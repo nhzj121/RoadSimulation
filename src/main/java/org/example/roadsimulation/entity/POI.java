@@ -19,8 +19,14 @@ public class POI {
     @Column(name = "latitude")
     private Double latitude; // 纬度
 
-    @Column(name = "type")
-    private String type; // 类型，如："仓库", "配送中心", "加油站"
+    public enum POIType {
+
+    }
+
+    // 在实体类中使用
+    @Enumerated(EnumType.STRING)
+    @Column(name = "POI_type", length = 20)
+    private POI.POIType POItype;
 
 
 
@@ -29,11 +35,11 @@ public class POI {
     }
 
     // 带参数的构造函数
-    public POI(String name, Double longitude, Double latitude, String type) {
+    public POI(String name, Double longitude, Double latitude, POI.POIType type) {
         this.name = name;
         this.longitude = longitude;
         this.latitude = latitude;
-        this.type = type;
+        this.POItype = type;
     }
 
     // Getter 和 Setter 方法
@@ -69,12 +75,12 @@ public class POI {
         this.latitude = latitude;
     }
 
-    public String getType() {
-        return type;
+    public POI.POIType getType() {
+        return POItype;
     }
 
-    public void setType(String type) {
-        this.type = type;
+    public void setType(POI.POIType type) {
+        this.POItype = type;
     }
 
     @Override
@@ -84,7 +90,7 @@ public class POI {
                 ", name='" + name + '\'' +
                 ", longitude=" + longitude +
                 ", latitude=" + latitude +
-                ", type='" + type + '\'' +
+                ", type='" + POItype + '\'' +
                 '}';
     }
 }
