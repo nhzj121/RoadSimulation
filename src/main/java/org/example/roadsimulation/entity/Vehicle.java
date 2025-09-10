@@ -7,6 +7,9 @@ import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
+import java.util.HashSet;
+import java.util.Set;
+
 @Entity
 @Table(name = "vehicle")
 public class Vehicle {
@@ -67,6 +70,8 @@ public class Vehicle {
     @ManyToOne(fetch = FetchType.LAZY, cascade = {CascadeType.PERSIST, CascadeType.MERGE})
     @JoinColumn(name = "current_action_id")
     private Action currentAction;
+    //
+
     // 当前所在的经度
     @Column(name = "current_longitude")
     private Double currentLongitude;
@@ -89,6 +94,9 @@ public class Vehicle {
     @Column(name = "current_status", length = 20)
     private VehicleStatus currentStatus;
 
+    // 多对多关系 - 车辆可以被多个司机驾驶
+    @ManyToMany(mappedBy = "vehicles") // 由Driver实体维护关系
+    private Set<Driver> drivers = new HashSet<>();
 
     public Vehicle(){
 
@@ -148,6 +156,15 @@ public class Vehicle {
     public void setCurrentLatitude(Double currentLatitude) {this.currentLatitude = currentLatitude;}
     public VehicleStatus getCurrentStatus() {return currentStatus;}
     public void setCurrentStatus(VehicleStatus currentStatus) {this.currentStatus = currentStatus;}
+
+    // 添加getter和setter
+    public Set<Driver> getDrivers() {
+        return drivers;
+    }
+
+    public void setDrivers(Set<Driver> drivers) {
+        this.drivers = drivers;
+    }
 
     @Override
     public String toString() {
