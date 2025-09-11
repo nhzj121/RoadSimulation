@@ -66,11 +66,15 @@ public class Vehicle {
     @ManyToOne(fetch = FetchType.LAZY, cascade = {CascadeType.PERSIST, CascadeType.MERGE})
     @JoinColumn(name = "current_poi_id")
     private POI currentPOI;
+
     // 多辆车可以对应同一个Action
     @ManyToOne(fetch = FetchType.LAZY, cascade = {CascadeType.PERSIST, CascadeType.MERGE})
     @JoinColumn(name = "current_action_id")
     private Action currentAction;
-    //
+
+    // 多对多关系 - 车辆可以被多个司机驾驶
+    @ManyToMany(mappedBy = "vehicles") // 由Driver实体维护关系
+    private Set<Driver> drivers = new HashSet<>();
 
     // 当前所在的经度
     @Column(name = "current_longitude")
@@ -93,10 +97,6 @@ public class Vehicle {
     @Enumerated(EnumType.STRING)
     @Column(name = "current_status", length = 20)
     private VehicleStatus currentStatus;
-
-    // 多对多关系 - 车辆可以被多个司机驾驶
-    @ManyToMany(mappedBy = "vehicles") // 由Driver实体维护关系
-    private Set<Driver> drivers = new HashSet<>();
 
     public Vehicle(){
 
@@ -146,8 +146,6 @@ public class Vehicle {
     public void setWidth(Double width) {this.width = width;}
     public Double getHeight() {return height;}
     public void setHeight(Double height) {this.height = height;}
-    public POI getCurrentPOI() {return currentPOI;}
-    public void setCurrentPOI(POI currentPOI) { this.currentPOI = currentPOI;}
     public Action getCurrentAction() {return currentAction;}
     public void setCurrentAction(Action currentAction) {this.currentAction = currentAction;}
     public Double getCurrentLongitude() {return currentLongitude;}
@@ -166,6 +164,32 @@ public class Vehicle {
         this.drivers = drivers;
     }
 
+    public POI getCurrentPOI() {
+        return currentPOI;
+    }
+
+    // 核心方法：设置车辆当前所在的POI，并维护双向关系
+    public void setCurrentPOI(POI currentPOI) {
+        // 如果当前POI与要设置的POI相同，则不执行任何操作
+        if (this.currentPOI == currentPOI) {
+            return;
+        }
+
+        // 如果当前已有POI，先从该POI的集合中移除自己
+        POI oldPOI = this.currentPOI;
+        if (oldPOI != null) {
+            oldPOI.internalRemoveVehicle(this);
+        }
+
+        // 设置新的POI
+        this.currentPOI = currentPOI;
+
+        // 如果新POI不为空，将自己添加到新POI的集合中
+        if (currentPOI != null) {
+            currentPOI.internalAddVehicle(this);
+        }
+    }
+
     @Override
     public String toString() {
         return "Vehicle{" +
@@ -173,7 +197,7 @@ public class Vehicle {
                 ", licensePlate='" + licensePlate + '\'' +
                 ", modelType='" + modelType + '\'' +
                 ", currentStatus=" + currentStatus +
-                ", currentPOI=" + (currentPOI != null ? currentPOI.getId() : "null") +
+                ", currentPOI=" + (currentPOI != null && currentPOI.getId() != null ? currentPOI.getId() : "null") +
                 '}';
     }
 }
