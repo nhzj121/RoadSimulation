@@ -53,67 +53,33 @@ public class POI {
     }
 
     // Getter 和 Setter 方法
-    public Long getId() {
-        return id;
-    }
+    public Long getId() {return id;}
+    public void setId(Long id) {this.id = id;}
+    public String getName() {return name;}
+    public void setName(String name) {this.name = name;}
+    public Double getLongitude() {return longitude;}
+    public void setLongitude(Double longitude) {this.longitude = longitude;}
+    public Double getLatitude() {return latitude;}
+    public void setLatitude(Double latitude) {this.latitude = latitude;}
+    public POI.POIType getType() {return POItype;}
+    public void setType(POI.POIType type) {this.POItype = type;}
+    public Set<Vehicle> getVehiclesAtLocation() {return vehiclesAtLocation;}
 
-    public void setId(Long id) {
-        this.id = id;
-    }
-
-    public String getName() {
-        return name;
-    }
-
-    public void setName(String name) {
-        this.name = name;
-    }
-
-    public Double getLongitude() {
-        return longitude;
-    }
-
-    public void setLongitude(Double longitude) {
-        this.longitude = longitude;
-    }
-
-    public Double getLatitude() {
-        return latitude;
-    }
-
-    public void setLatitude(Double latitude) {
-        this.latitude = latitude;
-    }
-
-    public POI.POIType getType() {
-        return POItype;
-    }
-
-    public void setType(POI.POIType type) {
-        this.POItype = type;
-    }
-
-    public Set<Vehicle> getVehiclesAtLocation() {
-        return vehiclesAtLocation;
-    }
-
+    /// Vehicle和POI
     // 辅助方法：添加车辆到此POI
     public void addVehicleAtLocation(Vehicle vehicle) {
         // 调用Vehicle的方法来设置关系，确保双向一致性
         vehicle.setCurrentPOI(this);
     }
-
     // 辅助方法：从此POI移除车辆
     public void removeVehicleAtLocation(Vehicle vehicle) {
         // 调用Vehicle的方法来移除关系，确保双向一致性
         vehicle.setCurrentPOI(null);
     }
-
     // 内部方法：仅供Vehicle实体调用，用于维护双向关系
     protected void internalAddVehicle(Vehicle vehicle) {
         this.vehiclesAtLocation.add(vehicle);
     }
-
     // 内部方法：仅供Vehicle实体调用，用于维护双向关系
     protected void internalRemoveVehicle(Vehicle vehicle) {
         this.vehiclesAtLocation.remove(vehicle);

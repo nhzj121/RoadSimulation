@@ -1,5 +1,6 @@
 package org.example.roadsimulation.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import org.example.roadsimulation.entity.Action;
 import org.example.roadsimulation.entity.POI;
@@ -67,14 +68,14 @@ public class Vehicle {
     @JoinColumn(name = "current_poi_id")
     private POI currentPOI;
 
-    // 多辆车可以对应同一个Action
-    @ManyToOne(fetch = FetchType.LAZY, cascade = {CascadeType.PERSIST, CascadeType.MERGE})
-    @JoinColumn(name = "current_action_id")
-    private Action currentAction;
-
     // 多对多关系 - 车辆可以被多个司机驾驶
     @ManyToMany(mappedBy = "vehicles") // 由Driver实体维护关系
     private Set<Driver> drivers = new HashSet<>();
+
+    // 一对多关系：一辆车可以有多个任务分配
+    @OneToMany(mappedBy = "assignedVehicle", fetch = FetchType.LAZY, cascade = CascadeType.ALL)
+    @JsonIgnore
+    private Set<Assignment> assignments = new HashSet<>();
 
     // 当前所在的经度
     @Column(name = "current_longitude")
@@ -146,8 +147,6 @@ public class Vehicle {
     public void setWidth(Double width) {this.width = width;}
     public Double getHeight() {return height;}
     public void setHeight(Double height) {this.height = height;}
-    public Action getCurrentAction() {return currentAction;}
-    public void setCurrentAction(Action currentAction) {this.currentAction = currentAction;}
     public Double getCurrentLongitude() {return currentLongitude;}
     public void setCurrentLongitude(Double currentLongitude) {this.currentLongitude = currentLongitude;}
     public Double getCurrentLatitude() {return currentLatitude;}
@@ -155,15 +154,36 @@ public class Vehicle {
     public VehicleStatus getCurrentStatus() {return currentStatus;}
     public void setCurrentStatus(VehicleStatus currentStatus) {this.currentStatus = currentStatus;}
 
+
+    /// 车辆与驾驶员关系的方法
     // 添加getter和setter
     public Set<Driver> getDrivers() {
         return drivers;
     }
-
-    public void setDrivers(Set<Driver> drivers) {
-        this.drivers = drivers;
+    // 添加司机到车辆
+    public void addDriver(Driver driver) {
+        this.drivers.add(driver);
+        driver.getVehicles().add(this);
     }
 
+    // 从车辆移除司机
+    public void removeDriver(Driver driver) {
+        this.drivers.remove(driver);
+        driver.getVehicles().remove(this);
+    }
+    public void setDrivers(Set<Driver> drivers) {
+        // 先清除现有关系
+        for (Driver driver : new HashSet<>(this.drivers)) {
+            this.removeDriver(driver);
+        }
+
+        // 添加新关系
+        for (Driver driver : drivers) {
+            this.addDriver(driver);
+        }
+    }
+
+    /// 车辆与关键点的关系点的方法
     public POI getCurrentPOI() {
         return currentPOI;
     }
@@ -188,6 +208,39 @@ public class Vehicle {
         if (currentPOI != null) {
             currentPOI.internalAddVehicle(this);
         }
+
+    }
+
+
+    ///  Vehicle和Assignment之间关系的维护代码
+    // 获取车辆的所有任务分配
+    public Set<Assignment> getAssignments() {
+        return assignments;
+    }
+
+    // 设置车辆的任务分配
+    public void setAssignments(Set<Assignment> assignments) {
+        this.assignments = assignments;
+    }
+
+    // 添加任务分配到车辆
+    public void addAssignment(Assignment assignment) {
+        this.assignments.add(assignment);
+        assignment.setAssignedVehicle(this);
+    }
+
+    // 从车辆移除任务分配
+    public void removeAssignment(Assignment assignment) {
+        this.assignments.remove(assignment);
+        assignment.setAssignedVehicle(null);
+    }
+
+    // 获取当前进行中的任务
+    public Assignment getCurrentAssignment() {
+        return assignments.stream()
+                .filter(Assignment::isInProgress)
+                .findFirst()
+                .orElse(null);
     }
 
     @Override
