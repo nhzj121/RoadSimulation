@@ -81,6 +81,7 @@ public class Assignment {
     public void setStartTime(LocalDateTime startTime) {this.startTime = startTime;}
     public LocalDateTime getEndTime() {return endTime;}
     public void setEndTime(LocalDateTime endTime) {this.endTime = endTime;}
+    public String getActionLineJson() {return actionLineJson;}
     public Vehicle getAssignedVehicle() {return assignedVehicle;}
     public Driver getAssignedDriver() {return assignedDriver;}
 

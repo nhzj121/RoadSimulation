@@ -4,6 +4,8 @@ import jakarta.persistence.*;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
+
 import java.util.HashSet;
 import java.util.Set;
 
@@ -69,23 +71,6 @@ public class Route {
         CONGESTED       // 拥堵
     }
 
-    // 与货物运输的关系 - 一对多（一条路线可以有多个货物运输）
-    @OneToMany(mappedBy = "route", cascade = CascadeType.ALL)
-    private Set<Shipment> shipments = new HashSet<>(); // 对应图中的Shipment（维护）
-
-    // 与任务的关系 - 一对多（一条路线可以有多个任务）
-    @OneToMany(mappedBy = "plannedRoute")
-    private Set<Task> tasks = new HashSet<>();
-
-    // 禁止点集合 - 多对多（一条路线可以有多个禁止点，一个禁止点可以属于多条路线）
-    @ManyToMany
-    @JoinTable(
-            name = "route_forbidden_poi",
-            joinColumns = @JoinColumn(name = "route_id"),
-            inverseJoinColumns = @JoinColumn(name = "poi_id")
-    )
-    private Set<POI> forbiddenPOIs = new HashSet<>(); // 对应图中的endPCI(禁止点)
-
     // 构造方法
     public Route() {
         this.status = RouteStatus.ACTIVE;
@@ -138,34 +123,6 @@ public class Route {
 
     public Double getFuelConsumption() { return fuelConsumption; }
     public void setFuelConsumption(Double fuelConsumption) { this.fuelConsumption = fuelConsumption; }
-
-    public Set<Shipment> getShipments() { return shipments; }
-    public void setShipments(Set<Shipment> shipments) { this.shipments = shipments; }
-
-    public Set<Task> getTasks() { return tasks; }
-    public void setTasks(Set<Task> tasks) { this.tasks = tasks; }
-
-    public Set<POI> getForbiddenPOIs() { return forbiddenPOIs; }
-    public void setForbiddenPOIs(Set<POI> forbiddenPOIs) { this.forbiddenPOIs = forbiddenPOIs; }
-
-    // 业务方法
-    public void addForbiddenPOI(POI poi) {
-        this.forbiddenPOIs.add(poi);
-        poi.getForbiddenRoutes().add(this);
-    }
-
-    public void removeForbiddenPOI(POI poi) {
-        this.forbiddenPOIs.remove(poi);
-        poi.getForbiddenRoutes().remove(this);
-    }
-
-    public boolean isForbiddenPOI(POI poi) {
-        return this.forbiddenPOIs.contains(poi);
-    }
-
-    public boolean isAvailable() {
-        return this.status == RouteStatus.ACTIVE;
-    }
 
     // 计算路线成本
     public Double calculateTotalCost(Double fuelPrice) {
