@@ -12,8 +12,8 @@ import java.util.Set;
 
 /**
  * 运单（业务主单）
- * 说明：参考你的 Vehicle 实体风格，使用 JPA 注解与校验注解；
- * 与 POI (起运/目的地) 关联；与 ShipmentItem 一对多。
+ * 说明：使用 JPA 注解与校验注解；
+ * 与 POI (起运/目的地) 关联；与 ShipmentItem 一对多；与 Customer 多对一。
  */
 @Entity
 @Table(
@@ -21,7 +21,8 @@ import java.util.Set;
         indexes = {
                 @Index(name = "idx_shipment_status", columnList = "status"),
                 @Index(name = "idx_shipment_origin_poi", columnList = "origin_poi_id"),
-                @Index(name = "idx_shipment_dest_poi", columnList = "dest_poi_id")
+                @Index(name = "idx_shipment_dest_poi", columnList = "dest_poi_id"),
+                @Index(name = "idx_shipment_customer", columnList = "customer_id") // 新增索引
         },
         uniqueConstraints = {
                 @UniqueConstraint(name = "uk_shipment_ref_no", columnNames = "ref_no")
@@ -61,6 +62,11 @@ public class Shipment {
     @Enumerated(EnumType.STRING)
     @Column(name = "status", length = 20, nullable = false)
     private ShipmentStatus status = ShipmentStatus.CREATED;
+
+    // 与客户的多对一关系
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "customer_id")
+    private Customer customer;
 
     // 起运地 / 目的地（与你项目里的 POI 实体关联）
     @ManyToOne(fetch = FetchType.LAZY, cascade = {CascadeType.PERSIST, CascadeType.MERGE})
@@ -129,6 +135,9 @@ public class Shipment {
     public ShipmentStatus getStatus() { return status; }
     public void setStatus(ShipmentStatus status) { this.status = status; }
 
+    public Customer getCustomer() { return customer; }
+    public void setCustomer(Customer customer) { this.customer = customer; }
+
     public POI getOriginPOI() { return originPOI; }
     public void setOriginPOI(POI originPOI) { this.originPOI = originPOI; }
 
@@ -161,6 +170,7 @@ public class Shipment {
                 "id=" + id +
                 ", refNo='" + refNo + '\'' +
                 ", status=" + status +
+                ", customer=" + (customer != null ? customer.getId() : "null") +
                 ", originPOI=" + (originPOI != null ? originPOI.getId() : "null") +
                 ", destPOI=" + (destPOI != null ? destPOI.getId() : "null") +
                 '}';
