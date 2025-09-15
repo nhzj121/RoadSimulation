@@ -64,7 +64,7 @@ public class Vehicle {
     * 从表：主动关联的一方（比如 Order 订单表，即当前实体对应的表），它需要通过 “外键” 关联主表的主键，是 “多” 的那一方（多个订单可能对应同一个 POI）。
     * */
     // 多辆车可以位于同一个POI
-    @ManyToOne(fetch = FetchType.LAZY, cascade = {CascadeType.PERSIST, CascadeType.MERGE})
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "current_poi_id")
     private POI currentPOI;
 
@@ -133,10 +133,10 @@ public class Vehicle {
     public void setModelType(String modelType) {
         this.modelType = modelType;
     }
-    public Double getcurrentLoad() {
+    public Double getCurrentLoad() {
         return currentLoad;
     }
-    public void setcurrentLoad(Double currentLoad) {
+    public void setCurrentLoad(Double currentLoad) {
         this.currentLoad = currentLoad;
     }
     public Double getCargoVolume() {return cargoVolume;}

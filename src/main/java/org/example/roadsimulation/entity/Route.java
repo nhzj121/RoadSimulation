@@ -36,6 +36,10 @@ public class Route {
     @JoinColumn(name = "end_poi_id", nullable = false)
     private POI endPOI; // 对应图中的endPCI
 
+    // 与Assignment的一对多的关系
+    @OneToMany(mappedBy = "route", fetch = FetchType.LAZY, cascade = {CascadeType.MERGE})
+    private Set<Assignment> assignments = new HashSet<>();
+
     @NotNull(message = "距离不能为空")
     @Min(value = 0, message = "距离不能为负数")
     @Column(name = "distance")
@@ -124,6 +128,23 @@ public class Route {
     public Double getFuelConsumption() { return fuelConsumption; }
     public void setFuelConsumption(Double fuelConsumption) { this.fuelConsumption = fuelConsumption; }
 
+    public Set<Assignment> getAssignments() { return assignments; }
+    public void setAssignments(Set<Assignment> assignments) { this.assignments = assignments; }
+
+    public void addAssignment(Assignment assignment) {
+        if (assignment != null) {
+            assignments.add(assignment);
+            assignment.setRoute(this);
+        }
+    }
+
+    public void removeAssignment(Assignment assignment) {
+        if (assignment != null) {
+            assignments.remove(assignment);
+            assignment.setRoute(null);
+        }
+    }
+
     // 计算路线成本
     public Double calculateTotalCost(Double fuelPrice) {
         Double fuelCost = (fuelConsumption != null && fuelPrice != null) ? fuelConsumption * fuelPrice : 0.0;
@@ -138,6 +159,8 @@ public class Route {
                 ", name='" + name + '\'' +
                 ", startPOI=" + (startPOI != null ? startPOI.getId() : "null") +
                 ", endPOI=" + (endPOI != null ? endPOI.getId() : "null") +
+                ", distance=" + distance +
+                ", estimatedTime=" + estimatedTime +
                 ", status=" + status +
                 '}';
     }

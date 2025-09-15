@@ -34,8 +34,8 @@ public class POI {
 
     // 在实体类中使用
     @Enumerated(EnumType.STRING)
-    @Column(name = "POI_type", length = 20)
-    private POI.POIType POItype;
+    @Column(name = "poi_type", length = 20)
+    private POI.POIType poiType;
 
     @OneToMany(mappedBy = "currentPOI", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
     private Set<Vehicle> vehiclesAtLocation = new HashSet<>();
@@ -49,7 +49,7 @@ public class POI {
         this.name = name;
         this.longitude = longitude;
         this.latitude = latitude;
-        this.POItype = type;
+        this.poiType = type;
     }
 
     // Getter 和 Setter 方法
@@ -61,8 +61,8 @@ public class POI {
     public void setLongitude(Double longitude) {this.longitude = longitude;}
     public Double getLatitude() {return latitude;}
     public void setLatitude(Double latitude) {this.latitude = latitude;}
-    public POI.POIType getType() {return POItype;}
-    public void setType(POI.POIType type) {this.POItype = type;}
+    public POI.POIType getType() {return poiType;}
+    public void setType(POI.POIType type) {this.poiType = type;}
     public Set<Vehicle> getVehiclesAtLocation() {return vehiclesAtLocation;}
 
     /// Vehicle和POI
@@ -92,7 +92,7 @@ public class POI {
                 ", name='" + name + '\'' +
                 ", longitude=" + longitude +
                 ", latitude=" + latitude +
-                ", type='" + POItype + '\'' +
+                ", type='" + poiType + '\'' +
                 '}';
     }
 }

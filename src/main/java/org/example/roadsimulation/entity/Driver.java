@@ -31,7 +31,7 @@ public class Driver {
     private Driver.DriverStatus currentStatus;
     /// 驾驶员与车辆关系的构建
     /// 多对多关系  驾驶员是关系的拥有者
-    @ManyToMany // 1. 声明多对多关系
+    @ManyToMany // 1. 声明多对多关系，通常不需要设置级联
     @JoinTable( // 2. 定义连接表（中间表）
             name = "driver_vehicle", // 3. 指定中间表的表名为 'driver_vehicle'
             joinColumns = @JoinColumn(name = "driver_id"), // 4. 指定本实体（Driver）在中间表中的外键列名
