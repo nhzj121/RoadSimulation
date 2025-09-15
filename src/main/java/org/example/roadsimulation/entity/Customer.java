@@ -58,7 +58,7 @@ public class Customer {
     private LocalDateTime updatedAt = LocalDateTime.now();
 
     // 与运单的一对多关系
-    @OneToMany(mappedBy = "customer", cascade = {CascadeType.PERSIST, CascadeType.MERGE}, fetch = FetchType.LAZY)
+    @OneToMany(mappedBy = "customer", cascade = {CascadeType.PERSIST, CascadeType.MERGE, CascadeType.REFRESH}, fetch = FetchType.LAZY)
     private Set<Shipment> shipments = new HashSet<>();
 
     public Customer() {}

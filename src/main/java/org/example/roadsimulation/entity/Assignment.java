@@ -9,10 +9,19 @@ import jakarta.validation.constraints.NotNull;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 @Entity
-@Table(name = "assignment")
+@Table(
+        name = "assignment",
+        indexes = {
+                @Index(name = "idx_assignment_status", columnList = "status"),
+                @Index(name = "idx_assignment_vehicle", columnList = "vehicle_id"),
+                @Index(name = "idx_assignment_driver", columnList = "driver_id"),
+                @Index(name = "idx_assignment_route", columnList = "route_id")
+        })
 public class Assignment {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -34,8 +43,8 @@ public class Assignment {
     private AssignmentStatus status;
 
     // 针对预设行为链的索引
-    @Column(name = "current_action_index")
-    private Integer currentActionIndex = 0;
+    @Column(name = "current_action_index", columnDefinition = "integer default 0")
+    private Integer currentActionIndex;
 
     @Column(name = "start_time")
     private LocalDateTime startTime;
@@ -57,6 +66,14 @@ public class Assignment {
     @JoinColumn(name = "driver_id")
     private Driver assignedDriver;
 
+    // 和ShipnmentItem的一对多的关系
+    @OneToMany(mappedBy = "assignment", fetch = FetchType.LAZY, cascade = CascadeType.ALL, orphanRemoval = true)
+    private Set<ShipmentItem> shipmentItems = new HashSet<>();
+
+    // 与Route的多对一的关系
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "route_id")
+    private Route route;
 
     // 无参构造函数
     public Assignment() {
@@ -84,6 +101,8 @@ public class Assignment {
     public String getActionLineJson() {return actionLineJson;}
     public Vehicle getAssignedVehicle() {return assignedVehicle;}
     public Driver getAssignedDriver() {return assignedDriver;}
+    public Route getRoute() { return route; }
+    public void setRoute(Route route) { this.route = route; }
 
     public void setAssignedDriver(Driver assignedDriver) {
         this.assignedDriver = assignedDriver;
@@ -110,6 +129,25 @@ public class Assignment {
         }
     }
 
+    ///  Assignment和ShipmentItem
+    // 添加对应的 getter 和 setter 方法
+    public Set<ShipmentItem> getShipmentItems() { return shipmentItems; }
+    public void setShipmentItems(Set<ShipmentItem> shipmentItems) { this.shipmentItems = shipmentItems; }
+
+    // 添加便捷方法来维护双向关系
+    public void addShipmentItem(ShipmentItem item) {
+        if (item != null) {
+            this.shipmentItems.add(item);
+            item.setAssignment(this);
+        }
+    }
+
+    public void removeShipmentItem(ShipmentItem item) {
+        if (item != null) {
+            this.shipmentItems.remove(item);
+            item.setAssignment(null);
+        }
+    }
     /**
      * 检查任务是否正在进行中
      * @return 是否正在进行中
@@ -216,6 +254,8 @@ public class Assignment {
                 // ", shipment=" + (shipment != null ? shipment.getId() : "null") +
                 ", assignedVehicle=" + (assignedVehicle != null ? assignedVehicle.getId() : "null") +
                 ", assignedDriver=" + (assignedDriver != null ? assignedDriver.getId() : "null") +
+                ", route=" + (route != null ? route.getId() : "null") +
+                ", shipmentItemsCount=" + (shipmentItems != null ? shipmentItems.size() : 0) +
                 '}';
     }
 
