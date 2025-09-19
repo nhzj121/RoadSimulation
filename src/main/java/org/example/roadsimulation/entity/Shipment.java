@@ -34,6 +34,7 @@ public class Shipment {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @NotBlank(message = "参考号不能为空")
     @Size(max = 100, message = "参考号长度不能超过100个字符")
     @Column(name = "ref_no", unique = true)
     private String refNo; // 客户/系统参考号
@@ -64,15 +65,18 @@ public class Shipment {
     private ShipmentStatus status = ShipmentStatus.CREATED;
 
     // 与客户的多对一关系
+    @NotNull(message = "客户不能为空")
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "customer_id")
     private Customer customer;
 
     // 起运地 / 目的地（与你项目里的 POI 实体关联）
+    @NotNull(message = "起运地不能为空")
     @ManyToOne(fetch = FetchType.LAZY, cascade = {CascadeType.PERSIST, CascadeType.MERGE})
     @JoinColumn(name = "origin_poi_id")
     private POI originPOI;
 
+    @NotNull(message = "目的地不能为空")
     @ManyToOne(fetch = FetchType.LAZY, cascade = {CascadeType.PERSIST, CascadeType.MERGE})
     @JoinColumn(name = "dest_poi_id")
     private POI destPOI;
