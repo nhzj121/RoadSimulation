@@ -27,4 +27,6 @@ public interface CustomerRepository extends JpaRepository<Customer, Long> {
 
     // 检查客户编码是否存在
     boolean existsByCode(String code);
+
+    List<Customer> code(String code);
 }
