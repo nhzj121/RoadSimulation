@@ -64,6 +64,14 @@ public class Goods {
     @Column(name = "updated_at")
     private LocalDateTime updatedAt = LocalDateTime.now();
 
+    @OneToMany(mappedBy = "goods", cascade = {CascadeType.PERSIST, CascadeType.MERGE}, fetch = FetchType.LAZY)
+    private Set<ShipmentItem> shipmentItems = new HashSet<>();
+
+
+
+    // Getter & Setter
+
+
     public Goods() {}
 
     public Goods(String name, String sku) {
@@ -107,6 +115,30 @@ public class Goods {
 
     public LocalDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
+
+    public Set<ShipmentItem> getShipmentItems() {
+        return shipmentItems;
+    }
+
+    public void setShipmentItems(Set<ShipmentItem> shipmentItems) {
+        this.shipmentItems = shipmentItems;
+    }
+
+
+    // Goods和ShipmentItem：维护双向关系
+    public void addShipmentItem(ShipmentItem item) {
+        if (item != null) {
+            shipmentItems.add(item);
+            item.setGoods(this);
+        }
+    }
+
+    public void removeShipmentItem(ShipmentItem item) {
+        if (item != null) {
+            shipmentItems.remove(item);
+            item.setGoods(null);
+        }
+    }
 
     @PreUpdate
     public void touchUpdateTime() {

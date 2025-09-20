@@ -23,6 +23,7 @@ public class ShipmentItem {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @NotNull(message = "运单不能为空")
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "shipment_id", nullable = false)
     private Shipment shipment;
@@ -41,11 +42,15 @@ public class ShipmentItem {
     @Column(name = "name", nullable = false)
     private String name;
 
+    // 商品唯一标识代码，用于区分和追踪库存中的不同商品；
+    // 区别于SPU（产品编码），SKU用于对同一商品下的不同种类进行区分
+    // 在这里我们暂设为商品唯一性标识 ToDo
     @Size(max = 100, message = "SKU长度不能超过100个字符")
     @Column(name = "sku")
     private String sku;
 
-    @Min(value = 0, message = "数量不能为负数")
+    @NotNull(message = "数量不能为空") // 添加非空校验
+    @Min(value = 1, message = "数量必须大于0") // 将最小值从0改为1
     @Column(name = "qty")
     private Integer qty;
 
@@ -59,10 +64,14 @@ public class ShipmentItem {
 
     public ShipmentItem() {}
 
-    public ShipmentItem(@NotNull Shipment shipment, String name, Integer qty) {
+    public ShipmentItem(@NotNull Shipment shipment, String name, Integer qty, String sku, Double weight, Double volume) {
         this.shipment = shipment;
         this.name = name;
         this.qty = qty;
+        this.sku = sku;
+        this.weight = weight;
+        this.volume = volume;
+        setShipment(shipment);
     }
 
     // Getter & Setter
@@ -70,7 +79,19 @@ public class ShipmentItem {
     public void setId(Long id) { this.id = id; }
 
     public Shipment getShipment() { return shipment; }
-    public void setShipment(Shipment shipment) { this.shipment = shipment; }
+    public void setShipment(Shipment shipment) {
+        if (this.shipment == shipment) {
+            return;
+        }
+        Shipment oldShipment = this.shipment;
+        this.shipment = shipment;
+        if (oldShipment != null) {
+            oldShipment.removeItem(this);
+        }
+        if (shipment != null) {
+            shipment.addItem(this);
+        }
+    }
 
     public Goods getGoods() { return goods; }
     public void setGoods(Goods goods) { this.goods = goods; }
