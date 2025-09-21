@@ -5,6 +5,7 @@ import org.example.roadsimulation.entity.Assignment;
 import org.example.roadsimulation.entity.Goods;
 import org.example.roadsimulation.entity.ShipmentItem;
 import org.example.roadsimulation.exception.GoodsAlreadyExistsException;
+import org.example.roadsimulation.exception.GoodsInUseException;
 import org.example.roadsimulation.repository.GoodsRepository;
 import org.example.roadsimulation.repository.ShipmentItemRepository;
 import org.example.roadsimulation.service.GoodsService;
@@ -183,24 +184,27 @@ public class GoodsServiceImpl implements GoodsService {
         );
     }
 
+    // 删除货物
     @Override
     public void deleteGoods(Long id) {
         Goods goods = goodsRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("货物不存在，ID: " + id));
 
         // 检查是否被运单项引用
-        if (!goods.getShipmentItems().isEmpty()) {
-            throw new IllegalStateException("无法删除货物，存在关联的运单项");
+        int usageCount = goods.getShipmentItems().size();
+        if (usageCount > 0) {
+            throw new GoodsInUseException(id, usageCount);
         }
 
         goodsRepository.delete(goods);
     }
-
+    // 判断SKU是否已经存在
     @Override
     public boolean existsBySku(String sku){
         return goodsRepository.existsBySku(sku);
     }
 
+    // 货物运输统计
     @Override
     @Transactional(readOnly = true)
     public GoodsTransportStats getTransportStats(Long goodsId) {
