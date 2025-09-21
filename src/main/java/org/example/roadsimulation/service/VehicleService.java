@@ -1,18 +1,28 @@
-
-// VehicleService.java (接口)
 package org.example.roadsimulation.service;
 
 import org.example.roadsimulation.entity.Vehicle;
+
 import java.util.List;
+import java.util.Optional;
 
 public interface VehicleService {
-    List<Vehicle> getAllVehicles();
-    Vehicle getVehicleById(Long id);
-    Vehicle createVehicle(Vehicle vehicle);
-    Vehicle updateVehicle(Long id, Vehicle vehicleDetails);
+
+    Vehicle saveVehicle(Vehicle vehicle);
+
     void deleteVehicle(Long id);
-    List<Vehicle> getVehiclesByStatus(Vehicle.VehicleStatus status);
-    Vehicle updateVehicleStatus(Long vehicleId, Vehicle.VehicleStatus newStatus);
-    Vehicle assignToPOI(Long vehicleId, Long poiId);
-    List<Vehicle> findAvailableVehiclesWithMinCapacity(Double minCapacity);
+
+    Optional<Vehicle> findById(Long id);
+
+    List<Vehicle> findAll();
+
+    Vehicle findByLicensePlate(String licensePlate);
+
+    List<Vehicle> findByCurrentStatus(Vehicle.VehicleStatus status);
+
+    List<Vehicle> findByVehicleType(String vehicleType);
+
+    List<Vehicle> findByCurrentPOIId(Long poiId);
+
+    List<Vehicle> findSuitableIdleVehicles(Double requiredCapacity);
 }
+
