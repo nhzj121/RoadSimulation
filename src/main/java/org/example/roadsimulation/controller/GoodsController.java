@@ -1,10 +1,12 @@
 package org.example.roadsimulation.controller;
 
 import jakarta.validation.Valid;
+import org.example.roadsimulation.dto.GoodsTransportStats;
 import org.example.roadsimulation.entity.Assignment;
 import org.example.roadsimulation.entity.Goods;
 import org.example.roadsimulation.entity.ShipmentItem;
 import org.example.roadsimulation.exception.GoodsAlreadyExistsException;
+import org.example.roadsimulation.exception.GoodsInUseException;
 import org.example.roadsimulation.service.GoodsService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
@@ -126,10 +128,10 @@ public class GoodsController {
         try {
             goodsService.deleteGoods(id);
             return ResponseEntity.noContent().build();
-        } catch (RuntimeException e) {
-            return ResponseEntity.notFound().build();
         } catch (GoodsInUseException e) {
             return ResponseEntity.status(HttpStatus.CONFLICT).build();
+        } catch (RuntimeException e) {
+            return ResponseEntity.notFound().build();
         }
     }
 
