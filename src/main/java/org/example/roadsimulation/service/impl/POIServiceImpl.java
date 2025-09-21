@@ -1,7 +1,8 @@
-package org.example.roadsimulation.service;
+package org.example.roadsimulation.service.impl;
 
 import org.example.roadsimulation.entity.POI;
 import org.example.roadsimulation.repository.POIRepository;
+import org.example.roadsimulation.service.POIService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
