@@ -34,7 +34,7 @@ public class Goods {
 
     @Size(max = 100, message = "类别长度不能超过100个字符")
     @Column(name = "category")
-    private String category;
+    private String category;   //可能需要完善具体构成，模拟时采用默认或建立一个枚举类型 ToDo
 
     @Size(max = 500, message = "描述长度不能超过500个字符")
     @Column(name = "description")
