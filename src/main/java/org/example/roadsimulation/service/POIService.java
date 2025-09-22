@@ -5,20 +5,33 @@ import org.example.roadsimulation.entity.POI;
 import java.util.List;
 import java.util.Optional;
 
+/**
+ * Service 层接口：定义 POI 的业务功能（CRUD）
+ */
 public interface POIService {
 
-    // 保存或更新 POI
-    POI savePOI(POI poi);
+    /**
+     * 新增 POI
+     */
+    POI create(POI poi);
 
-    // 根据 ID 查询
-    Optional<POI> findById(Long id);
+    /**
+     * 根据 ID 查询 POI
+     */
+    Optional<POI> getById(Long id);
 
-    // 查询所有 POI
-    List<POI> findAll();
+    /**
+     * 查询所有 POI
+     */
+    List<POI> getAll();
 
-    // 根据名称模糊查询
-    List<POI> findByNameContaining(String name);
+    /**
+     * 更新 POI
+     */
+    POI update(Long id, POI poi);
 
-    // 删除 POI
-    void deleteById(Long id);
+    /**
+     * 删除 POI
+     */
+    void delete(Long id);
 }
