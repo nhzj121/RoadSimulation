@@ -2,7 +2,7 @@ package org.example.roadsimulation.service.impl;
 
 import org.example.roadsimulation.dto.RouteRequestDTO;
 import org.example.roadsimulation.dto.RouteResponseDTO;
-import org.example.roadsimulation.entity.POI;
+
 import org.example.roadsimulation.entity.Route;
 import org.example.roadsimulation.entity.Route.RouteStatus;
 import org.example.roadsimulation.repository.RouteRepository;
@@ -288,9 +288,9 @@ public class RouteServiceImpl implements RouteService {
     private void validatePOIExists(Long poiId, String fieldName) {
         if (poiId != null) {
             // 这里需要调用POI服务验证POI存在
-            // if (!poiService.existsById(poiId)) {
-            //     throw new IllegalArgumentException(fieldName + "不存在: " + poiId);
-            // }
+            if (!poiService.existsById(poiId)) {
+                throw new IllegalArgumentException(fieldName + "不存在: " + poiId);
+            }
         }
     }
 

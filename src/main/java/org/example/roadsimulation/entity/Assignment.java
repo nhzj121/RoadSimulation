@@ -27,6 +27,10 @@ public class Assignment {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    public boolean isAssigned() {
+        return this.getStatus() == AssignmentStatus.ASSIGNED;
+    }
+
     public enum AssignmentStatus {
         WAITING,        // 等待（未分配）
         ASSIGNED,       // 已分配
