@@ -3,7 +3,6 @@ package org.example.roadsimulation.service.impl;
 import org.example.roadsimulation.entity.Action;
 import org.example.roadsimulation.repository.ActionRepository;
 import org.example.roadsimulation.service.ActionService;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -16,8 +15,11 @@ import java.util.Optional;
 @Transactional
 public class ActionServiceImpl implements ActionService {
 
-    @Autowired
-    private ActionRepository actionRepository;
+    private final ActionRepository actionRepository;
+
+    public ActionServiceImpl(ActionRepository actionRepository) {
+        this.actionRepository = actionRepository;
+    }
 
     @Override
     public Action createAction(Action action) {
@@ -147,9 +149,9 @@ public class ActionServiceImpl implements ActionService {
             return false;
         }
 
-        if (action.getDurationMinutes() != null && action.getDurationMinutes() <= 0) {
-            return false;
-        }
+            if (action.getDurationMinutes() != null && action.getDurationMinutes() <= 0) {
+                return false;
+            }
 
         return true;
     }

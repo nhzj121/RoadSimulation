@@ -5,7 +5,7 @@ import org.example.roadsimulation.dto.AssignmentResponseDTO;
 import org.example.roadsimulation.entity.Assignment;
 import org.example.roadsimulation.entity.Assignment.AssignmentStatus;
 import org.example.roadsimulation.repository.AssignmentRepository;
-import org.example.roadsimulation.service.AssignmentService;
+import org.example.roadsimulation.service.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -402,8 +402,9 @@ public class AssignmentServiceImpl implements AssignmentService {
         // 设置司机信息
         if (assignment.getAssignedDriver() != null) {
             dto.setDriverId(assignment.getAssignedDriver().getId());
-            dto.setDriverInfo(assignment.getAssignedDriver().getName());
+            dto.setDriverInfo(assignment.getAssignedDriver().getDriverName()); // 用 driverName
         }
+
         // 设置路线信息
         if (assignment.getRoute() != null) {
             dto.setRouteId(assignment.getRoute().getId());
