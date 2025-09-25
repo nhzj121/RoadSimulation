@@ -34,4 +34,6 @@ public interface POIService {
      * 删除 POI
      */
     void delete(Long id);
+
+    boolean existsById(Long poiId);
 }
