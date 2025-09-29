@@ -1,7 +1,6 @@
 package org.example.roadsimulation.service.impl;
 
 import org.example.roadsimulation.entity.Driver;
-import org.example.roadsimulation.entity.Driver.DriverStatus;
 import org.example.roadsimulation.repository.DriverRepository;
 import org.example.roadsimulation.service.DriverService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -16,12 +15,13 @@ import java.util.Optional;
 /**
  * DriverServiceImpl
  *
- * 注意：
- * - 使用 @Service 表示这是一个 Spring 管理的服务 Bean。
- * - 通过构造器注入 DriverRepository（比字段注入更利于测试）。
- * - save 和 delete 操作使用 @Transactional 保证事务一致性（必要时可设置回滚策略）。
+ * 说明：
+ * - 实现 DriverService 接口
+ * - 提供增删查改、分页、模糊查询、状态筛选、唯一性检查功能
+ * - 遵循事务管理，读取操作设置 readOnly=true
  */
 @Service
+@Transactional
 public class DriverServiceImpl implements DriverService {
 
     private final DriverRepository driverRepository;
@@ -32,96 +32,116 @@ public class DriverServiceImpl implements DriverService {
     }
 
     /**
-     * 新增或更新司机
-     * - 直接调用 repository.save()，Spring Data JPA 会根据 id 是否为 null 来判断 insert 或 update
+     * 创建新的司机
+     * @param driver 待创建司机
+     * @return 创建后的司机实体（带ID）
      */
     @Override
-    @Transactional
-    public Driver save(Driver driver) {
-        // 1) 简单校验：司机姓名不能为空（也可使用验证框架在 Controller 层校验）
-        if (driver == null) {
-            throw new IllegalArgumentException("driver must not be null");
+    public Driver createDriver(Driver driver) {
+        // 检查手机号唯一性
+        if (driverRepository.existsByDriverPhone(driver.getDriverPhone())) {
+            throw new IllegalArgumentException("手机号已存在: " + driver.getDriverPhone());
         }
-        // 2) 保存（新增或更新）
         return driverRepository.save(driver);
     }
 
     /**
-     * 根据 ID 查询
+     * 更新司机信息
      */
     @Override
-    @Transactional(readOnly = true)
-    public Optional<Driver> findById(Long id) {
-        if (id == null) return Optional.empty();
-        return driverRepository.findById(id);
+    public Driver updateDriver(Long id, Driver driverDetails) {
+        return driverRepository.findById(id)
+                .map(driver -> {
+                    // 检查手机号是否冲突
+                    if (!driver.getDriverPhone().equals(driverDetails.getDriverPhone()) &&
+                            driverRepository.existsByDriverPhone(driverDetails.getDriverPhone())) {
+                        throw new IllegalArgumentException("手机号已存在: " + driverDetails.getDriverPhone());
+                    }
+
+                    driver.setDriverName(driverDetails.getDriverName());
+                    driver.setDriverPhone(driverDetails.getDriverPhone());
+                    driver.setCurrentStatus(driverDetails.getCurrentStatus());
+                    return driverRepository.save(driver);
+                })
+                .orElseThrow(() -> new RuntimeException("司机不存在，ID: " + id));
     }
 
     /**
-     * 查询所有司机（不分页）
+     * 获取所有司机列表（不分页）
      */
     @Override
     @Transactional(readOnly = true)
-    public List<Driver> findAll() {
+    public List<Driver> getAllDrivers() {
         return driverRepository.findAll();
     }
 
     /**
-     * 分页查询（推荐用于列表展示）
+     * 分页获取司机列表
      */
     @Override
     @Transactional(readOnly = true)
-    public Page<Driver> findAll(Pageable pageable) {
+    public Page<Driver> getAllDrivers(Pageable pageable) {
         return driverRepository.findAll(pageable);
     }
 
     /**
-     * 根据手机号查找（可能返回 null）
+     * 根据ID查询司机
      */
     @Override
     @Transactional(readOnly = true)
-    public Driver findByPhone(String phone) {
-        if (phone == null || phone.isBlank()) return null;
-        return driverRepository.findByDriverPhone(phone);
+    public Optional<Driver> getDriverById(Long id) {
+        return driverRepository.findById(id);
     }
 
     /**
-     * 根据姓名模糊查询（忽略大小写）
+     * 根据姓名模糊查询司机
      */
     @Override
     @Transactional(readOnly = true)
-    public List<Driver> searchByName(String partialName) {
-        if (partialName == null) return List.of();
-        return driverRepository.findByDriverNameContainingIgnoreCase(partialName);
+    public List<Driver> searchDriversByName(String name) {
+        return driverRepository.findByDriverNameContainingIgnoreCase(name);
     }
 
     /**
-     * 根据状态查询
+     * 根据手机号查询司机
      */
     @Override
     @Transactional(readOnly = true)
-    public List<Driver> findByStatus(DriverStatus status) {
-        if (status == null) return List.of();
+    public Optional<Driver> getDriverByPhone(String phone) {
+        return Optional.ofNullable(driverRepository.findByDriverPhone(phone));
+    }
+
+    /**
+     * 根据状态查询司机
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public List<Driver> getDriversByStatus(Driver.DriverStatus status) {
         return driverRepository.findByCurrentStatus(status);
     }
 
     /**
-     * 删除司机（id 不存在时此操作为幂等）
+     * 删除司机
+     * 删除前检查是否有关联的任务（Assignments）
      */
     @Override
-    @Transactional
-    public void deleteById(Long id) {
-        if (id == null) return;
-        // 可选：在删除之前可以做检查或业务校验，例如是否有未完成的任务等
-        driverRepository.deleteById(id);
+    public void deleteDriver(Long id) {
+        Driver driver = driverRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("司机不存在，ID: " + id));
+
+        if (!driver.getAssignments().isEmpty()) {
+            throw new IllegalStateException("无法删除司机，存在关联任务");
+        }
+
+        driverRepository.delete(driver);
     }
 
     /**
-     * 判断司机是否存在
+     * 检查手机号是否存在
      */
     @Override
     @Transactional(readOnly = true)
-    public boolean existsById(Long id) {
-        if (id == null) return false;
-        return driverRepository.existsById(id);
+    public boolean existsByPhone(String phone) {
+        return driverRepository.existsByDriverPhone(phone);
     }
 }
