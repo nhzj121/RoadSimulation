@@ -76,4 +76,9 @@ public class POIServiceImpl implements POIService {
         }
         poiRepository.deleteById(id);
     }
+
+    @Override
+    public boolean existsById(Long poiId){
+        return poiRepository.existsById(poiId);
+    }
 }

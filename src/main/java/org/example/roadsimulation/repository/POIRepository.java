@@ -15,4 +15,6 @@ import org.springframework.stereotype.Repository;
  */
 @Repository
 public interface POIRepository extends JpaRepository<POI, Long> {
+
+
 }

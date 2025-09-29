@@ -1,9 +1,9 @@
 <template>
-  <Map />
+  <GuideLine />
 </template>
 
 <script setup lang="ts">
-import Map from './components/Map.vue'
+import GuideLine from "@/components/GuideLine.vue";
 </script>
 
 
