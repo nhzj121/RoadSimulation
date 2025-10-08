@@ -1,8 +1,10 @@
 package org.example.roadsimulation.service.impl;
 
 import org.example.roadsimulation.entity.Vehicle;
+import org.example.roadsimulation.entity.POI;
 import org.example.roadsimulation.repository.VehicleRepository;
 import org.example.roadsimulation.service.VehicleService;
+import org.example.roadsimulation.service.POIService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -27,10 +29,12 @@ import java.util.Optional;
 public class VehicleServiceImpl implements VehicleService {
 
     private final VehicleRepository vehicleRepository;
+    private final POIService poiService;
 
     @Autowired
-    public VehicleServiceImpl(VehicleRepository vehicleRepository) {
+    public VehicleServiceImpl(VehicleRepository vehicleRepository, POIService poiService) {
         this.vehicleRepository = vehicleRepository;
+        this.poiService = poiService;
     }
 
     @Override
@@ -61,6 +65,7 @@ public class VehicleServiceImpl implements VehicleService {
                     vehicle.setCurrentLoad(vehicleDetails.getCurrentLoad());
                     vehicle.setCurrentLongitude(vehicleDetails.getCurrentLongitude());
                     vehicle.setCurrentLatitude(vehicleDetails.getCurrentLatitude());
+                    vehicle.setVehicleType(vehicleDetails.getVehicleType()); // 更新车辆类型
                     return vehicleRepository.save(vehicle);
                 })
                 .orElseThrow(() -> new RuntimeException("车辆不存在，ID: " + id));
@@ -107,5 +112,63 @@ public class VehicleServiceImpl implements VehicleService {
     @Transactional(readOnly = true)
     public boolean existsByLicensePlate(String licensePlate) {
         return vehicleRepository.existsByLicensePlate(licensePlate);
+    }
+
+    // ================ 新增的方法实现 ================
+
+    @Override
+    public Vehicle assignDriverToVehicle(Long vehicleId, String driverName) {
+        return vehicleRepository.findById(vehicleId)
+                .map(vehicle -> {
+                    // 这里只是简单设置司机姓名，如果需要完整的司机实体关联可以扩展
+                    // vehicle.setDriverName(driverName);
+                    return vehicleRepository.save(vehicle);
+                })
+                .orElseThrow(() -> new RuntimeException("车辆不存在，ID: " + vehicleId));
+    }
+
+    @Override
+    public Vehicle setVehicleLocation(Long vehicleId, Long poiId) {
+        Vehicle vehicle = vehicleRepository.findById(vehicleId)
+                .orElseThrow(() -> new RuntimeException("车辆不存在，ID: " + vehicleId));
+
+        POI poi = poiService.getById(poiId)
+                .orElseThrow(() -> new RuntimeException("POI 不存在，ID: " + poiId));
+
+        // 使用 Vehicle 实体的方法来维护双向关系
+        vehicle.setCurrentPOI(poi);
+
+        // 同时更新车辆的坐标到POI的坐标
+        vehicle.setCurrentLongitude(poi.getLongitude());
+        vehicle.setCurrentLatitude(poi.getLatitude());
+
+        return vehicleRepository.save(vehicle);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<Vehicle> getVehiclesByType(String vehicleType) {
+        return vehicleRepository.findByVehicleType(vehicleType);
+    }
+
+    @Override
+    public Vehicle updateVehicleStatus(Long vehicleId, Vehicle.VehicleStatus status) {
+        return vehicleRepository.findById(vehicleId)
+                .map(vehicle -> {
+                    vehicle.setCurrentStatus(status);
+                    return vehicleRepository.save(vehicle);
+                })
+                .orElseThrow(() -> new RuntimeException("车辆不存在，ID: " + vehicleId));
+    }
+
+    @Override
+    public Vehicle updateVehicleCoordinates(Long vehicleId, Double longitude, Double latitude) {
+        return vehicleRepository.findById(vehicleId)
+                .map(vehicle -> {
+                    vehicle.setCurrentLongitude(longitude);
+                    vehicle.setCurrentLatitude(latitude);
+                    return vehicleRepository.save(vehicle);
+                })
+                .orElseThrow(() -> new RuntimeException("车辆不存在，ID: " + vehicleId));
     }
 }

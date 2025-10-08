@@ -162,4 +162,25 @@ public class POIServiceImpl implements POIService {
     public boolean existsByName(String name) {
         return poiRepository.existsByName(name);
     }
+
+    // ================ 新增的方法实现 ================
+
+    /**
+     * 根据 ID 判断 POI 是否存在
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public boolean existsById(Long id) {
+        return poiRepository.existsById(id);
+    }
+
+    /**
+     * 根据 ID 获取 POI 实体（不包装为 Optional）
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public POI getPOIEntityById(Long id) {
+        return poiRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("POI 不存在，ID: " + id));
+    }
 }

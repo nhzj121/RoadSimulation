@@ -35,6 +35,9 @@ public interface VehicleRepository extends JpaRepository<Vehicle, Long> {
     // 根据车型查找
     List<Vehicle> findByModelType(String modelType);
 
+    // 根据车辆类型查找（使用已有的 vehicleType 字段）
+    List<Vehicle> findByVehicleType(String vehicleType);
+
     // 根据车辆状态查找
     List<Vehicle> findByCurrentStatus(Vehicle.VehicleStatus status);
 

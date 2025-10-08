@@ -40,7 +40,18 @@ public class Vehicle {
 
     @Column(name = "vehicle_type")
     private String vehicleType; // 平板车，高护栏，全封闭等
+    // 在 Vehicle 实体类中添加这个字段（不要重复添加 vehicleType）
+    @Column(name = "driver_name")
+    private String driverName; // 当前司机姓名
 
+    // 添加对应的getter和setter方法
+    public String getDriverName() {
+        return driverName;
+    }
+
+    public void setDriverName(String driverName) {
+        this.driverName = driverName;
+    }
     @Column(name = "current_load")
     private Double currentLoad; // 载重能力（吨）
 
@@ -133,6 +144,13 @@ public class Vehicle {
     public void setModelType(String modelType) {
         this.modelType = modelType;
     }
+    public String getVehicleType() {
+        return vehicleType;
+    }
+    public void setVehicleType(String vehicleType) {
+        this.vehicleType = vehicleType;
+    }
+
     public Double getCurrentLoad() {
         return currentLoad;
     }
