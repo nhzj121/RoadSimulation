@@ -93,4 +93,21 @@ public interface POIService {
      * @return true 表示名称已存在，false 表示不存在
      */
     boolean existsByName(String name);
+
+    // ================ 新增的方法 ================
+
+    /**
+     * 根据 ID 判断 POI 是否存在
+     * @param id POI ID
+     * @return true 表示存在，false 表示不存在
+     */
+    boolean existsById(Long id);
+
+    /**
+     * 根据 ID 获取 POI 实体（不包装为 Optional）
+     * @param id POI ID
+     * @return POI 实体
+     * @throws RuntimeException 如果 POI 不存在
+     */
+    POI getPOIEntityById(Long id);
 }
