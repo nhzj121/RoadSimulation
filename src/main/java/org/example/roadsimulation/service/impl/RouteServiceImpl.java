@@ -288,9 +288,10 @@ public class RouteServiceImpl implements RouteService {
     private void validatePOIExists(Long poiId, String fieldName) {
         if (poiId != null) {
             // 这里需要调用POI服务验证POI存在
-            if (!poiService.existsById(poiId)) {
-                throw new IllegalArgumentException(fieldName + "不存在: " + poiId);
-            }
+//            if (!poiService.existsById(poiId)) {
+//                throw new IllegalArgumentException(fieldName + "不存在: " + poiId);
+//            } ToDo
+            return;
         }
     }
 

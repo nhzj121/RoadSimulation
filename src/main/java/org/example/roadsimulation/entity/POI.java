@@ -2,6 +2,7 @@ package org.example.roadsimulation.entity;
 
 import jakarta.persistence.*;
 
+import java.math.BigDecimal;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -16,11 +17,11 @@ public class POI {
     @Column(nullable = false)
     private String name; // POI名称，如："成都仓库", "重庆配送中心"
 
-    @Column(name = "longitude", precision = 9)
-    private Double longitude; // 经度，保留6位小数
+    @Column(name = "longitude", precision = 9, scale = 6)
+    private BigDecimal longitude; // 经度，保留6位小数
 
-    @Column(name = "latitude", precision = 9)
-    private Double latitude; // 纬度，保留6位小数
+    @Column(name = "latitude", precision = 9, scale = 6)
+    private BigDecimal latitude; // 纬度，保留6位小数
 
     // 枚举类型定义
     public enum POIType {
@@ -45,7 +46,7 @@ public class POI {
     }
 
     // 带参数的构造函数
-    public POI(String name, Double longitude, Double latitude, POI.POIType type) {
+    public POI(String name, BigDecimal longitude, BigDecimal latitude, POI.POIType type) {
         this.name = name;
         this.longitude = longitude;
         this.latitude = latitude;
@@ -57,10 +58,10 @@ public class POI {
     public void setId(Long id) {this.id = id;}
     public String getName() {return name;}
     public void setName(String name) {this.name = name;}
-    public Double getLongitude() {return longitude;}
-    public void setLongitude(Double longitude) {this.longitude = longitude;}
-    public Double getLatitude() {return latitude;}
-    public void setLatitude(Double latitude) {this.latitude = latitude;}
+    public BigDecimal getLongitude() {return longitude;}
+    public void setLongitude(BigDecimal longitude) {this.longitude = longitude;}
+    public BigDecimal getLatitude() {return latitude;}
+    public void setLatitude(BigDecimal latitude) {this.latitude = latitude;}
     public POI.POIType getType() {return poiType;}
     public void setType(POI.POIType type) {this.poiType = type;}
     public Set<Vehicle> getVehiclesAtLocation() {return vehiclesAtLocation;}
