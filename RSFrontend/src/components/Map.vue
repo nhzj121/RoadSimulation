@@ -1,16 +1,6 @@
 <!-- Map.vue -->
 <template>
   <div class="map-page">
-    <!-- 功能控制面板 -->
-<!--    <div class="feature-controls">-->
-<!--      <h3>功能控制</h3>-->
-<!--      <el-checkbox-group v-model="enabledFeatures">-->
-<!--&lt;!&ndash;        <el-checkbox label="search">搜索面板</el-checkbox>&ndash;&gt;-->
-<!--&lt;!&ndash;        <el-checkbox label="drawing">绘制工具</el-checkbox>&ndash;&gt;-->
-<!--        <el-checkbox label="poi">POI管理</el-checkbox>-->
-<!--      </el-checkbox-group>-->
-<!--    </div>-->
-
     <!-- 基础地图 -->
     <BaseMap
         ref="baseMapRef"
@@ -19,8 +9,7 @@
         @map-loaded="onMapLoaded"
     >
       <!-- 动态加载的功能组件 -->
-<!--      <SearchPanel v-if="features.search" />-->
-<!--      <DrawingTools v-if="features.drawing" />-->
+      <RoutePlanning v-if="features.routePlanning" />
       <POIManager v-if="features.poi" ref="poiManagerRef" />
     </BaseMap>
 
@@ -34,9 +23,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import BaseMap from './BaseMap.vue'
-import SearchPanel from './SearchPanel.vue'
-import DrawingTools from './DrawingTools.vue'
 import POIManager from './POIManager.vue'
+import RoutePlanning from "@/components/RoutePlanning.vue";
 
 // 地图配置
 const mapConfig = {
@@ -45,17 +33,17 @@ const mapConfig = {
 }
 
 // 功能开关
-const enabledFeatures = ref([/*'search', 'drawing',*/ 'poi'])
+const enabledFeatures = ref([/*'search', 'drawing',*/ 'routePlanning','poi'])
 
 // 计算属性，将数组转换为对象便于v-if使用
 const features = computed(() => ({
-  // search: enabledFeatures.value.includes('search'),
-  // drawing: enabledFeatures.value.includes('drawing'),
+  routePlanning: enabledFeatures.value.includes('routePlanning'),
   poi: enabledFeatures.value.includes('poi')
 }))
 
 // 组件引用
 const baseMapRef = ref<InstanceType<typeof BaseMap>>()
+const routePlanningRef = ref<InstanceType<typeof RoutePlanning>>()
 const poiManagerRef = ref<InstanceType<typeof POIManager>>()
 
 // 地图加载完成回调
@@ -74,6 +62,8 @@ const onMapLoaded = (mapContext: any) => {
 // 暴露方法给外部（如果需要）
 defineExpose({
   getMap: () => baseMapRef.value?.getMap(),
+  calculateRoute: () => routePlanningRef.value?.calculateRoute(),
+  clearRoute: () => routePlanningRef.value?.clearRoute(),
   startPOISearch: () => poiManagerRef.value?.startPOISearch(),
   toggleFeature: (feature: string, enabled: boolean) => {
     if (enabled) {
