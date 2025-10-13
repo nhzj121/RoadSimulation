@@ -212,21 +212,21 @@ const detailedPoiCategories = ref<POICategory[]>([
     name: 'factory',
     label: '工厂',
     types: ['170300'],
-    keywords: ['工厂', '工业园', '加工厂'],
+    keywords: ['工厂'],//, '工业园', '加工厂'
     visible: true
   },
   {
     name: 'warehouse',
     label: '仓库',
     types: ['070501'],
-    keywords: ['仓库', '物流园', '仓储'],
+    keywords: ['仓库'],//, '物流园', '仓储'
     visible: true
   },
   {
     name: 'gasStation',
     label: '加油站',
     types: ['010100'],
-    keywords: ['加油站', '中国石油', '中国石化'],
+    keywords: ['加油站'],//, '中国石油', '中国石化'
     visible: true
   },
   {
@@ -240,14 +240,14 @@ const detailedPoiCategories = ref<POICategory[]>([
     name: 'restArea',
     label: '休息区',
     types: ['180300'],
-    keywords: ['服务区', '休息区'],
+    keywords: ['休息区'],//'服务区',
     visible: true
   },
   {
     name: 'transport',
     label: '运输中心',
     types: ['070500', '150107', '150210'],
-    keywords: ['配送中心', '物流'],
+    keywords: ['配送中心'],//, '物流'
     visible: true
   }
 ]);
@@ -791,6 +791,8 @@ const searchSinglePage = (keyword: string, categoryName: string, pageIndex: numb
 
     placeSearch.searchInBounds(keyword, chengduPlainPolygon, function(status: string, result: any) {
       if (status === 'complete' && result.poiList && result.poiList.pois) {
+        const categoryConfig = poiCategories.value.find(cat => cat.label === categoryName);
+        const categoryKey = categoryConfig ? categoryConfig.name : categoryName;
         const pois: POI[] = result.poiList.pois.map((poi: any) => ({
           id: poi.id,
           name: poi.name,
@@ -798,7 +800,7 @@ const searchSinglePage = (keyword: string, categoryName: string, pageIndex: numb
           location: poi.location,
           address: poi.address,
           tel: poi.tel || '',
-          category: categoryName // 确保包含category
+          category: categoryKey // 确保包含category
         }));
         resolve(pois);
       } else {
@@ -847,7 +849,7 @@ const smartBatchPOISearch = async (): Promise<void> => {
         searchProgress.value.currentCategory = category.label;
         searchProgress.value.currentKeyword = keyword;
 
-        const results = await searchByKeywordWithPagination(keyword, category.label);
+        const results = await searchByKeywordWithPagination(keyword, category.name);
         allPOIs.push(...results);
 
         completedTasks++;

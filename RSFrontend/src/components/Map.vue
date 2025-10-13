@@ -2,14 +2,14 @@
 <template>
   <div class="map-page">
     <!-- 功能控制面板 -->
-    <div class="feature-controls">
-      <h3>功能控制</h3>
-      <el-checkbox-group v-model="enabledFeatures">
-        <el-checkbox label="search">搜索面板</el-checkbox>
-<!--        <el-checkbox label="drawing">绘制工具</el-checkbox>-->
-        <el-checkbox label="poi">POI管理</el-checkbox>
-      </el-checkbox-group>
-    </div>
+<!--    <div class="feature-controls">-->
+<!--      <h3>功能控制</h3>-->
+<!--      <el-checkbox-group v-model="enabledFeatures">-->
+<!--&lt;!&ndash;        <el-checkbox label="search">搜索面板</el-checkbox>&ndash;&gt;-->
+<!--&lt;!&ndash;        <el-checkbox label="drawing">绘制工具</el-checkbox>&ndash;&gt;-->
+<!--        <el-checkbox label="poi">POI管理</el-checkbox>-->
+<!--      </el-checkbox-group>-->
+<!--    </div>-->
 
     <!-- 基础地图 -->
     <BaseMap
@@ -19,7 +19,7 @@
         @map-loaded="onMapLoaded"
     >
       <!-- 动态加载的功能组件 -->
-      <SearchPanel v-if="features.search" />
+<!--      <SearchPanel v-if="features.search" />-->
 <!--      <DrawingTools v-if="features.drawing" />-->
       <POIManager v-if="features.poi" ref="poiManagerRef" />
     </BaseMap>
@@ -45,11 +45,11 @@ const mapConfig = {
 }
 
 // 功能开关
-const enabledFeatures = ref(['search'/*, 'drawing'*/, 'poi'])
+const enabledFeatures = ref([/*'search', 'drawing',*/ 'poi'])
 
 // 计算属性，将数组转换为对象便于v-if使用
 const features = computed(() => ({
-  search: enabledFeatures.value.includes('search'),
+  // search: enabledFeatures.value.includes('search'),
   // drawing: enabledFeatures.value.includes('drawing'),
   poi: enabledFeatures.value.includes('poi')
 }))
