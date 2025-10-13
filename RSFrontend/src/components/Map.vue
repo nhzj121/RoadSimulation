@@ -1,6 +1,14 @@
 <!-- Map.vue -->
 <template>
   <div class="map-page">
+    <!--功能控制面板 -->
+    <div class="feature-controls">
+      <h3>功能控制</h3>
+      <el-checkbox-group v-model="enabledFeatures">
+        <el-checkbox label="routePlanning">搜索面板</el-checkbox>
+        <el-checkbox label="poi">POI管理</el-checkbox>
+      </el-checkbox-group>
+    </div>
     <!-- 基础地图 -->
     <BaseMap
         ref="baseMapRef"
@@ -97,7 +105,7 @@ onMounted(() => {
 /* 功能控制面板 - 保持原有样式但确保在正确层级 */
 .feature-controls {
   position: absolute;
-  top: 10px;
+  top: 150px;
   right: 10px;
   z-index: 1000;
   background: white;
