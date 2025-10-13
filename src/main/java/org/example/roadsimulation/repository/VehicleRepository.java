@@ -1,12 +1,15 @@
 package org.example.roadsimulation.repository;
 
 import org.example.roadsimulation.entity.Vehicle;
+import org.jetbrains.annotations.NotNull;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Optional;
 
 /**
  * VehicleRepository
@@ -24,7 +27,7 @@ import java.util.List;
 public interface VehicleRepository extends JpaRepository<Vehicle, Long> {
 
     // 根据车牌号查找
-    Vehicle findByLicensePlate(String licensePlate);
+    Optional<Vehicle> findByLicensePlate(String licensePlate);
 
     // 模糊查询车牌号（忽略大小写）
     List<Vehicle> findByLicensePlateContainingIgnoreCase(String partialLicense);
@@ -42,8 +45,18 @@ public interface VehicleRepository extends JpaRepository<Vehicle, Long> {
     List<Vehicle> findByCurrentStatus(Vehicle.VehicleStatus status);
 
     // 分页查询
-    Page<Vehicle> findAll(Pageable pageable);
+    @NotNull Page<Vehicle> findAll(@NotNull Pageable pageable);
 
     // 检查车牌号是否存在（唯一性校验）
     boolean existsByLicensePlate(String licensePlate);
+
+    // 新增Modbus相关查询方法
+    List<Vehicle> findByModbusSlaveIdIsNotNull();
+
+    List<Vehicle> findByIsOnline(Boolean isOnline);
+
+    Optional<Vehicle> findByModbusSlaveId(Integer modbusSlaveId);
+
+    @Query("SELECT v FROM Vehicle v WHERE v.lastPositionUpdate IS NOT NULL ORDER BY v.lastPositionUpdate DESC")
+    List<Vehicle> findVehiclesWithRecentPosition();
 }

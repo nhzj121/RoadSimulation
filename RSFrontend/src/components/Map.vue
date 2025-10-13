@@ -132,8 +132,6 @@ async function initMap() {
           viewMode: "3D",
         })
 
-    getTrackData()
-
         // 贴图 
         createMyTexture(map)
 
@@ -231,7 +229,7 @@ async function initMap() {
         },
         offset: new AMap.Pixel(-15, -25)
       })
-      carMarker.value.on("click", function (e) {
+      carMarker.value.on("click", function (e:any) {
         console.log("你点击了Marker", e);
       });
       carMarker.value.hide()
@@ -275,14 +273,14 @@ const poiSearch = () => {
     autoFitView: true,
     panel: "panel", // 结果列表将在此容器中进行展示。出不来时设置样式z-inde: 999
   })
-  auto.value.on("select", function (e) {
+  auto.value.on("select", function (e:any) {
     //针对选中的poi实现自己的功能
     placeSearch.search(e.poi.name);
   });
 }
 
 // 鼠标双击事件
-const doubleClick = (e) => {
+const doubleClick = (e:any) => {
   console.log('您在 [ ' + e.lnglat.getLng() + ',' + e.lnglat.getLat() + ' ] 的位置双击了地图！')
   const x = e.lnglat.getLng()
   const y = e.lnglat.getLat()
@@ -295,7 +293,7 @@ const showInfoMove = () => {
 }
 
 // 鼠标点击事件
-const signClick = (e) => {
+const signClick = (e:any) => {
   console.log('您在 [ ' + e.lnglat.getLng() + ',' + e.lnglat.getLat() + ' ] 的位置单击了地图！')
   const x = e.lnglat.getLng()
   const y = e.lnglat.getLat()
@@ -386,7 +384,6 @@ const drawCircle = () => {
     strokeColor: "#FF33FF",
     strokeOpacity: 1,
     strokeWeight: 6,
-    strokeOpacity: 0.2,
     fillColor: '#1791fc',
     fillOpacity: 0.4,
     // strokeStyle: 'solid',
@@ -401,7 +398,6 @@ const drawOther = () => {
     strokeColor: "#FF33FF",
     strokeOpacity: 1,
     strokeWeight: 4,
-    strokeOpacity: 0.2,
     fillColor: '#1791fc',
     fillOpacity: 0.2,
     strokeStyle: "solid",
@@ -432,7 +428,7 @@ const goView = () => {
     {keyword: endName.value, city: '兰州'}
   ]
 
-  driving.search(points, (status, result) => {
+  driving.search(points, (status:any, result:any) => {
     // 未出错时，result即是对应的路线规划方案
     console.log('status=', status)
     console.log('result=', result)

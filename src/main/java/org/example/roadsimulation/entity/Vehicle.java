@@ -8,6 +8,7 @@ import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
+import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -66,6 +67,15 @@ public class Vehicle {
     @Min(value = 0, message = "高度不能为负数")
     @Column(name = "height")
     private Double height;
+
+    @Column(name = "modbus_slave_id")
+    private Integer modbusSlaveId; // Modbus从站ID
+
+    @Column(name = "last_position_update")
+    private LocalDateTime lastPositionUpdate;
+
+    @Column(name = "is_online")
+    private Boolean isOnline = false;
 
     // @ManyToOne: 多对一关系，多辆车可以关联到一个POI或一个Action
     // fetch = FetchType.LAZY: 懒加载，只有在访问关联对象时才从数据库加载
@@ -172,6 +182,12 @@ public class Vehicle {
     public VehicleStatus getCurrentStatus() {return currentStatus;}
     public void setCurrentStatus(VehicleStatus currentStatus) {this.currentStatus = currentStatus;}
 
+    public Integer getModbusSlaveId() { return modbusSlaveId; }
+    public void setModbusSlaveId(Integer modbusSlaveId) { this.modbusSlaveId = modbusSlaveId; }
+    public LocalDateTime getLastPositionUpdate() { return lastPositionUpdate; }
+    public void setLastPositionUpdate(LocalDateTime lastPositionUpdate) { this.lastPositionUpdate = lastPositionUpdate; }
+    public Boolean getIsOnline() { return isOnline; }
+    public void setIsOnline(Boolean isOnline) { this.isOnline = isOnline; }
 
     /// 车辆与驾驶员关系的方法
     // 添加getter和setter
