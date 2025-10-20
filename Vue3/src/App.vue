@@ -3,5 +3,8 @@ import MapContainer from "./components/MapContainer.vue";
 </script>
 
 <template>
-  <MapContainer />
+  <div>
+    <MapContainer />
+  </div>
+
 </template>
