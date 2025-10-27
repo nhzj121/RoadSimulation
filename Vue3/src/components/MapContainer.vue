@@ -3,7 +3,7 @@
     <ElHeader class="header-navbar">
       <div class="navbar-content">
         <div class="navbar-left">
-          <h2 class="navbar-title">物流运输仿真系统</h2>
+          <h2 class="navbar-title" @click="gotoMain">物流运输仿真系统</h2>
         </div>
         <div class="navbar-menu">
           <ElButton text @click="goToPOIManager">POI点管理</ElButton>
@@ -111,6 +111,9 @@ let map = null;
 const router = useRouter()
 const goToPOIManager = () => {
   router.push('/poi-manager')
+}
+const gotoMain = () => {
+  router.push('./')
 }
 // --- 仿真控制 ---
 const speedFactor = ref(1);

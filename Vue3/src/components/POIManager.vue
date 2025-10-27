@@ -5,9 +5,9 @@
       <!-- 导航栏，保持与主页面一致 -->
       <el-header class="header-navbar">
         <div class="navbar-content left-aligned">
-          <h2 class="navbar-title">POI点管理</h2>
+          <h2 class="navbar-title" @click="goBack">物流运输仿真系统</h2>
           <div class="navbar-menu">
-            <ElButton text @click="goBack">返回主页面</ElButton>
+            <ElButton text>POI管理</ElButton>
             <ElButton text>帮助文档</ElButton>
           </div>
         </div>
@@ -15,6 +15,7 @@
 
       <el-container>
         <el-aside width="300px" class="side-panel">
+          <h3 type="black">POI管理</h3>
           <!-- POI管理侧边栏内容 -->
           <el-card shadow="never" class="box-card">
             <template #header>
