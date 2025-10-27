@@ -1,86 +1,102 @@
 <template>
   <ElContainer class="page-container">
-    <ElAside width="320px" class="side-panel">
-      <!-- 仿真控制 -->
-      <ElCard shadow="never" class="box-card">
-        <template #header>
-          <div class="card-header">
-            <span>仿真控制</span>
-          </div>
-        </template>
-        <div class="control-group">
-          <span class="control-label">时间压缩:</span>
-          <ElButtonGroup>
-            <ElButton :type="speedFactor === 1 ? 'primary' : 'default'" @click="setSpeed(1)">1x</ElButton>
-            <ElButton icon="el-icon-minus" @click="decSpeed"></ElButton>
-            <ElButton icon="el-icon-plus" @click="incSpeed"></ElButton>
-          </ElButtonGroup>
+    <ElHeader class="header-navbar">
+      <div class="navbar-content">
+        <div class="navbar-left">
+          <h2 class="navbar-title">物流运输仿真系统</h2>
         </div>
-        <div class="control-group" style="margin-top: 15px;">
-          <ElButton type="primary" @click="startSimulation">▶ 开始</ElButton>
-          <ElButton @click="resetSimulation">↻ 重置</ElButton>
+        <div class="navbar-menu">
+          <ElButton text @click="goToPOIManager">POI点管理</ElButton>
+          <ElButton text>帮助文档</ElButton>
+          <ElButton text>用户中心</ElButton>
         </div>
-      </ElCard>
-
-      <!-- 显示筛选 -->
-      <ElCard shadow="never" class="box-card">
-        <template #header>
-          <div class="card-header">
-            <span>▼ 显示筛选</span>
-          </div>
-        </template>
-        <div class="filter-tags">
-          <ElCheckTag v-for="item in filters" :key="item.key" :checked="item.checked" @change="toggleFilter(item.key)">
-            {{ item.label }}
-          </ElCheckTag>
-        </div>
-      </ElCard>
-
-      <!-- 车辆状态 -->
-      <ElCard shadow="never" class="box-card">
-        <template #header>
-          <div class="card-header">
-            <span>车辆状态</span>
-          </div>
-        </template>
-        <div class="vehicle-list">
-          <div v-for="v in vehicles" :key="v.id" class="vehicle-item">
-            <span class="status-dot" :style="{ backgroundColor: statusMap[v.status].color }"></span>
-            <div class="vehicle-info">
-              <div class="vehicle-id">{{ v.id }}</div>
-              <div class="vehicle-location">{{ v.location }} | {{ statusMap[v.status].text }}</div>
+      </div>
+    </ElHeader>
+    <ElContainer>
+      <ElAside width="320px" class="side-panel">
+        <!-- 仿真控制 -->
+        <ElCard shadow="never" class="box-card">
+          <template #header>
+            <div class="card-header">
+              <span>仿真控制</span>
             </div>
-            <ElButton text :icon="InfoFilled" />
+          </template>
+          <div class="control-group">
+            <span class="control-label">时间压缩:</span>
+            <ElButtonGroup>
+              <ElButton :type="speedFactor === 1 ? 'primary' : 'default'" @click="setSpeed(1)">1x</ElButton>
+              <ElButton icon="el-icon-minus" @click="decSpeed"></ElButton>
+              <ElButton icon="el-icon-plus" @click="incSpeed"></ElButton>
+            </ElButtonGroup>
           </div>
-        </div>
-      </ElCard>
-
-      <!-- 统计信息 -->
-      <ElCard shadow="never" class="box-card">
-        <template #header>
-          <div class="card-header">
-            <span>统计信息</span>
+          <div class="control-group" style="margin-top: 15px;">
+            <ElButton type="primary" @click="startSimulation">▶ 开始</ElButton>
+            <ElButton @click="resetSimulation">↻ 重置</ElButton>
           </div>
-        </template>
-        <div class="stats-info">
-          <div><strong>运行车辆</strong><span></span></div>
-          <div><strong>POI点数</strong><span></span></div>
-          <div><strong>运输任务</strong><span></span></div>
-          <div><strong>异常率</strong><span></span></div>
-        </div>
-      </ElCard>
+        </ElCard>
 
-    </ElAside>
-    <ElMain>
-      <div id="container"></div>
-    </ElMain>
+        <!-- 显示筛选 -->
+        <ElCard shadow="never" class="box-card">
+          <template #header>
+            <div class="card-header">
+              <span>▼ 显示筛选</span>
+            </div>
+          </template>
+          <div class="filter-tags">
+            <ElCheckTag v-for="item in filters" :key="item.key" :checked="item.checked" @change="toggleFilter(item.key)">
+              {{ item.label }}
+            </ElCheckTag>
+          </div>
+        </ElCard>
+
+        <!-- 车辆状态 -->
+        <ElCard shadow="never" class="box-card">
+          <template #header>
+            <div class="card-header">
+              <span>车辆状态</span>
+            </div>
+          </template>
+          <div class="vehicle-list">
+            <div v-for="v in vehicles" :key="v.id" class="vehicle-item">
+              <span class="status-dot" :style="{ backgroundColor: statusMap[v.status].color }"></span>
+              <div class="vehicle-info">
+                <div class="vehicle-id">{{ v.id }}</div>
+                <div class="vehicle-location">{{ v.location }} | {{ statusMap[v.status].text }}</div>
+              </div>
+              <ElButton text :icon="InfoFilled" />
+            </div>
+          </div>
+        </ElCard>
+
+        <!-- 统计信息 -->
+        <ElCard shadow="never" class="box-card">
+          <template #header>
+            <div class="card-header">
+              <span>统计信息</span>
+            </div>
+          </template>
+          <div class="stats-info">
+            <div><strong>运行车辆</strong><span></span></div>
+            <div><strong>POI点数</strong><span></span></div>
+            <div><strong>运输任务</strong><span></span></div>
+            <div><strong>异常率</strong><span></span></div>
+          </div>
+        </ElCard>
+
+      </ElAside>
+      <ElMain>
+        <div id="container"></div>
+      </ElMain>
+    </ElContainer>
   </ElContainer>
 </template>
 
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted } from "vue";
+import { useRouter } from 'vue-router';
 import AMapLoader from "@amap/amap-jsapi-loader";
 import {
+  ElHeader,
   ElAside,
   ElMain,
   ElContainer,
@@ -92,7 +108,10 @@ import {
 import { InfoFilled } from '@element-plus/icons-vue'
 
 let map = null;
-
+const router = useRouter()
+const goToPOIManager = () => {
+  router.push('/poi-manager')
+}
 // --- 仿真控制 ---
 const speedFactor = ref(1);
 const setSpeed = (val) => speedFactor.value = val;
@@ -189,6 +208,37 @@ onUnmounted(() => {
 .page-container {
   height: 100vh;
   width: 100vw;
+}
+
+.header-navbar {
+  background-color: #fff;
+  border-bottom: 1px solid #e6e6e6;
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  height: 60px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+}
+
+.navbar-content {
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  gap: 10px;
+  padding-left: 20px;
+  width: 100%;
+}
+
+.navbar-title {
+  margin: 0;
+  color: #303133;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.navbar-menu {
+  display: flex;
+  gap: 10px;
 }
 
 .side-panel {
