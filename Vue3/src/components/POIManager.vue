@@ -15,7 +15,7 @@
 
       <el-container>
         <el-aside width="300px" class="side-panel">
-          <h3 type="black">POI管理</h3>
+          <h2 class="side-panel-h2">POI管理</h2>
           <!-- POI管理侧边栏内容 -->
           <el-card shadow="never" class="box-card">
             <template #header>
@@ -40,45 +40,14 @@
               </div>
             </template>
             <div class="action-buttons">
-              <el-button type="primary" @click="addPOI">添加POI</el-button>
-              <el-button @click="batchDelete">批量删除</el-button>
+              <!--ToDo 所需功能的控制处-->
             </div>
           </el-card>
         </el-aside>
 
         <el-main>
-          <!-- POI列表表格 -->
-          <el-card shadow="never">
-            <template #header>
-              <div class="card-header">
-                <span>POI列表</span>
-                <el-input v-model="searchKeyword" placeholder="搜索POI..." style="width: 200px;" clearable>
-                  <template #append>
-                    <el-button icon="search" />
-                  </template>
-                </el-input>
-              </div>
-            </template>
+          <!-- POI点展示的地图界面 -->
 
-            <el-table :data="filteredPOIList" style="width: 100%">
-              <el-table-column type="selection" width="55" />
-              <el-table-column prop="id" label="ID" width="80" />
-              <el-table-column prop="name" label="名称" />
-              <el-table-column prop="type" label="类型">
-                <template #default="scope">
-                  <el-tag :type="getTypeTag(scope.row.type)">{{ getTypeName(scope.row.type) }}</el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column prop="address" label="地址" />
-              <el-table-column prop="createdAt" label="创建时间" />
-              <el-table-column label="操作" width="120">
-                <template #default="scope">
-                  <el-button size="small" @click="editPOI(scope.row)">编辑</el-button>
-                  <el-button size="small" type="danger" @click="deletePOI(scope.row)">删除</el-button>
-                </template>
-              </el-table-column>
-            </el-table>
-          </el-card>
         </el-main>
       </el-container>
     </el-container>
@@ -106,65 +75,6 @@ const poiTypes = ref([
 ])
 
 const selectedTypes = ref<string[]>(['factory', 'parking', 'gas', 'service'])
-
-const poiList = ref([
-  { id: 1, name: '成都工厂A', type: 'factory', address: '成都市高新区', createdAt: '2024-01-15' },
-  { id: 2, name: '城东停车场', type: 'parking', address: '成都市成华区', createdAt: '2024-01-10' },
-  { id: 3, name: '中石油加油站', type: 'gas', address: '成都市金牛区', createdAt: '2024-01-08' },
-  { id: 4, name: '快速保养中心', type: 'service', address: '成都市武侯区', createdAt: '2024-01-05' }
-])
-
-const searchKeyword = ref('')
-
-// 计算属性：筛选后的POI列表
-const filteredPOIList = computed(() => {
-  return poiList.value.filter(poi => {
-    const matchesType = selectedTypes.value.includes(poi.type)
-    const matchesKeyword = !searchKeyword.value ||
-        poi.name.toLowerCase().includes(searchKeyword.value.toLowerCase()) ||
-        poi.address.toLowerCase().includes(searchKeyword.value.toLowerCase())
-    return matchesType && matchesKeyword
-  })
-})
-
-// 方法
-const getTypeTag = (type: string) => {
-  const tagMap: { [key: string]: string } = {
-    factory: 'primary',
-    parking: 'success',
-    gas: 'warning',
-    service: 'info'
-  }
-  return tagMap[type] || 'default'
-}
-
-const getTypeName = (type: string) => {
-  const typeObj = poiTypes.value.find(t => t.id === type)
-  return typeObj ? typeObj.name : type
-}
-
-const addPOI = () => {
-  ElMessage.info('打开添加POI对话框')
-  // 这里可以打开对话框或跳转到添加页面
-}
-
-const editPOI = (poi: any) => {
-  ElMessage.info(`编辑POI: ${poi.name}`)
-}
-
-const deletePOI = (poi: any) => {
-  ElMessageBox.confirm(`确定要删除POI "${poi.name}" 吗？`, '警告', {
-    confirmButtonText: '确定',
-    cancelButtonText: '取消',
-    type: 'warning'
-  }).then(() => {
-    ElMessage.success('删除成功')
-  })
-}
-
-const batchDelete = () => {
-  ElMessage.info('批量删除功能')
-}
 
 onMounted(() => {
   console.log('POI管理页面加载完成')
@@ -225,6 +135,10 @@ onMounted(() => {
   flex-direction: column;
   gap: 10px;
   overflow-y: auto;
+}
+
+.side-panel-h2{
+  color: black;
 }
 
 .box-card {
