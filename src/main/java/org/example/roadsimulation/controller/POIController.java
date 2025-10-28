@@ -111,12 +111,16 @@ public class POIController {
     }
 
     /**
-     * 获取所有 POI 列表
+     * 获取所有POI
      */
-    @GetMapping
-    public ResponseEntity<ApiResponse<List<POI>>> getAllPOIs() {
-        List<POI> pois = poiService.getAll();
-        return ResponseEntity.ok(ApiResponse.success("查询成功", pois));
+    @GetMapping("/all")
+    public ResponseEntity<?> getAllPOIs() {
+        try {
+            List<POI> pois = poiService.getAll();
+            return ResponseEntity.ok(createSuccessResponse("获取POI列表成功", pois));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(createErrorResponse(e.getMessage()));
+        }
     }
 
     /**
@@ -170,12 +174,16 @@ public class POIController {
     }
 
     /**
-     * 获取所有 POI 类型枚举值
+     * 获取POI类型枚举
      */
     @GetMapping("/types")
-    public ResponseEntity<ApiResponse<POI.POIType[]>> getPOITypes() {
-        POI.POIType[] types = POI.POIType.values();
-        return ResponseEntity.ok(ApiResponse.success("获取类型成功", types));
+    public ResponseEntity<?> getPOITypes() {
+        try {
+            POI.POIType[] types = POI.POIType.values();
+            return ResponseEntity.ok(createSuccessResponse("获取POI类型成功", types));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(createErrorResponse(e.getMessage()));
+        }
     }
 
     /**
@@ -211,6 +219,27 @@ public class POIController {
             statistics.put(type.name(), (long) pois.size());
         }
         return ResponseEntity.ok(ApiResponse.success("统计查询成功", statistics));
+    }
+
+    /**
+     * 创建成功响应
+     */
+    private Map<String, Object> createSuccessResponse(String message, Object data) {
+        Map<String, Object> response = new HashMap<>();
+        response.put("success", true);
+        response.put("message", message);
+        response.put("data", data);
+        return response;
+    }
+
+    /**
+     * 创建错误响应
+     */
+    private Map<String, Object> createErrorResponse(String error) {
+        Map<String, Object> response = new HashMap<>();
+        response.put("success", false);
+        response.put("error", error);
+        return response;
     }
 
     // ================= DTO 类 =================

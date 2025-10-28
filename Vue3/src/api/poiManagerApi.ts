@@ -8,6 +8,7 @@ export interface POIFromDB{
     longitude: number;
     latitude: number;
     tel: string;
+    address: string;
     // 后端可能返回的其他字段
     // ToDo
     createdAt?: string;
@@ -22,10 +23,10 @@ interface BackendResponse<T = any> {
     data?: T;
 }
 
-export const poiApi = {
-    // 获取所有POI数据 - 对应后端的 /api/poi/all
+export const poiManagerApi = {
+    // 获取所有POI数据 - 对应后端的 /api/pois/all
     async getAll(): Promise<POIFromDB[]> {
-        const response = await request.get<BackendResponse<POIFromDB[]>>('/api/poi/all');
+        const response = await request.get<BackendResponse<POIFromDB[]>>('/api/pois/all');
         if (response.data.success) {
             return response.data.data || [];
         } else {
@@ -33,9 +34,9 @@ export const poiApi = {
         }
     },
 
-    // 根据类型获取POI - 对应后端的 /api/poi/type/{type}
+    // 根据类型获取POI - 对应后端的 /api/pois/type/{type}
     async getByType(type: string): Promise<POIFromDB[]> {
-        const response = await request.get<BackendResponse<POIFromDB[]>>(`/api/poi/type/${type}`);
+        const response = await request.get<BackendResponse<POIFromDB[]>>(`/api/pois/type/${type}`);
         if (response.data.success) {
             return response.data.data || [];
         } else {
@@ -43,9 +44,9 @@ export const poiApi = {
         }
     },
 
-    // 批量保存POI数据 - 对应后端的 /api/poi/batch-save
+    // 批量保存POI数据 - 对应后端的 /api/pois/batch-save
     async batchSave(pois: POIFromDB[]): Promise<{ success: boolean; message: string }> {
-        const response = await request.post<BackendResponse>('/api/poi/batch-save', pois);
+        const response = await request.post<BackendResponse>('/api/pois/batch-save', pois);
         if (response.data.success) {
             return {
                 success: true,
@@ -56,9 +57,9 @@ export const poiApi = {
         }
     },
 
-    // 保存单个POI - 对应后端的 /api/poi/save
+    // 保存单个POI - 对应后端的 /api/pois/save
     async save(poi: POIFromDB): Promise<{ success: boolean; message: string; data?: any }> {
-        const response = await request.post<BackendResponse>('/api/poi/save', poi);
+        const response = await request.post<BackendResponse>('/api/pois/save', poi);
         return {
             success: response.data.success,
             message: response.data.message || response.data.error || '操作完成',
@@ -66,9 +67,9 @@ export const poiApi = {
         };
     },
 
-    // 删除POI - 对应后端的 /api/poi/{id}
+    // 删除POI - 对应后端的 /api/pois/{id}
     async delete(id: string): Promise<{ success: boolean; message: string }> {
-        const response = await request.delete<BackendResponse>(`/api/poi/${id}`);
+        const response = await request.delete<BackendResponse>(`/api/pois/${id}`);
         if (response.data.success) {
             return { success: true, message: response.data.message || '删除成功' };
         } else {
@@ -76,10 +77,17 @@ export const poiApi = {
         }
     },
 
-    // 获取POI类型枚举 - 可能需要后端支持，这里先模拟
+    // 获取POI类型枚举 - 对应后端的 /api/pois/types
     async getPOITypes(): Promise<string[]> {
-        // 如果后端有提供类型枚举的接口，可以调用
-        // 暂时返回前端已知的类型
-        return ['FACTORY', 'WAREHOUSE', 'GAS_STATION', 'MAINTENANCE', 'REST_AREA', 'TRANSPORT'];
+        try{
+            const response = await request.get<BackendResponse>(`/api/pois/types`);
+            if(response.data.success && response.data.data){
+                return response.data.data;
+            } else{
+                throw new Error(response.data.error || '获取POI类型失败');
+            }
+        } catch(error){
+            throw new Error(`获取POI类型失败: ${error instanceof Error ? error.message : '未知错误'}`);
+        }
     }
 }
