@@ -1,5 +1,6 @@
 package org.example.roadsimulation.controller;
 
+import org.example.roadsimulation.dto.POIDTO;
 import org.example.roadsimulation.entity.POI;
 import org.example.roadsimulation.service.POIService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -18,6 +19,7 @@ import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 
+import java.math.BigDecimal;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -209,6 +211,22 @@ public class POIController {
     }
 
     /**
+     * 批量接收POI数据并保存
+     */
+    @PostMapping("/batch-save")
+    public ResponseEntity<?> batchSavePOIs(@RequestBody List<POIDTO> poiDTOs) {
+        try {
+            List<POI> savedPOIs = poiService.batchSavePOIs(poiDTOs);
+            return ResponseEntity.ok(createSuccessResponse(
+                    "批量保存成功，共保存 " + savedPOIs.size() + " 个POI",
+                    savedPOIs
+            ));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(createErrorResponse(e.getMessage()));
+        }
+    }
+
+    /**
      * 统计各类型 POI 数量（扩展功能）
      */
     @GetMapping("/statistics/type-count")
@@ -252,24 +270,24 @@ public class POIController {
         private String name;
 
         @NotNull(message = "经度不能为空")
-        private Double longitude;
+        private BigDecimal longitude;
 
         @NotNull(message = "纬度不能为空")
-        private Double latitude;
+        private BigDecimal latitude;
 
         @NotNull(message = "POI 类型不能为空")
         private POI.POIType poiType;
 
         // Getter 方法
         public String getName() { return name; }
-        public Double getLongitude() { return longitude; }
-        public Double getLatitude() { return latitude; }
+        public BigDecimal getLongitude() { return longitude; }
+        public BigDecimal getLatitude() { return latitude; }
         public POI.POIType getPoiType() { return poiType; }
 
         // Setter 方法（用于 JSON 反序列化）
         public void setName(String name) { this.name = name; }
-        public void setLongitude(Double longitude) { this.longitude = longitude; }
-        public void setLatitude(Double latitude) { this.latitude = latitude; }
+        public void setLongitude(BigDecimal longitude) { this.longitude = longitude; }
+        public void setLatitude(BigDecimal latitude) { this.latitude = latitude; }
         public void setPoiType(POI.POIType poiType) { this.poiType = poiType; }
     }
 
@@ -281,24 +299,24 @@ public class POIController {
         private String name;
 
         @NotNull(message = "经度不能为空")
-        private Double longitude;
+        private BigDecimal longitude;
 
         @NotNull(message = "纬度不能为空")
-        private Double latitude;
+        private BigDecimal latitude;
 
         @NotNull(message = "POI 类型不能为空")
         private POI.POIType poiType;
 
         // Getter 方法
         public String getName() { return name; }
-        public Double getLongitude() { return longitude; }
-        public Double getLatitude() { return latitude; }
+        public BigDecimal getLongitude() { return longitude; }
+        public BigDecimal getLatitude() { return latitude; }
         public POI.POIType getPoiType() { return poiType; }
 
         // Setter 方法（用于 JSON 反序列化）
         public void setName(String name) { this.name = name; }
-        public void setLongitude(Double longitude) { this.longitude = longitude; }
-        public void setLatitude(Double latitude) { this.latitude = latitude; }
+        public void setLongitude(BigDecimal longitude) { this.longitude = longitude; }
+        public void setLatitude(BigDecimal latitude) { this.latitude = latitude; }
         public void setPoiType(POI.POIType poiType) { this.poiType = poiType; }
     }
 

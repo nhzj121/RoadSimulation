@@ -1,5 +1,6 @@
 package org.example.roadsimulation.service.impl;
 
+import org.example.roadsimulation.dto.POIDTO;
 import org.example.roadsimulation.entity.POI;
 import org.example.roadsimulation.repository.POIRepository;
 import org.example.roadsimulation.service.POIService;
@@ -11,6 +12,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 /**
  * POI Service 实现类
@@ -182,5 +184,57 @@ public class POIServiceImpl implements POIService {
     public POI getPOIEntityById(Long id) {
         return poiRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("POI 不存在，ID: " + id));
+    }
+
+    /**
+     * 将前端POI数据转换为实体并保存
+     */
+    @Transactional
+    public POI savePOIFromFrontend(POIDTO poiDTO) {
+        // 检查是否已存在相同的POI
+        if (poiRepository.existsByNameAndLocation(poiDTO.getName(),
+                poiDTO.getLongitude(), poiDTO.getLatitude()) > 0) {
+            throw new RuntimeException("POI已存在: " + poiDTO.getName());
+        }
+
+        // 转换POI类型
+        POI.POIType poiType = convertPOIType(poiDTO.getType());
+
+        // 创建POI实体
+        POI poi = new POI(
+                poiDTO.getName(),
+                poiDTO.getLongitude(),
+                poiDTO.getLatitude(),
+                poiType
+        );
+
+        return poiRepository.save(poi);
+    }
+
+    /**
+     * 转换前端POI类型字符串为枚举类型
+     */
+    @Override
+    public POI.POIType convertPOIType(String frontendType) {
+        return switch (frontendType) {
+            case "工厂" -> POI.POIType.FACTORY;
+            case "仓库" -> POI.POIType.WAREHOUSE;
+            case "加油站" -> POI.POIType.GAS_STATION;
+            case "维修中心" -> POI.POIType.MAINTENANCE_CENTER;
+            case "休息区" -> POI.POIType.REST_AREA;
+            case "运输中心" -> POI.POIType.DISTRIBUTION_CENTER;
+            default -> throw new IllegalArgumentException("未知的POI类型: " + frontendType);
+        };
+    }
+
+    /**
+     * 批量保存POI数据
+     */
+    @Override
+    @Transactional
+    public List<POI> batchSavePOIs(List<POIDTO> poiDTOs) {
+        return poiDTOs.stream()
+                .map(this::savePOIFromFrontend)
+                .collect(Collectors.toList());
     }
 }

@@ -4,8 +4,10 @@ import org.example.roadsimulation.entity.POI;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
 import org.springframework.stereotype.Repository;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 /**
@@ -39,4 +41,12 @@ public interface POIRepository extends JpaRepository<POI, Long> {
      * 检查是否存在相同名称
      */
     boolean existsByName(String name);
+
+    // 根据经纬度范围查找POI
+    @Query("SELECT p FROM POI p WHERE p.longitude BETWEEN :minLng AND :maxLng AND p.latitude BETWEEN :minLat AND :maxLat")
+    List<POI> findByLocationRange(BigDecimal minLng, BigDecimal maxLng, BigDecimal minLat, BigDecimal maxLat);
+
+    // 检查是否已存在相同名称和位置的POI
+    @Query("SELECT COUNT(p) FROM POI p WHERE p.name = :name AND p.longitude = :longitude AND p.latitude = :latitude")
+    int existsByNameAndLocation(String name, BigDecimal longitude, BigDecimal latitude);
 }
