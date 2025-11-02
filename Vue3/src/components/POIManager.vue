@@ -153,8 +153,10 @@ const goBack = () => {
 /*
   POI点的相关数据分类统计
  */
-// 总共加载的POI点的数量
-const totalPOICount = ref(0);
+interface MapContext {
+  map: any
+  AMap: any
+}
 
 // 统一的POI接口定义
 interface POI {
@@ -174,6 +176,8 @@ interface POICategory {
   keywords: string[];
   visible: boolean;
 }
+
+const mapContext = inject<{ value: MapContext }>('mapContext')
 
 // POI数据状态
 const poiData = ref<Record<string, POI[]>>({
@@ -503,6 +507,562 @@ const saveToBackend = async (): Promise<void> => {
     console.error('保存POI数据时发生错误:', error)
     ElMessage.error('保存POI数据时发生错误: ' + (error as Error).message)
   }
+}
+
+// 按类型加载数据
+const loadDataByType = async (type: string): Promise<void> => {
+  try {
+    loadingData.value = true
+
+    // 映射前端分类到后端类型
+    const backendType = typeMapping[type as keyof typeof typeMapping]
+    if (!backendType) {
+      ElMessage.warning(`未找到类型 ${type} 的后端映射`)
+      return
+    }
+
+    const poisFromDB = await poiManagerApi.getByType(backendType)
+
+    if (poisFromDB && poisFromDB.length > 0) {
+      const convertedPOIs = convertDBDataToFrontend(poisFromDB)
+
+      // 更新特定分类的数据
+      poiData.value[type as keyof typeof poiData.value] = convertedPOIs
+      updateMapDisplay()
+
+      ElMessage.success(`加载了 ${convertedPOIs.length} 个${getCategoryLabel(type)}数据`)
+    } else {
+      ElMessage.info(`数据库中没有${getCategoryLabel(type)}数据`)
+    }
+
+  } catch (error) {
+    console.error(`加载${type}数据失败:`, error)
+    ElMessage.error(`加载${getCategoryLabel(type)}数据失败`)
+  } finally {
+    loadingData.value = false
+  }
+}
+
+// 获取分类标签
+const getCategoryLabel = (categoryName: string): string => {
+  const category = poiCategories.value.find(cat => cat.name === categoryName)
+  return category?.label || categoryName
+}
+
+// 数据管理功能
+const manageData = async (): Promise<void> => {
+  try {
+    const { value: action } = await ElMessageBox.prompt(
+        '请输入操作:\n1. 清空数据库\n2. 导出所有数据\n3. 统计信息',
+        '数据管理',
+        {
+          confirmButtonText: '确定',
+          cancelButtonText: '取消',
+          inputPattern: /^[123]$/,
+          inputErrorMessage: '请输入1、2或3'
+        }
+    )
+
+    switch (action) {
+      case '1':
+        await clearDatabase()
+        break
+      case '2':
+        await exportAllData()
+        break
+      case '3':
+        await showStatistics()
+        break
+    }
+  } catch (error) {
+    // 用户取消输入
+  }
+}
+
+// 清空数据库
+const clearDatabase = async (): Promise<void> => {
+  try {
+    await ElMessageBox.confirm(
+        '确定要清空数据库中的所有POI数据吗？此操作不可恢复！',
+        '确认清空',
+        {
+          confirmButtonText: '确定清空',
+          cancelButtonText: '取消',
+          type: 'error',
+          confirmButtonClass: 'el-button--danger'
+        }
+    )
+
+    // 这里需要调用后端的清空接口
+    // 需要在后端添加这个功能
+    // ToDo
+    ElMessage.warning('清空数据库功能需要后端支持，请联系开发人员')
+
+  } catch {
+    ElMessage.info('已取消清空操作')
+  }
+}
+
+// 导出所有数据
+const exportAllData = async (): Promise<void> => {
+  try {
+    const allData = await poiManagerApi.getAll()
+    const dataStr = JSON.stringify(allData, null, 2)
+    const dataBlob = new Blob([dataStr], { type: 'application/json' })
+
+    const link = document.createElement('a')
+    link.href = URL.createObjectURL(dataBlob)
+    link.download = `poi_database_export_${new Date().getTime()}.json`
+    link.click()
+
+    ElMessage.success('数据库数据导出成功')
+  } catch (error) {
+    console.error('导出数据库数据失败:', error)
+    ElMessage.error('导出数据库数据失败')
+  }
+}
+
+// 显示统计信息
+const showStatistics = async (): Promise<void> => {
+  try {
+    const allData = await poiManagerApi.getAll()
+
+    const typeCount: Record<string, number> = {}
+    allData.forEach(poi => {
+      typeCount[poi.type] = (typeCount[poi.type] || 0) + 1
+    })
+
+    const statsText = Object.entries(typeCount)
+        .map(([type, count]) => `${type}: ${count}个`)
+        .join('\n')
+
+    await ElMessageBox.alert(
+        `数据库统计信息:\n\n总记录数: ${allData.length}\n\n类型分布:\n${statsText}`,
+        '统计信息',
+        {
+          confirmButtonText: '确定'
+        }
+    )
+  } catch (error) {
+    console.error('获取统计信息失败:', error)
+    ElMessage.error('获取统计信息失败')
+  }
+}
+
+// ToDo
+/// 搜索函数的实现
+
+// 分页搜索函数
+const searchByKeywordWithPagination = async (keyword: string, categoryName: string): Promise<POI[]> => {
+  return new Promise(async (resolve) => {
+    if (!mapContext?.value) {
+      console.error('地图上下文未就绪');
+      resolve([]);
+      return;
+    }
+
+    const { AMap } = mapContext.value;
+    let pageIndex = 1;
+    const pageSize = 50;
+    let hasMoreData = true;
+    let allResults: POI[] = [];
+
+    while (hasMoreData && pageIndex <= 5) { // 限制最多5页
+      try {
+        const pois = await searchSinglePage(keyword, categoryName, pageIndex, pageSize);
+
+        if (pois.length > 0) {
+          allResults.push(...pois);
+          console.log(`搜索 "${keyword}" 第${pageIndex}页找到 ${pois.length} 个${categoryName}`);
+
+          if (pois.length < pageSize) {
+            hasMoreData = false;
+          } else {
+            pageIndex++;
+            // 添加延迟避免请求过快
+            await new Promise(resolve => setTimeout(resolve, 500));
+          }
+        } else {
+          hasMoreData = false;
+        }
+      } catch (error) {
+        console.error(`搜索 "${keyword}" 第${pageIndex}页失败:`, error);
+        hasMoreData = false;
+      }
+    }
+
+    console.log(`搜索 "${keyword}" 完成，共找到 ${allResults.length} 个${categoryName}`);
+    resolve(allResults);
+  });
+};
+
+// 单页搜索实现
+const searchSinglePage = (keyword: string, categoryName: string, pageIndex: number, pageSize: number): Promise<POI[]> => {
+  return new Promise((resolve) => {
+    if (!mapContext?.value) {
+      resolve([]);
+      return;
+    }
+
+    const { AMap } = mapContext.value;
+
+    const placeSearch = new AMap.PlaceSearch({
+      city: '成都市',
+      citylimit: true,
+      pageSize: pageSize,
+      pageIndex: pageIndex,
+      extensions: 'all'
+    });
+
+    placeSearch.searchInBounds(keyword, chengduPlainPolygon, function(status: string, result: any) {
+      if (status === 'complete' && result.poiList && result.poiList.pois) {
+        const categoryConfig = poiCategories.value.find(cat => cat.label === categoryName);
+        const categoryKey = categoryConfig ? categoryConfig.name : categoryName;
+        const pois: POI[] = result.poiList.pois.map((poi: any) => ({
+          id: poi.id,
+          name: poi.name,
+          type: categoryName,
+          location: poi.location,
+          address: poi.address,
+          tel: poi.tel || '',
+          category: categoryKey // 确保包含category
+        }));
+        resolve(pois);
+      } else {
+        console.warn(`搜索 "${keyword}" 第${pageIndex}页状态: ${status}`);
+        resolve([]);
+      }
+    });
+  });
+};
+
+// 智能批量搜索POI
+const smartBatchPOISearch = async (): Promise<void> => {
+  if (!mapContext?.value) {
+    ElMessage.warning('地图未初始化');
+    return;
+  }
+
+  isSearching.value = true;
+  const allPOIs: POI[] = [];
+
+  // 计算总任务数用于进度显示
+  const totalTasks = poiCategories.value.reduce((sum, category) => sum + category.keywords.length, 0);
+  let completedTasks = 0;
+
+  searchProgress.value = {
+    total: totalTasks,
+    completed: completedTasks,
+    currentCategory: '',
+    currentKeyword: ''
+  };
+
+  try {
+    // 按优先级排序搜索
+    const prioritizedCategories = [...poiCategories.value].sort((a, b) => {
+      if (a.name === 'gasStation' || a.name === 'restArea') return -1;
+      if (b.name === 'gasStation' || b.name === 'restArea') return 1;
+      return 0;
+    });
+
+    for (const category of prioritizedCategories) {
+      if (!category.visible) continue;
+
+      console.log(`开始搜索分类: ${category.label}`);
+
+      for (const keyword of category.keywords) {
+        searchProgress.value.currentCategory = category.label;
+        searchProgress.value.currentKeyword = keyword;
+
+        const results = await searchByKeywordWithPagination(keyword, category.name);
+        allPOIs.push(...results);
+
+        completedTasks++;
+        searchProgress.value.completed = completedTasks;
+
+        // 控制并发，避免请求过快
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+
+    // 处理搜索结果
+    const uniquePOIs = removeDuplicatePOIs(allPOIs);
+    classifyPOIData(uniquePOIs);
+
+    ElMessage.success(`POI搜索完成，共找到 ${uniquePOIs.length} 个地点`);
+    updateMapDisplay();
+
+  } catch (error) {
+    console.error('POI搜索失败:', error);
+    ElMessage.error('POI搜索失败');
+  } finally {
+    isSearching.value = false;
+    searchProgress.value.currentCategory = '';
+    searchProgress.value.currentKeyword = '';
+  }
+};
+
+// 去重函数
+const removeDuplicatePOIs = (pois: POI[]): POI[] => {
+  const seen = new Map();
+  return pois.filter(poi => {
+    const key = `${poi.name}-${poi.location.lng.toFixed(6)}-${poi.location.lat.toFixed(6)}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.set(key, true);
+    return true;
+  });
+};
+
+// ToDo
+
+// 分类存储POI数据
+const classifyPOIData = (pois: POI[]): void => {
+  console.group('🔍 POI数据分类过程')
+
+  // 先清空现有数据
+  Object.keys(poiData.value).forEach(key => {
+    const oldCount = poiData.value[key as keyof typeof poiData.value].length
+    if (oldCount > 0) {
+      console.log(`清空分类 ${key}: 原有 ${oldCount} 条数据`)
+    }
+    poiData.value[key as keyof typeof poiData.value] = []
+  })
+
+  console.log(`开始分类 ${pois.length} 个POI数据`)
+
+  // 按分类存储
+  let classifiedCount = 0
+  let unclassifiedCount = 0
+
+  pois.forEach(poi => {
+    const categoryKey = poi.category // 这里应该是前端的分类名，如 'factory', 'warehouse' 等
+
+    if (categoryKey && poiData.value[categoryKey as keyof typeof poiData.value] !== undefined) {
+      poiData.value[categoryKey as keyof typeof poiData.value].push(poi)
+      classifiedCount++
+      console.log(`✅ 分类成功: "${poi.name}" -> ${categoryKey}`)
+    } else {
+      unclassifiedCount++
+      console.warn(`❌ 分类失败: "${poi.name}" - 分类键: "${categoryKey}"`)
+      console.log('  可用分类键:', Object.keys(poiData.value))
+    }
+  })
+
+  // 输出详细的统计信息
+  console.log('📊 POI分类统计结果:')
+  poiCategories.value.forEach(category => {
+    const count = poiData.value[category.name as keyof typeof poiData.value].length
+    console.log(`  ${category.label} (${category.name}): ${count} 个`)
+  })
+
+  console.log(`总计: 已分类 ${classifiedCount} 个, 未分类 ${unclassifiedCount} 个`)
+  console.groupEnd()
+}
+
+// 更新地图显示
+const updateMapDisplay = (): void => {
+  console.log('开始更新地图显示...');
+
+  // 清除现有标记
+  clearAllMarkers();
+  addIndividualMarkers();
+
+};
+
+// 添加单独标记 - 修复图标使用问题
+// 增强添加单独标记函数
+const addIndividualMarkers = (): void => {
+  if (!mapContext?.value) {
+    console.error('❌ 地图上下文未就绪')
+    return
+  }
+
+  const { map, AMap } = mapContext.value
+  let totalMarkers = 0
+
+  console.group('📍 创建单独标记')
+
+  poiCategories.value.forEach(category => {
+    if (!category.visible) {
+      console.log(`⏭️ 跳过隐藏分类: ${category.label}`)
+      return
+    }
+
+    const pois = poiData.value[category.name as keyof typeof poiData.value]
+    const iconConfig = poiIcons[category.label as keyof typeof poiIcons]
+
+    if (!iconConfig) {
+      console.warn(`❌ 未找到分类 ${category.label} 的图标配置`)
+      return
+    }
+
+    console.log(`📁 处理分类 ${category.label}: ${pois.length} 个POI`)
+
+    pois.forEach((poi, index) => {
+      try {
+        // 使用图片图标创建标记
+        const icon = new AMap.Icon({
+          image: iconConfig.url,
+          size: new AMap.Size(iconConfig.size[0], iconConfig.size[1]),
+          imageSize: new AMap.Size(iconConfig.size[0], iconConfig.size[1]),
+          anchor: iconConfig.anchor as any
+        })
+
+        // 创建标记
+        const marker = new AMap.Marker({
+          position: [poi.location.lng, poi.location.lat],
+          title: `${poi.name} - ${category.label}`,
+          icon: icon,
+          offset: new AMap.Pixel(-iconConfig.size[0] / 2, -iconConfig.size[1]),
+          extData: poi
+        })
+
+        // 添加点击事件
+        marker.on('click', () => {
+          console.log(`🖱️ 点击标记: ${poi.name}`)
+          showPOIInfoWindow(poi, marker.getPosition())
+        })
+
+        map.add(marker)
+        totalMarkers++
+
+        if (index < 3) { // 只打印前3个标记的详细信息，避免日志过多
+          console.log(`  ✅ 创建标记: ${poi.name} (${poi.location.lng}, ${poi.location.lat})`)
+        }
+      } catch (error) {
+        console.error(`❌ 创建标记失败: ${poi.name}`, error)
+      }
+    })
+  })
+
+  console.log(`🎉 标记创建完成: 共 ${totalMarkers} 个标记`)
+  ElMessage.success(`已显示 ${totalMarkers} 个地点`)
+  console.groupEnd()
+}
+
+// 显示POI信息窗口
+const showPOIInfoWindow = (poi: POI, position: any): void => {
+  if (!mapContext?.value) return;
+
+  const { map, AMap } = mapContext.value;
+
+  const infoContent = `
+    <div class="poi-info-window">
+      <div class="poi-header">
+        <h4>${poi.name}</h4>
+        <span class="poi-category">${poi.category}</span>
+      </div>
+      <div class="poi-details">
+        <p><strong>地址:</strong> ${poi.address}</p>
+        ${poi.tel ? `<p><strong>电话:</strong> ${poi.tel}</p>` : ''}
+        <p><strong>坐标:</strong> ${poi.location.lng.toFixed(6)}, ${poi.location.lat.toFixed(6)}</p>
+      </div>
+    </div>
+  `;
+
+  const infoWindow = new AMap.InfoWindow({
+    content: infoContent,
+    offset: new AMap.Pixel(0, -30)
+  });
+
+  infoWindow.open(map, position);
+};
+
+const checkPluginAvailability = (): boolean => {
+  if (!mapContext?.value) {
+    console.error('地图上下文未就绪')
+    return false
+  }
+
+  const { AMap } = mapContext.value
+
+  console.group('🔧 插件可用性检查')
+  console.log('AMap:', AMap ? '已加载' : '未加载')
+  console.log('MarkerClusterer:', AMap?.MarkerClusterer ? '可用' : '不可用')
+
+  if (AMap?.MarkerClusterer) {
+    console.log('✅ 所有插件可用')
+    console.groupEnd()
+    return true
+  } else {
+    console.error('❌ MarkerClusterer 插件不可用')
+    console.log('可用插件:', Object.keys(AMap).filter(key => key.startsWith('AMap.')))
+    console.groupEnd()
+    ElMessage.error('点聚合插件未正确加载')
+    return false
+  }
+}
+
+
+
+
+
+// 刷新显示
+const refreshDisplay = (): void => {
+  updateMapDisplay();
+  ElMessage.info('地图显示已刷新');
+};
+
+// 获取分类数量
+const getCategoryCount = (categoryName: string): number => {
+  return poiData.value[categoryName as keyof typeof poiData.value]?.length || 0;
+};
+
+// 计算总POI数量
+const totalPOICount = computed(() => {
+  return Object.values(poiData.value).reduce((sum, pois) => sum + pois.length, 0);
+});
+
+// 分类显示切换
+const onCategoryVisibilityChange = (category: POICategory): void => {
+  console.log(`切换 ${category.label} 可见性:`, category.visible);
+  updateMapDisplay();
+};
+
+// 快速操作
+const showAllCategories = (): void => {
+  poiCategories.value.forEach(cat => cat.visible = true);
+  updateMapDisplay();
+  ElMessage.success('已显示所有分类');
+};
+
+const hideAllCategories = (): void => {
+  poiCategories.value.forEach(cat => cat.visible = false);
+  updateMapDisplay();
+  ElMessage.info('已隐藏所有分类');
+};
+
+const clearAllData = (): void => {
+  Object.keys(poiData.value).forEach(key => {
+    poiData.value[key as keyof typeof poiData.value] = [];
+  });
+  clearAllMarkers();
+  ElMessage.info('已清空所有数据');
+};
+
+// 清除所有标记
+const clearAllMarkers = (): void => {
+  if (!mapContext?.value) return;
+
+  const { map } = mapContext.value;
+  // 清除所有覆盖物
+  map.clearMap();
+};
+
+// 导出数据
+const exportPOIData = () => {
+  const allPOIs = Object.values(poiData.value).flat()
+  const dataStr = JSON.stringify(allPOIs, null, 2)
+  const dataBlob = new Blob([dataStr], { type: 'application/json' })
+
+  const link = document.createElement('a')
+  link.href = URL.createObjectURL(dataBlob)
+  link.download = `poi_data_${new Date().getTime()}.json`
+  link.click()
+
+  ElMessage.success('数据导出成功')
 }
 
 onMounted(() => {
