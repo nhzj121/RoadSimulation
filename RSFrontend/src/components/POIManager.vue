@@ -102,48 +102,9 @@
 
     <!-- 显示控制 -->
     <div class="display-controls">
-      <div class="cluster-controls">
-        <el-switch
-            v-model="clusterEnabled"
-            @change="toggleCluster"
-            active-text="点聚合"
-            inactive-text="单独显示"
-        />
-        <el-button @click="refreshDisplay" size="small" style="margin-left: 10px;">
-          刷新显示
-        </el-button>
-      </div>
-
-      <!-- 点聚合高级设置（可选） -->
-      <div v-if="clusterEnabled" class="cluster-advanced">
-        <el-collapse>
-          <el-collapse-item title="聚合设置">
-            <div class="cluster-settings">
-              <div class="setting-item">
-                <span>聚合网格大小:</span>
-                <el-slider
-                    v-model="clusterConfig.gridSize"
-                    :min="40"
-                    :max="120"
-                    :step="10"
-                    @change="refreshCluster"
-                />
-                <span>{{ clusterConfig.gridSize }}px</span>
-              </div>
-              <div class="setting-item">
-                <span>最小聚合数量:</span>
-                <el-slider
-                    v-model="clusterConfig.minClusterSize"
-                    :min="2"
-                    :max="10"
-                    @change="refreshCluster"
-                />
-                <span>{{ clusterConfig.minClusterSize }}</span>
-              </div>
-            </div>
-          </el-collapse-item>
-        </el-collapse>
-      </div>
+      <el-button @click="refreshDisplay" size="small">
+        刷新显示
+      </el-button>
     </div>
 
     <!-- 快速分类操作 -->
@@ -165,9 +126,6 @@ import gasStationIcon from '@/assets/icons/gas-station.png';
 import maintenanceIcon from '@/assets/icons/maintenance-center.png';
 import restAreaIcon from '@/assets/icons/rest-area.png';
 import transportIcon from '@/assets/icons/distribution-center.png';
-import MaxMerge from '@/assets/merge/max.png';
-import MiddleMerge from '@/assets/merge/middle.png';
-import MinMerge from '@/assets/merge/min.png';
 
 interface MapContext {
   map: any
@@ -262,50 +220,7 @@ const searchProgress = ref({
   currentKeyword: ''
 })
 
-// 修复：移除在初始化时直接使用 AMap 的代码
-const clusterConfig = ref({
-  gridSize: 150,           // 聚合计算时网格的像素大小
-  maxZoom: 20,            // 最大聚合级别，大于此级别不聚合
-  minClusterSize: 2,      // 最小聚合数量
-  styles: [               // 聚合簇样式配置 - 移除直接的 AMap 引用
-    {
-      url: MinMerge,
-      size: { width: 40, height: 40 }, // 使用普通对象而不是 AMap.Size
-      color: '#fa0303',
-      background: '#ff6b6b',
-      borderColor: '#fff',
-      borderRadius: 20,
-      borderWidth: 2,
-      fontSize: 12
-    },
-    {
-      url: MiddleMerge,
-      size: { width: 50, height: 50 },
-      color: '#fa5656',
-      background: '#4ecdc4',
-      borderColor: '#fff',
-      borderRadius: 25,
-      borderWidth: 3,
-      fontSize: 13
-    },
-    {
-      url: MaxMerge,
-      size: { width: 60, height: 60 },
-      color: '#f1c0c0',
-      background: '#45b7d1',
-      borderColor: '#fff',
-      borderRadius: 30,
-      borderWidth: 4,
-      fontSize: 14
-    }
-  ]
-})
-
-// 点聚合实例
-let markerClusterer: any = null
-
 const isSearching = ref(false)
-const clusterEnabled = ref(false)
 
 // 成都平原搜索区域
 const chengduPlainPolygon = [
@@ -941,11 +856,8 @@ const updateMapDisplay = (): void => {
   // 清除现有标记
   clearAllMarkers();
 
-  if (clusterEnabled.value) {
-    initMarkerCluster();
-  } else {
-    addIndividualMarkers();
-  }
+  // 显示单独标记
+  addIndividualMarkers();
 };
 
 // 添加单独标记 - 修复图标使用问题
@@ -1047,333 +959,6 @@ const showPOIInfoWindow = (poi: POI, position: any): void => {
   infoWindow.open(map, position);
 };
 
-const checkPluginAvailability = (): boolean => {
-  if (!mapContext?.value) {
-    console.error('地图上下文未就绪')
-    return false
-  }
-
-  const { AMap } = mapContext.value
-
-  console.group('🔧 插件可用性检查')
-  console.log('AMap:', AMap ? '已加载' : '未加载')
-  console.log('MarkerClusterer:', AMap?.MarkerClusterer ? '可用' : '不可用')
-
-  if (AMap?.MarkerClusterer) {
-    console.log('✅ 所有插件可用')
-    console.groupEnd()
-    return true
-  } else {
-    console.error('❌ MarkerClusterer 插件不可用')
-    console.log('可用插件:', Object.keys(AMap).filter(key => key.startsWith('AMap.')))
-    console.groupEnd()
-    ElMessage.error('点聚合插件未正确加载')
-    return false
-  }
-}
-
-
-// 初始化点聚合
-// 增强初始化点聚合函数
-const initMarkerCluster = (): void => {
-  if (!mapContext?.value) {
-    console.error('地图上下文未就绪')
-    return
-  }
-
-  const { map, AMap } = mapContext.value
-  const currentZoom = map.getZoom()
-  const center = map.getCenter()
-  console.log('🗺️ 地图状态:', { zoom: currentZoom, center })
-
-  // 清除现有聚合
-  if (markerClusterer) {
-    markerClusterer.clearMarkers()
-    markerClusterer.setMap(null)
-    markerClusterer = null
-  }
-
-  console.group('🔗 初始化点聚合')
-
-  // 首先检查插件可用性
-  if (!checkPluginAvailability()) {
-    console.groupEnd()
-    return
-  }
-  // 创建标记数组
-  const markers: any[] = []
-  let totalMarkers = 0
-
-  // 检查标记位置分布
-  if (markers.length > 0) {
-    const firstMarker = markers[0]
-    const lastMarker = markers[markers.length - 1]
-    console.log('📍 标记位置范围:', {
-      first: firstMarker.getPosition(),
-      last: lastMarker.getPosition()
-    })
-  }
-
-  // 创建聚合器之前验证配置
-  console.log('⚙️ 聚合配置:', {
-    gridSize: clusterConfig.value.gridSize,
-    maxZoom: clusterConfig.value.maxZoom,
-    minClusterSize: clusterConfig.value.minClusterSize,
-    markersCount: markers.length
-  })
-
-  // 收集所有可见分类的标记
-  poiCategories.value.forEach(category => {
-    if (!category.visible) {
-      console.log(`⏭️ 跳过隐藏分类: ${category.label}`)
-      return
-    }
-
-    const categoryPOIs = poiData.value[category.name] || []
-    const iconConfig = poiIcons[category.label as keyof typeof poiIcons]
-
-    if (!iconConfig) {
-      console.warn(`❌ 未找到分类 ${category.label} 的图标配置`)
-      return
-    }
-
-    console.log(`📁 处理分类 ${category.label}: ${categoryPOIs.length} 个POI`)
-
-    categoryPOIs.forEach((poi, index) => {
-      try {
-        // 创建图标
-        const icon = new AMap.Icon({
-          image: iconConfig.url,
-          size: new AMap.Size(iconConfig.size[0], iconConfig.size[1]),
-          imageSize: new AMap.Size(iconConfig.size[0], iconConfig.size[1]),
-          anchor: iconConfig.anchor as any
-        })
-
-        // 创建标记
-        const marker = new AMap.Marker({
-          position: [poi.location.lng, poi.location.lat],
-          title: `${poi.name} - ${category.label}`,
-          icon: icon,
-          offset: new AMap.Pixel(-iconConfig.size[0] / 2, -iconConfig.size[1]),
-          extData: {
-            ...poi,
-            category: category.label,
-            originalCategory: category.name
-          }
-        })
-
-        // 添加点击事件
-        marker.on('click', () => {
-          console.log(`🖱️ 点击标记: ${poi.name}`)
-          showPOIInfoWindow(poi, marker.getPosition())
-        })
-
-        markers.push(marker)
-        totalMarkers++
-
-      } catch (error) {
-        console.error(`❌ 创建标记失败: ${poi.name}`, error)
-      }
-    })
-  })
-
-  console.log(`📊 准备聚合 ${totalMarkers} 个标记`)
-
-  if (markers.length === 0) {
-    console.warn('⚠️ 没有标记可聚合')
-    console.groupEnd()
-    return
-  }
-
-  try {
-    // 创建自定义聚合样式渲染函数
-    const renderClusterMarker = (context: any) => {
-      const count = context.count
-      const factor = Math.pow(context.count / totalMarkers, 1 / 5)
-      const size = Math.max(30, Math.min(60, 30 + factor * 30))
-
-      // 根据数量选择样式
-      let styleIndex = 0
-      if (count > 10) styleIndex = 1
-      if (count > 50) styleIndex = 2
-
-      const style = clusterConfig.value.styles[styleIndex]
-
-      // 创建自定义DOM元素
-      const div = document.createElement('div')
-      div.className = 'custom-cluster-marker'
-      div.innerHTML = `
-        <div class="cluster-inner">
-          <span class="cluster-count">${count}</span>
-        </div>
-      `
-
-      // 应用样式
-      const innerEl = div.querySelector('.cluster-inner') as HTMLElement
-      if (innerEl) {
-        innerEl.style.cssText = `
-          width: ${size}px;
-          height: ${size}px;
-          background: ${style.background};
-          border: ${style.borderWidth}px solid ${style.borderColor};
-          border-radius: ${style.borderRadius}px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          color: ${style.color};
-          font-size: ${style.fontSize}px;
-          font-weight: bold;
-          box-shadow: 0 2px 6px rgba(0,0,0,0.3);
-          cursor: pointer;
-        `
-      }
-
-      context.marker.setContent(div)
-      // 修复：使用 AMap.Pixel 来设置偏移
-      context.marker.setOffset(new AMap.Pixel(-size / 2, -size / 2))
-
-      // 添加聚合簇点击事件
-      context.marker.on('click', (event: any) => {
-        console.log(`🖱️ 点击聚合簇: ${count} 个地点`)
-        showClusterInfoWindow(context, event.target.getPosition())
-      })
-    }
-
-    // 创建点聚合实例
-    markerClusterer = new AMap.MarkerClusterer(map, markers, {
-      gridSize: clusterConfig.value.gridSize,
-      maxZoom: clusterConfig.value.maxZoom,
-      minClusterSize: clusterConfig.value.minClusterSize,
-      //renderClusterMarker: renderClusterMarker,
-      // 可选：设置聚合算法
-      averageCenter: true
-    })
-
-    console.log('✅ 点聚合初始化完成')
-    ElMessage.success(`点聚合已启用，聚合了 ${totalMarkers} 个标记`)
-
-    // 立即检查聚合状态
-    setTimeout(() => {
-      console.log('📊 聚合器状态:', {
-        clustersCount: markerClusterer.getClustersCount(),
-        markersCount: markerClusterer.getClustersCount().length,
-        gridSize: markerClusterer.getGridSize()
-      })
-
-    }, 100)
-
-  } catch (error) {
-    console.error('❌ 点聚合初始化失败:', error)
-    ElMessage.error('点聚合初始化失败，将使用单独标记模式')
-    // 降级到单独标记模式
-    clusterEnabled.value = false
-    addIndividualMarkers()
-  }
-
-  console.groupEnd()
-}
-
-// 显示聚合簇信息窗口
-const showClusterInfoWindow = (context: any, position: any): void => {
-  if (!mapContext?.value) return
-
-  const { map, AMap } = mapContext.value
-  const markers = context.markers || []
-  const count = context.count
-
-  // 统计聚合簇中的分类分布
-  const categoryStats: Record<string, number> = {}
-  markers.forEach((marker: any) => {
-    const category = marker.getExtData()?.category || '未知'
-    categoryStats[category] = (categoryStats[category] || 0) + 1
-  })
-
-  // 生成分类统计HTML
-  const statsHTML = Object.entries(categoryStats)
-      .map(([category, count]) => `<div class="cluster-category">${category}: ${count}个</div>`)
-      .join('')
-
-  const infoContent = `
-    <div class="cluster-info-window">
-      <div class="cluster-header">
-        <h4>聚合簇信息</h4>
-        <span class="cluster-total">共 ${count} 个地点</span>
-      </div>
-      <div class="cluster-stats">
-        <h5>分类分布:</h5>
-        ${statsHTML}
-      </div>
-      <div class="cluster-actions">
-        <button class="cluster-zoom-btn" onclick="window.vueComponent.zoomToCluster(${position.lng}, ${position.lat})">
-          放大查看
-        </button>
-      </div>
-    </div>
-  `
-
-  const infoWindow = new AMap.InfoWindow({
-    content: infoContent,
-    offset: new AMap.Pixel(0, -20),
-    closeWhenClickMap: true
-  })
-
-  infoWindow.open(map, position)
-}
-
-// 放大到聚合簇
-const zoomToCluster = (lng: number, lat: number): void => {
-  if (!mapContext?.value) return
-
-  const { map } = mapContext.value
-  map.setZoomAndCenter(15, [lng, lat]) // 放大到15级并居中
-}
-
-// 切换聚合模式
-// 增强切换聚合模式
-const toggleCluster = (enabled: boolean): void => {
-  clusterEnabled.value = enabled
-
-  if (enabled) {
-    console.log('🔗 启用点聚合模式')
-    initMarkerCluster()
-
-    // 监控聚合状态
-    const checkInterval = setInterval(() => {
-      if (markerClusterer) {
-        const clusterCount = markerClusterer.getClustersCount()
-        console.log(`📊 当前聚合簇数量: ${clusterCount}`)
-
-        if (clusterCount > 0) {
-          clearInterval(checkInterval)
-          console.log('✅ 聚合成功，检测到聚合簇')
-        }
-      }
-    }, 500)
-
-    // 5秒后停止检查
-    setTimeout(() => clearInterval(checkInterval), 5000)
-  } else {
-    console.log('📍 禁用点聚合模式，显示单独标记')
-    // 清除点聚合
-    if (markerClusterer) {
-      markerClusterer.setMap(null)
-      markerClusterer = null
-    }
-    // 显示单独标记
-    addIndividualMarkers()
-  }
-
-  ElMessage.info(`已${enabled ? '启用' : '禁用'}点聚合`)
-}
-
-// 刷新点聚合
-const refreshCluster = (): void => {
-  if (clusterEnabled.value) {
-    console.log('🔄 刷新点聚合配置')
-    initMarkerCluster()
-  }
-}
-
 // 刷新显示
 const refreshDisplay = (): void => {
   updateMapDisplay();
@@ -1442,10 +1027,6 @@ const exportPOIData = () => {
 
 onMounted(() => {
   // 组件挂载后的初始化
-  // 将 zoomToCluster 方法挂载到 window 上，以便在信息窗口中使用
-  (window as any).vueComponent = {
-    zoomToCluster
-  }
 })
 
 defineExpose({
@@ -1456,12 +1037,7 @@ defineExpose({
   exportPOIData,
   saveToBackend,
   getPOIData: () => poiData.value,
-  getDataStats: () => dataStats.value,
-  // 点聚合相关方法
-  enableCluster: () => toggleCluster(true),
-  disableCluster: () => toggleCluster(false),
-  refreshCluster,
-  getClusterConfig: () => clusterConfig.value
+  getDataStats: () => dataStats.value
 })
 </script>
 
@@ -1649,125 +1225,6 @@ defineExpose({
 
   .stats-grid {
     grid-template-columns: 1fr;
-  }
-}
-
-/* 点聚合样式 */
-.cluster-controls {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 10px;
-}
-
-.cluster-advanced {
-  margin-top: 10px;
-  border: 1px solid #e4e7ed;
-  border-radius: 4px;
-  padding: 10px;
-}
-
-.cluster-settings {
-  padding: 10px 0;
-}
-
-.setting-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 10px;
-}
-
-.setting-item span:first-child {
-  min-width: 120px;
-  font-size: 12px;
-  color: #666;
-}
-
-.setting-item .el-slider {
-  flex: 1;
-  margin: 0 10px;
-}
-
-/* 聚合簇信息窗口样式 */
-:deep(.cluster-info-window) {
-  min-width: 200px;
-  max-width: 280px;
-}
-
-:deep(.cluster-header) {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 10px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid #e4e7ed;
-}
-
-:deep(.cluster-header h4) {
-  margin: 0;
-  font-size: 16px;
-  color: #333;
-}
-
-:deep(.cluster-total) {
-  background: #409eff;
-  color: white;
-  padding: 2px 8px;
-  border-radius: 12px;
-  font-size: 12px;
-}
-
-:deep(.cluster-stats h5) {
-  margin: 0 0 8px 0;
-  font-size: 14px;
-  color: #666;
-}
-
-:deep(.cluster-category) {
-  display: block;
-  padding: 4px 0;
-  font-size: 13px;
-  color: #333;
-  border-bottom: 1px dashed #f0f0f0;
-}
-
-:deep(.cluster-category:last-child) {
-  border-bottom: none;
-}
-
-:deep(.cluster-actions) {
-  margin-top: 10px;
-  text-align: center;
-}
-
-:deep(.cluster-zoom-btn) {
-  background: #409eff;
-  color: white;
-  border: none;
-  padding: 6px 12px;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 12px;
-}
-
-:deep(.cluster-zoom-btn:hover) {
-  background: #66b1ff;
-}
-
-/* 自定义聚合簇标记样式 */
-:deep(.custom-cluster-marker) {
-  animation: cluster-appear 0.3s ease-out;
-}
-
-@keyframes cluster-appear {
-  from {
-    transform: scale(0.8);
-    opacity: 0;
-  }
-  to {
-    transform: scale(1);
-    opacity: 1;
   }
 }
 </style>
