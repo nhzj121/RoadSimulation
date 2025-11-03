@@ -4,6 +4,7 @@ import org.example.roadsimulation.entity.Vehicle;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
 
@@ -75,5 +76,5 @@ public interface VehicleService {
      * @param latitude 纬度
      * @return 更新后的车辆对象
      */
-    Vehicle updateVehicleCoordinates(Long vehicleId, Double longitude, Double latitude);
+    Vehicle updateVehicleCoordinates(Long vehicleId, BigDecimal longitude, BigDecimal latitude);
 }

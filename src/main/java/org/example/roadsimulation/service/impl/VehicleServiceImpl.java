@@ -11,6 +11,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
 
@@ -162,7 +163,7 @@ public class VehicleServiceImpl implements VehicleService {
     }
 
     @Override
-    public Vehicle updateVehicleCoordinates(Long vehicleId, Double longitude, Double latitude) {
+    public Vehicle updateVehicleCoordinates(Long vehicleId, BigDecimal longitude, BigDecimal latitude) {
         return vehicleRepository.findById(vehicleId)
                 .map(vehicle -> {
                     vehicle.setCurrentLongitude(longitude);

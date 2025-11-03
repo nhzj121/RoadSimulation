@@ -1,12 +1,14 @@
 // POIDTO.java
 package org.example.roadsimulation.dto;
 
+import org.example.roadsimulation.entity.POI;
+
 import java.math.BigDecimal;
 
 public class POIDTO {
-    private String id;
+    private Long id;
     private String name;
-    private String type;
+    private POI.POIType poiType;
     private BigDecimal longitude;
     private BigDecimal latitude;
     private String address;
@@ -15,26 +17,24 @@ public class POIDTO {
     // 构造器
     public POIDTO() {}
 
-    public POIDTO(String id, String name, String type, BigDecimal longitude,
-                  BigDecimal latitude, String address, String tel) {
+    public POIDTO(Long id, String name, POI.POIType poiType, BigDecimal longitude,
+                  BigDecimal latitude) {
         this.id = id;
         this.name = name;
-        this.type = type;
+        this.poiType = poiType;
         this.longitude = longitude;
         this.latitude = latitude;
-        this.address = address;
-        this.tel = tel;
     }
 
     // Getter和Setter
-    public String getId() { return id; }
-    public void setId(String id) { this.id = id; }
+    public Long getId() { return id; }
+    public void setId(Long id) { this.id = id; }
 
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
 
-    public String getType() { return type; }
-    public void setType(String type) { this.type = type; }
+    public POI.POIType getPoiType() { return poiType; }
+    public void setPoiType(POI.POIType poiType) { this.poiType = poiType; }
 
     public BigDecimal getLongitude() { return longitude; }
     public void setLongitude(BigDecimal longitude) { this.longitude = longitude; }

@@ -122,4 +122,7 @@ public interface POIService {
      * 转换前端POI类型字符串为枚举类型
      */
     POI.POIType convertPOIType(String frontendType);
+
+    void resetAutoIncrement();
+    boolean isTableEmpty();
 }

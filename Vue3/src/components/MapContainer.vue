@@ -161,10 +161,10 @@ const runningVehicleCount = computed(() => {
 
 onMounted(() => {
   window._AMapSecurityConfig = {
-    securityJsCode: "9df38c185c95fa1dbf78a1082b64f668", // 请替换为您的安全密钥
+    securityJsCode: "9df38c185c95fa1dbf78a1082b64f668",
   };
   AMapLoader.load({
-    key: "e0ea478e44e417b4c2fc9a54126debaa", // 请替换为您的Key
+    key: "e0ea478e44e417b4c2fc9a54126debaa",
     version: "2.0",
     plugins: ["AMap.Scale", "AMap.Driving"], // 1. 在这里加载 AMap.Driving 插件
   })

@@ -1,5 +1,6 @@
 package org.example.roadsimulation.service.impl;
 
+import jakarta.persistence.EntityManager;
 import org.example.roadsimulation.dto.POIDTO;
 import org.example.roadsimulation.entity.POI;
 import org.example.roadsimulation.repository.POIRepository;
@@ -198,7 +199,7 @@ public class POIServiceImpl implements POIService {
         }
 
         // 转换POI类型
-        POI.POIType poiType = convertPOIType(poiDTO.getType());
+        POI.POIType poiType = poiDTO.getPoiType();
 
         // 创建POI实体
         POI poi = new POI(
@@ -236,5 +237,22 @@ public class POIServiceImpl implements POIService {
         return poiDTOs.stream()
                 .map(this::savePOIFromFrontend)
                 .collect(Collectors.toList());
+    }
+
+    @Autowired
+    private EntityManager entityManager;
+
+    @Override
+    @Transactional
+    public void resetAutoIncrement() {
+        // 对于MySQL
+        entityManager.createNativeQuery("ALTER TABLE poi AUTO_INCREMENT = 1").executeUpdate();
+    }
+
+    @Override
+    // 检查是否为空的方法
+    public boolean isTableEmpty() {
+        Long count = poiRepository.count();
+        return count == 0;
     }
 }
