@@ -1,6 +1,8 @@
 package org.example.roadsimulation.entity;
 
 import jakarta.persistence.*;
+
+import java.math.BigDecimal;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -24,10 +26,10 @@ public class POI {
     private String name; // POI 名称
 
     @Column(precision = 9)
-    private Double longitude; // 经度
+    private BigDecimal longitude; // 经度
 
     @Column(precision = 9)
-    private Double latitude; // 纬度
+    private BigDecimal latitude; // 纬度
 
     /**
      * POI 类型枚举
@@ -54,7 +56,7 @@ public class POI {
     // ================= 构造方法 =================
     public POI() {}
 
-    public POI(String name, Double longitude, Double latitude, POIType type) {
+    public POI(String name, BigDecimal longitude, BigDecimal latitude, POIType type) {
         this.name = name;
         this.longitude = longitude;
         this.latitude = latitude;
@@ -68,11 +70,11 @@ public class POI {
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
 
-    public Double getLongitude() { return longitude; }
-    public void setLongitude(Double longitude) { this.longitude = longitude; }
+    public BigDecimal getLongitude() { return longitude; }
+    public void setLongitude(BigDecimal longitude) { this.longitude = longitude; }
 
-    public Double getLatitude() { return latitude; }
-    public void setLatitude(Double latitude) { this.latitude = latitude; }
+    public BigDecimal getLatitude() { return latitude; }
+    public void setLatitude(BigDecimal latitude) { this.latitude = latitude; }
 
     public POIType getPoiType() { return poiType; }
     public void setPoiType(POIType poiType) { this.poiType = poiType; }
