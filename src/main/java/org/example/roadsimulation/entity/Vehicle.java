@@ -8,6 +8,7 @@ import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
+import java.math.BigDecimal;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -90,10 +91,10 @@ public class Vehicle {
 
     // 当前所在的经度
     @Column(name = "current_longitude")
-    private Double currentLongitude;
+    private BigDecimal currentLongitude;
     // 当前所在的纬度
     @Column(name = "current_latitude")
-    private Double currentLatitude;
+    private BigDecimal currentLatitude;
 
     public enum VehicleStatus {
         IDLE,           // 空闲
@@ -165,10 +166,10 @@ public class Vehicle {
     public void setWidth(Double width) {this.width = width;}
     public Double getHeight() {return height;}
     public void setHeight(Double height) {this.height = height;}
-    public Double getCurrentLongitude() {return currentLongitude;}
-    public void setCurrentLongitude(Double currentLongitude) {this.currentLongitude = currentLongitude;}
-    public Double getCurrentLatitude() {return currentLatitude;}
-    public void setCurrentLatitude(Double currentLatitude) {this.currentLatitude = currentLatitude;}
+    public BigDecimal getCurrentLongitude() {return currentLongitude;}
+    public void setCurrentLongitude(BigDecimal currentLongitude) {this.currentLongitude = currentLongitude;}
+    public BigDecimal getCurrentLatitude() {return currentLatitude;}
+    public void setCurrentLatitude(BigDecimal currentLatitude) {this.currentLatitude = currentLatitude;}
     public VehicleStatus getCurrentStatus() {return currentStatus;}
     public void setCurrentStatus(VehicleStatus currentStatus) {this.currentStatus = currentStatus;}
 

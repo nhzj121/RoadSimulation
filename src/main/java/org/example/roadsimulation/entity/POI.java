@@ -25,11 +25,21 @@ public class POI {
     @Column(nullable = false)
     private String name; // POI 名称
 
-    @Column(precision = 9)
+    @Column(
+        precision = 9,    // 总位数：3位整数 + 6位小数 = 9位
+        scale = 6,         // 小数位：8位（满足绝大多数场景，0.01米精度）
+        nullable = false,  // 经度为必填字段，禁止 null
+        columnDefinition = "DECIMAL(9,6) COMMENT '经度（范围：-180~180，精度6位小数）'"
+    )
     private BigDecimal longitude; // 经度
 
-    @Column(precision = 9)
-    private BigDecimal latitude; // 纬度
+    @Column(
+        precision = 9,
+        scale = 6,
+        nullable = false,
+        columnDefinition = "DECIMAL(10,6) COMMENT '纬度（范围：-90~90，精度6位小数）'"
+    )
+    private BigDecimal latitude;
 
     /**
      * POI 类型枚举

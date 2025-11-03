@@ -216,6 +216,19 @@ public class POIController {
     @PostMapping("/batch-save")
     public ResponseEntity<?> batchSavePOIs(@RequestBody List<POIDTO> poiDTOs) {
         try {
+            // 处理枚举转换
+            for (POIDTO dto : poiDTOs) {
+                if (dto.getPoiType() == null && dto.getPoiType() != null) {
+                    // 尝试从字符串转换
+                    try {
+                        POI.POIType type = POI.POIType.valueOf(dto.getPoiType().toString());
+                        dto.setPoiType(type);
+                    } catch (IllegalArgumentException e) {
+                        System.err.println("无法转换POI类型: " + dto.getPoiType());
+                    }
+                }
+            }
+
             List<POI> savedPOIs = poiService.batchSavePOIs(poiDTOs);
             return ResponseEntity.ok(createSuccessResponse(
                     "批量保存成功，共保存 " + savedPOIs.size() + " 个POI",
@@ -349,6 +362,43 @@ public class POIController {
         public String getMessage() { return message; }
         public T getData() { return data; }
         public long getTimestamp() { return timestamp; }
+    }
+
+    /**
+     * 重置POI表自增ID从1开始
+     * 注意：这会删除所有现有数据！
+     */
+    @PostMapping("/reset-auto-increment")
+    public ResponseEntity<?> resetAutoIncrement() {
+        try {
+            // 安全检查：确认用户真的想要重置
+            // 在实际应用中，你可能需要更严格的安全检查
+
+            poiService.resetAutoIncrement();
+            return ResponseEntity.ok(createSuccessResponse("POI表自增ID已重置为1", null));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(createErrorResponse("重置失败: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * 安全重置：先检查表是否为空
+     */
+    @PostMapping("/safe-reset-auto-increment")
+    public ResponseEntity<?> safeResetAutoIncrement() {
+        try {
+            if (!poiService.isTableEmpty()) {
+                return ResponseEntity.status(HttpStatus.CONFLICT)
+                        .body(createErrorResponse("表中还有数据，请先清空数据再重置ID"));
+            }
+
+            poiService.resetAutoIncrement();
+            return ResponseEntity.ok(createSuccessResponse("POI表自增ID已安全重置为1", null));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(createErrorResponse("重置失败: " + e.getMessage()));
+        }
     }
 
     /**
