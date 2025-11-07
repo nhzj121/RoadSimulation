@@ -2,8 +2,6 @@ package org.example.roadsimulation.entity;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
-import org.example.roadsimulation.entity.Action;
-import org.example.roadsimulation.entity.POI;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
@@ -97,12 +95,12 @@ public class Vehicle {
 
     public enum VehicleStatus {
         IDLE,           // 空闲
-        TRANSPORTING,   // 运输中
+        ORDER_DRIVING,   // 接单运输
         UNLOADING,      // 卸货
-        MAINTAINING,    // 保养
-        REFUELING,      // 加油
-        RESTING,        // 休息
-        ACCIDENT        // 事故
+        LOADING,      //装货
+        TRANSPORT_DRIVING,        //运货行驶
+        WAITING,     //等待
+
     }
 
     // 在实体类中使用
