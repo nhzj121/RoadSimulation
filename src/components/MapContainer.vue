@@ -45,10 +45,10 @@
         </template>
         <div class="vehicle-list">
           <div v-for="v in vehicles" :key="v.id" class="vehicle-item">
-            <span class="status-dot" :style="{ backgroundColor: statusMap[v.status].color }"></span>
+            <span class="status-dot" :style="{ backgroundColor: statusMap[v.status]?.color || '#ccc' }"></span>
             <div class="vehicle-info">
               <div class="vehicle-id">{{ v.id }}</div>
-              <div class="vehicle-location">{{ v.location }} | {{ statusMap[v.status].text }}</div>
+              <div class="vehicle-location">{{ v.location || (v.lat && v.lng ? `${v.lng}, ${v.lat}` : '-') }} | {{ statusMap[v.status]?.text || v.status }}</div>
             </div>
             <ElButton text :icon="InfoFilled" />
           </div>
@@ -63,10 +63,10 @@
           </div>
         </template>
         <div class="stats-info">
-          <div><strong>运行车辆</strong><span></span></div>
-          <div><strong>POI点数</strong><span></span></div>
-          <div><strong>运输任务</strong><span></span></div>
-          <div><strong>异常率</strong><span></span></div>
+          <div><strong>运行车辆</strong><span>{{ stats.running }}</span></div>
+          <div><strong>POI点数</strong><span>{{ stats.poiCount }}</span></div>
+          <div><strong>运输任务</strong><span>{{ stats.tasks }}</span></div>
+          <div><strong>异常率</strong><span>{{ stats.anomalyRate }}%</span></div>
         </div>
       </ElCard>
 
@@ -75,10 +75,11 @@
       <div id="container"></div>
     </ElMain>
   </ElContainer>
+  
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, onUnmounted } from "vue";
+import { ref, reactive, computed, onMounted, onUnmounted, createHydrationRenderer } from "vue";
 import AMapLoader from "@amap/amap-jsapi-loader";
 import {
   ElAside,
@@ -90,8 +91,11 @@ import {
   ElCheckTag,
 } from "element-plus";
 import { InfoFilled } from '@element-plus/icons-vue'
+import axios from 'axios'
 
 let map = null;
+let AMapLib = null; // 保存加载后的 AMap 构造对象
+const drawnRoutes = []; // 存放已绘制的覆盖物，便于清理
 
 // --- 仿真控制 ---
 const speedFactor = ref(1);
@@ -125,17 +129,143 @@ const statusMap = {
   stopped: { text: '停靠中', color: '#95a5a6' },
 };
 
-const vehicles = reactive([
-//各个汽车状态
+const vehicles = reactive([]); // 从后端拉取车辆列表
 
-]);
+// 新增：前端统计与数据容器
+const stats = reactive({
+  running: 0,
+  poiCount: 0,
+  tasks: 0,
+  anomalyRate: 0, // 百分比整数
+});
+
+const pois = ref([]);    // POI 列表
+const tasks = ref([]);   // 运输任务列表
+
+// Axios 客户端与与后端/路线相关函数（已有）
+const api = axios.create({
+  baseURL: 'http://localhost:8080',
+  timeout: 10000,
+});
+
+const clearDrawnRoutes = () => {
+  for (const o of drawnRoutes) {
+    try { o.setMap && o.setMap(null); } catch (_) {}
+  }
+  drawnRoutes.length = 0;
+};
+
+const fetchVehicles = async () => {
+  try {
+    const res = await api.get('/vehicles');
+    // 约定后端返回数组或 { data: [...] }
+    const list = Array.isArray(res.data) ? res.data : (Array.isArray(res.data?.items) ? res.data.items : []);
+    vehicles.splice(0, vehicles.length, ...list);
+    updateStats(); // 更新统计
+  } catch (e) {
+    console.error('fetchVehicles error', e);
+  }
+};
+
+const fetchPOIs = async () => {
+  try {
+    const res = await api.get('/pois');
+    const list = Array.isArray(res.data) ? res.data : (Array.isArray(res.data?.items) ? res.data.items : []);
+    pois.value = list;
+    stats.poiCount = list.length;
+  } catch (e) {
+    console.error('fetchPOIs error', e);
+  }
+};
+
+const fetchTasks = async () => {
+  try {
+    const res = await api.get('/tasks');
+    const list = Array.isArray(res.data) ? res.data : (Array.isArray(res.data?.items) ? res.data.items : []);
+    tasks.value = list;
+    stats.tasks = list.length;
+  } catch (e) {
+    console.error('fetchTasks error', e);
+  }
+};
+
+// 根据当前 vehicles 数据计算运行车辆与异常率
+const updateStats = () => {
+  stats.running = vehicles.filter(v => v.status === 'running').length;
+  // 优先使用车辆对象中的 anomaly 布尔字段计算异常率；否则以 status === 'maintenance' 作为异常示例
+  const total = Math.max(vehicles.length, 1);
+  const anomalies = vehicles.filter(v => v.anomaly === true).length || vehicles.filter(v => v.status === 'maintenance').length;
+  stats.anomalyRate = Math.round((anomalies / total) * 100);
+};
+
+const fetchRawRoutes = async () => {
+  try {
+    const res = await api.get('/routes'); // 后端返回原始路线或任务，包含 id 与点列表
+    return Array.isArray(res.data) ? res.data : [];
+  } catch (e) {
+    console.error('fetchRawRoutes error', e);
+    return [];
+  }
+};
+
+// 将每条路线的起点/终点发送给后端，后端负责调用高德API规划并返回可绘制的路线数据
+// 请求体示例: { endpoints: [{ id, start: [lng,lat], end: [lng,lat] }, ...] }
+// 返回示例: [{ id, path: [[lng,lat],...], start: [lng,lat], end: [lng,lat] }, ...]
+const computeRoutesOnBackend = async (endpoints) => {
+  try {
+    const res = await api.post('/routes/compute', { endpoints });
+    return Array.isArray(res.data) ? res.data : [];
+  } catch (e) {
+    console.error('computeRoutesOnBackend error', e);
+    return [];
+  }
+};
+
+const drawComputedRoutes = (routes) => {
+  if (!AMapLib || !map) return;
+  clearDrawnRoutes();
+  for (const r of routes) {
+    try {
+      // 绘制路线折线 (后端返回的 path 应为 [[lng,lat], ...])
+      const poly = new AMapLib.Polyline({
+        path: r.path || [],
+        strokeColor: '#3388ff',
+        strokeOpacity: 1,
+        strokeWeight: 4,
+        lineJoin: 'round',
+      });
+      poly.setMap(map);
+      drawnRoutes.push(poly);
+      0
+
+      // 起点标记
+      if (r.start) {
+        const m1 = new AMapLib.Marker({
+          position: r.start,
+          title: '起点',
+        });
+        m1.setMap(map);
+        drawnRoutes.push(m1);
+      }
+      // 终点标记
+      if (r.end) {
+        const m2 = new AMapLib.Marker({
+          position: r.end,
+          title: '终点',
+        });
+        m2.setMap(map);
+        drawnRoutes.push(m2);
+      }
+    } catch (e) {
+      console.error('drawComputedRoutes error', e);
+    }
+  }
+};
 
 // --- 统计信息 ---
 const runningVehicleCount = computed(() => {
     return vehicles.filter(v => v.status === 'running').length;
 });
-
-
 
 onMounted(() => {
   window._AMapSecurityConfig = {
@@ -146,34 +276,39 @@ onMounted(() => {
     version: "2.0",
     plugins: ["AMap.Scale", "AMap.Driving"], // 1. 在这里加载 AMap.Driving 插件
   })
-    .then((AMap) => {
+    .then(async (AMap) => {
+      AMapLib = AMap; // 保存 AMap 构造体以便后续创建覆盖物
       map = new AMap.Map("container", {
         viewMode: "3D",
         zoom: 11,
         center: [104.066158, 30.657150],
       });
-            // --- 驾车路线规划 ---
-      var driving = new AMap.Driving({
-        map: map, // 2. 将路线规划结果绘制到这个 map 对象上
-        policy: AMap.DrivingPolicy.LEAST_TIME, // 驾车路线规划策略
-      });
 
-      // 起点和终点
-      var points = [
-        { keyword: "成都市政府", city: "成都" },
-        { keyword: "成都东站", city: "成都" },
-      ];
+      // 拉取前端需要展示的所有数据
+      try {
+        await Promise.all([
+          fetchVehicles(),
+          fetchPOIs(),
+          fetchTasks()
+        ]);
 
-      driving.search(points, function (status, result) {
-        // status：'complete' 表示查询成功
-        // result 即为对应的驾车导航信息
-        if (status === 'complete') {
-            console.log('绘制驾车路线完成');
-        } else {
-            console.error('获取驾车数据失败：' + result);
+        // 按既有流程拉取原始路线并请求后端规划，绘制路线
+        const rawRoutes = await fetchRawRoutes();
+        const endpoints = rawRoutes.map(r => {
+          const pts = Array.isArray(r.points) ? r.points : (r.path || []);
+          if (!pts || pts.length === 0) return null;
+          const first = Array.isArray(pts[0]) ? pts[0] : [pts[0].lng, pts[0].lat];
+          const last = Array.isArray(pts[pts.length - 1]) ? pts[pts.length - 1] : [pts[pts.length - 1].lng, pts[pts.length - 1].lat];
+          return { id: r.id, start: first, end: last };
+        }).filter(Boolean);
+
+        if (endpoints.length > 0) {
+          const computed = await computeRoutesOnBackend(endpoints);
+          drawComputedRoutes(computed);
         }
-      });
-      // --- 驾车路线规划结束 ---
+      } catch (e) {
+        console.error('init data error', e);
+      }
     })
     .catch((e) => {
       console.log(e);
@@ -182,6 +317,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   map?.destroy();
+  clearDrawnRoutes();
 });
 </script>
 
