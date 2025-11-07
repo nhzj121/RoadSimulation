@@ -4,22 +4,12 @@ import org.example.roadsimulation.entity.Vehicle;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
 
-/**
- * VehicleRepository
- *
- * 功能说明：
- * 1. 继承 JpaRepository 提供基础 CRUD 功能
- * 2. 提供额外查询方法：
- *    - 按车牌号精确/模糊查询
- *    - 按品牌或车型查询
- *    - 按状态查询
- *    - 分页查询
- *    - 唯一性校验车牌号
- */
 @Repository
 public interface VehicleRepository extends JpaRepository<Vehicle, Long> {
 
@@ -46,4 +36,51 @@ public interface VehicleRepository extends JpaRepository<Vehicle, Long> {
 
     // 检查车牌号是否存在（唯一性校验）
     boolean existsByLicensePlate(String licensePlate);
+
+    // === 新增方法：用于车辆匹配服务 ===
+
+    // 根据最小载重能力查询可用车辆
+    @Query("SELECT v FROM Vehicle v WHERE v.maxLoadCapacity >= :minLoadCapacity AND v.currentStatus = 'IDLE'")
+    List<Vehicle> findAvailableByMinLoadCapacity(@Param("minLoadCapacity") Double minLoadCapacity);
+
+    // 根据载重范围查询可用车辆
+    @Query("SELECT v FROM Vehicle v WHERE v.maxLoadCapacity BETWEEN :minLoad AND :maxLoad AND v.currentStatus = 'IDLE'")
+    List<Vehicle> findAvailableByLoadRange(@Param("minLoad") Double minLoad, @Param("maxLoad") Double maxLoad);
+
+    // 根据品牌和车辆类型查询可用车辆
+    List<Vehicle> findByBrandAndVehicleTypeAndCurrentStatus(String brand, String vehicleType, Vehicle.VehicleStatus status);
+
+    // 根据车辆类型和最小载重查询
+    @Query("SELECT v FROM Vehicle v WHERE v.vehicleType = :vehicleType AND v.maxLoadCapacity >= :minLoadCapacity AND v.currentStatus = 'IDLE'")
+    List<Vehicle> findByVehicleTypeAndMinLoadCapacity(@Param("vehicleType") String vehicleType,
+                                                      @Param("minLoadCapacity") Double minLoadCapacity);
+
+    // 综合查询：品牌、类型、最小载重
+    @Query("SELECT v FROM Vehicle v WHERE " +
+            "(:brand IS NULL OR v.brand = :brand) AND " +
+            "(:vehicleType IS NULL OR v.vehicleType = :vehicleType) AND " +
+            "(:minLoadCapacity IS NULL OR v.maxLoadCapacity >= :minLoadCapacity) AND " +
+            "v.currentStatus = 'IDLE'")
+    List<Vehicle> findAvailableVehiclesByCriteria(@Param("brand") String brand,
+                                                  @Param("vehicleType") String vehicleType,
+                                                  @Param("minLoadCapacity") Double minLoadCapacity);
+
+    // 分页查询可用车辆
+    Page<Vehicle> findByCurrentStatus(Vehicle.VehicleStatus status, Pageable pageable);
+
+    // 根据载重能力降序排列可用车辆
+    @Query("SELECT v FROM Vehicle v WHERE v.currentStatus = 'IDLE' ORDER BY v.maxLoadCapacity DESC")
+    List<Vehicle> findAvailableVehiclesOrderByLoadCapacityDesc();
+
+    // 根据品牌分组统计车辆数量
+    @Query("SELECT v.brand, COUNT(v) FROM Vehicle v GROUP BY v.brand")
+    List<Object[]> countVehiclesByBrand();
+
+    // 查询所有品牌（去重）
+    @Query("SELECT DISTINCT v.brand FROM Vehicle v WHERE v.brand IS NOT NULL")
+    List<String> findAllBrands();
+
+    // 查询所有车辆类型（去重）
+    @Query("SELECT DISTINCT v.vehicleType FROM Vehicle v WHERE v.vehicleType IS NOT NULL")
+    List<String> findAllVehicleTypes();
 }

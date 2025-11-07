@@ -1,6 +1,8 @@
 package org.example.roadsimulation.entity;
 
 import jakarta.persistence.*;
+
+import java.math.BigDecimal;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -23,11 +25,21 @@ public class POI {
     @Column(nullable = false)
     private String name; // POI 名称
 
-    @Column(precision = 9)
-    private Double longitude; // 经度
+    @Column(
+        precision = 9,    // 总位数：3位整数 + 6位小数 = 9位
+        scale = 6,         // 小数位：8位（满足绝大多数场景，0.01米精度）
+        nullable = false,  // 经度为必填字段，禁止 null
+        columnDefinition = "DECIMAL(9,6) COMMENT '经度（范围：-180~180，精度6位小数）'"
+    )
+    private BigDecimal longitude; // 经度
 
-    @Column(precision = 9)
-    private Double latitude; // 纬度
+    @Column(
+        precision = 9,
+        scale = 6,
+        nullable = false,
+        columnDefinition = "DECIMAL(10,6) COMMENT '纬度（范围：-90~90，精度6位小数）'"
+    )
+    private BigDecimal latitude;
 
     /**
      * POI 类型枚举
@@ -54,7 +66,7 @@ public class POI {
     // ================= 构造方法 =================
     public POI() {}
 
-    public POI(String name, Double longitude, Double latitude, POIType type) {
+    public POI(String name, BigDecimal longitude, BigDecimal latitude, POIType type) {
         this.name = name;
         this.longitude = longitude;
         this.latitude = latitude;
@@ -68,11 +80,11 @@ public class POI {
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
 
-    public Double getLongitude() { return longitude; }
-    public void setLongitude(Double longitude) { this.longitude = longitude; }
+    public BigDecimal getLongitude() { return longitude; }
+    public void setLongitude(BigDecimal longitude) { this.longitude = longitude; }
 
-    public Double getLatitude() { return latitude; }
-    public void setLatitude(Double latitude) { this.latitude = latitude; }
+    public BigDecimal getLatitude() { return latitude; }
+    public void setLatitude(BigDecimal latitude) { this.latitude = latitude; }
 
     public POIType getPoiType() { return poiType; }
     public void setPoiType(POIType poiType) { this.poiType = poiType; }

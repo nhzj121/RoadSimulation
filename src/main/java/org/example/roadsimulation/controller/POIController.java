@@ -1,5 +1,6 @@
 package org.example.roadsimulation.controller;
 
+import org.example.roadsimulation.dto.POIDTO;
 import org.example.roadsimulation.entity.POI;
 import org.example.roadsimulation.service.POIService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -18,6 +19,7 @@ import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 
+import java.math.BigDecimal;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -111,12 +113,16 @@ public class POIController {
     }
 
     /**
-     * 获取所有 POI 列表
+     * 获取所有POI
      */
-    @GetMapping
-    public ResponseEntity<ApiResponse<List<POI>>> getAllPOIs() {
-        List<POI> pois = poiService.getAll();
-        return ResponseEntity.ok(ApiResponse.success("查询成功", pois));
+    @GetMapping("/all")
+    public ResponseEntity<?> getAllPOIs() {
+        try {
+            List<POI> pois = poiService.getAll();
+            return ResponseEntity.ok(createSuccessResponse("获取POI列表成功", pois));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(createErrorResponse(e.getMessage()));
+        }
     }
 
     /**
@@ -170,12 +176,16 @@ public class POIController {
     }
 
     /**
-     * 获取所有 POI 类型枚举值
+     * 获取POI类型枚举
      */
     @GetMapping("/types")
-    public ResponseEntity<ApiResponse<POI.POIType[]>> getPOITypes() {
-        POI.POIType[] types = POI.POIType.values();
-        return ResponseEntity.ok(ApiResponse.success("获取类型成功", types));
+    public ResponseEntity<?> getPOITypes() {
+        try {
+            POI.POIType[] types = POI.POIType.values();
+            return ResponseEntity.ok(createSuccessResponse("获取POI类型成功", types));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(createErrorResponse(e.getMessage()));
+        }
     }
 
     /**
@@ -201,6 +211,35 @@ public class POIController {
     }
 
     /**
+     * 批量接收POI数据并保存
+     */
+    @PostMapping("/batch-save")
+    public ResponseEntity<?> batchSavePOIs(@RequestBody List<POIDTO> poiDTOs) {
+        try {
+            // 处理枚举转换
+            for (POIDTO dto : poiDTOs) {
+                if (dto.getPoiType() == null && dto.getPoiType() != null) {
+                    // 尝试从字符串转换
+                    try {
+                        POI.POIType type = POI.POIType.valueOf(dto.getPoiType().toString());
+                        dto.setPoiType(type);
+                    } catch (IllegalArgumentException e) {
+                        System.err.println("无法转换POI类型: " + dto.getPoiType());
+                    }
+                }
+            }
+
+            List<POI> savedPOIs = poiService.batchSavePOIs(poiDTOs);
+            return ResponseEntity.ok(createSuccessResponse(
+                    "批量保存成功，共保存 " + savedPOIs.size() + " 个POI",
+                    savedPOIs
+            ));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(createErrorResponse(e.getMessage()));
+        }
+    }
+
+    /**
      * 统计各类型 POI 数量（扩展功能）
      */
     @GetMapping("/statistics/type-count")
@@ -213,6 +252,27 @@ public class POIController {
         return ResponseEntity.ok(ApiResponse.success("统计查询成功", statistics));
     }
 
+    /**
+     * 创建成功响应
+     */
+    private Map<String, Object> createSuccessResponse(String message, Object data) {
+        Map<String, Object> response = new HashMap<>();
+        response.put("success", true);
+        response.put("message", message);
+        response.put("data", data);
+        return response;
+    }
+
+    /**
+     * 创建错误响应
+     */
+    private Map<String, Object> createErrorResponse(String error) {
+        Map<String, Object> response = new HashMap<>();
+        response.put("success", false);
+        response.put("error", error);
+        return response;
+    }
+
     // ================= DTO 类 =================
 
     /**
@@ -223,24 +283,24 @@ public class POIController {
         private String name;
 
         @NotNull(message = "经度不能为空")
-        private Double longitude;
+        private BigDecimal longitude;
 
         @NotNull(message = "纬度不能为空")
-        private Double latitude;
+        private BigDecimal latitude;
 
         @NotNull(message = "POI 类型不能为空")
         private POI.POIType poiType;
 
         // Getter 方法
         public String getName() { return name; }
-        public Double getLongitude() { return longitude; }
-        public Double getLatitude() { return latitude; }
+        public BigDecimal getLongitude() { return longitude; }
+        public BigDecimal getLatitude() { return latitude; }
         public POI.POIType getPoiType() { return poiType; }
 
         // Setter 方法（用于 JSON 反序列化）
         public void setName(String name) { this.name = name; }
-        public void setLongitude(Double longitude) { this.longitude = longitude; }
-        public void setLatitude(Double latitude) { this.latitude = latitude; }
+        public void setLongitude(BigDecimal longitude) { this.longitude = longitude; }
+        public void setLatitude(BigDecimal latitude) { this.latitude = latitude; }
         public void setPoiType(POI.POIType poiType) { this.poiType = poiType; }
     }
 
@@ -252,24 +312,24 @@ public class POIController {
         private String name;
 
         @NotNull(message = "经度不能为空")
-        private Double longitude;
+        private BigDecimal longitude;
 
         @NotNull(message = "纬度不能为空")
-        private Double latitude;
+        private BigDecimal latitude;
 
         @NotNull(message = "POI 类型不能为空")
         private POI.POIType poiType;
 
         // Getter 方法
         public String getName() { return name; }
-        public Double getLongitude() { return longitude; }
-        public Double getLatitude() { return latitude; }
+        public BigDecimal getLongitude() { return longitude; }
+        public BigDecimal getLatitude() { return latitude; }
         public POI.POIType getPoiType() { return poiType; }
 
         // Setter 方法（用于 JSON 反序列化）
         public void setName(String name) { this.name = name; }
-        public void setLongitude(Double longitude) { this.longitude = longitude; }
-        public void setLatitude(Double latitude) { this.latitude = latitude; }
+        public void setLongitude(BigDecimal longitude) { this.longitude = longitude; }
+        public void setLatitude(BigDecimal latitude) { this.latitude = latitude; }
         public void setPoiType(POI.POIType poiType) { this.poiType = poiType; }
     }
 
@@ -302,6 +362,43 @@ public class POIController {
         public String getMessage() { return message; }
         public T getData() { return data; }
         public long getTimestamp() { return timestamp; }
+    }
+
+    /**
+     * 重置POI表自增ID从1开始
+     * 注意：这会删除所有现有数据！
+     */
+    @PostMapping("/reset-auto-increment")
+    public ResponseEntity<?> resetAutoIncrement() {
+        try {
+            // 安全检查：确认用户真的想要重置
+            // 在实际应用中，你可能需要更严格的安全检查
+
+            poiService.resetAutoIncrement();
+            return ResponseEntity.ok(createSuccessResponse("POI表自增ID已重置为1", null));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(createErrorResponse("重置失败: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * 安全重置：先检查表是否为空
+     */
+    @PostMapping("/safe-reset-auto-increment")
+    public ResponseEntity<?> safeResetAutoIncrement() {
+        try {
+            if (!poiService.isTableEmpty()) {
+                return ResponseEntity.status(HttpStatus.CONFLICT)
+                        .body(createErrorResponse("表中还有数据，请先清空数据再重置ID"));
+            }
+
+            poiService.resetAutoIncrement();
+            return ResponseEntity.ok(createSuccessResponse("POI表自增ID已安全重置为1", null));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(createErrorResponse("重置失败: " + e.getMessage()));
+        }
     }
 
     /**

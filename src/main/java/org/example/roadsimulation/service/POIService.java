@@ -1,11 +1,13 @@
 package org.example.roadsimulation.service;
 
+import org.example.roadsimulation.dto.POIDTO;
 import org.example.roadsimulation.entity.POI;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 /**
  * POIService 接口
@@ -110,4 +112,17 @@ public interface POIService {
      * @throws RuntimeException 如果 POI 不存在
      */
     POI getPOIEntityById(Long id);
+
+    /**
+     * 批量保存POI数据
+     */
+    List<POI> batchSavePOIs(List<POIDTO> poiDTOs);
+
+    /**
+     * 转换前端POI类型字符串为枚举类型
+     */
+    POI.POIType convertPOIType(String frontendType);
+
+    void resetAutoIncrement();
+    boolean isTableEmpty();
 }
