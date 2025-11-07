@@ -14,6 +14,8 @@ import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.example.roadsimulation.dto.GaodeRouteRequest;
+import org.example.roadsimulation.dto.GaodeRouteResponse;
 
 import java.util.List;
 import java.util.Map;
@@ -503,5 +505,110 @@ public class RouteController {
         logger.error("运行时异常: {}", e.getMessage());
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(ApiResponse.error("服务器内部错误: " + e.getMessage()));
+    }
+
+
+
+    /**
+     * 高德地图路线规划
+     */
+    @PostMapping("/gaode/plan")
+    public ResponseEntity<ApiResponse<GaodeRouteResponse>> planRouteWithGaode(@RequestBody GaodeRouteRequest request) {
+        logger.info("高德路线规划: {} -> {}", request.getOrigin(), request.getDestination());
+
+        try {
+            GaodeRouteResponse response = routeService.planRouteWithGaode(request);
+            if (response.isSuccess()) {
+                logger.info("高德路线规划成功");
+                return ResponseEntity.ok(ApiResponse.success("路线规划成功", response));
+            } else {
+                logger.warn("高德路线规划失败: {}", response.getMessage());
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                        .body(ApiResponse.error(response.getMessage()));
+            }
+        } catch (Exception e) {
+            logger.error("高德路线规划异常", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(ApiResponse.error("路线规划服务异常"));
+        }
+    }
+
+    /**
+     * 根据POI坐标规划路线
+     */
+    @GetMapping("/gaode/plan-by-pois")
+    public ResponseEntity<ApiResponse<GaodeRouteResponse>> planRouteByPois(
+            @RequestParam Long startPoiId,
+            @RequestParam Long endPoiId,
+            @RequestParam(defaultValue = "0") String strategy) {
+
+        logger.info("根据POI坐标规划路线: {} -> {}, 策略: {}", startPoiId, endPoiId, strategy);
+
+        try {
+            GaodeRouteResponse response = routeService.planRouteBetweenPois(startPoiId, endPoiId, strategy);
+            if (response.isSuccess()) {
+                return ResponseEntity.ok(ApiResponse.success("路线规划成功", response));
+            } else {
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                        .body(ApiResponse.error(response.getMessage()));
+            }
+        } catch (Exception e) {
+            logger.error("POI坐标路线规划异常", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(ApiResponse.error("路线规划服务异常"));
+        }
+    }
+
+    /**
+     * 直接使用坐标规划路线
+     */
+    @GetMapping("/gaode/plan-by-coordinates")
+    public ResponseEntity<ApiResponse<GaodeRouteResponse>> planRouteByCoordinates(
+            @RequestParam String startLon,
+            @RequestParam String startLat,
+            @RequestParam String endLon,
+            @RequestParam String endLat,
+            @RequestParam(defaultValue = "0") String strategy) {
+
+        String startLocation = startLon + "," + startLat;
+        String endLocation = endLon + "," + endLat;
+
+        logger.info("坐标路线规划: {} -> {}", startLocation, endLocation);
+
+        try {
+            GaodeRouteRequest request = new GaodeRouteRequest(startLocation, endLocation);
+            request.setStrategy(strategy);
+
+            GaodeRouteResponse response = routeService.planRouteWithGaode(request);
+            if (response.isSuccess()) {
+                return ResponseEntity.ok(ApiResponse.success("路线规划成功", response));
+            } else {
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                        .body(ApiResponse.error(response.getMessage()));
+            }
+        } catch (Exception e) {
+            logger.error("坐标路线规划异常", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(ApiResponse.error("路线规划服务异常"));
+        }
+    }
+
+    /**
+     * 批量规划路线
+     */
+    @PostMapping("/gaode/batch-plan")
+    public ResponseEntity<ApiResponse<List<GaodeRouteResponse>>> batchPlanRoutes(
+            @RequestBody List<GaodeRouteRequest> requests) {
+
+        logger.info("批量规划路线, 数量: {}", requests.size());
+
+        try {
+            List<GaodeRouteResponse> responses = routeService.batchPlanRoutes(requests);
+            return ResponseEntity.ok(ApiResponse.success("批量规划成功", responses));
+        } catch (Exception e) {
+            logger.error("批量规划路线异常", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(ApiResponse.error("批量规划异常"));
+        }
     }
 }
