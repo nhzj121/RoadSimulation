@@ -2,12 +2,15 @@ package org.example.roadsimulation.service.impl;
 
 import org.example.roadsimulation.dto.RouteRequestDTO;
 import org.example.roadsimulation.dto.RouteResponseDTO;
-
+import org.example.roadsimulation.dto.GaodeRouteRequest;
+import org.example.roadsimulation.dto.GaodeRouteResponse;
+import org.example.roadsimulation.entity.POI;
 import org.example.roadsimulation.entity.Route;
 import org.example.roadsimulation.entity.Route.RouteStatus;
 import org.example.roadsimulation.repository.RouteRepository;
 import org.example.roadsimulation.service.POIService;
 import org.example.roadsimulation.service.RouteService;
+import org.example.roadsimulation.service.GaodeMapService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -25,7 +28,100 @@ public class RouteServiceImpl implements RouteService {
     private RouteRepository routeRepository;
 
     @Autowired
-    private POIService poiService; // 假设存在POI服务
+    private POIService poiService;
+
+    @Autowired
+    private GaodeMapService gaodeMapService;
+
+    // ========== 高德路线规划新增方法实现 ==========
+
+    @Override
+    public GaodeRouteResponse planRouteWithGaode(GaodeRouteRequest request) {
+        // 简单的参数验证
+        if (request.getOrigin() == null || request.getOrigin().trim().isEmpty()) {
+            return GaodeRouteResponse.error("起点坐标不能为空");
+        }
+        if (request.getDestination() == null || request.getDestination().trim().isEmpty()) {
+            return GaodeRouteResponse.error("终点坐标不能为空");
+        }
+
+        // 验证坐标格式
+        if (!isValidCoordinate(request.getOrigin()) || !isValidCoordinate(request.getDestination())) {
+            return GaodeRouteResponse.error("坐标格式不正确，应为：经度,纬度");
+        }
+
+        System.out.println("高德路线规划: " + request.getOrigin() + " -> " + request.getDestination());
+        return gaodeMapService.planDrivingRoute(request);
+    }
+
+    @Override
+    public GaodeRouteResponse planRouteBetweenPois(Long startPoiId, Long endPoiId, String strategy) {
+        // 验证POI存在
+        validatePOIExists(startPoiId, "起点POI");
+        validatePOIExists(endPoiId, "终点POI");
+
+        System.out.println("根据POI坐标规划路线: " + startPoiId + " -> " + endPoiId + ", 策略: " + strategy);
+
+        String startLocation = getPoiLocation(startPoiId);
+        String endLocation = getPoiLocation(endPoiId);
+
+        if (startLocation == null || endLocation == null) {
+            return GaodeRouteResponse.error("起点或终点POI坐标不存在");
+        }
+
+        System.out.println("起点坐标: " + startLocation + ", 终点坐标: " + endLocation);
+
+        GaodeRouteRequest request = new GaodeRouteRequest(startLocation, endLocation);
+        request.setStrategy(strategy != null ? strategy : "0");
+        return gaodeMapService.planDrivingRoute(request);
+    }
+
+    @Override
+    public List<GaodeRouteResponse> batchPlanRoutes(List<GaodeRouteRequest> requests) {
+        System.out.println("批量规划路线, 数量: " + requests.size());
+
+        List<GaodeRouteResponse> responses = new ArrayList<>();
+        for (GaodeRouteRequest request : requests) {
+            try {
+                GaodeRouteResponse response = planRouteWithGaode(request);
+                responses.add(response);
+            } catch (Exception e) {
+                System.err.println("批量规划路线失败: " + request + ", 错误: " + e.getMessage());
+                responses.add(GaodeRouteResponse.error("路线规划失败: " + e.getMessage()));
+            }
+        }
+
+        return responses;
+    }
+
+    @Override
+    public String getPoiLocation(Long poiId) {
+        System.out.println("获取POI坐标, ID: " + poiId);
+
+        try {
+            // 使用POI服务获取POI实体
+            POI poi = poiService.getPOIEntityById(poiId);
+            if (poi != null) {
+                Double longitude = poi.getLongitude();
+                Double latitude = poi.getLatitude();
+
+                if (longitude != null && latitude != null) {
+                    return String.format("%.6f,%.6f", longitude, latitude);
+                } else {
+                    System.out.println("POI坐标数据不完整, ID: " + poiId);
+                    return null;
+                }
+            } else {
+                System.out.println("POI不存在, ID: " + poiId);
+                return null;
+            }
+        } catch (Exception e) {
+            System.err.println("获取POI坐标失败, ID: " + poiId + ", 错误: " + e.getMessage());
+            return null;
+        }
+    }
+
+    // ========== 你原有的其他方法保持不变 ==========
 
     @Override
     @Transactional
@@ -279,7 +375,8 @@ public class RouteServiceImpl implements RouteService {
         routeRepository.saveAll(routes);
     }
 
-    // 私有辅助方法
+    // ========== 私有辅助方法 ==========
+
     private Route findRouteById(Long id) {
         return routeRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("未找到ID为 " + id + " 的路线"));
@@ -287,7 +384,6 @@ public class RouteServiceImpl implements RouteService {
 
     private void validatePOIExists(Long poiId, String fieldName) {
         if (poiId != null) {
-            // 这里需要调用POI服务验证POI存在
             if (!poiService.existsById(poiId)) {
                 throw new IllegalArgumentException(fieldName + "不存在: " + poiId);
             }
@@ -308,12 +404,12 @@ public class RouteServiceImpl implements RouteService {
 
     private void setRoutePOIs(Route route, RouteRequestDTO dto) {
         if (dto.getStartPoiId() != null) {
-            // POI startPOI = poiService.getPOIEntityById(dto.getStartPoiId());
-            // route.setStartPOI(startPOI);
+            POI startPOI = poiService.getPOIEntityById(dto.getStartPoiId());
+            route.setStartPOI(startPOI);
         }
         if (dto.getEndPoiId() != null) {
-            // POI endPOI = poiService.getPOIEntityById(dto.getEndPoiId());
-            // route.setEndPOI(endPOI);
+            POI endPOI = poiService.getPOIEntityById(dto.getEndPoiId());
+            route.setEndPOI(endPOI);
         }
     }
 
@@ -333,7 +429,7 @@ public class RouteServiceImpl implements RouteService {
         // 设置POI信息
         if (route.getStartPOI() != null) {
             dto.setStartPoiId(route.getStartPOI().getId());
-            dto.setStartPoiName(route.getStartPOI().getName()); // 假设POI有name字段
+            dto.setStartPoiName(route.getStartPOI().getName());
         }
 
         if (route.getEndPOI() != null) {
@@ -345,8 +441,25 @@ public class RouteServiceImpl implements RouteService {
         dto.setAssignmentCount(route.getAssignments().size());
 
         // 计算总成本（使用默认油价）
-        dto.setTotalCost(route.calculateTotalCost(8.0)); // 假设油价8元/升
+        dto.setTotalCost(route.calculateTotalCost(8.0));
 
         return dto;
+    }
+
+    /**
+     * 简单的坐标格式验证
+     */
+    private boolean isValidCoordinate(String coordinate) {
+        if (coordinate == null) return false;
+        String[] parts = coordinate.split(",");
+        if (parts.length != 2) return false;
+
+        try {
+            Double.parseDouble(parts[0].trim()); // 经度
+            Double.parseDouble(parts[1].trim()); // 纬度
+            return true;
+        } catch (NumberFormatException e) {
+            return false;
+        }
     }
 }

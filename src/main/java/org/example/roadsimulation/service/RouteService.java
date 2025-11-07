@@ -1,5 +1,7 @@
 package org.example.roadsimulation.service;
 
+import org.example.roadsimulation.dto.GaodeRouteRequest;
+import org.example.roadsimulation.dto.GaodeRouteResponse;
 import org.example.roadsimulation.dto.RouteRequestDTO;
 import org.example.roadsimulation.dto.RouteResponseDTO;
 import org.example.roadsimulation.entity.Route.RouteStatus;
@@ -46,4 +48,35 @@ public interface RouteService {
     // 批量操作
     List<RouteResponseDTO> batchCreateRoutes(List<RouteRequestDTO> requestDTOs);
     void batchUpdateStatus(List<Long> routeIds, RouteStatus status);
+
+
+    /**
+     * 使用高德地图API规划驾车路线
+     * @param request 高德路线规划请求
+     * @return 高德路线规划响应
+     */
+    GaodeRouteResponse planRouteWithGaode(GaodeRouteRequest request);
+
+    /**
+     * 根据POI坐标规划路线
+     * @param startPoiId 起点POI ID
+     * @param endPoiId 终点POI ID
+     * @param strategy 路线策略：0-最快 1-最经济 2-最短 3-避开高速
+     * @return 高德路线规划响应
+     */
+    GaodeRouteResponse planRouteBetweenPois(Long startPoiId, Long endPoiId, String strategy);
+
+    /**
+     * 批量规划路线
+     * @param requests 高德路线规划请求列表
+     * @return 高德路线规划响应列表
+     */
+    List<GaodeRouteResponse> batchPlanRoutes(List<GaodeRouteRequest> requests);
+
+    /**
+     * 获取POI坐标信息（用于路线规划）
+     * @param poiId POI ID
+     * @return POI坐标，格式："经度,纬度"
+     */
+    String getPoiLocation(Long poiId);
 }
