@@ -115,5 +115,18 @@ export const poiManagerApi = {
             console.error('获取POI类型失败:', error);
             throw new Error(error.response?.data?.error || error.message || '网络请求失败');
         }
+    },
+
+    // 获取用于进行展示的POI数据
+    async getPOIAbleToShow(): Promise<POIFromDB[]>{
+        try{
+            const response = await request.post<BackendResponse>(`/api/able-to-show`);
+            if(response.data.success && response.data.data){
+                return response.data.data;
+            }
+        } catch (error: any){
+            console.error('获取可以展示的POI数据失败', error);
+            throw new Error(error.response?.data?.error || error.message || '网络请求失败');
+        }
     }
 }

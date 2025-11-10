@@ -50,7 +50,7 @@ public class DataInitializer{
 
     // 限制条件
     private final int maxTrueCount = 8; // 最大为真的数量
-    private double trueProbability = 0.17; // 判断为真的概率
+    private double trueProbability = 0.25; // 判断为真的概率
 
     @Autowired
     public DataInitializer(GoodsPOIGenerateService goodsPOIGenerateService,  POIService poiService, EnrollmentRepository enrollmentRepository, GoodsRepository goodsRepository,  POIRepository poiRepository) {
@@ -61,7 +61,7 @@ public class DataInitializer{
         this.poiRepository = poiRepository;
     }
 
-    @PostConstruct
+    //@PostConstruct
     public void initialize(){
         // 初始化 POI 列表
         this.goalFactoryList = getFilteredPOI("玻璃", POI.POIType.FACTORY);
@@ -155,7 +155,7 @@ public class DataInitializer{
     /**
      *  周期性的随机判断 - 每5秒执行一次
      */
-    @Scheduled(fixedRate = 10000)
+    //@Scheduled(fixedRate = 10000)
     @Transactional
     public void periodicJudgement(){
         if (goalFactoryList.isEmpty()) {
@@ -185,7 +185,9 @@ public class DataInitializer{
                     // 这里可以添加其他业务逻辑，比如初始化关系
                     // ToDo
                     Integer generateQuantity = generateRandomQuantity();
-                    initRelationForTest(poi, goodsForTest, generateQuantity);
+                    // 因为懒加载的原因，在关系建立上运行存在问题，暂时搁置
+                    // ToDo
+                    // initRelationForTest(poi, goodsForTest, generateQuantity);
                 }
             }
         }
@@ -195,7 +197,7 @@ public class DataInitializer{
     /**
      * 周期性的重置判断 - 每12秒执行一次
      */
-    @Scheduled(fixedRate = 15000) // 12秒一个周期
+    //@Scheduled(fixedRate = 15000) // 12秒一个周期
     @Transactional
     public void periodicReset() {
         if (goalFactoryList.isEmpty()) {
@@ -209,7 +211,9 @@ public class DataInitializer{
         if (!truePois.isEmpty()) {
             Random random = new Random();
             POI poiToReset = truePois.get(random.nextInt(truePois.size()));
-            deleteRelationForTest(poiToReset);
+            // 因为懒加载的原因，在关系建立上运行存在问题，暂时搁置
+            // ToDo
+            // deleteRelationForTest(poiToReset);
             setPoiToFalse(poiToReset);
             System.out.println("POI [" + poiToReset.getName() + "] 已被重置为假");
         } else{

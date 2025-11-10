@@ -94,6 +94,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted } from "vue";
 import { useRouter } from 'vue-router';
+import {poiManagerApi} from "../api/poiManagerApi";
 import AMapLoader from "@amap/amap-jsapi-loader";
 import {
   ElHeader,

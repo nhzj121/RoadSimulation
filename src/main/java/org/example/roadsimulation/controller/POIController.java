@@ -1,5 +1,7 @@
 package org.example.roadsimulation.controller;
 
+import org.apache.coyote.Response;
+import org.example.roadsimulation.DataInitializer;
 import org.example.roadsimulation.dto.POIDTO;
 import org.example.roadsimulation.entity.POI;
 import org.example.roadsimulation.service.POIService;
@@ -40,9 +42,11 @@ import java.util.Optional;
 public class POIController {
 
     private final POIService poiService;
+    private DataInitializer dataInitializer;
 
     @Autowired
-    public POIController(POIService poiService) {
+    public POIController(POIService poiService, DataInitializer dataInitializer) {
+        this.dataInitializer = dataInitializer;
         this.poiService = poiService;
     }
 
@@ -421,5 +425,12 @@ public class POIController {
             jakarta.validation.ConstraintViolationException e) {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(ApiResponse.error("参数校验失败: " + e.getMessage()));
+    }
+
+    // =============================货物自动生成相关POI点操作========================================
+    @GetMapping("/able-to-show")
+    public ResponseEntity<ApiResponse<List<POI>>> showAbleToShow(){
+        List<POI> ableToShow = dataInitializer.getCurrentTruePois();
+        return ResponseEntity.ok(ApiResponse.success("查找目标成功", ableToShow));
     }
 }
