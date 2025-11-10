@@ -17,6 +17,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -102,8 +103,8 @@ public class RouteServiceImpl implements RouteService {
             // 使用POI服务获取POI实体
             POI poi = poiService.getPOIEntityById(poiId);
             if (poi != null) {
-                Double longitude = poi.getLongitude();
-                Double latitude = poi.getLatitude();
+                BigDecimal longitude = poi.getLongitude();
+                BigDecimal latitude = poi.getLatitude();
 
                 if (longitude != null && latitude != null) {
                     return String.format("%.6f,%.6f", longitude, latitude);
