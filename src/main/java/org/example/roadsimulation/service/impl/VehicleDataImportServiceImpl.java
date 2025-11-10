@@ -7,15 +7,16 @@ import org.example.roadsimulation.service.VehicleDataImportService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.event.ContextRefreshedEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
-import jakarta.annotation.PostConstruct;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 
 @Service
-@Transactional
 public class VehicleDataImportServiceImpl implements VehicleDataImportService {
 
     private static final Logger logger = LoggerFactory.getLogger(VehicleDataImportServiceImpl.class);
@@ -29,14 +30,23 @@ public class VehicleDataImportServiceImpl implements VehicleDataImportService {
     // 存储导入的车辆数据
     private final List<Vehicle> importedVehicles = new ArrayList<>();
 
+    // 标记数据是否已导入，避免重复导入
+    private boolean dataImported = false;
+
     public VehicleDataImportServiceImpl(VehicleRepository vehicleRepository, ObjectMapper objectMapper) {
         this.vehicleRepository = vehicleRepository;
         this.objectMapper = objectMapper;
     }
 
-    @PostConstruct
+    @EventListener(ContextRefreshedEvent.class)
     @Override
     public int importVehicleData() {
+        // 避免重复导入
+        if (dataImported) {
+            logger.info("车辆数据已导入，跳过重复导入");
+            return importedVehicles.size();
+        }
+
         try {
             logger.info("开始导入车辆数据...");
 
@@ -61,7 +71,12 @@ public class VehicleDataImportServiceImpl implements VehicleDataImportService {
                         Vehicle savedVehicle = vehicleRepository.save(vehicle);
                         importedVehicles.add(savedVehicle);
                         importedCount++;
-                        logger.debug("成功导入车辆: {}", savedVehicle.getLicensePlate());
+
+                        // 添加容积信息到日志
+                        String volumeInfo = savedVehicle.getCargoVolume() != null ?
+                                String.format(" (容积: %.2f m³)", savedVehicle.getCargoVolume()) : " (容积: 未知)";
+
+                        logger.debug("成功导入车辆: {}{}", savedVehicle.getLicensePlate(), volumeInfo);
                     } else {
                         logger.debug("车辆已存在，跳过导入: {}", vehicle.getLicensePlate());
                     }
@@ -71,6 +86,7 @@ public class VehicleDataImportServiceImpl implements VehicleDataImportService {
                 }
             }
 
+            dataImported = true;
             logger.info("车辆数据导入完成，共导入 {} 种车型", importedCount);
             return importedCount;
 
@@ -108,9 +124,23 @@ public class VehicleDataImportServiceImpl implements VehicleDataImportService {
         }
 
         // 解析尺寸数据
-        vehicle.setLength(parseDimension((String) vehicleData.get("length")));
-        vehicle.setWidth(parseDimension((String) vehicleData.get("width")));
-        vehicle.setHeight(parseDimension((String) vehicleData.get("height")));
+        Double length = parseDimension((String) vehicleData.get("length"));
+        Double width = parseDimension((String) vehicleData.get("width"));
+        Double height = parseDimension((String) vehicleData.get("height"));
+
+        vehicle.setLength(length);
+        vehicle.setWidth(width);
+        vehicle.setHeight(height);
+
+        // 计算货箱容积（长×宽×高）
+        if (length != null && width != null && height != null) {
+            double volume = length * width * height;
+            vehicle.setCargoVolume(volume);
+            logger.debug("计算货箱容积: {} × {} × {} = {} 立方米", length, width, height, volume);
+        } else {
+            vehicle.setCargoVolume(null);
+            logger.warn("尺寸数据不完整，无法计算货箱容积: 长={}, 宽={}, 高={}", length, width, height);
+        }
 
         // 解析速度数据
         String speedStr = (String) vehicleData.get("speed");
