@@ -36,7 +36,6 @@ import java.util.stream.Collectors;
 public class DataInitializer{
 
     private final GoodsPOIGenerateService goodsPOIGenerateService;
-    private final POIService poiService;
     private final EnrollmentRepository enrollmentRepository;
     private final GoodsRepository goodsRepository;
     private final POIRepository poiRepository;
@@ -53,15 +52,14 @@ public class DataInitializer{
     private double trueProbability = 0.25; // 判断为真的概率
 
     @Autowired
-    public DataInitializer(GoodsPOIGenerateService goodsPOIGenerateService,  POIService poiService, EnrollmentRepository enrollmentRepository, GoodsRepository goodsRepository,  POIRepository poiRepository) {
+    public DataInitializer(GoodsPOIGenerateService goodsPOIGenerateService, EnrollmentRepository enrollmentRepository, GoodsRepository goodsRepository,  POIRepository poiRepository) {
         this.goodsPOIGenerateService = goodsPOIGenerateService;
-        this.poiService = poiService;
         this.enrollmentRepository = enrollmentRepository;
         this.goodsRepository = goodsRepository;
         this.poiRepository = poiRepository;
     }
 
-    //@PostConstruct
+    // @PostConstruct
     public void initialize(){
         // 初始化 POI 列表
         this.goalFactoryList = getFilteredPOI("玻璃", POI.POIType.FACTORY);
@@ -129,7 +127,7 @@ public class DataInitializer{
      * 根据 关键字姓名模糊化搜素 与 种类限制 进行POI数据的筛选
      */
     public List<POI> getFilteredPOI(String keyword, POI.POIType goalPOIType) {
-        return poiService.searchByName(keyword).stream()
+        return poiRepository.findByNameContainingIgnoreCase(keyword).stream()
                 .filter(poi -> poi.getPoiType().equals(goalPOIType))
                 .collect(Collectors.toList());
     }
@@ -180,7 +178,7 @@ public class DataInitializer{
                     setPoiToTrue(poi);
                     System.out.println("POI [" + poi.getName() + "] 判断为真");
 
-                    this.trueProbability /= 2;
+                    this.trueProbability -= 0.03;
 
                     // 这里可以添加其他业务逻辑，比如初始化关系
                     // ToDo
@@ -215,6 +213,7 @@ public class DataInitializer{
             // ToDo
             // deleteRelationForTest(poiToReset);
             setPoiToFalse(poiToReset);
+            this.trueProbability += 0.03;
             System.out.println("POI [" + poiToReset.getName() + "] 已被重置为假");
         } else{
             System.out.println("无可重置的POI数据");
@@ -346,6 +345,14 @@ public class DataInitializer{
         System.out.println("项目关闭，清理模拟数据...");
         cleanupExistingEnrollments();
         System.out.println("模拟数据清理完成");
+    }
+
+    /// 和其它模块的对接
+    /**
+     * 获取当前可以展示的POI列表，只展示有货物的POI
+     */
+    public List<POI> getPOIAbleToShow(){
+        return getCurrentTruePois();
     }
 }
 

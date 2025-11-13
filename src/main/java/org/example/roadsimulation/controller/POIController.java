@@ -130,6 +130,18 @@ public class POIController {
     }
 
     /**
+     * 获取可以展示的POI数据
+     */
+    @GetMapping("/able-to-show")
+    public ResponseEntity<?> getPOIAbleToShow() {
+        try{
+            List<POI> poiAbleToShow = poiService.getPOIAbleToShow();
+            return ResponseEntity.ok(createSuccessResponse("获取POI列表成功", poiAbleToShow));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(createErrorResponse(e.getMessage()));
+        }
+    }
+    /**
      * 分页查询 POI
      */
     @GetMapping("/page")
@@ -427,10 +439,5 @@ public class POIController {
                 .body(ApiResponse.error("参数校验失败: " + e.getMessage()));
     }
 
-    // =============================货物自动生成相关POI点操作========================================
-    @GetMapping("/able-to-show")
-    public ResponseEntity<ApiResponse<List<POI>>> showAbleToShow(){
-        List<POI> ableToShow = dataInitializer.getCurrentTruePois();
-        return ResponseEntity.ok(ApiResponse.success("查找目标成功", ableToShow));
-    }
+
 }

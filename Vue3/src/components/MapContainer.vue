@@ -96,6 +96,12 @@ import { ref, reactive, computed, onMounted, onUnmounted } from "vue";
 import { useRouter } from 'vue-router';
 import {poiManagerApi} from "../api/poiManagerApi";
 import AMapLoader from "@amap/amap-jsapi-loader";
+import factoryIcon from '../../public/icons/factory.png';
+import warehouseIcon from '../../public/icons/warehouse.png';
+import gasStationIcon from '../../public/icons/gas-station.png';
+import maintenanceIcon from '../../public/icons/maintenance-center.png';
+import restAreaIcon from '../../public/icons/rest-area.png';
+import transportIcon from '../../public/icons/distribution-center.png';
 import {
   ElHeader,
   ElAside,
@@ -104,7 +110,7 @@ import {
   ElCard,
   ElButton,
   ElButtonGroup,
-  ElCheckTag,
+  ElCheckTag, ElMessage,
 } from "element-plus";
 import { InfoFilled } from '@element-plus/icons-vue'
 
@@ -121,8 +127,165 @@ const speedFactor = ref(1);
 const setSpeed = (val) => speedFactor.value = val;
 const decSpeed = () => speedFactor.value = Math.max(0.5, speedFactor.value - 0.5);
 const incSpeed = () => speedFactor.value = Math.min(5, speedFactor.value + 0.5);
-const startSimulation = () => console.log("开始仿真");
-const resetSimulation = () => console.log("重置仿真");
+
+// ToDo 添加的用于展示POI点的功能
+// 添加仿真循环时POI点自动生成的对应功能
+const poiMarkers = ref([]); // 存储POI标记
+const isSimulationRunning = ref(false); // 仿真运行状态
+
+// 图标配置 - 根据POI类型使用不同的图标
+const poiIcons = {
+  'FACTORY': factoryIcon,
+  'WAREHOUSE': warehouseIcon,
+  'GAS_STATION': gasStationIcon,
+  'MAINTENANCE_CENTER': maintenanceIcon,
+  'REST_AREA': restAreaIcon,
+  'DISTRIBUTION_CENTER': transportIcon
+};
+
+// 获取POI类型对应的图标
+const getPOIIcon = (poiType) => {
+  return poiIcons[poiType] || factoryIcon; // 默认使用工厂图标
+};
+
+// 启动仿真 - 获取并显示可展示的POI
+const startSimulation = async () => {
+  try {
+    console.log("开始仿真");
+    isSimulationRunning.value = true;
+
+    // 获取可展示的POI数据
+    const pois = await poiManagerApi.getPOIAbleToShow();
+    console.log('获取到可展示的POI数据：', pois);
+
+    // 清除现有标记
+    clearPOIMarkers();
+
+    // 添加POI标记到地图
+    await addPOIMarkersToMap(pois);
+
+    ElMessage.success(`成功加载 ${pois.length} 个POI点`);
+
+  } catch (error) {
+    console.error("启动仿真模拟失败：", error);
+    ElMessage.error('获取POI数据失败：' + error.message);
+  }
+};
+
+// 重置仿真
+const resetSimulation = () => {
+  console.log("重置仿真");
+  isSimulationRunning.value = false;
+  clearPOIMarkers();
+  ElMessage.info('仿真已重置');
+};
+
+// 清除POI标记
+const clearPOIMarkers = () => {
+  if(poiMarkers.value.length > 0 && map){
+    poiMarkers.value.forEach(marker => {
+      map.remove(marker);
+    });
+    poiMarkers.value = [];
+    console.log('已清除所有POI标记');
+  }
+};
+
+// 添加POI标记到地图
+const addPOIMarkersToMap = async (pois) => {
+  if(!map || !pois || pois.length === 0) {
+    console.log('没有POI数据或地图未初始化');
+    return;
+  }
+
+  try {
+    const markers = [];
+
+    for(const poi of pois){
+      // 根据POI类型选择图标
+      const iconUrl = getPOIIcon(poi.poiType);
+      const icon = new AMap.Icon({
+        image: iconUrl,
+        size: new AMap.Size(32, 32),
+        imageSize: new AMap.Size(32, 32)
+      });
+
+      const marker = new AMap.Marker({
+        position: [poi.longitude, poi.latitude],
+        icon: icon,
+        title: `${poi.name} (${poi.poiType})`,
+        extData: poi // 将原始数据保存在标记中
+      });
+
+      // 添加点击事件
+      marker.on('click', () => {
+        handlePOIClick(poi);
+      });
+
+      // 添加到地图
+      map.add(marker);
+      markers.push(marker);
+    }
+
+    poiMarkers.value = markers;
+    console.log(`成功添加 ${markers.length} 个POI标记到地图`);
+
+    // 调整地图视野以包含所有标记
+    if (markers.length > 0) {
+      map.setFitView();
+    }
+
+  } catch (error){
+    console.error('添加POI标记失败', error);
+    throw error;
+  }
+};
+
+// 处理POI点击事件
+const handlePOIClick = (poi) => {
+  console.log('点击POI:', poi);
+
+  // 显示POI详细信息
+  const poiTypeText = getPOITypeText(poi.poiType);
+  ElMessage.info(`POI: ${poi.name} (${poiTypeText})`);
+
+  // 显示信息窗口
+  showInfoWindow(poi);
+};
+
+// 获取POI类型的中文显示
+const getPOITypeText = (poiType) => {
+  const typeMap = {
+    'FACTORY': '工厂',
+    'WAREHOUSE': '仓库',
+    'GAS_STATION': '加油站',
+    'MAINTENANCE_CENTER': '维修中心',
+    'REST_AREA': '休息区',
+    'DISTRIBUTION_CENTER': '运输中心'
+  };
+  return typeMap[poiType] || poiType;
+};
+
+// 显示信息窗口
+const showInfoWindow = (poi) => {
+  if (!map) return;
+
+  const infoWindow = new AMap.InfoWindow({
+    content: `
+            <div style="padding: 10px; min-width: 200px; color: #000;">
+                <h3 style="margin: 0 0 8px 0; color: #000;">${poi.name}</h3>
+                <p style="margin: 4px 0; color: #000;"><strong>类型:</strong> ${getPOITypeText(poi.poiType)}</p>
+                <p style="margin: 4px 0; color: #000;"><strong>坐标:</strong> ${poi.longitude.toFixed(6)}, ${poi.latitude.toFixed(6)}</p>
+                ${poi.address ? `<p style="margin: 4px 0; color: #000;"><strong>地址:</strong> ${poi.address}</p>` : ''}
+                ${poi.tel ? `<p style="margin: 4px 0; color: #000;"><strong>电话:</strong> ${poi.tel}</p>` : ''}
+            </div>
+        `,
+    offset: new AMap.Pixel(0, -30)
+  });
+
+  infoWindow.open(map, [poi.longitude, poi.latitude]);
+};
+// ToDo 添加的用于展示POI点的功能
 
 // --- 显示筛选 ---
 const filters = reactive([
@@ -167,7 +330,7 @@ onMounted(() => {
   AMapLoader.load({
     key: "e0ea478e44e417b4c2fc9a54126debaa",
     version: "2.0",
-    plugins: ["AMap.Scale", "AMap.Driving"], // 1. 在这里加载 AMap.Driving 插件
+    plugins: ["AMap.Scale", "AMap.Driving", "AMap.Marker"], // 1. 在这里加载 AMap.Driving 插件
   })
     .then((AMap) => {
       map = new AMap.Map("container", {

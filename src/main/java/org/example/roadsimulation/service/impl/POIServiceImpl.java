@@ -1,6 +1,7 @@
 package org.example.roadsimulation.service.impl;
 
 import jakarta.persistence.EntityManager;
+import org.example.roadsimulation.DataInitializer;
 import org.example.roadsimulation.dto.POIDTO;
 import org.example.roadsimulation.entity.POI;
 import org.example.roadsimulation.repository.POIRepository;
@@ -29,10 +30,12 @@ import java.util.stream.Collectors;
 public class POIServiceImpl implements POIService {
 
     private final POIRepository poiRepository;
+    private final DataInitializer dataInitializer;
 
     @Autowired
-    public POIServiceImpl(POIRepository poiRepository) {
+    public POIServiceImpl(POIRepository poiRepository,  DataInitializer dataInitializer) {
         this.poiRepository = poiRepository;
+        this.dataInitializer = dataInitializer;
     }
 
     /**
@@ -116,6 +119,15 @@ public class POIServiceImpl implements POIService {
     @Transactional(readOnly = true)
     public List<POI> getAll() {
         return poiRepository.findAll();
+    }
+
+    /**
+     * 查询可以展示的POI数据
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public List<POI> getPOIAbleToShow(){
+        return dataInitializer.getPOIAbleToShow();
     }
 
     /**

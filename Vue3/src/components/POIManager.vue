@@ -144,12 +144,12 @@ import {ref, onMounted, onUnmounted, computed, nextTick} from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {poiManagerApi, POIFromDB} from "../api/poiManagerApi";
 import AMapLoader from "@amap/amap-jsapi-loader";
-import factoryIcon from '@/assets/icons/factory.png';
-import warehouseIcon from '@/assets/icons/warehouse.png';
-import gasStationIcon from '@/assets/icons/gas-station.png';
-import maintenanceIcon from '@/assets/icons/maintenance-center.png';
-import restAreaIcon from '@/assets/icons/rest-area.png';
-import transportIcon from '@/assets/icons/distribution-center.png';
+import factoryIcon from '../../public/icons/factory.png';
+import warehouseIcon from '../../public/icons/warehouse.png';
+import gasStationIcon from '../../public/icons/gas-station.png';
+import maintenanceIcon from '../../public/icons/maintenance-center.png';
+import restAreaIcon from '../../public/icons/rest-area.png';
+import transportIcon from '../../public/icons/distribution-center.png';
 import { useRouter } from 'vue-router'
 
 // VueRouter配置
@@ -207,7 +207,7 @@ const poiCategories = ref<POICategory[]>([
     name: 'factory',
     label: '工厂',
     types: ['170300'],
-    keywords: ['工厂', '工业园', '加工厂'],//
+    keywords: [],//'工厂', '工业园', '加工厂'
     visible: true
   },
   {
@@ -262,6 +262,7 @@ const chengduPlainPolygon = [
   [104.8000, 31.1000], [104.8000, 30.3000],
   [103.848084, 30.076928], [103.463537, 30.174276]
 ];
+// 103.566708,31.019274|103.700000,31.100000|104.800000,31.100000|104.800000,30.300000|103.848084,30.076928|103.463537,30.174276|103.566708,31.019274
 
 // 图标配置
 const poiIcons = {
