@@ -20,7 +20,7 @@ public class Vehicle {
     private Long id;
 
     @NotBlank(message = "车牌号不能为空")
-    @Size(max = 20, message = "车牌号长度不能超过20个字符")
+    @Size(max = 25, message = "车牌号长度不能超过25个字符")
     @Column(name = "license_plate", nullable = false, unique = true)
     private String licensePlate;
 
