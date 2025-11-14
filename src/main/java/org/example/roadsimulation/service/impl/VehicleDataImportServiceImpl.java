@@ -34,7 +34,7 @@ public class VehicleDataImportServiceImpl implements VehicleDataImportService {
         this.objectMapper = objectMapper;
     }
 
-    @PostConstruct
+    //@PostConstruct
     @Override
     public int importVehicleData() {
         try {

@@ -37,7 +37,10 @@ import java.util.Optional;
  */
 @RestController
 @RequestMapping("/api/pois")
-@CrossOrigin(origins = "*", maxAge = 3600)
+@CrossOrigin(origins = {"http://localhost:5173", "http://127.0.0.1:5173"},
+        maxAge = 3600,
+        allowedHeaders = "*",
+        methods = {RequestMethod.GET, RequestMethod.POST, RequestMethod.PUT, RequestMethod.DELETE, RequestMethod.OPTIONS})
 @Validated
 public class POIController {
 

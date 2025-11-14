@@ -102,6 +102,7 @@ import gasStationIcon from '../../public/icons/gas-station.png';
 import maintenanceIcon from '../../public/icons/maintenance-center.png';
 import restAreaIcon from '../../public/icons/rest-area.png';
 import transportIcon from '../../public/icons/distribution-center.png';
+import materialMarketIcon from '../../public/icons/materialMarket.png';
 import {
   ElHeader,
   ElAside,
@@ -140,7 +141,8 @@ const poiIcons = {
   'GAS_STATION': gasStationIcon,
   'MAINTENANCE_CENTER': maintenanceIcon,
   'REST_AREA': restAreaIcon,
-  'DISTRIBUTION_CENTER': transportIcon
+  'DISTRIBUTION_CENTER': transportIcon,
+  'MATERIAL_MARKET': materialMarketIcon
 };
 
 // 获取POI类型对应的图标
@@ -261,7 +263,10 @@ const getPOITypeText = (poiType) => {
     'GAS_STATION': '加油站',
     'MAINTENANCE_CENTER': '维修中心',
     'REST_AREA': '休息区',
-    'DISTRIBUTION_CENTER': '运输中心'
+    'DISTRIBUTION_CENTER': '运输中心',
+    'MATERIAL_MARKET': '建材市场',
+    'Vegetable_Base': '蔬菜基地',
+    'Vegetable_Market': '蔬菜市场'
   };
   return typeMap[poiType] || poiType;
 };

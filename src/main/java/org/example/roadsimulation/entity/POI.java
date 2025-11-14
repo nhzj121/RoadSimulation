@@ -1,5 +1,6 @@
 package org.example.roadsimulation.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 
 import java.math.BigDecimal;
@@ -51,7 +52,10 @@ public class POI {
         FACTORY,                // 工厂
         GAS_STATION,            // 加油站
         MAINTENANCE_CENTER,     // 维修中心
-        REST_AREA               // 休息区
+        REST_AREA,               // 休息区
+        MATERIAL_MARKET,         // 建材市场
+        VEGETABLE_BASE,         // 蔬菜基地
+        VEGETABLE_MARKET       // 蔬菜市场
     }
 
     @Enumerated(EnumType.STRING)

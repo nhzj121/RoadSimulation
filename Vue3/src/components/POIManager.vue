@@ -150,6 +150,9 @@ import gasStationIcon from '../../public/icons/gas-station.png';
 import maintenanceIcon from '../../public/icons/maintenance-center.png';
 import restAreaIcon from '../../public/icons/rest-area.png';
 import transportIcon from '../../public/icons/distribution-center.png';
+import materialMarketIcon from '../../public/icons/materialMarket.png';
+import vegetableBaseIcon from '../../public/icons/vegetable-base.png';
+import vegetableMarketIcon from '../../public/icons/vegetable-market.png';
 import { useRouter } from 'vue-router'
 
 // VueRouter配置
@@ -198,7 +201,10 @@ const poiData = ref<Record<string, POI[]>>({
   gasStation: [],
   maintenance: [],
   restArea: [],
-  transport: []
+  transport: [],
+  materialMarket: [],
+  vegetableBase: [],
+  vegetableMarket: []
 })
 
 // POI分类配置
@@ -207,7 +213,7 @@ const poiCategories = ref<POICategory[]>([
     name: 'factory',
     label: '工厂',
     types: ['170300'],
-    keywords: [],//'工厂', '工业园', '加工厂'
+    keywords: ['木材厂','家具厂'],//'水泥', '砂石'
     visible: true
   },
   {
@@ -243,6 +249,27 @@ const poiCategories = ref<POICategory[]>([
     label: '运输中心',
     types: ['070500', '150107', '150210'],
     keywords: ['配送中心', '物流'],//
+    visible: true
+  },
+  {
+    name: 'materialMarket',
+    label: '建材市场',
+    types: ['060603'],
+    keywords: ['建材市场'],
+    visible: true
+  },
+  {
+    name: 'vegetableBase',
+    label: '蔬菜基地',
+    types: ['170400'],
+    keywords: ['蔬菜基地', '蔬菜'],
+    visible: true
+  },
+  {
+    name: 'vegetableMarket',
+    label: '蔬菜市场',
+    types: ['060705'],
+    keywords: ['蔬菜市场'],
     visible: true
   }
 ]);
@@ -301,6 +328,24 @@ const poiIcons = {
     size: [22, 22],
     anchor: 'bottom-center',
     color: '#073B4C'
+  },
+  '建材市场':{
+    url: materialMarketIcon,
+    size:[22, 22],
+    anchor: 'bottom-center',
+    color: '#0c0b09'
+  },
+  '蔬菜基地': {
+    url: vegetableBaseIcon,
+    size: [22, 22],
+    anchor: 'bottom-center',
+    color: '#4CAF50' // 绿色
+  },
+  '蔬菜市场': {
+    url: vegetableMarketIcon,
+    size: [22, 22],
+    anchor: 'bottom-center',
+    color: '#8BC34A' // 浅绿色
   }
 };
 
@@ -321,7 +366,10 @@ const typeMapping = {
   'gasStation': 'GAS_STATION',
   'maintenance': 'MAINTENANCE_CENTER',
   'restArea': 'REST_AREA',
-  'transport': 'DISTRIBUTION_CENTER'
+  'transport': 'DISTRIBUTION_CENTER',
+  'materialMarket': 'MATERIAL_MARKET',
+  'vegetableBase': 'VEGETABLE_BASE',
+  'vegetableMarket': 'VEGETABLE_MARKET'
 } as const;
 
 const reverseTypeMapping = {
@@ -330,7 +378,10 @@ const reverseTypeMapping = {
   'GAS_STATION': 'gasStation',
   'MAINTENANCE_CENTER': 'maintenance',
   'REST_AREA': 'restArea',
-  'DISTRIBUTION_CENTER': 'transport'
+  'DISTRIBUTION_CENTER': 'transport',
+  'MATERIAL_MARKET': 'materialMarket',
+  'VEGETABLE_BASE': 'vegetableBase',
+  'VEGETABLE_MARKET': 'vegetableMarket'
 } as const;
 
 // 地图初始化
@@ -803,15 +854,25 @@ const searchSinglePage = (keyword: string, categoryName: string, pageIndex: numb
       if (status === 'complete' && result.poiList && result.poiList.pois) {
         const categoryConfig = poiCategories.value.find(cat => cat.label === categoryName);
         const categoryKey = categoryConfig ? categoryConfig.name : categoryName;
-        const pois: POI[] = result.poiList.pois.map((poi: any) => ({
-          id: poi.id,
-          name: poi.name,
-          type: categoryName,
-          location: poi.location,
-          address: poi.address,
-          tel: poi.tel || '',
-          category: categoryKey
-        }));
+        // 过滤POI数据：如果是工厂分类，跳过名称中包含"仓库"的POI
+        const pois: POI[] = result.poiList.pois
+          .filter((poi: any) => {
+            // 如果是工厂分类，检查名称是否包含"仓库"
+            if (categoryName === '工厂' && poi.name && poi.name.includes('仓库')) {
+              console.log(`🚫 跳过工厂分类中的仓库POI: ${poi.name}`);
+              return false; // 跳过这个POI
+            }
+            return true; // 保留其他POI
+          })
+          .map((poi: any) => ({
+            id: poi.id,
+            name: poi.name,
+            type: categoryName,
+            location: poi.location,
+            address: poi.address,
+            tel: poi.tel || '',
+            category: categoryKey
+          }));
         resolve(pois);
       } else {
         console.warn(`搜索 "${keyword}" 第${pageIndex}页状态: ${status}`);
@@ -916,6 +977,10 @@ const classifyPOIData = (pois: POI[]): void => {
   pois.forEach(poi => {
     const categoryKey = poi.category
 
+    if (categoryKey === 'factory' && poi.name && poi.name.includes('仓库')) {
+      console.log(`🚫 分类阶段跳过工厂仓库POI: ${poi.name}`)
+      return
+    }
     if (categoryKey && poiData.value[categoryKey as keyof typeof poiData.value] !== undefined) {
       poiData.value[categoryKey as keyof typeof poiData.value].push(poi)
       classifiedCount++

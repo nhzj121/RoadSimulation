@@ -41,7 +41,18 @@ public class DataInitializer{
     private final POIRepository poiRepository;
 
     public List<POI> goalFactoryList;
+    public List<POI> CementPlantList; // 水泥厂
+    public List<POI> MaterialMarketList; // 建材市场
+    public List<POI> QuarryList; // 砂石场/沙石场
+    public List<POI> VegetableBaseList; // 蔬菜基地
+    public List<POI> VegetableMarketList; // 蔬菜市场
+
     public Goods goodsForTest;
+    public Goods Cement; // 水泥
+    public Goods Dinas; // 砂石
+    public Goods SandStone; // 沙石
+    public Goods Vegetable; // 蔬菜
+
 //    public List<POI> goalNeedGoodsPOIList = getFilteredPOI("家具", POI.POIType.FACTORY);
     // POI的判断状态和计数
     private final Map<POI, Boolean> poiIsWithGoods = new ConcurrentHashMap<>();
@@ -59,7 +70,7 @@ public class DataInitializer{
         this.poiRepository = poiRepository;
     }
 
-    // @PostConstruct
+    //@PostConstruct
     public void initialize(){
         // 初始化 POI 列表
         this.goalFactoryList = getFilteredPOI("玻璃", POI.POIType.FACTORY);
@@ -81,7 +92,7 @@ public class DataInitializer{
     private void initalizePOIStatus(){ //List<POI> goalPOITypeList
         /// 测试用例
         for(POI poi: goalFactoryList){
-            poiIsWithGoods.put(poi, false);
+            poiIsWithGoods.put(poi, true);
             poiTrueCount.put(poi, 0);
         }
         /* ----------------- */
