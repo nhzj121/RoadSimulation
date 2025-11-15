@@ -158,7 +158,7 @@ public class DataInitializer{
     /**
      *  周期性的随机判断 - 每5秒执行一次
      */
-    @Scheduled(fixedRate = 10000)
+    @Scheduled(fixedRate = 5000)
     @Transactional
     public void periodicJudgement(){
         if (goalFactoryList.isEmpty()) {
@@ -200,7 +200,7 @@ public class DataInitializer{
     /**
      * 周期性的重置判断 - 每12秒执行一次
      */
-    @Scheduled(fixedRate = 15000) // 12秒一个周期
+    @Scheduled(fixedRate = 9000) // 12秒一个周期
     @Transactional
     public void periodicReset() {
         if (goalFactoryList.isEmpty()) {
@@ -218,7 +218,6 @@ public class DataInitializer{
             // ToDo
             // deleteRelationForTest(poiToReset);
             setPoiToFalse(poiToReset);
-            this.trueProbability += 0.03;
             System.out.println("POI [" + poiToReset.getName() + "] 已被重置为假");
         } else{
             System.out.println("无可重置的POI数据");

@@ -35,6 +35,9 @@ import java.util.Optional;
  * 3. 统一的响应格式和异常处理
  * 4. 参数校验和业务逻辑验证
  */
+
+// ToDo 将方法中相关的操作进行 DTO 表示
+
 @RestController
 @RequestMapping("/api/pois")
 @CrossOrigin(origins = {"http://localhost:5173", "http://127.0.0.1:5173"},

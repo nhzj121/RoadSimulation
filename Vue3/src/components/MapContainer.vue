@@ -134,8 +134,12 @@ const setSpeed = (val) => speedFactor.value = val;
 const decSpeed = () => speedFactor.value = Math.max(0.5, speedFactor.value - 0.5);
 const incSpeed = () => speedFactor.value = Math.min(5, speedFactor.value + 0.5);
 
+const simulationTimer = ref(null);
+const simulationInterval = ref(2000); // 5秒更新一次
+
 // --- 原有POI功能 ---
 const poiMarkers = ref([]); // 存储POI标记
+const currentPOIs = ref([]); // 当前显示的POI数据
 const isSimulationRunning = ref(false); // 仿真运行状态
 
 // 图标配置 - 根据POI类型使用不同的图标
@@ -185,40 +189,112 @@ const getPOIIcon = (poiType) => {
   return poiIcons[frontendType] || factoryIcon; // 默认使用工厂图标
 };
 
-// 启动仿真 - 获取并显示可展示的POI
+// --- 核心仿真方法 ---
+
+/**
+ * 启动仿真
+ */
 const startSimulation = async () => {
   try {
     console.log("开始仿真");
     isSimulationRunning.value = true;
 
+    // 初始加载POI数据
+    await updatePOIData();
+
+    // 启动定时更新
+    startSimulationTimer();
+
+    // 启动车辆动画和路线规划
+    await startVehicleSimulation();
+
+    ElMessage.success('仿真已启动');
+
+  } catch (error) {
+    console.error("启动仿真模拟失败：", error);
+    ElMessage.error('启动仿真失败：' + error.message);
+    isSimulationRunning.value = false;
+  }
+};
+
+/**
+ * 重置仿真
+ */
+const resetSimulation = () => {
+  console.log("重置仿真");
+  isSimulationRunning.value = false;
+
+  // 停止定时器
+  stopSimulationTimer();
+
+  // 清除所有可视化元素
+  clearPOIMarkers();
+  clearDrawnRoutes();
+
+  // 重置数据
+  currentPOIs.value = [];
+
+  ElMessage.info('仿真已重置');
+};
+
+/**
+ * 启动仿真定时器
+ */
+const startSimulationTimer = () => {
+  if (simulationTimer.value) {
+    clearInterval(simulationTimer.value);
+  }
+
+  simulationTimer.value = setInterval(async () => {
+    if (isSimulationRunning.value) {
+      await updatePOIData();
+      // 这里可以添加其他定时更新的数据，如车辆状态、任务状态等
+    }
+  }, simulationInterval.value);
+};
+
+/**
+ * 停止仿真定时器
+ */
+const stopSimulationTimer = () => {
+  if (simulationTimer.value) {
+    clearInterval(simulationTimer.value);
+    simulationTimer.value = null;
+  }
+};
+
+/**
+ * 更新POI数据 - 从 startSimulation 中提取的核心方法
+ */
+const updatePOIData = async () => {
+  try {
+    console.log("更新POI数据");
+
     // 获取可展示的POI数据
     const pois = await poiManagerApi.getPOIAbleToShow();
     console.log('获取到可展示的POI数据：', pois);
 
-    // 清除现有标记
-    clearPOIMarkers();
+    if (!pois || pois.length === 0) {
+      console.warn('当前没有可展示的POI数据');
+      return;
+    }
 
-    // 添加POI标记到地图
+    // 更新当前POI数据
+    currentPOIs.value = pois;
+
+    // 清除现有标记并重新添加
+    clearPOIMarkers();
     await addPOIMarkersToMap(pois);
 
-    // 新增：启动车辆动画和路线规划
-    await startVehicleSimulation();
+    // 更新统计信息
+    stats.poiCount = pois.length;
 
-    ElMessage.success(`成功加载 ${pois.length} 个POI点`);
+    console.log(`成功更新 ${pois.length} 个POI点`);
 
   } catch (error) {
-    console.error("启动仿真模拟失败：", error);
-    ElMessage.error('获取POI数据失败：' + error.message);
+    console.error("更新POI数据失败：", error);
+    // 不抛出错误，避免影响其他定时任务
   }
-};
-
-// 重置仿真
-const resetSimulation = () => {
-  console.log("重置仿真");
-  isSimulationRunning.value = false;
-  clearPOIMarkers();
-  clearDrawnRoutes(); // 新增：清除车辆动画和路线
-  ElMessage.info('仿真已重置');
 };
 
 // 清除POI标记
@@ -253,8 +329,8 @@ const addPOIMarkersToMap = async (pois) => {
       const iconUrl = getPOIIcon(poi.poiType);
       const icon = new AMapLib.Icon({
         image: iconUrl,
-        size: new AMapLib.Size(32, 32),
-        imageSize: new AMapLib.Size(32, 32)
+        size: new AMapLib.Size(16, 16),
+        imageSize: new AMapLib.Size(16, 16)
       });
 
       const marker = new AMapLib.Marker({
@@ -294,7 +370,6 @@ const handlePOIClick = (poi) => {
 
   // 显示POI详细信息
   const poiTypeText = getPOITypeText(poi.poiType);
-  ElMessage.info(`POI: ${poi.name} (${poiTypeText})`);
 
   // 显示信息窗口
   showInfoWindow(poi);
@@ -685,6 +760,7 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  stopSimulationTimer();
   map?.destroy();
   clearDrawnRoutes();
 });
