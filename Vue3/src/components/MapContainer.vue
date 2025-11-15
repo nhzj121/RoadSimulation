@@ -104,6 +104,8 @@ import maintenanceIcon from '../../public/icons/maintenance-center.png';
 import restAreaIcon from '../../public/icons/rest-area.png';
 import transportIcon from '../../public/icons/distribution-center.png';
 import materialMarketIcon from '../../public/icons/materialMarket.png';
+import vegetableBaseIcon from '../../public/icons/vegetable-base.png';
+import vegetableMarketIcon from '../../public/icons/vegetable-market.png';
 import {
   ElHeader,
   ElAside,
@@ -115,7 +117,6 @@ import {
   ElCheckTag, ElMessage,
 } from "element-plus";
 import { InfoFilled } from '@element-plus/icons-vue'
-import axios from 'axios'
 
 let map = null;
 let AMapLib = null; // 保存加载后的 AMap 构造对象
@@ -145,12 +146,43 @@ const poiIcons = {
   'MAINTENANCE_CENTER': maintenanceIcon,
   'REST_AREA': restAreaIcon,
   'DISTRIBUTION_CENTER': transportIcon,
-  'MATERIAL_MARKET': materialMarketIcon
+  'MATERIAL_MARKET': materialMarketIcon,
+  'VEGETABLE_BASE': vegetableBaseIcon,
+  'VEGETABLE_MARKET': vegetableMarketIcon,
 };
 
 // 获取POI类型对应的图标
 const getPOIIcon = (poiType) => {
-  return poiIcons[poiType] || factoryIcon; // 默认使用工厂图标
+  // 创建类型映射表
+  const typeMapping = {
+    'FACTORY': '工厂',
+    'WAREHOUSE': '仓库',
+    'GAS_STATION': '加油站',
+    'MAINTENANCE_CENTER': '维修中心',
+    'REST_AREA': '休息区',
+    'DISTRIBUTION_CENTER': '运输中心',
+    'MATERIAL_MARKET': '建材市场',
+    'VEGETABLE_BASE': '蔬菜基地',
+    'VEGETABLE_MARKET': '蔬菜市场'
+  };
+
+  // 反向映射：后端类型 -> 前端显示名
+  const reverseMapping = {
+    'FACTORY': '工厂',
+    'WAREHOUSE': '仓库',
+    'GAS_STATION': '加油站',
+    'MAINTENANCE_CENTER': '维修中心',
+    'REST_AREA': '休息区',
+    'DISTRIBUTION_CENTER': '运输中心',
+    'MATERIAL_MARKET': '建材市场',
+    'VEGETABLE_BASE': '蔬菜基地',
+    'VEGETABLE_MARKET': '蔬菜市场'
+  };
+
+  // 获取对应的前端显示名
+  const frontendType = reverseMapping[poiType] || '工厂';
+
+  return poiIcons[frontendType] || factoryIcon; // 默认使用工厂图标
 };
 
 // 启动仿真 - 获取并显示可展示的POI
@@ -209,9 +241,15 @@ const addPOIMarkersToMap = async (pois) => {
 
   try {
     const markers = [];
+    const bounds = [];
 
     for(const poi of pois){
       // 根据POI类型选择图标
+      if (!poi.longitude || !poi.latitude) {
+        console.warn(`POI ${poi.name} 坐标无效，跳过`);
+        continue;
+      }
+
       const iconUrl = getPOIIcon(poi.poiType);
       const icon = new AMapLib.Icon({
         image: iconUrl,
@@ -241,7 +279,7 @@ const addPOIMarkersToMap = async (pois) => {
 
     // 调整地图视野以包含所有标记
     if (markers.length > 0) {
-      map.setFitView();
+      map.setFitView(bounds);
     }
 
   } catch (error){
@@ -272,8 +310,8 @@ const getPOITypeText = (poiType) => {
     'REST_AREA': '休息区',
     'DISTRIBUTION_CENTER': '运输中心',
     'MATERIAL_MARKET': '建材市场',
-    'Vegetable_Base': '蔬菜基地',
-    'Vegetable_Market': '蔬菜市场'
+    'VEGETABLE_BASE': '蔬菜基地',
+    'VEGETABLE_MARKET': '蔬菜市场',
   };
   return typeMap[poiType] || poiType;
 };
@@ -543,31 +581,61 @@ const computeRoutesOnBackend = async (endpoints) => {
 
 // 启动车辆仿真
 const startVehicleSimulation = async () => {
+
   try {
-    // 拉取前端需要展示的所有数据
-    await Promise.all([
-      fetchVehicles(),
-      // fetchPOIs(),
-      // fetchTasks()
-    ]);
+    console.log("开始仿真");
+    isSimulationRunning.value = true;
 
-    // 按既有流程拉取原始路线并请求后端规划，绘制路线
-    const rawRoutes = await fetchRawRoutes();
-    const endpoints = rawRoutes.map(r => {
-      const pts = Array.isArray(r.points) ? r.points : (r.path || []);
-      if (!pts || pts.length === 0) return null;
-      const first = Array.isArray(pts[0]) ? pts[0] : [pts[0].lng, pts[0].lat];
-      const last = Array.isArray(pts[pts.length - 1]) ? pts[pts.length - 1] : [pts[pts.length - 1].lng, pts[pts.length - 1].lat];
-      return { id: r.id, start: first, end: last };
-    }).filter(Boolean);
+    // 获取可展示的POI数据
+    const pois = await poiManagerApi.getPOIAbleToShow();
+    console.log('获取到可展示的POI数据：', pois);
 
-    if (endpoints.length > 0) {
-      const computed = await computeRoutesOnBackend(endpoints);
-      drawComputedRoutes(computed);
+    if (!pois || pois.length === 0) {
+      ElMessage.warning('当前没有可展示的POI数据');
+      return;
     }
-  } catch (e) {
-    console.error('车辆仿真初始化错误', e);
+
+    // 清除现有标记
+    clearPOIMarkers();
+
+    // 添加POI标记到地图
+    await addPOIMarkersToMap(pois);
+
+    ElMessage.success(`成功加载 ${pois.length} 个POI点`);
+
+  } catch (error) {
+    console.error("启动仿真模拟失败：", error);
+    ElMessage.error('获取POI数据失败：' + error.message);
+    // 重置状态
+    isSimulationRunning.value = false;
   }
+
+
+  // try {
+  //   // 拉取前端需要展示的所有数据
+  //   await Promise.all([
+  //     fetchVehicles(),
+  //     fetchPOIs(),
+  //     fetchTasks()
+  //   ]);
+  //
+  //   // 按既有流程拉取原始路线并请求后端规划，绘制路线
+  //   const rawRoutes = await fetchRawRoutes();
+  //   const endpoints = rawRoutes.map(r => {
+  //     const pts = Array.isArray(r.points) ? r.points : (r.path || []);
+  //     if (!pts || pts.length === 0) return null;
+  //     const first = Array.isArray(pts[0]) ? pts[0] : [pts[0].lng, pts[0].lat];
+  //     const last = Array.isArray(pts[pts.length - 1]) ? pts[pts.length - 1] : [pts[pts.length - 1].lng, pts[pts.length - 1].lat];
+  //     return { id: r.id, start: first, end: last };
+  //   }).filter(Boolean);
+  //
+  //   if (endpoints.length > 0) {
+  //     const computed = await computeRoutesOnBackend(endpoints);
+  //     drawComputedRoutes(computed);
+  //   }
+  // } catch (e) {
+  //   console.error('车辆仿真初始化错误', e);
+  // }
 };
 
 // --- 统计信息 ---

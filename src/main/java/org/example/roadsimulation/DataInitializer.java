@@ -43,15 +43,9 @@ public class DataInitializer{
     public List<POI> goalFactoryList;
     public List<POI> CementPlantList; // 水泥厂
     public List<POI> MaterialMarketList; // 建材市场
-    public List<POI> QuarryList; // 砂石场/沙石场
-    public List<POI> VegetableBaseList; // 蔬菜基地
-    public List<POI> VegetableMarketList; // 蔬菜市场
 
     public Goods goodsForTest;
     public Goods Cement; // 水泥
-    public Goods Dinas; // 砂石
-    public Goods SandStone; // 沙石
-    public Goods Vegetable; // 蔬菜
 
 //    public List<POI> goalNeedGoodsPOIList = getFilteredPOI("家具", POI.POIType.FACTORY);
     // POI的判断状态和计数
@@ -59,8 +53,8 @@ public class DataInitializer{
     private final Map<POI, Integer> poiTrueCount = new ConcurrentHashMap<>();
 
     // 限制条件
-    private final int maxTrueCount = 8; // 最大为真的数量
-    private double trueProbability = 0.25; // 判断为真的概率
+    private final int maxTrueCount = 45; // 最大为真的数量
+    private double trueProbability = 0.009; // 判断为真的概率
 
     @Autowired
     public DataInitializer(GoodsPOIGenerateService goodsPOIGenerateService, EnrollmentRepository enrollmentRepository, GoodsRepository goodsRepository,  POIRepository poiRepository) {
@@ -70,11 +64,11 @@ public class DataInitializer{
         this.poiRepository = poiRepository;
     }
 
-    //@PostConstruct
+    @PostConstruct
     public void initialize(){
         // 初始化 POI 列表
-        this.goalFactoryList = getFilteredPOI("玻璃", POI.POIType.FACTORY);
-        this.goodsForTest = getGoodsForTest("00001");
+        this.goalFactoryList = getFilteredPOI("水泥", POI.POIType.FACTORY);
+        this.goodsForTest = getGoodsForTest("CEMENT");
         System.out.println("DataInitializer 初始化完成，共加载 " + goalFactoryList.size() + " 个POI");
 
         initalizePOIStatus();
@@ -92,7 +86,7 @@ public class DataInitializer{
     private void initalizePOIStatus(){ //List<POI> goalPOITypeList
         /// 测试用例
         for(POI poi: goalFactoryList){
-            poiIsWithGoods.put(poi, true);
+            poiIsWithGoods.put(poi, false);
             poiTrueCount.put(poi, 0);
         }
         /* ----------------- */
@@ -164,7 +158,7 @@ public class DataInitializer{
     /**
      *  周期性的随机判断 - 每5秒执行一次
      */
-    //@Scheduled(fixedRate = 10000)
+    @Scheduled(fixedRate = 10000)
     @Transactional
     public void periodicJudgement(){
         if (goalFactoryList.isEmpty()) {
@@ -189,7 +183,7 @@ public class DataInitializer{
                     setPoiToTrue(poi);
                     System.out.println("POI [" + poi.getName() + "] 判断为真");
 
-                    this.trueProbability -= 0.03;
+//                    this.trueProbability -= 0.005;
 
                     // 这里可以添加其他业务逻辑，比如初始化关系
                     // ToDo
@@ -206,7 +200,7 @@ public class DataInitializer{
     /**
      * 周期性的重置判断 - 每12秒执行一次
      */
-    //@Scheduled(fixedRate = 15000) // 12秒一个周期
+    @Scheduled(fixedRate = 15000) // 12秒一个周期
     @Transactional
     public void periodicReset() {
         if (goalFactoryList.isEmpty()) {
