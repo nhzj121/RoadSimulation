@@ -295,6 +295,7 @@ public class ActionController {
     }
 
     @GetMapping("/health")
+    //http://localhost:8080/health/api/actions
     public ResponseEntity<String> healthCheck() {
         logger.debug("动作服务健康检查请求");
         return ResponseEntity.ok("Action Service is running properly");

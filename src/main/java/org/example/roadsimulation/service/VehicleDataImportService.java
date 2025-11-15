@@ -1,6 +1,7 @@
 package org.example.roadsimulation.service;
 
 import org.example.roadsimulation.entity.Vehicle;
+
 import java.util.List;
 import java.util.Map;
 
@@ -13,21 +14,21 @@ public interface VehicleDataImportService {
     int importVehicleData();
 
     /**
-     * 从JSON数据转换为Vehicle实体
-     * @param vehicleData JSON数据
+     * 将数据映射转换为Vehicle实体
+     * @param vehicleData 车辆数据映射
      * @return Vehicle实体
      */
     Vehicle convertToVehicleEntity(Map<String, Object> vehicleData);
 
     /**
-     * 从车辆名称中提取品牌
+     * 从名称中提取品牌
      * @param name 车辆名称
      * @return 品牌名称
      */
     String extractBrandFromName(String name);
 
     /**
-     * 从车辆名称中提取车型
+     * 从名称中提取车型
      * @param name 车辆名称
      * @return 车型名称
      */
