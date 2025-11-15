@@ -4,7 +4,9 @@ import jakarta.persistence.*;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.Size;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 
 /**
@@ -58,17 +60,17 @@ public class Goods {
     @Column(name = "shelf_life_days")
     private Integer shelfLifeDays; // 保质期（天）
 
+    @OneToMany(mappedBy = "goods", cascade = {CascadeType.PERSIST, CascadeType.MERGE}, fetch = FetchType.LAZY)
+    private Set<ShipmentItem> shipmentItems = new HashSet<>();
+
+    @OneToMany(mappedBy = "goods", cascade = {CascadeType.PERSIST, CascadeType.MERGE}, fetch = FetchType.LAZY)
+    private List<Enrollment> enrollments = new ArrayList<>();
+
     @Column(name = "created_at")
     private LocalDateTime createdAt = LocalDateTime.now();
 
     @Column(name = "updated_at")
     private LocalDateTime updatedAt = LocalDateTime.now();
-
-    @OneToMany(mappedBy = "goods", cascade = {CascadeType.PERSIST, CascadeType.MERGE}, fetch = FetchType.LAZY)
-    private Set<ShipmentItem> shipmentItems = new HashSet<>();
-
-
-
     // Getter & Setter
 
 
@@ -116,12 +118,31 @@ public class Goods {
     public LocalDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
 
+    public List<Enrollment> getEnrollments() { return enrollments; }
+    public void setEnrollments(List<Enrollment> enrollments) { this.enrollments = enrollments; }
+
     public Set<ShipmentItem> getShipmentItems() {
         return shipmentItems;
     }
 
     public void setShipmentItems(Set<ShipmentItem> shipmentItems) {
         this.shipmentItems = shipmentItems;
+    }
+
+    // ================ Goods和POI，双向进行维护 =================
+    public void addPOIEnrollment(Enrollment enrollment) {
+        if(!this.enrollments.contains(enrollment) && enrollment != null){
+            this.enrollments.add(enrollment);
+            enrollment.setGoods(this);
+        } else if(this.enrollments.contains(enrollment) && enrollment != null){
+            enrollment.setGoods(this);
+        }
+    }
+    public void removePOIEnrollment(Enrollment enrollment) {
+        if(this.enrollments.contains(enrollment) && enrollment != null){
+            this.enrollments.remove(enrollment);
+            enrollment.setGoods(null);
+        }
     }
 
 

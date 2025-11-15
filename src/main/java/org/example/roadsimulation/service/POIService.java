@@ -65,6 +65,11 @@ public interface POIService {
     List<POI> getAll();
 
     /**
+     * 查询当前可以展示的POI数据
+     */
+    List<POI> getPOIAbleToShow();
+
+    /**
      * 分页查询所有 POI
      *
      * @param pageable 分页参数（页码、每页条数、排序规则）

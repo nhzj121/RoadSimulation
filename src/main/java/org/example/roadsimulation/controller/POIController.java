@@ -1,5 +1,7 @@
 package org.example.roadsimulation.controller;
 
+import org.apache.coyote.Response;
+import org.example.roadsimulation.DataInitializer;
 import org.example.roadsimulation.dto.POIDTO;
 import org.example.roadsimulation.entity.POI;
 import org.example.roadsimulation.service.POIService;
@@ -35,14 +37,19 @@ import java.util.Optional;
  */
 @RestController
 @RequestMapping("/api/pois")
-@CrossOrigin(origins = "*", maxAge = 3600)
+@CrossOrigin(origins = {"http://localhost:5173", "http://127.0.0.1:5173"},
+        maxAge = 3600,
+        allowedHeaders = "*",
+        methods = {RequestMethod.GET, RequestMethod.POST, RequestMethod.PUT, RequestMethod.DELETE, RequestMethod.OPTIONS})
 @Validated
 public class POIController {
 
     private final POIService poiService;
+    private DataInitializer dataInitializer;
 
     @Autowired
-    public POIController(POIService poiService) {
+    public POIController(POIService poiService, DataInitializer dataInitializer) {
+        this.dataInitializer = dataInitializer;
         this.poiService = poiService;
     }
 
@@ -125,6 +132,18 @@ public class POIController {
         }
     }
 
+    /**
+     * 获取可以展示的POI数据
+     */
+    @GetMapping("/able-to-show")
+    public ResponseEntity<?> getPOIAbleToShow() {
+        try{
+            List<POI> poiAbleToShow = poiService.getPOIAbleToShow();
+            return ResponseEntity.ok(createSuccessResponse("获取POI列表成功", poiAbleToShow));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(createErrorResponse(e.getMessage()));
+        }
+    }
     /**
      * 分页查询 POI
      */
@@ -422,4 +441,6 @@ public class POIController {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(ApiResponse.error("参数校验失败: " + e.getMessage()));
     }
+
+
 }

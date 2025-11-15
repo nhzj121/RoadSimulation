@@ -68,7 +68,7 @@ public class Vehicle {
     @Column(name = "height")
     private Double height;
 
-    // @ManyToOne: 多对一关系，多辆车可以关联到一个POI或一个Action
+    // @ManyToOne: 多对一的关系，多辆车可以关联到一个POI或一个Action
     // fetch = FetchType.LAZY: 懒加载，只有在访问关联对象时才从数据库加载
     // @JoinColumn: 指定外键列名，即从表的外键字段名
     /*

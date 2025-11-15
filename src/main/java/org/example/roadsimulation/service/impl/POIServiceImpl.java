@@ -1,6 +1,7 @@
 package org.example.roadsimulation.service.impl;
 
 import jakarta.persistence.EntityManager;
+import org.example.roadsimulation.DataInitializer;
 import org.example.roadsimulation.dto.POIDTO;
 import org.example.roadsimulation.entity.POI;
 import org.example.roadsimulation.repository.POIRepository;
@@ -29,10 +30,12 @@ import java.util.stream.Collectors;
 public class POIServiceImpl implements POIService {
 
     private final POIRepository poiRepository;
+    private final DataInitializer dataInitializer;
 
     @Autowired
-    public POIServiceImpl(POIRepository poiRepository) {
+    public POIServiceImpl(POIRepository poiRepository,  DataInitializer dataInitializer) {
         this.poiRepository = poiRepository;
+        this.dataInitializer = dataInitializer;
     }
 
     /**
@@ -116,6 +119,15 @@ public class POIServiceImpl implements POIService {
     @Transactional(readOnly = true)
     public List<POI> getAll() {
         return poiRepository.findAll();
+    }
+
+    /**
+     * 查询可以展示的POI数据
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public List<POI> getPOIAbleToShow(){
+        return dataInitializer.getPOIAbleToShow();
     }
 
     /**
@@ -224,6 +236,9 @@ public class POIServiceImpl implements POIService {
             case "维修中心" -> POI.POIType.MAINTENANCE_CENTER;
             case "休息区" -> POI.POIType.REST_AREA;
             case "运输中心" -> POI.POIType.DISTRIBUTION_CENTER;
+            case "建材市场" -> POI.POIType.MATERIAL_MARKET;
+            case "蔬菜基地" -> POI.POIType.VEGETABLE_BASE;
+            case "蔬菜市场" -> POI.POIType.VEGETABLE_MARKET;
             default -> throw new IllegalArgumentException("未知的POI类型: " + frontendType);
         };
     }

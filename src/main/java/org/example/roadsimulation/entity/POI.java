@@ -1,14 +1,16 @@
 package org.example.roadsimulation.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 
 /**
  * POI（Point of Interest）实体类
- *
  * 功能：
  * 1. 表示系统中的关键点，如仓库、配送中心、工厂等
  * 2. 与 Vehicle 维护一对多双向关系（一个 POI 可包含多辆车）
@@ -50,7 +52,10 @@ public class POI {
         FACTORY,                // 工厂
         GAS_STATION,            // 加油站
         MAINTENANCE_CENTER,     // 维修中心
-        REST_AREA               // 休息区
+        REST_AREA,               // 休息区
+        MATERIAL_MARKET,         // 建材市场
+        VEGETABLE_BASE,         // 蔬菜基地
+        VEGETABLE_MARKET       // 蔬菜市场
     }
 
     @Enumerated(EnumType.STRING)
@@ -60,8 +65,14 @@ public class POI {
     /**
      * 一对多关系：一个 POI 可以包含多辆车
      */
-    @OneToMany(mappedBy = "currentPOI", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
+    @OneToMany(mappedBy = "currentPOI", cascade = CascadeType.PERSIST, fetch = FetchType.LAZY)
     private Set<Vehicle> vehiclesAtLocation = new HashSet<>();
+
+    /**
+     * 一对多关系： 一个 POI 可以产生或接受多个种类的货物
+     */
+    @OneToMany(mappedBy = "poi", cascade = CascadeType.PERSIST, fetch = FetchType.LAZY)
+    private List<Enrollment> enrollments = new ArrayList<>();
 
     // ================= 构造方法 =================
     public POI() {}
@@ -90,6 +101,33 @@ public class POI {
     public void setPoiType(POIType poiType) { this.poiType = poiType; }
 
     public Set<Vehicle> getVehiclesAtLocation() { return vehiclesAtLocation; }
+
+    public List<Enrollment> getEnrollments() { return enrollments; }
+    public void setEnrollments(List<Enrollment> enrollments) { this.enrollments = enrollments; }
+    // =========== Enrollment和Goods 双向关系维护 ========
+    /**
+     * 添加货物到POI
+     */
+    public void addGoodsEnrollment(Enrollment enrollment) {
+        if(!enrollments.contains(enrollment) && enrollment != null){
+            this.enrollments.add(enrollment);
+            enrollment.setPoi(this);
+        } else if (enrollments.contains(enrollment)) {
+            if (enrollment != null) {
+                enrollment.setPoi(this);
+            }
+        }
+    }
+
+    /**
+     * 从POI移除货物
+     */
+    public void removeGoodsEnrollment(Enrollment enrollment) {
+        if(this.enrollments.contains(enrollment) && enrollment != null){
+            this.enrollments.remove(enrollment);
+            enrollment.setPoi(null);
+        }
+    }
 
     // ================= Vehicle 双向关系维护 =================
     /**

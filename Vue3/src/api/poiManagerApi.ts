@@ -39,6 +39,21 @@ export const poiManagerApi = {
         }
     },
 
+    // 获取可以展示的POI点 - 对应后端的 /api/pois/able-to-show
+    async getPOIAbleToShow(): Promise<POIFromDB[]> {
+        try {
+            const response = await request.get<BackendResponse<POIFromDB[]>>('/api/pois/able-to-show');
+            if (response.data.success) {
+                return response.data.data || [];
+            } else {
+                throw new Error(response.data.error || '获取可展示POI数据失败');
+            }
+        } catch (error: any) {
+            console.error('获取可展示POI数据失败:', error);
+            throw new Error(error.response?.data?.error || error.message || '网络请求失败');
+        }
+    },
+
     // 根据类型获取POI - 对应后端的 /api/pois/type/{type}
     async getByType(type: string): Promise<POIFromDB[]> {
         try {
@@ -115,5 +130,7 @@ export const poiManagerApi = {
             console.error('获取POI类型失败:', error);
             throw new Error(error.response?.data?.error || error.message || '网络请求失败');
         }
-    }
+    },
+
+
 }

@@ -58,10 +58,10 @@
           </template>
           <div class="vehicle-list">
             <div v-for="v in vehicles" :key="v.id" class="vehicle-item">
-              <span class="status-dot" :style="{ backgroundColor: statusMap[v.status].color }"></span>
+              <span class="status-dot" :style="{ backgroundColor: statusMap[v.status]?.color || '#ccc' }"></span>
               <div class="vehicle-info">
                 <div class="vehicle-id">{{ v.id }}</div>
-                <div class="vehicle-location">{{ v.location }} | {{ statusMap[v.status].text }}</div>
+                <div class="vehicle-location">{{ v.location || (v.lat && v.lng ? `${v.lng}, ${v.lat}` : '-') }} | {{ statusMap[v.status]?.text || v.status }}</div>
               </div>
               <ElButton text :icon="InfoFilled" />
             </div>
@@ -76,10 +76,10 @@
             </div>
           </template>
           <div class="stats-info">
-            <div><strong>运行车辆</strong><span></span></div>
-            <div><strong>POI点数</strong><span></span></div>
-            <div><strong>运输任务</strong><span></span></div>
-            <div><strong>异常率</strong><span></span></div>
+            <div><strong>运行车辆</strong><span>{{ stats.running }}</span></div>
+            <div><strong>POI点数</strong><span>{{ stats.poiCount }}</span></div>
+            <div><strong>运输任务</strong><span>{{ stats.tasks }}</span></div>
+            <div><strong>异常率</strong><span>{{ stats.anomalyRate }}%</span></div>
           </div>
         </ElCard>
 
@@ -94,7 +94,18 @@
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted } from "vue";
 import { useRouter } from 'vue-router';
+import { poiManagerApi } from "../api/poiManagerApi";
+import request from "../utils/request";
 import AMapLoader from "@amap/amap-jsapi-loader";
+import factoryIcon from '../../public/icons/factory.png';
+import warehouseIcon from '../../public/icons/warehouse.png';
+import gasStationIcon from '../../public/icons/gas-station.png';
+import maintenanceIcon from '../../public/icons/maintenance-center.png';
+import restAreaIcon from '../../public/icons/rest-area.png';
+import transportIcon from '../../public/icons/distribution-center.png';
+import materialMarketIcon from '../../public/icons/materialMarket.png';
+import vegetableBaseIcon from '../../public/icons/vegetable-base.png';
+import vegetableMarketIcon from '../../public/icons/vegetable-market.png';
 import {
   ElHeader,
   ElAside,
@@ -103,11 +114,12 @@ import {
   ElCard,
   ElButton,
   ElButtonGroup,
-  ElCheckTag,
+  ElCheckTag, ElMessage,
 } from "element-plus";
 import { InfoFilled } from '@element-plus/icons-vue'
 
 let map = null;
+let AMapLib = null; // 保存加载后的 AMap 构造对象
 const router = useRouter()
 const goToPOIManager = () => {
   router.push('/poi-manager')
@@ -115,28 +127,229 @@ const goToPOIManager = () => {
 const gotoMain = () => {
   router.push('./')
 }
+
 // --- 仿真控制 ---
 const speedFactor = ref(1);
 const setSpeed = (val) => speedFactor.value = val;
 const decSpeed = () => speedFactor.value = Math.max(0.5, speedFactor.value - 0.5);
 const incSpeed = () => speedFactor.value = Math.min(5, speedFactor.value + 0.5);
-const startSimulation = () => console.log("开始仿真");
-const resetSimulation = () => console.log("重置仿真");
+
+// --- 原有POI功能 ---
+const poiMarkers = ref([]); // 存储POI标记
+const isSimulationRunning = ref(false); // 仿真运行状态
+
+// 图标配置 - 根据POI类型使用不同的图标
+const poiIcons = {
+  'FACTORY': factoryIcon,
+  'WAREHOUSE': warehouseIcon,
+  'GAS_STATION': gasStationIcon,
+  'MAINTENANCE_CENTER': maintenanceIcon,
+  'REST_AREA': restAreaIcon,
+  'DISTRIBUTION_CENTER': transportIcon,
+  'MATERIAL_MARKET': materialMarketIcon,
+  'VEGETABLE_BASE': vegetableBaseIcon,
+  'VEGETABLE_MARKET': vegetableMarketIcon,
+};
+
+// 获取POI类型对应的图标
+const getPOIIcon = (poiType) => {
+  // 创建类型映射表
+  const typeMapping = {
+    'FACTORY': '工厂',
+    'WAREHOUSE': '仓库',
+    'GAS_STATION': '加油站',
+    'MAINTENANCE_CENTER': '维修中心',
+    'REST_AREA': '休息区',
+    'DISTRIBUTION_CENTER': '运输中心',
+    'MATERIAL_MARKET': '建材市场',
+    'VEGETABLE_BASE': '蔬菜基地',
+    'VEGETABLE_MARKET': '蔬菜市场'
+  };
+
+  // 反向映射：后端类型 -> 前端显示名
+  const reverseMapping = {
+    'FACTORY': '工厂',
+    'WAREHOUSE': '仓库',
+    'GAS_STATION': '加油站',
+    'MAINTENANCE_CENTER': '维修中心',
+    'REST_AREA': '休息区',
+    'DISTRIBUTION_CENTER': '运输中心',
+    'MATERIAL_MARKET': '建材市场',
+    'VEGETABLE_BASE': '蔬菜基地',
+    'VEGETABLE_MARKET': '蔬菜市场'
+  };
+
+  // 获取对应的前端显示名
+  const frontendType = reverseMapping[poiType] || '工厂';
+
+  return poiIcons[frontendType] || factoryIcon; // 默认使用工厂图标
+};
+
+// 启动仿真 - 获取并显示可展示的POI
+const startSimulation = async () => {
+  try {
+    console.log("开始仿真");
+    isSimulationRunning.value = true;
+
+    // 获取可展示的POI数据
+    const pois = await poiManagerApi.getPOIAbleToShow();
+    console.log('获取到可展示的POI数据：', pois);
+
+    // 清除现有标记
+    clearPOIMarkers();
+
+    // 添加POI标记到地图
+    await addPOIMarkersToMap(pois);
+
+    // 新增：启动车辆动画和路线规划
+    await startVehicleSimulation();
+
+    ElMessage.success(`成功加载 ${pois.length} 个POI点`);
+
+  } catch (error) {
+    console.error("启动仿真模拟失败：", error);
+    ElMessage.error('获取POI数据失败：' + error.message);
+  }
+};
+
+// 重置仿真
+const resetSimulation = () => {
+  console.log("重置仿真");
+  isSimulationRunning.value = false;
+  clearPOIMarkers();
+  clearDrawnRoutes(); // 新增：清除车辆动画和路线
+  ElMessage.info('仿真已重置');
+};
+
+// 清除POI标记
+const clearPOIMarkers = () => {
+  if(poiMarkers.value.length > 0 && map){
+    poiMarkers.value.forEach(marker => {
+      map.remove(marker);
+    });
+    poiMarkers.value = [];
+    console.log('已清除所有POI标记');
+  }
+};
+
+// 添加POI标记到地图
+const addPOIMarkersToMap = async (pois) => {
+  if(!map || !pois || pois.length === 0) {
+    console.log('没有POI数据或地图未初始化');
+    return;
+  }
+
+  try {
+    const markers = [];
+    const bounds = [];
+
+    for(const poi of pois){
+      // 根据POI类型选择图标
+      if (!poi.longitude || !poi.latitude) {
+        console.warn(`POI ${poi.name} 坐标无效，跳过`);
+        continue;
+      }
+
+      const iconUrl = getPOIIcon(poi.poiType);
+      const icon = new AMapLib.Icon({
+        image: iconUrl,
+        size: new AMapLib.Size(32, 32),
+        imageSize: new AMapLib.Size(32, 32)
+      });
+
+      const marker = new AMapLib.Marker({
+        position: [poi.longitude, poi.latitude],
+        icon: icon,
+        title: `${poi.name} (${poi.poiType})`,
+        extData: poi // 将原始数据保存在标记中
+      });
+
+      // 添加点击事件
+      marker.on('click', () => {
+        handlePOIClick(poi);
+      });
+
+      // 添加到地图
+      map.add(marker);
+      markers.push(marker);
+    }
+
+    poiMarkers.value = markers;
+    console.log(`成功添加 ${markers.length} 个POI标记到地图`);
+
+    // 调整地图视野以包含所有标记
+    if (markers.length > 0) {
+      map.setFitView(bounds);
+    }
+
+  } catch (error){
+    console.error('添加POI标记失败', error);
+    throw error;
+  }
+};
+
+// 处理POI点击事件
+const handlePOIClick = (poi) => {
+  console.log('点击POI:', poi);
+
+  // 显示POI详细信息
+  const poiTypeText = getPOITypeText(poi.poiType);
+  ElMessage.info(`POI: ${poi.name} (${poiTypeText})`);
+
+  // 显示信息窗口
+  showInfoWindow(poi);
+};
+
+// 获取POI类型的中文显示
+const getPOITypeText = (poiType) => {
+  const typeMap = {
+    'FACTORY': '工厂',
+    'WAREHOUSE': '仓库',
+    'GAS_STATION': '加油站',
+    'MAINTENANCE_CENTER': '维修中心',
+    'REST_AREA': '休息区',
+    'DISTRIBUTION_CENTER': '运输中心',
+    'MATERIAL_MARKET': '建材市场',
+    'VEGETABLE_BASE': '蔬菜基地',
+    'VEGETABLE_MARKET': '蔬菜市场',
+  };
+  return typeMap[poiType] || poiType;
+};
+
+// 显示信息窗口
+const showInfoWindow = (poi) => {
+  if (!map) return;
+
+  const infoWindow = new AMapLib.InfoWindow({
+    content: `
+            <div style="padding: 10px; min-width: 200px; color: #000;">
+                <h3 style="margin: 0 0 8px 0; color: #000;">${poi.name}</h3>
+                <p style="margin: 4px 0; color: #000;"><strong>类型:</strong> ${getPOITypeText(poi.poiType)}</p>
+                <p style="margin: 4px 0; color: #000;"><strong>坐标:</strong> ${poi.longitude.toFixed(6)}, ${poi.latitude.toFixed(6)}</p>
+                ${poi.address ? `<p style="margin: 4px 0; color: #000;"><strong>地址:</strong> ${poi.address}</p>` : ''}
+                ${poi.tel ? `<p style="margin: 4px 0; color: #000;"><strong>电话:</strong> ${poi.tel}</p>` : ''}
+            </div>
+        `,
+    offset: new AMapLib.Pixel(0, -30)
+  });
+
+  infoWindow.open(map, [poi.longitude, poi.latitude]);
+};
 
 // --- 显示筛选 ---
 const filters = reactive([
-    { key: 'factory', label: '工厂', checked: true },
-    { key: 'parking', label: '停车场', checked: true },
-    { key: 'gas', label: '加油站', checked: true },
-    { key: 'service', label: '保养站', checked: true },
-    { key: 'route', label: '运输路线', checked: true },
+  { key: 'factory', label: '工厂', checked: true },
+  { key: 'parking', label: '停车场', checked: true },
+  { key: 'gas', label: '加油站', checked: true },
+  { key: 'service', label: '保养站', checked: true },
+  { key: 'route', label: '运输路线', checked: true },
 ]);
 const toggleFilter = (key) => {
-    const filter = filters.find(f => f.key === key);
-    if (filter) {
-        filter.checked = !filter.checked;
-        console.log(`筛选 ${filter.label}: ${filter.checked}`);
-    }
+  const filter = filters.find(f => f.key === key);
+  if (filter) {
+    filter.checked = !filter.checked;
+    console.log(`筛选 ${filter.label}: ${filter.checked}`);
+  }
 };
 
 // --- 车辆状态 ---
@@ -147,17 +360,288 @@ const statusMap = {
   stopped: { text: '停靠中', color: '#95a5a6' },
 };
 
-const vehicles = reactive([
-//各个汽车状态
+const vehicles = reactive([]); // 从后端拉取车辆列表
 
-]);
+// --- 新增：车辆动画和路线规划功能 ---
+
+// 统计信息
+const stats = reactive({
+  running: 0,
+  poiCount: 0,
+  tasks: 0,
+  anomalyRate: 0, // 百分比整数
+});
+
+const poisData = ref([]);    // POI 列表
+const tasks = ref([]);   // 运输任务列表
+
+const drawnRoutes = []; // 存放已绘制的覆盖物，便于清理
+const vehicleAnimations = []; // 存放正在移动的 marker，用于取消与清理
+
+const clearDrawnRoutes = () => {
+  for (const o of drawnRoutes) {
+    try { o.setMap && o.setMap(null); } catch (_) {}
+  }
+  drawnRoutes.length = 0;
+
+  for (const a of vehicleAnimations) {
+    try { a.cancel && a.cancel(); } catch (_) {}
+    try { a.marker && a.marker.setMap && a.marker.setMap(null); } catch (_) {}
+  }
+  vehicleAnimations.length = 0;
+};
+
+// 新增：创建 van 内联 SVG 元素（背景圆 + svg）
+const createSvgVanEl = (size = 32, bg = '#ff7f50') => {
+  const el = document.createElement('div');
+  el.style.width = `${size}px`;
+  el.style.height = `${size}px`;
+  el.style.borderRadius = '50%';
+  el.style.display = 'flex';
+  el.style.alignItems = 'center';
+  el.style.justifyContent = 'center';
+  el.style.background = bg;
+  el.style.color = '#fff';
+  el.style.boxShadow = '0 1px 4px rgba(0,0,0,0.3)';
+  el.innerHTML = `<svg width="${Math.round(size*0.6)}" height="${Math.round(size*0.6)}" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+    <path d="M3 13v-6h11v6H3zm13 0h3l2 3v3h-3a2 2 0 0 1-2-2v-4zM6 18a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zm10 0a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z"/>
+  </svg>`;
+  return el;
+};
+
+// 计算两点球面距离（米）
+const haversineDistance = (a, b) => {
+  const toRad = d => d * Math.PI / 180;
+  const R = 6371000;
+  const dLat = toRad(b[1] - a[1]);
+  const dLon = toRad(b[0] - a[0]);
+  const lat1 = toRad(a[1]), lat2 = toRad(b[1]);
+  const sinDLat = Math.sin(dLat/2), sinDLon = Math.sin(dLon/2);
+  const c = 2 * Math.asin(Math.sqrt(sinDLat*sinDLat + Math.cos(lat1)*Math.cos(lat2)*sinDLon*sinDLon));
+  return R * c;
+};
+
+// marker 匀速沿 path 移动（path: [[lng,lat],...], speed 米/秒），返回 cancel 函数
+const animateAlongPath = (marker, path, speed = 8) => {
+  if (!path || path.length < 2) return () => {};
+  const segLengths = [];
+  let total = 0;
+  for (let i = 0; i < path.length - 1; i++) {
+    const L = haversineDistance(path[i], path[i+1]);
+    segLengths.push(L);
+    total += L;
+  }
+  let start = null;
+  let rafId = null;
+  let canceled = false;
+
+  const seek = (d) => {
+    if (d <= 0) return path[0];
+    if (d >= total) return path[path.length-1];
+    let acc = 0;
+    for (let i = 0; i < segLengths.length; i++) {
+      const L = segLengths[i];
+      if (acc + L >= d) {
+        const t = (d - acc) / L;
+        const a = path[i], b = path[i+1];
+        return [ a[0] + (b[0]-a[0])*t, a[1] + (b[1]-a[1])*t ];
+      }
+      acc += L;
+    }
+    return path[path.length-1];
+  };
+
+  const step = (ts) => {
+    if (canceled) return;
+    if (start === null) start = ts;
+    const elapsed = (ts - start)/1000;
+    const dist = Math.min(elapsed * speed, total);
+    const pos = seek(dist);
+    try { marker.setPosition(pos); } catch (e) {}
+    if (dist >= total) return; // 到终点停止
+    rafId = requestAnimationFrame(step);
+  };
+  rafId = requestAnimationFrame(step);
+
+  return () => {
+    canceled = true;
+    if (rafId) cancelAnimationFrame(rafId);
+  };
+};
+
+// 在起点添加 van 图标并匀速沿 path 移动
+const drawComputedRoutes = (routes) => {
+  if (!AMapLib || !map) return;
+  clearDrawnRoutes();
+  for (const r of routes) {
+    try {
+      const path = Array.isArray(r.path) ? r.path : (r.path || []);
+      // 绘制折线
+      const poly = new AMapLib.Polyline({
+        path: path,
+        strokeColor: '#3388ff',
+        strokeOpacity: 1,
+        strokeWeight: 4,
+        lineJoin: 'round',
+      });
+      poly.setMap(map);
+      drawnRoutes.push(poly);
+
+      // 起点静态标记
+      if (r.start) {
+        const m1 = new AMapLib.Marker({
+          position: r.start,
+          title: '起点',
+        });
+        m1.setMap(map);
+        drawnRoutes.push(m1);
+      }
+
+      // 终点静态标记
+      if (r.end) {
+        const m2 = new AMapLib.Marker({
+          position: r.end,
+          title: '终点',
+        });
+        m2.setMap(map);
+        drawnRoutes.push(m2);
+      }
+
+      // 如果有路径，则在起点放置 van（可移动）
+      if (path && path.length > 0) {
+        const vanEl = createSvgVanEl(32, '#ff7f50');
+        const movingMarker = new AMapLib.Marker({
+          position: path[0],
+          content: vanEl,
+          offset: new AMapLib.Pixel(-16, -16),
+          title: `van-${r.id || Math.random().toString(36).slice(2,6)}`,
+        });
+        movingMarker.setMap(map);
+        // 速度：优先使用后端返回的 r.speedMps，否则用默认 8 m/s
+        const speedMps = typeof r.speedMps === 'number' ? r.speedMps : 8;
+        const cancel = animateAlongPath(movingMarker, path, speedMps);
+        vehicleAnimations.push({ marker: movingMarker, cancel });
+      }
+    } catch (e) {
+      console.error('drawComputedRoutes error', e);
+    }
+  }
+};
+
+// 数据获取函数
+const fetchVehicles = async () => {
+  try {
+    const response = await request.get('/api/vehicles');
+    vehicles.splice(0, vehicles.length, ...response.data);
+    stats.running = vehicles.filter(v => v.status === 'running').length;
+  } catch (error) {
+    console.error('获取车辆数据失败:', error);
+  }
+};
+
+const fetchPOIs = async () => {
+  try {
+    const response = await request.get('/api/pois');
+    poisData.value = response.data;
+    stats.poiCount = poisData.value.length;
+  } catch (error) {
+    console.error('获取POI数据失败:', error);
+  }
+};
+
+const fetchTasks = async () => {
+  try {
+    const response = await request.get('/api/tasks');
+    tasks.value = response.data;
+    stats.tasks = tasks.value.length;
+  } catch (error) {
+    console.error('获取任务数据失败:', error);
+  }
+};
+
+const fetchRawRoutes = async () => {
+  try {
+    const response = await request.get('/api/routes');
+    return response.data;
+  } catch (error) {
+    console.error('获取路线数据失败:', error);
+    return [];
+  }
+};
+
+const computeRoutesOnBackend = async (endpoints) => {
+  try {
+    const response = await request.post('/api/routes/compute', endpoints);
+    return response.data;
+  } catch (error) {
+    console.error('计算路线失败:', error);
+    return [];
+  }
+};
+
+// 启动车辆仿真
+const startVehicleSimulation = async () => {
+
+  try {
+    console.log("开始仿真");
+    isSimulationRunning.value = true;
+
+    // 获取可展示的POI数据
+    const pois = await poiManagerApi.getPOIAbleToShow();
+    console.log('获取到可展示的POI数据：', pois);
+
+    if (!pois || pois.length === 0) {
+      ElMessage.warning('当前没有可展示的POI数据');
+      return;
+    }
+
+    // 清除现有标记
+    clearPOIMarkers();
+
+    // 添加POI标记到地图
+    await addPOIMarkersToMap(pois);
+
+    ElMessage.success(`成功加载 ${pois.length} 个POI点`);
+
+  } catch (error) {
+    console.error("启动仿真模拟失败：", error);
+    ElMessage.error('获取POI数据失败：' + error.message);
+    // 重置状态
+    isSimulationRunning.value = false;
+  }
+
+
+  // try {
+  //   // 拉取前端需要展示的所有数据
+  //   await Promise.all([
+  //     fetchVehicles(),
+  //     fetchPOIs(),
+  //     fetchTasks()
+  //   ]);
+  //
+  //   // 按既有流程拉取原始路线并请求后端规划，绘制路线
+  //   const rawRoutes = await fetchRawRoutes();
+  //   const endpoints = rawRoutes.map(r => {
+  //     const pts = Array.isArray(r.points) ? r.points : (r.path || []);
+  //     if (!pts || pts.length === 0) return null;
+  //     const first = Array.isArray(pts[0]) ? pts[0] : [pts[0].lng, pts[0].lat];
+  //     const last = Array.isArray(pts[pts.length - 1]) ? pts[pts.length - 1] : [pts[pts.length - 1].lng, pts[pts.length - 1].lat];
+  //     return { id: r.id, start: first, end: last };
+  //   }).filter(Boolean);
+  //
+  //   if (endpoints.length > 0) {
+  //     const computed = await computeRoutesOnBackend(endpoints);
+  //     drawComputedRoutes(computed);
+  //   }
+  // } catch (e) {
+  //   console.error('车辆仿真初始化错误', e);
+  // }
+};
 
 // --- 统计信息 ---
 const runningVehicleCount = computed(() => {
-    return vehicles.filter(v => v.status === 'running').length;
+  return vehicles.filter(v => v.status === 'running').length;
 });
-
-
 
 onMounted(() => {
   window._AMapSecurityConfig = {
@@ -166,44 +650,43 @@ onMounted(() => {
   AMapLoader.load({
     key: "e0ea478e44e417b4c2fc9a54126debaa",
     version: "2.0",
-    plugins: ["AMap.Scale", "AMap.Driving"], // 1. 在这里加载 AMap.Driving 插件
+    plugins: ["AMap.Scale", "AMap.Driving", "AMap.Marker", "AMap.Polyline", "AMap.InfoWindow"],
   })
-    .then((AMap) => {
-      map = new AMap.Map("container", {
-        viewMode: "3D",
-        zoom: 11,
-        center: [104.066158, 30.657150],
-      });
-            // --- 驾车路线规划 ---
-      var driving = new AMap.Driving({
-        map: map, // 2. 将路线规划结果绘制到这个 map 对象上
-        policy: AMap.DrivingPolicy.LEAST_TIME, // 驾车路线规划策略
-      });
+      .then((AMap) => {
+        AMapLib = AMap; // 保存 AMap 构造体以便后续创建覆盖物
+        map = new AMap.Map("container", {
+          viewMode: "3D",
+          zoom: 11,
+          center: [104.066158, 30.657150],
+        });
 
-      // 起点和终点
-      var points = [
-        { keyword: "成都市政府", city: "成都" },
-        { keyword: "成都东站", city: "成都" },
-      ];
+        // 保留原有的驾车路线规划示例
+        var driving = new AMap.Driving({
+          map: map,
+          policy: AMap.DrivingPolicy.LEAST_TIME,
+        });
 
-      driving.search(points, function (status, result) {
-        // status：'complete' 表示查询成功
-        // result 即为对应的驾车导航信息
-        if (status === 'complete') {
+        var points = [
+          { keyword: "成都市政府", city: "成都" },
+          { keyword: "成都东站", city: "成都" },
+        ];
+
+        driving.search(points, function (status, result) {
+          if (status === 'complete') {
             console.log('绘制驾车路线完成');
-        } else {
+          } else {
             console.error('获取驾车数据失败：' + result);
-        }
+          }
+        });
+      })
+      .catch((e) => {
+        console.log(e);
       });
-      // --- 驾车路线规划结束 ---
-    })
-    .catch((e) => {
-      console.log(e);
-    });
 });
 
 onUnmounted(() => {
   map?.destroy();
+  clearDrawnRoutes();
 });
 </script>
 

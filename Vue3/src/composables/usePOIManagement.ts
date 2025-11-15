@@ -1,11 +1,98 @@
-// composables/usePOIManagement.ts
-import { ref, reactive, computed } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { poiManagerApi } from '../api/poiManagerApi'
+// src/composables/usePOIManager.ts
+import { ref, computed, onUnmounted } from 'vue'
+import { ElMessage } from 'element-plus'
+import { poiManagerApi, POIFromDB } from '../api/poiManagerApi'
 
-export function usePOIManagement(mapContext) {
-    // POI 数据状态
-    const poiData = reactive({
+// 类型定义
+export interface POI {
+    id: string;
+    name: string;
+    poiType: string;
+    location: { lng: number; lat: number };
+    address: string;
+    tel: string;
+    category: string;
+}
+
+export interface POICategory {
+    name: string;
+    label: string;
+    visible: boolean;
+}
+
+export interface UsePOIManagerOptions {
+    map: any;
+    AMap: any;
+    onPOIClicked?: (poi: POI) => void;
+    onPOILoaded?: (pois: POI[]) => void;
+    onError?: (error: Error) => void;
+}
+
+// 类型映射配置
+const typeMapping = {
+    'factory': 'FACTORY',
+    'warehouse': 'WAREHOUSE',
+    'gasStation': 'GAS_STATION',
+    'maintenance': 'MAINTENANCE_CENTER',
+    'restArea': 'REST_AREA',
+    'transport': 'DISTRIBUTION_CENTER'
+} as const;
+
+const reverseTypeMapping = {
+    'FACTORY': 'factory',
+    'WAREHOUSE': 'warehouse',
+    'GAS_STATION': 'gasStation',
+    'MAINTENANCE_CENTER': 'maintenance',
+    'REST_AREA': 'restArea',
+    'DISTRIBUTION_CENTER': 'transport'
+} as const;
+
+// 图标配置 - 使用相对路径
+const poiIcons = {
+    '工厂': {
+        url: '/icons/factory.png',
+        size: [22, 22] as [number, number],
+        anchor: 'bottom-center' as const,
+        color: '#FF6B6B'
+    },
+    '仓库': {
+        url: '/icons/warehouse.png',
+        size: [22, 22] as [number, number],
+        anchor: 'bottom-center' as const,
+        color: '#4ECDC4'
+    },
+    '加油站': {
+        url: '/icons/gas-station.png',
+        size: [22, 22] as [number, number],
+        anchor: 'bottom-center' as const,
+        color: '#FFD166'
+    },
+    '维修中心': {
+        url: '/icons/maintenance-center.png',
+        size: [22, 22] as [number, number],
+        anchor: 'bottom-center' as const,
+        color: '#06D6A0'
+    },
+    '休息区': {
+        url: '/icons/rest-area.png',
+        size: [22, 22] as [number, number],
+        anchor: 'bottom-center' as const,
+        color: '#8f11b2'
+    },
+    '运输中心': {
+        url: '/icons/distribution-center.png',
+        size: [22, 22] as [number, number],
+        anchor: 'bottom-center' as const,
+        color: '#073B4C'
+    }
+};
+
+export function usePOIManager(options: UsePOIManagerOptions) {
+    const { map, AMap, onPOIClicked, onPOILoaded, onError } = options
+
+    // 响应式状态
+    const poiMarkers = ref<any[]>([])
+    const poiData = ref<Record<string, POI[]>>({
         factory: [],
         warehouse: [],
         gasStation: [],
@@ -13,334 +100,311 @@ export function usePOIManagement(mapContext) {
         restArea: [],
         transport: []
     })
-    // 详细的POI分类配置
-    const poiCategories = ref([
-        {
-            name: 'factory',
-            label: '工厂',
-            types: ['170300'],
-            keywords: ['工厂'],//, '工业园', '加工厂'
-            visible: true
-        },
-        {
-            name: 'warehouse',
-            label: '仓库',
-            types: ['070501'],
-            keywords: ['仓库'],//, '物流园', '仓储'
-            visible: true
-        },
-        {
-            name: 'gasStation',
-            label: '加油站',
-            types: ['010100'],
-            keywords: ['加油站'],//, '中国石油', '中国石化'
-            visible: true
-        },
-        {
-            name: 'maintenance',
-            label: '维修中心',
-            types: ['035000'],
-            keywords: ['货车维修'],
-            visible: true
-        },
-        {
-            name: 'restArea',
-            label: '休息区',
-            types: ['180300'],
-            keywords: ['休息区'],//'服务区',
-            visible: true
-        },
-        {
-            name: 'transport',
-            label: '运输中心',
-            types: ['070500', '150107', '150210'],
-            keywords: ['配送中心'],//, '物流'
-            visible: true
-        }
-    ]);
 
-    // 搜索状态
-    const searchProgress = ref({
-        total: 0,
-        completed: 0,
-        currentCategory: '',
-        currentKeyword: ''
-    })
+    const isLoading = ref(false)
+    const isLoaded = ref(false)
 
-    const isSearching = ref(false)
-    const loadingData = ref(false)
-    const loadProgress = ref(0)
-    const showTypeMappingWarning = ref(false)
-
-    // 类型映射
-    const typeMapping = {
-        'factory': 'FACTORY',
-        'warehouse': 'WAREHOUSE',
-        'gasStation': 'GAS_STATION',
-        'maintenance': 'MAINTENANCE_CENTER',
-        'restArea': 'REST_AREA',
-        'transport': 'DISTRIBUTION_CENTER'
-    }
-
-    const reverseTypeMapping = {
-        'FACTORY': 'factory',
-        'WAREHOUSE': 'warehouse',
-        'GAS_STATION': 'gasStation',
-        'MAINTENANCE_CENTER': 'maintenance',
-        'REST_AREA': 'restArea',
-        'DISTRIBUTION_CENTER': 'transport'
-    }
+    // POI 分类配置
+    const poiCategories = ref<POICategory[]>([
+        { name: 'factory', label: '工厂', visible: true },
+        { name: 'warehouse', label: '仓库', visible: true },
+        { name: 'gasStation', label: '加油站', visible: true },
+        { name: 'maintenance', label: '维修中心', visible: true },
+        { name: 'restArea', label: '休息区', visible: true },
+        { name: 'transport', label: '运输中心', visible: true }
+    ])
 
     // 计算属性
     const totalPOICount = computed(() => {
-        return Object.values(poiData).reduce((sum, pois) => sum + pois.length, 0)
+        return Object.values(poiData.value).reduce((sum, pois) => sum + pois.length, 0)
     })
 
-    const getCategoryCount = (categoryName) => {
-        return poiData[categoryName]?.length || 0
-    }
+    const visiblePOICount = computed(() => {
+        return poiCategories.value
+            .filter(cat => cat.visible)
+            .reduce((sum, cat) => sum + getCategoryCount(cat.name), 0)
+    })
 
-    // 数据操作方法
-    const classifyPOIData = (pois) => {
-        console.group('🔍 POI数据分类过程')
+    // 核心方法：从后端加载可展示的 POI 数据
+    const loadPOIsAbleToShow = async (): Promise<POI[]> => {
+        if (!map || !AMap) {
+            const error = new Error('地图未初始化')
+            onError?.(error)
+            throw error
+        }
 
-        // 清空现有数据
-        Object.keys(poiData).forEach(key => {
-            poiData[key] = []
-        })
+        try {
+            isLoading.value = true
+            console.log('开始从后端加载可展示的 POI 数据...')
 
-        let classifiedCount = 0
-        let unclassifiedCount = 0
+            // 调用后端 API 获取可展示的 POI 数据
+            const poisFromDB = await poiManagerApi.getPOIAbleToShow()
 
-        pois.forEach(poi => {
-            const categoryKey = poi.category
-            if (categoryKey && poiData[categoryKey] !== undefined) {
-                poiData[categoryKey].push(poi)
-                classifiedCount++
-            } else {
-                unclassifiedCount++
+            if (!poisFromDB || poisFromDB.length === 0) {
+                console.log('没有可展示的 POI 数据')
+                return []
             }
-        })
 
-        console.log(`总计: 已分类 ${classifiedCount} 个, 未分类 ${unclassifiedCount} 个`)
-        console.groupEnd()
+            // 转换数据格式
+            const convertedPOIs = convertDBDataToFrontend(poisFromDB)
+
+            // 分类存储数据
+            classifyPOIData(convertedPOIs)
+
+            // 更新地图显示
+            updateMapDisplay()
+
+            // 标记为已加载
+            isLoaded.value = true
+
+            // 触发回调
+            onPOILoaded?.(convertedPOIs)
+
+            console.log(`成功加载 ${convertedPOIs.length} 个 POI 数据`)
+            ElMessage.success(`成功加载 ${convertedPOIs.length} 个 POI 点`)
+
+            return convertedPOIs
+
+        } catch (error) {
+            console.error('加载 POI 数据失败:', error)
+            const err = error instanceof Error ? error : new Error('加载 POI 数据失败')
+            onError?.(err)
+            ElMessage.error('加载 POI 数据失败: ' + err.message)
+            throw err
+        } finally {
+            isLoading.value = false
+        }
     }
 
-    const convertDBDataToFrontend = (dbData) => {
-        console.group('🔄 数据转换过程')
-        const convertedPOIs = dbData.map((item) => {
-            let frontendCategory = 'unknown'
-            const normalizedType = item.type.toUpperCase().trim()
+    // 清除所有标记
+    const clearMarkers = (): void => {
+        if (!map) return
 
-            if (reverseTypeMapping[normalizedType]) {
-                frontendCategory = reverseTypeMapping[normalizedType]
+        poiMarkers.value.forEach(marker => {
+            map.remove(marker)
+        })
+        poiMarkers.value = []
+        console.log('已清除所有 POI 标记')
+    }
+
+    // 清除所有数据
+    const clearAllData = (): void => {
+        Object.keys(poiData.value).forEach(key => {
+            poiData.value[key as keyof typeof poiData.value] = []
+        })
+        clearMarkers()
+        isLoaded.value = false
+        console.log('已清空所有 POI 数据')
+    }
+
+    // 更新分类可见性
+    const updateCategoryVisibility = (categoryName: string, visible: boolean): void => {
+        const category = poiCategories.value.find(cat => cat.name === categoryName)
+        if (category) {
+            category.visible = visible
+            updateMapDisplay()
+        }
+    }
+
+    // 显示所有分类
+    const showAllCategories = (): void => {
+        poiCategories.value.forEach(cat => cat.visible = true)
+        updateMapDisplay()
+    }
+
+    // 隐藏所有分类
+    const hideAllCategories = (): void => {
+        poiCategories.value.forEach(cat => cat.visible = false)
+        updateMapDisplay()
+    }
+
+    // 获取分类数量
+    const getCategoryCount = (categoryName: string): number => {
+        return poiData.value[categoryName as keyof typeof poiData.value]?.length || 0
+    }
+
+    // 内部方法：转换数据库数据为前端格式
+    const convertDBDataToFrontend = (dbData: POIFromDB[]): POI[] => {
+        if (!dbData || dbData.length === 0) {
+            return []
+        }
+
+        return dbData.map((item, index) => {
+            if (!item) {
+                console.warn(`数据项 ${index} 为空，跳过`)
+                return null
+            }
+
+            // 标准化类型处理
+            let frontendCategory = 'unknown'
+            const itemType = (item.poiType || '').toString().trim()
+            const normalizedType = itemType.toUpperCase()
+
+            // 类型映射
+            if (normalizedType && reverseTypeMapping[normalizedType as keyof typeof reverseTypeMapping]) {
+                frontendCategory = reverseTypeMapping[normalizedType as keyof typeof reverseTypeMapping]
+            } else if (normalizedType === 'GASSTATION') {
+                frontendCategory = 'gasStation'
+            } else if (normalizedType === 'RESTAREA') {
+                frontendCategory = 'restArea'
             }
 
             return {
-                id: item.id.toString(),
-                name: item.name,
-                type: item.type,
-                location: { lng: item.longitude, lat: item.latitude },
-                address: item.address,
+                id: (item.id || `unknown-${Date.now()}-${index}`).toString(),
+                name: item.name || '未知名称',
+                poiType: itemType,
+                location: {
+                    lng: Number(item.longitude) || 0,
+                    lat: Number(item.latitude) || 0
+                },
+                address: item.address || '未知地址',
                 tel: item.tel || '',
                 category: frontendCategory
             }
-        })
-
-        console.log(`转换完成: ${convertedPOIs.length} 条记录`)
-        console.groupEnd()
-
-        return convertedPOIs
+        }).filter(poi => poi !== null) as POI[]
     }
 
-    const convertFrontendDataToDB = (frontendData) => {
-        return frontendData.map(poi => {
-            const backendType = typeMapping[poi.category] || 'UNKNOWN'
-            return {
-                id: poi.id,
-                name: poi.name,
-                type: backendType,
-                longitude: poi.location.lng,
-                latitude: poi.location.lat,
-                address: poi.address,
-                tel: poi.tel
+    // 内部方法：分类存储 POI 数据
+    const classifyPOIData = (pois: POI[]): void => {
+        // 清空现有数据
+        Object.keys(poiData.value).forEach(key => {
+            poiData.value[key as keyof typeof poiData.value] = []
+        })
+
+        // 分类存储
+        pois.forEach(poi => {
+            const categoryKey = poi.category
+            if (categoryKey && poiData.value[categoryKey as keyof typeof poiData.value] !== undefined) {
+                poiData.value[categoryKey as keyof typeof poiData.value].push(poi)
+            } else {
+                console.warn(`无法分类的 POI: ${poi.name} (分类: ${categoryKey})`)
             }
         })
+
+        console.log('POI 数据分类完成:', Object.keys(poiData.value).map(key => ({
+            category: key,
+            count: poiData.value[key as keyof typeof poiData.value].length
+        })))
     }
 
-    // API 操作方法
-    const loadDataFromBackend = async () => {
-        if (!mapContext?.value) {
-            ElMessage.warning('地图未初始化')
+    // 内部方法：更新地图显示
+    const updateMapDisplay = (): void => {
+        if (!map || !AMap) {
+            console.error('地图未就绪')
             return
         }
 
-        loadingData.value = true
-        loadProgress.value = 0
-        const startTime = Date.now()
-        showTypeMappingWarning.value = false
-
-        try {
-            ElMessage.info('开始从数据库加载POI数据...')
-
-            const progressInterval = setInterval(() => {
-                if (loadProgress.value < 90) {
-                    loadProgress.value += 10
-                }
-            }, 200)
-
-            const poisFromDB = await poiManagerApi.getAll()
-            clearInterval(progressInterval)
-            loadProgress.value = 100
-
-            if (poisFromDB && poisFromDB.length > 0) {
-                const convertedPOIs = convertDBDataToFrontend(poisFromDB)
-                classifyPOIData(convertedPOIs)
-                ElMessage.success(`成功加载 ${convertedPOIs.length} 个POI数据`)
-            } else {
-                ElMessage.info('数据库中没有POI数据')
-            }
-        } catch (error) {
-            console.error('加载POI数据失败:', error)
-            ElMessage.error('加载POI数据失败，请检查网络连接')
-        } finally {
-            loadingData.value = false
-            loadProgress.value = 0
-        }
+        clearMarkers()
+        addIndividualMarkers()
     }
 
-    const saveToBackend = async () => {
-        try {
-            const allPOIs = Object.values(poiData).flat()
-            if (allPOIs.length === 0) {
-                ElMessage.warning('没有数据可保存')
+    // 内部方法：添加单独标记
+    const addIndividualMarkers = (): void => {
+        if (!map || !AMap) return
+
+        let totalMarkers = 0
+
+        poiCategories.value.forEach(category => {
+            if (!category.visible) return
+
+            const pois = poiData.value[category.name as keyof typeof poiData.value]
+            const iconConfig = poiIcons[category.label as keyof typeof poiIcons]
+
+            if (!iconConfig) {
+                console.warn(`未找到分类 ${category.label} 的图标配置`)
                 return
             }
 
-            const poisToSave = convertFrontendDataToDB(allPOIs)
+            pois.forEach(poi => {
+                try {
+                    const icon = new AMap.Icon({
+                        image: iconConfig.url,
+                        size: new AMap.Size(iconConfig.size[0], iconConfig.size[1]),
+                        imageSize: new AMap.Size(iconConfig.size[0], iconConfig.size[1]),
+                        anchor: iconConfig.anchor
+                    })
 
-            await ElMessageBox.confirm(
-                `确定要保存 ${allPOIs.length} 个POI数据到数据库吗？`,
-                '确认保存',
-                {
-                    confirmButtonText: '确定',
-                    cancelButtonText: '取消',
-                    type: 'warning'
+                    const marker = new AMap.Marker({
+                        position: [poi.location.lng, poi.location.lat],
+                        title: `${poi.name} - ${category.label}`,
+                        icon: icon,
+                        offset: new AMap.Pixel(-iconConfig.size[0] / 2, -iconConfig.size[1]),
+                        extData: poi
+                    })
+
+                    marker.on('click', () => {
+                        console.log(`点击标记: ${poi.name}`)
+                        onPOIClicked?.(poi)
+                        showPOIInfoWindow(poi, marker.getPosition())
+                    })
+
+                    map.add(marker)
+                    poiMarkers.value.push(marker)
+                    totalMarkers++
+
+                } catch (error) {
+                    console.error(`创建标记失败: ${poi.name}`, error)
                 }
-            )
-
-            ElMessage.info('正在保存数据...')
-            const result = await poiManagerApi.batchSave(poisToSave)
-
-            if (result.success) {
-                ElMessage.success(result.message || 'POI数据保存成功')
-            } else {
-                ElMessage.error(`保存失败: ${result.message}`)
-            }
-        } catch (error) {
-            console.error('保存POI数据时发生错误:', error)
-            ElMessage.error('保存POI数据时发生错误: ' + (error as Error).message)
-        }
-    }
-
-    // 搜索方法
-    const smartBatchPOISearch = async () => {
-        if (!mapContext?.value) {
-            ElMessage.warning('地图未初始化')
-            return
-        }
-
-        isSearching.value = true
-        const allPOIs = []
-
-        // 计算总任务数
-        const totalTasks = poiCategories.value.reduce((sum, category) => sum + category.keywords.length, 0)
-        let completedTasks = 0
-
-        searchProgress.value = {
-            total: totalTasks,
-            completed: completedTasks,
-            currentCategory: '',
-            currentKeyword: ''
-        }
-
-        try {
-            // 搜索逻辑实现...
-            // 这里可以进一步拆分搜索逻辑到单独的 Composable
-            console.log('开始POI搜索...')
-
-            // 模拟搜索过程
-            await new Promise(resolve => setTimeout(resolve, 2000))
-
-            ElMessage.success('POI搜索完成')
-        } catch (error) {
-            console.error('POI搜索失败:', error)
-            ElMessage.error('POI搜索失败')
-        } finally {
-            isSearching.value = false
-            searchProgress.value.currentCategory = ''
-            searchProgress.value.currentKeyword = ''
-        }
-    }
-
-    // 分类可见性控制
-    const onCategoryVisibilityChange = (category) => {
-        console.log(`切换 ${category.label} 可见性:`, category.visible)
-    }
-
-    const showAllCategories = () => {
-        poiCategories.value.forEach(cat => cat.visible = true)
-        ElMessage.success('已显示所有分类')
-    }
-
-    const hideAllCategories = () => {
-        poiCategories.value.forEach(cat => cat.visible = false)
-        ElMessage.info('已隐藏所有分类')
-    }
-
-    const clearAllData = () => {
-        Object.keys(poiData).forEach(key => {
-            poiData[key] = []
+            })
         })
-        ElMessage.info('已清空所有数据')
+
+        console.log(`标记创建完成: 共 ${totalMarkers} 个标记`)
     }
 
-    const exportPOIData = () => {
-        const allPOIs = Object.values(poiData).flat()
-        const dataStr = JSON.stringify(allPOIs, null, 2)
-        const dataBlob = new Blob([dataStr], { type: 'application/json' })
+    // 内部方法：显示 POI 信息窗口
+    const showPOIInfoWindow = (poi: POI, position: any): void => {
+        if (!map || !AMap) return
 
-        const link = document.createElement('a')
-        link.href = URL.createObjectURL(dataBlob)
-        link.download = `poi_data_${new Date().getTime()}.json`
-        link.click()
+        const infoContent = `
+      <div class="poi-info-window" style="color: #000000;">
+        <div class="poi-header">
+          <h4 style="color: #000000; margin: 0 0 8px 0;">${poi.name}</h4>
+          <span class="poi-category" style="color: #ffffff; background-color: #409eff; padding: 2px 8px; border-radius: 4px; font-size: 12px;">${poi.category}</span>
+        </div>
+        <div class="poi-details" style="color: #000000; margin-top: 10px;">
+          <p style="color: #000000; margin: 4px 0;"><strong style="color: #000000;">地址:</strong> ${poi.address}</p>
+          ${poi.tel ? `<p style="color: #000000; margin: 4px 0;"><strong style="color: #000000;">电话:</strong> ${poi.tel}</p>` : ''}
+          <p style="color: #000000; margin: 4px 0;"><strong style="color: #000000;">坐标:</strong> ${poi.location.lng.toFixed(6)}, ${poi.location.lat.toFixed(6)}</p>
+        </div>
+      </div>
+    `
 
-        ElMessage.success('数据导出成功')
+        const infoWindow = new AMap.InfoWindow({
+            content: infoContent,
+            offset: new AMap.Pixel(0, -30)
+        })
+
+        infoWindow.open(map, position)
     }
 
+    // 组件卸载时清理
+    onUnmounted(() => {
+        clearMarkers()
+    })
+
+    // 返回公共 API
     return {
         // 状态
+        poiMarkers,
         poiData,
         poiCategories,
-        searchProgress,
-        isSearching,
-        loadingData,
-        loadProgress,
-        showTypeMappingWarning,
+        isLoading,
+        isLoaded,
 
         // 计算属性
         totalPOICount,
+        visiblePOICount,
 
         // 方法
-        getCategoryCount,
-        classifyPOIData,
-        loadDataFromBackend,
-        saveToBackend,
-        smartBatchPOISearch,
-        onCategoryVisibilityChange,
+        loadPOIsAbleToShow,
+        clearMarkers,
+        clearAllData,
+        updateCategoryVisibility,
         showAllCategories,
         hideAllCategories,
-        clearAllData,
-        exportPOIData
+        getCategoryCount
+
     }
 }
+
+export type UsePOIManagerReturn = ReturnType<typeof usePOIManager>
