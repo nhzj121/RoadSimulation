@@ -14,7 +14,10 @@ import org.example.roadsimulation.service.POIService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -39,6 +42,7 @@ public class DataInitializer{
     private final EnrollmentRepository enrollmentRepository;
     private final GoodsRepository goodsRepository;
     private final POIRepository poiRepository;
+    private final PlatformTransactionManager transactionManager;
 
     public List<POI> goalFactoryList;
     public List<POI> CementPlantList; // 水泥厂
@@ -57,11 +61,13 @@ public class DataInitializer{
     private double trueProbability = 0.009; // 判断为真的概率
 
     @Autowired
-    public DataInitializer(GoodsPOIGenerateService goodsPOIGenerateService, EnrollmentRepository enrollmentRepository, GoodsRepository goodsRepository,  POIRepository poiRepository) {
+    public DataInitializer(GoodsPOIGenerateService goodsPOIGenerateService, EnrollmentRepository enrollmentRepository, GoodsRepository goodsRepository,
+                           POIRepository poiRepository, PlatformTransactionManager transactionManager) {
         this.goodsPOIGenerateService = goodsPOIGenerateService;
         this.enrollmentRepository = enrollmentRepository;
         this.goodsRepository = goodsRepository;
         this.poiRepository = poiRepository;
+        this.transactionManager = transactionManager;
     }
 
     @PostConstruct
@@ -72,8 +78,6 @@ public class DataInitializer{
         System.out.println("DataInitializer 初始化完成，共加载 " + goalFactoryList.size() + " 个POI");
 
         initalizePOIStatus();
-
-        cleanupExistingEnrollments();
 
         System.out.println("DataInitializer 初始化完成");
 
@@ -103,12 +107,18 @@ public class DataInitializer{
     private void cleanupExistingEnrollments() {
         try {
             List<Enrollment> existingEnrollments = enrollmentRepository.findAll();
+            int size = existingEnrollments.size();
             for (Enrollment enrollment : existingEnrollments) {
-                if (enrollment.getGoods() != null && enrollment.getGoods().getSku().equals(goodsForTest.getSku())) {
-                    enrollmentRepository.delete(enrollment);
+                if (enrollment.getPoi() != null) {
+                    enrollment.getPoi().getEnrollments().remove(enrollment);
                 }
+                if (enrollment.getGoods() != null) {
+                    enrollment.getGoods().getEnrollments().remove(enrollment);
+                }
+                enrollmentRepository.delete(enrollment);
+                System.out.println("删除关系[" + enrollment.getGoods().getName()+","+ enrollment.getPoi().getName() + "]");
             }
-            System.out.println("清理完成，共删除 " + existingEnrollments.size() + " 条旧记录");
+            System.out.println("清理完成，共删除 " + size + " 条旧记录");
         } catch (Exception e) {
             System.err.println("清理旧数据时出错: " + e.getMessage());
         }
@@ -158,7 +168,7 @@ public class DataInitializer{
     /**
      *  周期性的随机判断 - 每5秒执行一次
      */
-    @Scheduled(fixedRate = 5000)
+    @Scheduled(fixedRate = 10000)
     @Transactional
     public void periodicJudgement(){
         if (goalFactoryList.isEmpty()) {
@@ -190,7 +200,7 @@ public class DataInitializer{
                     Integer generateQuantity = generateRandomQuantity();
                     // 因为懒加载的原因，在关系建立上运行存在问题，暂时搁置
                     // ToDo
-                    // initRelationForTest(poi, goodsForTest, generateQuantity);
+                    initRelationForTest(poi, goodsForTest, generateQuantity);
                 }
             }
         }
@@ -200,7 +210,7 @@ public class DataInitializer{
     /**
      * 周期性的重置判断 - 每12秒执行一次
      */
-    @Scheduled(fixedRate = 9000) // 12秒一个周期
+    @Scheduled(fixedRate = 15000) // 12秒一个周期
     @Transactional
     public void periodicReset() {
         if (goalFactoryList.isEmpty()) {
@@ -216,7 +226,7 @@ public class DataInitializer{
             POI poiToReset = truePois.get(random.nextInt(truePois.size()));
             // 因为懒加载的原因，在关系建立上运行存在问题，暂时搁置
             // ToDo
-            // deleteRelationForTest(poiToReset);
+            deleteRelationForTest(poiToReset);
             setPoiToFalse(poiToReset);
             System.out.println("POI [" + poiToReset.getName() + "] 已被重置为假");
         } else{
@@ -309,6 +319,7 @@ public class DataInitializer{
         return random.nextInt(60) + 10; // 100-600之间的随机数
     }
 
+    @Transactional
     public void initRelationForTest(POI poiForTest, Goods goodsForTest, Integer generateQuantity) {
         try{
             Enrollment enrollmentForTest = new Enrollment(poiForTest, goodsForTest, generateQuantity);
@@ -322,8 +333,9 @@ public class DataInitializer{
         }
     }
 
+    @Transactional
     public void deleteRelationForTest(POI poiForTest) {
-        List<Enrollment> goalEnrollment = poiForTest.getEnrollments();
+        List<Enrollment> goalEnrollment = new ArrayList<>(poiForTest.getEnrollments());
 
         // 目前只有 POI 的 enrollment 中一个 enrollment, 即一个 POI点 只生成一份 货物
         for (Enrollment enrollment : goalEnrollment) {
@@ -338,6 +350,8 @@ public class DataInitializer{
 
                 System.out.println("已删除" + poiForTest.getName() + "中的货物" + goalGoods.getName());
             }
+            poiRepository.save(poiForTest);
+            goodsRepository.save(goodsForTest);
         }
     }
 
@@ -347,9 +361,25 @@ public class DataInitializer{
     @PreDestroy
     public void cleanupOnShutdown() {
         System.out.println("项目关闭，清理模拟数据...");
-        cleanupExistingEnrollments();
-        System.out.println("模拟数据清理完成");
+        try {
+            // 使用编程式事务
+            TransactionTemplate transactionTemplate = new TransactionTemplate(transactionManager);
+            transactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+            transactionTemplate.execute(status -> {
+                cleanupExistingEnrollments();
+                return null;
+            });
+            System.out.println("模拟数据清理完成");
+        } catch (Exception e) {
+            System.err.println("清理数据时出错: " + e.getMessage());
+        }
     }
+//    @PreDestroy
+//    public void cleanupOnShutdown() {
+//        System.out.println("项目关闭，清理模拟数据...");
+//        cleanupExistingEnrollments();
+//        System.out.println("模拟数据清理完成");
+//    }
 
     /// 和其它模块的对接
     /**

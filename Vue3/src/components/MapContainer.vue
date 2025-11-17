@@ -451,22 +451,35 @@ const poisData = ref([]);    // POI 列表
 const tasks = ref([]);   // 运输任务列表
 
 const drawnRoutes = []; // 存放已绘制的覆盖物，便于清理
-const vehicleAnimations = []; // 存放正在移动的 marker，用于取消与清理
+const vehicleAnimations = []; // 存放正在移动的 车辆marker，用于取消与清理
 
+// 清理绘制的路线
 const clearDrawnRoutes = () => {
+  // 第一部分：清除所有已绘制的覆盖物（折线、标记等）
   for (const o of drawnRoutes) {
-    try { o.setMap && o.setMap(null); } catch (_) {}
+    try {
+      // 如果覆盖物有setMap方法，则调用setMap(null)将其从地图上移除
+      o.setMap && o.setMap(null);
+    } catch (_) {} // 忽略错误
   }
-  drawnRoutes.length = 0;
+  drawnRoutes.length = 0; // 清空drawnRoutes数组
 
+  // 第二部分：清除所有车辆动画
   for (const a of vehicleAnimations) {
-    try { a.cancel && a.cancel(); } catch (_) {}
-    try { a.marker && a.marker.setMap && a.marker.setMap(null); } catch (_) {}
+    try {
+      // 如果动画有cancel方法，则调用取消动画
+      a.cancel && a.cancel();
+    } catch (_) {} // 忽略错误
+    try {
+      // 如果动画关联的标记存在，并且有setMap方法，则将其从地图上移除
+      a.marker && a.marker.setMap && a.marker.setMap(null);
+    } catch (_) {} // 忽略错误
   }
-  vehicleAnimations.length = 0;
+  vehicleAnimations.length = 0; // 清空vehicleAnimations数组
 };
 
 // 新增：创建 van 内联 SVG 元素（背景圆 + svg）
+// 创建一个用于在前端地图界面上展示的自定义车辆图标
 const createSvgVanEl = (size = 32, bg = '#ff7f50') => {
   const el = document.createElement('div');
   el.style.width = `${size}px`;
@@ -485,6 +498,7 @@ const createSvgVanEl = (size = 32, bg = '#ff7f50') => {
 };
 
 // 计算两点球面距离（米）
+// a 和 b 是六位小数的经纬度坐标； 两者使用 [经度,纬度] 的形式
 const haversineDistance = (a, b) => {
   const toRad = d => d * Math.PI / 180;
   const R = 6371000;
@@ -497,7 +511,9 @@ const haversineDistance = (a, b) => {
 };
 
 // marker 匀速沿 path 移动（path: [[lng,lat],...], speed 米/秒），返回 cancel 函数
+// 方法基于车辆在 path 相邻两项之间 沿直线 匀速运动
 const animateAlongPath = (marker, path, speed = 8) => {
+  // 确保运动路径的有效性
   if (!path || path.length < 2) return () => {};
   const segLengths = [];
   let total = 0;
@@ -510,6 +526,7 @@ const animateAlongPath = (marker, path, speed = 8) => {
   let rafId = null;
   let canceled = false;
 
+  // 根据行驶距离计算当前位置坐标
   const seek = (d) => {
     if (d <= 0) return path[0];
     if (d >= total) return path[path.length-1];
@@ -528,12 +545,18 @@ const animateAlongPath = (marker, path, speed = 8) => {
 
   const step = (ts) => {
     if (canceled) return;
+    // 初始化时间
     if (start === null) start = ts;
+
     const elapsed = (ts - start)/1000;
+    // 计算当下行驶的距离
     const dist = Math.min(elapsed * speed, total);
+    // 通过距离确定具体的位置
     const pos = seek(dist);
+    // 应该是进行图标marker 的地图上的展示
     try { marker.setPosition(pos); } catch (e) {}
     if (dist >= total) return; // 到终点停止
+    // 继续下一帧
     rafId = requestAnimationFrame(step);
   };
   rafId = requestAnimationFrame(step);

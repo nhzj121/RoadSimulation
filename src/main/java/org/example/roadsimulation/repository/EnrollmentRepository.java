@@ -16,6 +16,8 @@ public interface EnrollmentRepository extends JpaRepository<Enrollment, Long> {
     List<Enrollment> findByPoi(POI poi);
     List<Enrollment> findByGoods(Goods goods);
 
+    void deleteEnrollmentById(Long id);
+
     // 按货物SKU查询
     @Query("SELECT e FROM Enrollment e WHERE e.goods.sku = :sku")
     List<Enrollment> findByGoodsSku(@Param("sku") String sku);

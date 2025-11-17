@@ -562,6 +562,7 @@ public class RouteController {
     /**
      * 直接使用坐标规划路线
      */
+    // 前端最可能使用的方法。
     @GetMapping("/gaode/plan-by-coordinates")
     public ResponseEntity<ApiResponse<GaodeRouteResponse>> planRouteByCoordinates(
             @RequestParam String startLon,
