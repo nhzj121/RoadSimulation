@@ -6,11 +6,12 @@ import jakarta.annotation.PreDestroy;
 import org.example.roadsimulation.entity.Enrollment;
 import org.example.roadsimulation.entity.Goods;
 import org.example.roadsimulation.entity.POI;
+import org.example.roadsimulation.entity.Route;
 import org.example.roadsimulation.repository.EnrollmentRepository;
 import org.example.roadsimulation.repository.GoodsRepository;
 import org.example.roadsimulation.repository.POIRepository;
+import org.example.roadsimulation.repository.RouteRepository;
 import org.example.roadsimulation.service.GoodsPOIGenerateService;
-import org.example.roadsimulation.service.POIService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -43,6 +44,8 @@ public class DataInitializer{
     private final GoodsRepository goodsRepository;
     private final POIRepository poiRepository;
     private final PlatformTransactionManager transactionManager;
+    private final RouteRepository routeRepository;
+    private final Map<POI, POI> startToEndMapping = new ConcurrentHashMap<>(); // 起点到终点的映射关系
 
     public List<POI> goalFactoryList;
     public List<POI> CementPlantList; // 水泥厂
@@ -61,27 +64,32 @@ public class DataInitializer{
     private double trueProbability = 0.009; // 判断为真的概率
 
     @Autowired
-    public DataInitializer(GoodsPOIGenerateService goodsPOIGenerateService, EnrollmentRepository enrollmentRepository, GoodsRepository goodsRepository,
-                           POIRepository poiRepository, PlatformTransactionManager transactionManager) {
+    public DataInitializer(GoodsPOIGenerateService goodsPOIGenerateService,
+                           EnrollmentRepository enrollmentRepository,
+                           GoodsRepository goodsRepository,
+                           POIRepository poiRepository,
+                           PlatformTransactionManager transactionManager,
+                           RouteRepository routeRepository) {
         this.goodsPOIGenerateService = goodsPOIGenerateService;
         this.enrollmentRepository = enrollmentRepository;
         this.goodsRepository = goodsRepository;
         this.poiRepository = poiRepository;
         this.transactionManager = transactionManager;
+        this.routeRepository = routeRepository;
     }
 
     @PostConstruct
     public void initialize(){
         // 初始化 POI 列表
-        this.goalFactoryList = getFilteredPOI("水泥", POI.POIType.FACTORY);
-        this.goodsForTest = getGoodsForTest("CEMENT");
-        System.out.println("DataInitializer 初始化完成，共加载 " + goalFactoryList.size() + " 个POI");
+        this.CementPlantList = getFilteredPOIByNameAndType("水泥", POI.POIType.FACTORY);
+        this.MaterialMarketList = getFilterdPOIByType(POI.POIType.MATERIAL_MARKET);
+        // this.goalFactoryList = getFilteredPOIByNameAndType("水泥", POI.POIType.FACTORY);
+        this.Cement = getGoodsForTest("CEMENT");
+        System.out.println("DataInitializer 初始化完成，共加载 " + CementPlantList.size() + " 个起点POI 和 " + MaterialMarketList.size() + "个终点POI");
 
         initalizePOIStatus();
 
         System.out.println("DataInitializer 初始化完成");
-
-
     }
 
     /**
@@ -89,7 +97,7 @@ public class DataInitializer{
      */
     private void initalizePOIStatus(){ //List<POI> goalPOITypeList
         /// 测试用例
-        for(POI poi: goalFactoryList){
+        for(POI poi: CementPlantList){
             poiIsWithGoods.put(poi, false);
             poiTrueCount.put(poi, 0);
         }
@@ -124,7 +132,6 @@ public class DataInitializer{
         }
     }
 
-
     /// 测试 关键词检索 获取 模拟所需POI
 //    @PostConstruct
 //    public void initFactory(String KeyWord){
@@ -141,10 +148,16 @@ public class DataInitializer{
     /**
      * 根据 关键字姓名模糊化搜素 与 种类限制 进行POI数据的筛选
      */
-    public List<POI> getFilteredPOI(String keyword, POI.POIType goalPOIType) {
+    public List<POI> getFilteredPOIByNameAndType(String keyword, POI.POIType goalPOIType) {
         return poiRepository.findByNameContainingIgnoreCase(keyword).stream()
                 .filter(poi -> poi.getPoiType().equals(goalPOIType))
                 .collect(Collectors.toList());
+    }
+    /**
+     * 根据 种类 进行POI数据的筛选
+     */
+    public List<POI> getFilterdPOIByType(POI.POIType goalPOIType) {
+        return new ArrayList<>(poiRepository.findByPoiType(goalPOIType));
     }
 
     /**
@@ -167,18 +180,19 @@ public class DataInitializer{
 
     /**
      *  周期性的随机判断 - 每5秒执行一次
+     *  用于随机选择 起点POI
      */
     @Scheduled(fixedRate = 10000)
     @Transactional
     public void periodicJudgement(){
-        if (goalFactoryList.isEmpty()) {
+        if (CementPlantList.isEmpty() ||  MaterialMarketList.isEmpty()) {
             return;
         }
 
         System.out.println("开始新一轮的POI判断周期...");
         // 对所有POI进行判断
 
-        for (POI poi : goalFactoryList) {
+        for (POI poi : CementPlantList) {
             // 如果当前POI已经为真，跳过判断
             if (poiIsWithGoods.get(poi)) {
                 continue;
@@ -193,14 +207,16 @@ public class DataInitializer{
                     setPoiToTrue(poi);
                     System.out.println("POI [" + poi.getName() + "] 判断为真");
 
-//                    this.trueProbability -= 0.005;
-
+                    Random random = new Random();
                     // 这里可以添加其他业务逻辑，比如初始化关系
                     // ToDo
+                    // 随机获取终点POI
+                    POI endPOI = this.MaterialMarketList.get(random.nextInt(this.MaterialMarketList.size()));
+                    //initalizeRoute(poi, endPOI);
+                    startToEndMapping.put(poi, endPOI); // 保存对应关系
                     Integer generateQuantity = generateRandomQuantity();
-                    // 因为懒加载的原因，在关系建立上运行存在问题，暂时搁置
-                    // ToDo
-                    initRelationForTest(poi, goodsForTest, generateQuantity);
+                    // 与货物通过Enrollment建立联系
+                    initRelationBetweenPOIAndGoods(poi, Cement, generateQuantity);
                 }
             }
         }
@@ -213,7 +229,7 @@ public class DataInitializer{
     @Scheduled(fixedRate = 15000) // 12秒一个周期
     @Transactional
     public void periodicReset() {
-        if (goalFactoryList.isEmpty()) {
+        if (CementPlantList.isEmpty() || MaterialMarketList.isEmpty()) {
             return;
         }
 
@@ -224,9 +240,13 @@ public class DataInitializer{
         if (!truePois.isEmpty()) {
             Random random = new Random();
             POI poiToReset = truePois.get(random.nextInt(truePois.size()));
-            // 因为懒加载的原因，在关系建立上运行存在问题，暂时搁置
-            // ToDo
-            deleteRelationForTest(poiToReset);
+
+            POI correspondingEndPOI = startToEndMapping.remove(poiToReset);
+            if (correspondingEndPOI != null) {
+                System.out.println("同时移除对应的终点POI: " + correspondingEndPOI.getName());
+            }
+
+            deleteRelationBetweenPOIAndGoods(poiToReset);
             setPoiToFalse(poiToReset);
             System.out.println("POI [" + poiToReset.getName() + "] 已被重置为假");
         } else{
@@ -319,8 +339,25 @@ public class DataInitializer{
         return random.nextInt(60) + 10; // 100-600之间的随机数
     }
 
+    // 起点与终点之间通过 route 实现的关系建立
+//    @Transactional
+//    public void initalizeRoute(POI startpoi, POI endPOI) {
+//        List<Route> goalRoute = routeRepository.findByStartPOIIdAndEndPOIId(startpoi.getId(), endPOI.getId());
+//
+//        // 现在先默认选择id最小的route
+//        if (goalRoute.isEmpty()) {
+//            Route route = new Route(startpoi, endPOI);
+//            routeRepository.save(route);
+//        } else{
+//
+//        }
+//
+//    }
+
+
+    // POI点与货物关系的建立与删除
     @Transactional
-    public void initRelationForTest(POI poiForTest, Goods goodsForTest, Integer generateQuantity) {
+    public void initRelationBetweenPOIAndGoods(POI poiForTest, Goods goodsForTest, Integer generateQuantity) {
         try{
             Enrollment enrollmentForTest = new Enrollment(poiForTest, goodsForTest, generateQuantity);
             enrollmentRepository.save(enrollmentForTest);
@@ -334,7 +371,7 @@ public class DataInitializer{
     }
 
     @Transactional
-    public void deleteRelationForTest(POI poiForTest) {
+    public void deleteRelationBetweenPOIAndGoods(POI poiForTest) {
         List<Enrollment> goalEnrollment = new ArrayList<>(poiForTest.getEnrollments());
 
         // 目前只有 POI 的 enrollment 中一个 enrollment, 即一个 POI点 只生成一份 货物
@@ -349,9 +386,10 @@ public class DataInitializer{
                 enrollmentRepository.delete(enrollment);
 
                 System.out.println("已删除" + poiForTest.getName() + "中的货物" + goalGoods.getName());
+                poiRepository.save(poiForTest);
+                goodsRepository.save(goalGoods);
             }
-            poiRepository.save(poiForTest);
-            goodsRepository.save(goodsForTest);
+
         }
     }
 
@@ -386,7 +424,18 @@ public class DataInitializer{
      * 获取当前可以展示的POI列表，只展示有货物的POI
      */
     public List<POI> getPOIAbleToShow(){
-        return getCurrentTruePois();
+        List<POI> AbleToShow = new ArrayList<>();
+
+        List<POI> goalStartPOI = getCurrentTruePois();
+        AbleToShow.addAll(goalStartPOI);
+
+        for(POI poi : goalStartPOI){
+            POI endPOI = startToEndMapping.get(poi);
+            if(endPOI != null && !AbleToShow.contains(endPOI)){
+                AbleToShow.add(endPOI);
+            }
+        }
+        return AbleToShow;
     }
 }
 
