@@ -157,36 +157,14 @@ const poiIcons = {
 
 // 获取POI类型对应的图标
 const getPOIIcon = (poiType) => {
-  // 创建类型映射表
-  const typeMapping = {
-    'FACTORY': '工厂',
-    'WAREHOUSE': '仓库',
-    'GAS_STATION': '加油站',
-    'MAINTENANCE_CENTER': '维修中心',
-    'REST_AREA': '休息区',
-    'DISTRIBUTION_CENTER': '运输中心',
-    'MATERIAL_MARKET': '建材市场',
-    'VEGETABLE_BASE': '蔬菜基地',
-    'VEGETABLE_MARKET': '蔬菜市场'
-  };
+  const icon = poiIcons[poiType];
 
-  // 反向映射：后端类型 -> 前端显示名
-  const reverseMapping = {
-    'FACTORY': '工厂',
-    'WAREHOUSE': '仓库',
-    'GAS_STATION': '加油站',
-    'MAINTENANCE_CENTER': '维修中心',
-    'REST_AREA': '休息区',
-    'DISTRIBUTION_CENTER': '运输中心',
-    'MATERIAL_MARKET': '建材市场',
-    'VEGETABLE_BASE': '蔬菜基地',
-    'VEGETABLE_MARKET': '蔬菜市场'
-  };
-
-  // 获取对应的前端显示名
-  const frontendType = reverseMapping[poiType] || '工厂';
-
-  return poiIcons[frontendType] || factoryIcon; // 默认使用工厂图标
+  if (icon) {
+    return icon;
+  } else {
+    console.warn(`未找到POI类型 ${poiType} 对应的图标，使用默认工厂图标`);
+    return factoryIcon; // 默认使用工厂图标
+  }
 };
 
 // --- 核心仿真方法 ---

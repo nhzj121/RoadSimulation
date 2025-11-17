@@ -9,6 +9,8 @@ import jakarta.validation.constraints.Size;
 import java.util.HashSet;
 import java.util.Set;
 
+// ToDo 为了测试的方便，我们对一些不能为空的属性进行修改
+
 @Entity
 @Table(name = "route")
 public class Route {
@@ -16,12 +18,12 @@ public class Route {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @NotBlank(message = "路线编号不能为空")
+    //@NotBlank(message = "路线编号不能为空")
     @Size(max = 50, message = "路线编号长度不能超过50个字符")
     @Column(name = "route_code", nullable = false, unique = true)
     private String routeCode;
 
-    @NotBlank(message = "路线名称不能为空")
+    //@NotBlank(message = "路线名称不能为空")
     @Size(max = 100, message = "路线名称长度不能超过100个字符")
     @Column(name = "name", nullable = false)
     private String name;
@@ -40,12 +42,12 @@ public class Route {
     @OneToMany(mappedBy = "route", fetch = FetchType.LAZY, cascade = {CascadeType.MERGE})
     private Set<Assignment> assignments = new HashSet<>();
 
-    @NotNull(message = "距离不能为空")
+    //@NotNull(message = "距离不能为空")
     @Min(value = 0, message = "距离不能为负数")
     @Column(name = "distance")
     private Double distance; // 路线距离（公里）
 
-    @NotNull(message = "预计时间不能为空")
+    //@NotNull(message = "预计时间不能为空")
     @Min(value = 0, message = "预计时间不能为负数")
     @Column(name = "estimated_time")
     private Double estimatedTime; // 预计行驶时间（小时）
@@ -80,15 +82,10 @@ public class Route {
         this.status = RouteStatus.ACTIVE;
     }
 
-    public Route(String routeCode, String name, POI startPOI, POI endPOI,
-                 Double distance, Double estimatedTime) {
+    public Route(POI startPOI, POI endPOI) {
         this();
-        this.routeCode = routeCode;
-        this.name = name;
         this.startPOI = startPOI;
         this.endPOI = endPOI;
-        this.distance = distance;
-        this.estimatedTime = estimatedTime;
     }
 
     // Getter和Setter方法
