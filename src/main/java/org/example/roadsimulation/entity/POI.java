@@ -72,7 +72,7 @@ public class POI {
     /**
      * 一对多关系： 一个 POI 可以产生或接受多个种类的货物
      */
-    @OneToMany(mappedBy = "poi", cascade = CascadeType.PERSIST, fetch = FetchType.LAZY)
+    @OneToMany(mappedBy = "poi", cascade = CascadeType.PERSIST, fetch = FetchType.EAGER)
     @JsonIgnore
     private List<Enrollment> enrollments = new ArrayList<>();
 

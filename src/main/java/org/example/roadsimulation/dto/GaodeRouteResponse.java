@@ -30,6 +30,7 @@ public class GaodeRouteResponse {
     }
 
     @Data
+    // 基于高德地图路径规划开发的路径数据
     public static class GaodeRouteData {
         private List<RoutePath> paths;
         private String origin;

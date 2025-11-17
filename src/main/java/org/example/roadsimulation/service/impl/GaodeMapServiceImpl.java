@@ -74,8 +74,6 @@ public class GaodeMapServiceImpl implements GaodeMapService {
         return baseUrl + "?" + buildQueryString(params);
     }
 
-
-
     private String buildQueryString(Map<String, String> params) {
         return params.entrySet().stream()
                 .map(entry -> {
