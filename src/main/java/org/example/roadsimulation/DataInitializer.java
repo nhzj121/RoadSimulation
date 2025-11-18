@@ -3,14 +3,8 @@ package org.example.roadsimulation;
 
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
-import org.example.roadsimulation.entity.Enrollment;
-import org.example.roadsimulation.entity.Goods;
-import org.example.roadsimulation.entity.POI;
-import org.example.roadsimulation.entity.Route;
-import org.example.roadsimulation.repository.EnrollmentRepository;
-import org.example.roadsimulation.repository.GoodsRepository;
-import org.example.roadsimulation.repository.POIRepository;
-import org.example.roadsimulation.repository.RouteRepository;
+import org.example.roadsimulation.entity.*;
+import org.example.roadsimulation.repository.*;
 import org.example.roadsimulation.service.GoodsPOIGenerateService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -45,13 +39,21 @@ public class DataInitializer{
     private final POIRepository poiRepository;
     private final PlatformTransactionManager transactionManager;
     private final RouteRepository routeRepository;
-    private final Map<POI, POI> startToEndMapping = new ConcurrentHashMap<>(); // 起点到终点的映射关系
+    private final CustomerRepository customerRepository;
+    private final ShipmentRepository shipmentRepository;
+    private final ShipmentItemRepository shipmentItemRepository;
 
-    public List<POI> goalFactoryList;
+    private final Map<POI, POI> startToEndMapping = new ConcurrentHashMap<>(); // 起点到终点的映射关系
+    // 修改成员变量，使用起点-终点对作为键
+    private final Map<String, Shipment> poiPairShipmentMapping = new ConcurrentHashMap<>();
+    // 生成唯一键的方法
+    private String generatePoiPairKey(POI startPOI, POI endPOI) {
+        return startPOI.getId() + "_" + endPOI.getId();
+    }
+
     public List<POI> CementPlantList; // 水泥厂
     public List<POI> MaterialMarketList; // 建材市场
 
-    public Goods goodsForTest;
     public Goods Cement; // 水泥
 
 //    public List<POI> goalNeedGoodsPOIList = getFilteredPOI("家具", POI.POIType.FACTORY);
@@ -69,13 +71,19 @@ public class DataInitializer{
                            GoodsRepository goodsRepository,
                            POIRepository poiRepository,
                            PlatformTransactionManager transactionManager,
-                           RouteRepository routeRepository) {
+                           RouteRepository routeRepository,
+                           CustomerRepository customerRepository,
+                           ShipmentRepository shipmentRepository,
+                           ShipmentItemRepository shipmentItemRepository) {
         this.goodsPOIGenerateService = goodsPOIGenerateService;
         this.enrollmentRepository = enrollmentRepository;
         this.goodsRepository = goodsRepository;
         this.poiRepository = poiRepository;
         this.transactionManager = transactionManager;
         this.routeRepository = routeRepository;
+        this.customerRepository = customerRepository;
+        this.shipmentRepository = shipmentRepository;
+        this.shipmentItemRepository = shipmentItemRepository;
     }
 
     @PostConstruct
@@ -212,7 +220,7 @@ public class DataInitializer{
                     // ToDo
                     // 随机获取终点POI
                     POI endPOI = this.MaterialMarketList.get(random.nextInt(this.MaterialMarketList.size()));
-                    //initalizeRoute(poi, endPOI);
+                    initalizeRoute(poi, endPOI);
                     startToEndMapping.put(poi, endPOI); // 保存对应关系
                     Integer generateQuantity = generateRandomQuantity();
                     // 与货物通过Enrollment建立联系
@@ -336,24 +344,43 @@ public class DataInitializer{
      */
     private Integer generateRandomQuantity() {
         Random random = new Random();
-        return random.nextInt(60) + 10; // 100-600之间的随机数
+        return random.nextInt(25) + 10; // 100-600之间的随机数
     }
 
     // 起点与终点之间通过 route 实现的关系建立
-//    @Transactional
-//    public void initalizeRoute(POI startpoi, POI endPOI) {
-//        List<Route> goalRoute = routeRepository.findByStartPOIIdAndEndPOIId(startpoi.getId(), endPOI.getId());
-//
-//        // 现在先默认选择id最小的route
-//        if (goalRoute.isEmpty()) {
-//            Route route = new Route(startpoi, endPOI);
-//            routeRepository.save(route);
-//        } else{
-//
-//        }
-//
-//    }
+    @Transactional
+    public void initalizeRoute(POI startpoi, POI endPOI) {
+        List<Route> goalRoute = routeRepository.findByStartPOIIdAndEndPOIId(startpoi.getId(), endPOI.getId());
 
+        // 现在先默认选择id最小的route
+        if (goalRoute.isEmpty()) {
+            Route route = new Route(startpoi, endPOI);
+            route.setName(startpoi.getName().substring(0, 3) + "-" + endPOI.getName().substring(0, 3));
+            route.setRouteCode(startpoi.getId() + "_" + endPOI.getId());
+            route.setRouteType("road");
+            route.setDistance(calculateDistance(startpoi, endPOI));
+            route.setEstimatedTime(calculateEstimatedTime(startpoi, endPOI));
+            routeRepository.save(route);
+            System.out.println("新建路径：" + route.getRouteCode());
+        } else{
+            Route route = goalRoute.get(0);
+            System.out.println("使用现有路径：" + route.getRouteCode());
+        }
+
+    }
+
+    // 计算两个 POI点 之间的距离
+    // 可以用于进行 随机生成的对应两点 是否可以作为仿真模拟需要路径的 简单判断
+    private Double calculateDistance(POI startPOI, POI endPOI) {
+        // ToDo 测试需要，先随便返回一个值
+        return 0.0;
+    }
+
+    // 计算两点该路线的预期运输时间
+    private Double calculateEstimatedTime(POI startPOI, POI endPOI) {
+        // ToDo 测试需要，先随便返回一个值
+        return 0.0;
+    }
 
     // POI点与货物关系的建立与删除
     @Transactional

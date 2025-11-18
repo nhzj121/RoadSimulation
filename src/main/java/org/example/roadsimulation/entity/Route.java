@@ -59,7 +59,7 @@ public class Route {
     @Column(name = "status", length = 20)
     private RouteStatus status; // 路线状态
 
-    @NotNull(message = "路线类型不能为空")
+    //@NotNull(message = "路线类型不能为空")
     @Column(name = "route_type")
     private String routeType; // 路线类型（高速、国道、省道等）
 
@@ -83,7 +83,7 @@ public class Route {
     }
 
     public Route(POI startPOI, POI endPOI) {
-        this();
+        this.status = RouteStatus.ACTIVE;
         this.startPOI = startPOI;
         this.endPOI = endPOI;
     }
