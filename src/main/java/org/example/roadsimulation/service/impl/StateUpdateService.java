@@ -91,34 +91,34 @@ public class StateUpdateService implements TimeEventScheduler.TimeEventListener 
      * 更新任务分配状态
      */
     public void updateAssignmentStates() {
-        List<Assignment> assignments = assignmentRepository.findByStatusIn(
-                List.of(Assignment.AssignmentStatus.ASSIGNED, Assignment.AssignmentStatus.IN_PROGRESS)
-        );
-
-        for (Assignment assignment : assignments) {
-            updateAssignmentProgress(assignment);
-        }
-
-        // 重新安排下一次更新
-        eventScheduler.scheduleRelativeEvent(10, this::updateAssignmentStates, "assignment_state_update");
+//        List<Assignment> assignments = assignmentRepository.findByStatusIn(
+//                List.of(Assignment.AssignmentStatus.ASSIGNED, Assignment.AssignmentStatus.IN_PROGRESS)
+//        );
+//
+//        for (Assignment assignment : assignments) {
+//            updateAssignmentProgress(assignment);
+//        }
+//
+//        // 重新安排下一次更新
+//        eventScheduler.scheduleRelativeEvent(10, this::updateAssignmentStates, "assignment_state_update");
     }
 
     /**
      * 检查超期任务
      */
     public void checkOverdueAssignments() {
-        LocalDateTime now = simulationTime.getCurrentTime();
-        List<Assignment> overdueAssignments = assignmentRepository.findOverdueAssignments(now);
-
-        for (Assignment assignment : overdueAssignments) {
-            System.out.printf("时间: %s, 任务超期: %s, 预计完成: %s%n",
-                    now, assignment.getId(), assignment.getEndTime());
-
-            // 可以在这里触发通知或其他处理逻辑
-        }
-
-        // 重新安排下一次检查
-        eventScheduler.scheduleRelativeEvent(30, this::checkOverdueAssignments, "overdue_assignment_check");
+//        LocalDateTime now = simulationTime.getCurrentTime();
+//        List<Assignment> overdueAssignments = assignmentRepository.findOverdueAssignments(now);
+//
+//        for (Assignment assignment : overdueAssignments) {
+//            System.out.printf("时间: %s, 任务超期: %s, 预计完成: %s%n",
+//                    now, assignment.getId(), assignment.getEndTime());
+//
+//            // 可以在这里触发通知或其他处理逻辑
+//        }
+//
+//        // 重新安排下一次检查
+//        eventScheduler.scheduleRelativeEvent(30, this::checkOverdueAssignments, "overdue_assignment_check");
     }
 
     /**
