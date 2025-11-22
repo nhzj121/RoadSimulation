@@ -637,7 +637,7 @@ const fetchTasks = async () => {
 
 const fetchRawRoutes = async () => {
   try {
-    const response = await request.get('/api/routes');
+    const response = await request.get('/api/routes/3');
     return response.data;
   } catch (error) {
     console.error('获取路线数据失败:', error);
@@ -658,60 +658,80 @@ const computeRoutesOnBackend = async (endpoints) => {
 // 启动车辆仿真
 const startVehicleSimulation = async () => {
 
-  try {
-    console.log("开始仿真");
-    isSimulationRunning.value = true;
-
-    // 获取可展示的POI数据
-    const pois = await poiManagerApi.getPOIAbleToShow();
-    console.log('获取到可展示的POI数据：', pois);
-
-    if (!pois || pois.length === 0) {
-      ElMessage.warning('当前没有可展示的POI数据');
-      return;
-    }
-
-    // 清除现有标记
-    clearPOIMarkers();
-
-    // 添加POI标记到地图
-    await addPOIMarkersToMap(pois);
-
-    ElMessage.success(`成功加载 ${pois.length} 个POI点`);
-
-  } catch (error) {
-    console.error("启动仿真模拟失败：", error);
-    ElMessage.error('获取POI数据失败：' + error.message);
-    // 重置状态
-    isSimulationRunning.value = false;
-  }
-
-
   // try {
-  //   // 拉取前端需要展示的所有数据
-  //   await Promise.all([
-  //     fetchVehicles(),
-  //     fetchPOIs(),
-  //     fetchTasks()
-  //   ]);
+  //   console.log("开始仿真");
+  //   isSimulationRunning.value = true;
   //
-  //   // 按既有流程拉取原始路线并请求后端规划，绘制路线
-  //   const rawRoutes = await fetchRawRoutes();
-  //   const endpoints = rawRoutes.map(r => {
-  //     const pts = Array.isArray(r.points) ? r.points : (r.path || []);
-  //     if (!pts || pts.length === 0) return null;
-  //     const first = Array.isArray(pts[0]) ? pts[0] : [pts[0].lng, pts[0].lat];
-  //     const last = Array.isArray(pts[pts.length - 1]) ? pts[pts.length - 1] : [pts[pts.length - 1].lng, pts[pts.length - 1].lat];
-  //     return { id: r.id, start: first, end: last };
-  //   }).filter(Boolean);
+  //   // 获取可展示的POI数据
+  //   const pois = await poiManagerApi.getPOIAbleToShow();
+  //   console.log('获取到可展示的POI数据：', pois);
   //
-  //   if (endpoints.length > 0) {
-  //     const computed = await computeRoutesOnBackend(endpoints);
-  //     drawComputedRoutes(computed);
+  //   if (!pois || pois.length === 0) {
+  //     ElMessage.warning('当前没有可展示的POI数据');
+  //     return;
   //   }
-  // } catch (e) {
-  //   console.error('车辆仿真初始化错误', e);
+  //
+  //   // 清除现有标记
+  //   clearPOIMarkers();
+  //
+  //   // 添加POI标记到地图
+  //   await addPOIMarkersToMap(pois);
+  //
+  //   ElMessage.success(`成功加载 ${pois.length} 个POI点`);
+  //
+  // } catch (error) {
+  //   console.error("启动仿真模拟失败：", error);
+  //   ElMessage.error('获取POI数据失败：' + error.message);
+  //   // 重置状态
+  //   isSimulationRunning.value = false;
   // }
+
+
+  try {
+    // 拉取前端需要展示的所有数据
+    // await Promise.all([
+    //   fetchVehicles(),
+    //   fetchPOIs(),
+    //   fetchTasks()
+    // ]);
+    //
+    // // 按既有流程拉取原始路线并请求后端规划，绘制路线
+    // const rawRoutes = await fetchRawRoutes();
+    // const endpoints = rawRoutes.map(r => {
+    //   const pts = Array.isArray(r.points) ? r.points : (r.path || []);
+    //   if (!pts || pts.length === 0) return null;
+    //   const first = Array.isArray(pts[0]) ? pts[0] : [pts[0].lng, pts[0].lat];
+    //   const last = Array.isArray(pts[pts.length - 1]) ? pts[pts.length - 1] : [pts[pts.length - 1].lng, pts[pts.length - 1].lat];
+    //   return { id: r.id, start: first, end: last };
+    // }).filter(Boolean);
+    //
+    // if (endpoints.length > 0) {
+    //   const computed = await computeRoutesOnBackend(endpoints);
+    //   drawComputedRoutes(computed);
+    // }
+    const useTestData = () => {
+      const testRoutes = [
+        {
+          id: 1,
+          path: [
+            [116.478935,39.997761],[116.478939,39.997825],[116.478912,39.998549],
+            [116.478912,39.998549],[116.478998,39.998555],[116.478998,39.998555],
+            [116.479282,39.99856],[116.479658,39.998528],[116.480151,39.998453],
+            [116.480784,39.998302],[116.480784,39.998302],[116.481149,39.998184],
+            [116.481573,39.997997],[116.481863,39.997846],[116.482072,39.997718],
+            [116.482362,39.997718],[116.483633,39.998935],[116.48367,39.998968],[116.484648,39.999861]
+          ],
+          start: [116.478935,39.997761],
+          end: [116.484648,39.999861],
+          speedMps: 50
+        }
+      ];
+      drawComputedRoutes(testRoutes);
+    };
+    useTestData();
+  } catch (e) {
+    console.error('车辆仿真初始化错误', e);
+  }
 };
 
 // --- 统计信息 ---
