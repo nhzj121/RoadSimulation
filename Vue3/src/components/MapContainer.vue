@@ -181,8 +181,37 @@ const startSimulation = async () => {
     await updatePOIData();
 
     // 启动定时更新
-    startSimulationTimer();
+    //startSimulationTimer();
 
+    // 使用一个简单且已知有效的测试坐标
+    const testEndpoints = [
+      {
+        id: 'test-1',
+        start: [104.123712, 30.511696],  // 北京天安门
+        end: [104.059277, 30.505305]     // 附近点
+      }
+    ]
+
+    console.log('使用测试坐标进行路线规划:', testEndpoints);
+
+    try {
+      const routes = await computeRoutesOnBackend(testEndpoints);
+      console.log('测试路线规划成功，获取到路线:', routes);
+      drawComputedRoutes(routes);
+    } catch (error) {
+      console.error('测试路线规划失败:', error);
+
+      // 如果测试坐标也失败，说明是后端服务问题
+      if (error.response?.status === 400) {
+        const errorDetail = error.response?.data;
+        console.error('后端返回的错误详情:', errorDetail);
+        ElMessage.error(`路线规划服务错误: ${errorDetail?.message || '未知错误'}`);
+      } else {
+        ElMessage.error('路线规划失败: ' + error.message);
+      }
+
+      drawComputedRoutes([]);
+    }
     // 启动车辆动画和路线规划
     await startVehicleSimulation();
 
@@ -490,7 +519,7 @@ const haversineDistance = (a, b) => {
 
 // marker 匀速沿 path 移动（path: [[lng,lat],...], speed 米/秒），返回 cancel 函数
 // 方法基于车辆在 path 相邻两项之间 沿直线 匀速运动
-const animateAlongPath = (marker, path, speed = 8) => {
+const animateAlongPath = (marker, path, speed = 20) => {
   // 确保运动路径的有效性
   if (!path || path.length < 2) return () => {};
   const segLengths = [];
@@ -645,13 +674,75 @@ const fetchRawRoutes = async () => {
   }
 };
 
+// 调整路线计算接口
 const computeRoutesOnBackend = async (endpoints) => {
   try {
-    const response = await request.post('/api/routes/compute', endpoints);
-    return response.data;
-  } catch (error) {
-    console.error('计算路线失败:', error);
-    return [];
+    const plans = await Promise.all(
+        endpoints.map(ep => {
+          const params = {
+            startLon: String(ep.start[0]),
+            startLat: String(ep.start[1]),
+            endLon: String(ep.end[0]),
+            endLat: String(ep.end[1]),
+            strategy: '0'
+          };
+
+          return request
+              .get('/api/routes/gaode/plan-by-coordinates', { params })
+              .then(res => {
+                const response = res.data;
+
+                if (!response.success) {
+                  throw new Error(response.message);
+                }
+
+                // 获取高德地图数据
+                const gaodeData = response.data?.data;
+
+                // 检查是否有路径数据
+                if (!gaodeData?.paths?.length) {
+                  throw new Error('没有找到路径方案');
+                }
+
+                const pathInfo = gaodeData.paths[0];
+
+                // 从 steps 的 polyline 构建完整路径
+                let fullPath = [];
+                if (pathInfo.steps) {
+                  pathInfo.steps.forEach(step => {
+                    if (step.polyline) {
+                      const points = step.polyline.split(';');
+                      points.forEach(pointStr => {
+                        const [lng, lat] = pointStr.split(',').map(Number);
+                        fullPath.push([lng, lat]);
+                      });
+                    }
+                  });
+                }
+
+                console.log(`路线 ${ep.id} 规划成功，路径点数: ${fullPath.length}`);
+
+                return {
+                  id: ep.id,
+                  path: fullPath,
+                  start: fullPath[0] || ep.start,
+                  end: fullPath[fullPath.length - 1] || ep.end,
+                  distance: pathInfo.distance,
+                  duration: pathInfo.duration,
+                  speedMps: pathInfo.distance / pathInfo.duration
+                };
+              })
+              .catch(error => {
+                const errorMsg = error.response?.data?.message || error.message;
+                throw new Error(`路线 ${ep.id} 规划失败: ${errorMsg}`);
+              });
+        })
+    );
+
+    return plans;
+  } catch (e) {
+    console.error('路线规划整体失败', e);
+    throw e;
   }
 };
 

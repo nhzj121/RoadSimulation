@@ -86,7 +86,7 @@ public class DataInitializer{
         this.shipmentItemRepository = shipmentItemRepository;
     }
 
-    @PostConstruct
+    //@PostConstruct
     public void initialize(){
         // 初始化 POI 列表
         this.CementPlantList = getFilteredPOIByNameAndType("水泥", POI.POIType.FACTORY);
@@ -190,7 +190,7 @@ public class DataInitializer{
      *  周期性的随机判断 - 每5秒执行一次
      *  用于随机选择 起点POI
      */
-    @Scheduled(fixedRate = 10000)
+    //@Scheduled(fixedRate = 10000)
     @Transactional
     public void periodicJudgement(){
         if (CementPlantList.isEmpty() ||  MaterialMarketList.isEmpty()) {
@@ -234,7 +234,7 @@ public class DataInitializer{
     /**
      * 周期性的重置判断 - 每12秒执行一次
      */
-    @Scheduled(fixedRate = 15000) // 12秒一个周期
+    //@Scheduled(fixedRate = 15000) // 12秒一个周期
     @Transactional
     public void periodicReset() {
         if (CementPlantList.isEmpty() || MaterialMarketList.isEmpty()) {
