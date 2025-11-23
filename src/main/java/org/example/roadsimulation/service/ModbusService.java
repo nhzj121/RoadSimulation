@@ -39,7 +39,7 @@ public class ModbusService {
     /**
      * 定时从Modbus Slave读取所有在线车辆的位置信息
      */
-    @Scheduled(fixedRate = 10000) // 每分钟读取一次
+    @Scheduled(fixedRate = 20000) // 每分钟读取一次
     public void updateAllVehiclesPosition() {
         try {
             // 获取所有配置了Modbus Slave ID的车辆
@@ -101,15 +101,15 @@ public class ModbusService {
                 return;
             }
 
-            // 解析经度（32位浮点数）
-            int longitudeHigh = registers.readUnsignedShort();
-            int longitudeLow = registers.readUnsignedShort();
-            double longitude = registersToDouble(longitudeHigh, longitudeLow);
+            // 解析经度（按照新方案）
+            int longitudeIntegerWithTwoDecimals = registers.readUnsignedShort();
+            int longitudeRemainingFourDecimals = registers.readUnsignedShort();
+            double longitude = parseCoordinate(longitudeIntegerWithTwoDecimals, longitudeRemainingFourDecimals);
 
-            // 解析纬度（32位浮点数）
-            int latitudeHigh = registers.readUnsignedShort();
-            int latitudeLow = registers.readUnsignedShort();
-            double latitude = registersToDouble(latitudeHigh, latitudeLow);
+            // 解析纬度（按照新方案）
+            int latitudeIntegerWithTwoDecimals = registers.readUnsignedShort();
+            int latitudeRemainingFourDecimals = registers.readUnsignedShort();
+            double latitude = parseCoordinate(latitudeIntegerWithTwoDecimals, latitudeRemainingFourDecimals);
 
             // 解析状态
             int statusValue = registers.readUnsignedShort();
@@ -135,26 +135,122 @@ public class ModbusService {
         }
     }
 
-    private double registersToDouble(int high, int low) {
-        // 方法1：大端序（当前方法）
-        int bigEndianBits = (high << 16) | (low & 0xFFFF);
-        float bigEndianValue = Float.intBitsToFloat(bigEndianBits);
+    /**
+     * 解析坐标值（经度/纬度）
+     * @param integerWithTwoDecimals 整数部分 + 两位小数
+     * @param remainingFourDecimals 剩余四位小数，以1开头
+     * @return 完整的坐标值
+     */
+    public double parseCoordinate(int integerWithTwoDecimals, int remainingFourDecimals) {
+        try {
+            // 解析整数部分和两位小数
+            double mainPart = integerWithTwoDecimals / 100.0;
 
-        // 方法2：小端序
-        int littleEndianBits = (low << 16) | (high & 0xFFFF);
-        float littleEndianValue = Float.intBitsToFloat(littleEndianBits);
+            // 解析剩余四位小数
+            String remainingStr = String.valueOf(remainingFourDecimals);
 
-        log.debug("字节序测试 - 大端序: {}, 小端序: {}", bigEndianValue, littleEndianValue);
+            // 检查是否以1开头，如果是则去掉开头的1
+            if (remainingStr.startsWith("1")) {
+                remainingStr = remainingStr.substring(1);
+            }
 
-        // 根据实际情况返回正确的值
-        // 如果大端序接近预期，返回bigEndianValue
-        // 如果小端序接近预期，返回littleEndianValue
+            // 补零到4位
+            while (remainingStr.length() < 4) {
+                remainingStr += "0";
+            }
 
-        // 返回大端序，根据测试结果调整
-        return bigEndianValue;
+            // 将剩余部分转换为小数（除以10000得到4位小数）
+            double decimalPart = Integer.parseInt(remainingStr) / 1000000.0;
+
+            double result = mainPart + decimalPart;
+
+            log.debug("坐标解析 - 主部分: {}, 剩余小数: {}, 完整值: {}",
+                    mainPart, decimalPart, result);
+
+            return result;
+        } catch (Exception e) {
+            log.error("坐标解析错误 - 输入: {}, {}, 错误: {}",
+                    integerWithTwoDecimals, remainingFourDecimals, e.getMessage());
+            return 0.0;
+        }
+    }
+    /**
+     * 将坐标值编码为两个Modbus寄存器值
+     * @param coordinate 坐标值（如123.456789）
+     * @return 包含两个整数的数组 [integerWithTwoDecimals, remainingFourDecimals]
+     */
+    public static int[] encodeCoordinate(double coordinate) {
+        // 将坐标乘以1000000得到整数
+        long scaledValue = Math.round(coordinate * 1000000);
+
+        // 提取前5位数字（整数部分 + 2位小数）
+        int integerWithTwoDecimals = (int) (scaledValue / 10000);
+
+        // 提取后4位数字（剩余4位小数）
+        int remainingFourDecimals = (int) (scaledValue % 10000);
+
+        // 在剩余小数前补1，避免前导零
+        remainingFourDecimals += 10000;
+
+        return new int[]{integerWithTwoDecimals, remainingFourDecimals};
+    }
+
+    private double registersToDouble(int integerWithTwoDecimals, int remainingFourDecimals) {
+        // 解析整数部分和两位小数
+        double mainPart = integerWithTwoDecimals / 100.0;
+
+        // 解析剩余四位小数
+        // 因为remainingFourDecimals以1开头，我们需要去掉开头的1
+        StringBuilder remainingStr = new StringBuilder(String.valueOf(remainingFourDecimals));
+        if (remainingStr.toString().startsWith("1")) {
+            remainingStr = new StringBuilder(remainingStr.substring(1));
+        }
+
+        // 补零到4位
+        while (remainingStr.length() < 4) {
+            remainingStr.append("0");
+        }
+
+        double decimalPart = Integer.parseInt(remainingStr.toString()) / 1000000.0;
+
+        return mainPart + decimalPart;
+    }
+
+    public double testRegistersToDouble(int integerWithTwoDecimals, int remainingFourDecimals) {
+        // 解析整数部分和两位小数
+        double mainPart = integerWithTwoDecimals / 100.0;
+
+        // 解析剩余四位小数
+        // 因为remainingFourDecimals以1开头，我们需要去掉开头的1
+        StringBuilder remainingStr = new StringBuilder(String.valueOf(remainingFourDecimals));
+        if (remainingStr.toString().startsWith("1")) {
+            remainingStr = new StringBuilder(remainingStr.substring(1));
+        }
+
+        // 补零到4位
+        while (remainingStr.length() < 4) {
+            remainingStr.append("0");
+        }
+
+        double decimalPart = Integer.parseInt(remainingStr.toString()) / 1000000.0;
+
+        return mainPart + decimalPart;
     }
 
     private Vehicle.VehicleStatus intToVehicleStatus(int status) {
+        switch (status) {
+            case 0: return Vehicle.VehicleStatus.IDLE;
+            case 1: return Vehicle.VehicleStatus.TRANSPORTING;
+            case 2: return Vehicle.VehicleStatus.UNLOADING;
+            case 3: return Vehicle.VehicleStatus.MAINTAINING;
+            case 4: return Vehicle.VehicleStatus.REFUELING;
+            case 5: return Vehicle.VehicleStatus.RESTING;
+            case 6: return Vehicle.VehicleStatus.ACCIDENT;
+            default: return Vehicle.VehicleStatus.IDLE;
+        }
+    }
+
+    public Vehicle.VehicleStatus testIntToVehicleStatus(int status) {
         switch (status) {
             case 0: return Vehicle.VehicleStatus.IDLE;
             case 1: return Vehicle.VehicleStatus.TRANSPORTING;
