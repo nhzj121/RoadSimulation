@@ -39,7 +39,7 @@ public class ModbusService {
     /**
      * 定时从Modbus Slave读取所有在线车辆的位置信息
      */
-    @Scheduled(fixedRate = 20000) // 每分钟读取一次
+    @Scheduled(fixedRate = 9000) // 每分钟读取一次
     public void updateAllVehiclesPosition() {
         try {
             // 获取所有配置了Modbus Slave ID的车辆
@@ -110,6 +110,18 @@ public class ModbusService {
             int latitudeIntegerWithTwoDecimals = registers.readUnsignedShort();
             int latitudeRemainingFourDecimals = registers.readUnsignedShort();
             double latitude = parseCoordinate(latitudeIntegerWithTwoDecimals, latitudeRemainingFourDecimals);
+
+            // 验证经度范围 (-180 到 180)
+            if (longitude < -180.0 || longitude > 180.0) {
+                log.error("经度值超出有效范围: {}，有效范围为 -180 到 180", longitude);
+                return;
+            }
+
+            // 验证纬度范围 (-90 到 90)
+            if (latitude < -90.0 || latitude > 90.0) {
+                log.error("纬度值超出有效范围: {}，有效范围为 -90 到 90", latitude);
+                return;
+            }
 
             // 解析状态
             int statusValue = registers.readUnsignedShort();

@@ -174,6 +174,89 @@ class ModbusServiceTest {
     }
 
     @Test
+    void testProcessVehicleData_LongitudeOutOfRange() throws Exception {
+        /// 数据准备
+        // 准备一个经度超过180的Modbus响应数据，模拟设备返回异常数据场景
+        ReadHoldingRegistersResponse outOfRangeResponse = TestDataUtils.createOutOfRangeResponse(
+                1L, 181.000000f, 39.9042f);
+
+        // 利用上述测试数据，创建一个返回结果
+        CompletableFuture<ReadHoldingRegistersResponse> future =
+                CompletableFuture.completedFuture(outOfRangeResponse);
+
+        /// Mock测试隔离
+        // 当sendRequest方法被调用时，返回上述创建的返回结果
+        doReturn(future).when(modbusMaster)
+                .sendRequest(any(ReadHoldingRegistersRequest.class), eq(1));
+
+        /// 进行测试
+        // 触发测试流程，启动完整的Modbus数据读取和处理流程
+        modbusService.readVehiclePosition(testVehicle);
+
+        /// 断言验证
+        // 因为经度超出范围，所以针对正常数据的车辆数据保存功能不应该被调用
+        // 通过检测vehicleRepository.save()方法是否被调用进行结果验证
+        verify(vehicleRepository, never()).save(any(Vehicle.class));
+    }
+
+    @Test
+    void testProcessVehicleData_LatitudeOutOfRange() throws Exception {
+        // Given - 纬度超过90的数据
+        ReadHoldingRegistersResponse outOfRangeResponse = TestDataUtils.createOutOfRangeResponse(
+                1L, 116.4074f, 91.000000f);
+
+        CompletableFuture<ReadHoldingRegistersResponse> future =
+                CompletableFuture.completedFuture(outOfRangeResponse);
+
+        doReturn(future).when(modbusMaster)
+                .sendRequest(any(ReadHoldingRegistersRequest.class), eq(1));
+
+        // When
+        modbusService.readVehiclePosition(testVehicle);
+
+        // Then - 不应该保存数据，因为纬度超出范围
+        verify(vehicleRepository, never()).save(any(Vehicle.class));
+    }
+
+    @Test
+    void testProcessVehicleData_LongitudeNegativeOutOfRange() throws Exception {
+        // Given - 经度小于-180的数据
+        ReadHoldingRegistersResponse outOfRangeResponse = TestDataUtils.createOutOfRangeResponse(
+                1L, -181.000000f, 39.9042f);
+
+        CompletableFuture<ReadHoldingRegistersResponse> future =
+                CompletableFuture.completedFuture(outOfRangeResponse);
+
+        doReturn(future).when(modbusMaster)
+                .sendRequest(any(ReadHoldingRegistersRequest.class), eq(1));
+
+        // When
+        modbusService.readVehiclePosition(testVehicle);
+
+        // Then - 不应该保存数据，因为经度超出范围
+        verify(vehicleRepository, never()).save(any(Vehicle.class));
+    }
+
+    @Test
+    void testProcessVehicleData_LatitudeNegativeOutOfRange() throws Exception {
+        // Given - 纬度小于-90的数据
+        ReadHoldingRegistersResponse outOfRangeResponse = TestDataUtils.createOutOfRangeResponse(
+                1L, 116.4074f, -91.000000f);
+
+        CompletableFuture<ReadHoldingRegistersResponse> future =
+                CompletableFuture.completedFuture(outOfRangeResponse);
+
+        doReturn(future).when(modbusMaster)
+                .sendRequest(any(ReadHoldingRegistersRequest.class), eq(1));
+
+        // When
+        modbusService.readVehiclePosition(testVehicle);
+
+        // Then - 不应该保存数据，因为纬度超出范围
+        verify(vehicleRepository, never()).save(any(Vehicle.class));
+    }
+
+    @Test
     void testEncodeCoordinate() {
         // 测试编码过程
         int[] encoded = ModbusService.encodeCoordinate(123.456789);
