@@ -114,7 +114,7 @@ import {
   ElCard,
   ElButton,
   ElButtonGroup,
-  ElCheckTag, ElMessage,
+  ElCheckTag, ElMessage,ElMessageBox
 } from "element-plus";
 import { InfoFilled } from '@element-plus/icons-vue'
 
@@ -227,21 +227,40 @@ const startSimulation = async () => {
 /**
  * 重置仿真
  */
-const resetSimulation = () => {
-  console.log("重置仿真");
-  isSimulationRunning.value = false;
+const resetSimulation = async () => {
+  try {
+    // 简洁版确认对话框
+    const confirmResult = await ElMessageBox.confirm(
+        '确定要重置仿真吗？',
+        '确认重置',
+        {
+          confirmButtonText: '确定',
+          cancelButtonText: '取消',
+          type: 'warning'
+        }
+    );
 
-  // 停止定时器
-  stopSimulationTimer();
+    if (confirmResult === 'confirm') {
+      console.log("重置仿真");
+      isSimulationRunning.value = false;
 
-  // 清除所有可视化元素
-  clearPOIMarkers();
-  clearDrawnRoutes();
+      // 停止定时器
+      stopSimulationTimer();
 
-  // 重置数据
-  currentPOIs.value = [];
+      // 清除所有可视化元素
+      clearPOIMarkers();
+      clearDrawnRoutes();
 
-  ElMessage.info('仿真已重置');
+      // 重置数据
+      currentPOIs.value = [];
+
+      ElMessage.success('仿真已重置');
+    }
+
+  } catch (error) {
+    // 用户点击取消
+    ElMessage.info('已取消重置操作');
+  }
 };
 
 /**

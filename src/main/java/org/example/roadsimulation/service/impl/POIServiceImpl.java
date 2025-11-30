@@ -239,6 +239,7 @@ public class POIServiceImpl implements POIService {
             case "建材市场" -> POI.POIType.MATERIAL_MARKET;
             case "蔬菜基地" -> POI.POIType.VEGETABLE_BASE;
             case "蔬菜市场" -> POI.POIType.VEGETABLE_MARKET;
+            case "测试" -> POI.POIType.TEST;
             default -> throw new IllegalArgumentException("未知的POI类型: " + frontendType);
         };
     }
