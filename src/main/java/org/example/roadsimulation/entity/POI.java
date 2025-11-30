@@ -55,7 +55,8 @@ public class POI {
         REST_AREA,               // 休息区
         MATERIAL_MARKET,         // 建材市场
         VEGETABLE_BASE,         // 蔬菜基地
-        VEGETABLE_MARKET       // 蔬菜市场
+        VEGETABLE_MARKET,       // 蔬菜市场
+        TEST
     }
 
     @Enumerated(EnumType.STRING)
