@@ -14,6 +14,7 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
@@ -42,6 +43,7 @@ public class DataInitializer{
     private final CustomerRepository customerRepository;
     private final ShipmentRepository shipmentRepository;
     private final ShipmentItemRepository shipmentItemRepository;
+    private final SimulationDataCleanupService cleanupService;
 
     private final Map<POI, POI> startToEndMapping = new ConcurrentHashMap<>(); // 起点到终点的映射关系
     // 修改成员变量，使用起点-终点对作为键
@@ -74,7 +76,8 @@ public class DataInitializer{
                            RouteRepository routeRepository,
                            CustomerRepository customerRepository,
                            ShipmentRepository shipmentRepository,
-                           ShipmentItemRepository shipmentItemRepository) {
+                           ShipmentItemRepository shipmentItemRepository,
+                           SimulationDataCleanupService cleanupService) {
         this.goodsPOIGenerateService = goodsPOIGenerateService;
         this.enrollmentRepository = enrollmentRepository;
         this.goodsRepository = goodsRepository;
@@ -84,9 +87,64 @@ public class DataInitializer{
         this.customerRepository = customerRepository;
         this.shipmentRepository = shipmentRepository;
         this.shipmentItemRepository = shipmentItemRepository;
+        this.cleanupService = cleanupService;
     }
 
-    //@PostConstruct
+    /**
+     * 生成货物 - 由主循环调用
+     */
+    @Transactional
+    public void generateGoods(int loopCount) {
+        if (CementPlantList.isEmpty() || MaterialMarketList.isEmpty()) {
+            System.out.println("生成工厂为空");
+            return;
+        }
+
+        System.out.println("开始货物生成检查（循环 " + loopCount + "）");
+
+        periodicJudgement();
+    }
+
+    /**
+     * 运出货物 - 由主循环调用
+     */
+    @Transactional
+    public void shipOutGoods(int loopCount) {
+        List<POI> truePois = getCurrentTruePois();
+
+        if (truePois.isEmpty()) {
+            System.out.println("当前没有可运出的货物");
+            return;
+        }
+
+        periodicReset();
+    }
+
+    /**
+     * 打印仿真状态 - 由主循环调用
+     */
+    public void printSimulationStatus(int loopCount) {
+        int trueCount = getCurrentTruePois().size();
+
+        System.out.println("===================================");
+        System.out.println("仿真状态报告");
+        System.out.println("当前循环: " + loopCount);
+        System.out.println("模拟时间: " + (loopCount * 30 / 60.0) + " 小时");
+        System.out.println("有货物POI数量: " + trueCount + "/" + maxTrueCount);
+
+        if (trueCount > 0) {
+            System.out.println("有货物POI列表:");
+            getCurrentTruePois().forEach(poi -> {
+                POI endPOI = startToEndMapping.get(poi);
+                System.out.println("  - " + poi.getName() +
+                        (endPOI != null ? " → " + endPOI.getName() : ""));
+            });
+        }
+
+        System.out.println("===================================");
+    }
+
+    @PostConstruct
     public void initialize(){
         // 初始化 POI 列表
         this.CementPlantList = getFilteredPOIByNameAndType("水泥", POI.POIType.FACTORY);
@@ -213,6 +271,10 @@ public class DataInitializer{
                 // 检查是否超过最大限度
                 if(canSetToTrue()){
                     setPoiToTrue(poi);
+
+                    // 调整判断的因素数值
+                    trueProbability = trueProbability * 0.95;
+
                     System.out.println("POI [" + poi.getName() + "] 判断为真");
 
                     Random random = new Random();
@@ -220,9 +282,13 @@ public class DataInitializer{
                     // ToDo
                     // 随机获取终点POI
                     POI endPOI = this.MaterialMarketList.get(random.nextInt(this.MaterialMarketList.size()));
-                    initalizeRoute(poi, endPOI);
-                    startToEndMapping.put(poi, endPOI); // 保存对应关系
+
                     Integer generateQuantity = generateRandomQuantity();
+
+                    initializeRoute(poi, endPOI); // 初始化路径
+                    Shipment goalShipment = createCompleteGoodsTransport(poi, endPOI, Cement, generateQuantity);
+                    // Assignment goalAssignment = initalizeAssignment();
+                    startToEndMapping.put(poi, endPOI); // 保存对应关系
                     // 与货物通过Enrollment建立联系
                     initRelationBetweenPOIAndGoods(poi, Cement, generateQuantity);
                 }
@@ -253,6 +319,8 @@ public class DataInitializer{
             if (correspondingEndPOI != null) {
                 System.out.println("同时移除对应的终点POI: " + correspondingEndPOI.getName());
             }
+
+            trueProbability = trueProbability / 0.95;
 
             deleteRelationBetweenPOIAndGoods(poiToReset);
             setPoiToFalse(poiToReset);
@@ -349,13 +417,19 @@ public class DataInitializer{
 
     // 起点与终点之间通过 route 实现的关系建立
     @Transactional
-    public void initalizeRoute(POI startpoi, POI endPOI) {
+    public void initializeRoute(POI startpoi, POI endPOI) {
         List<Route> goalRoute = routeRepository.findByStartPOIIdAndEndPOIId(startpoi.getId(), endPOI.getId());
 
         // 现在先默认选择id最小的route
         if (goalRoute.isEmpty()) {
             Route route = new Route(startpoi, endPOI);
-            route.setName(startpoi.getName().substring(0, 3) + "-" + endPOI.getName().substring(0, 3));
+            // 如果名称长度小于3，使用完整名称；否则截取前3个字符
+            String startName = startpoi.getName();
+            String endName = endPOI.getName();
+            String startAbbr = startName.length() >= 3 ? startName.substring(0, 3) : startName;
+            String endAbbr = endName.length() >= 3 ? endName.substring(0, 3) : endName;
+
+            route.setName(startAbbr + "-" + endAbbr);
             route.setRouteCode(startpoi.getId() + "_" + endPOI.getId());
             route.setRouteType("road");
             route.setDistance(calculateDistance(startpoi, endPOI));
@@ -382,14 +456,103 @@ public class DataInitializer{
         return 0.0;
     }
 
+    // 货物，货物清单，货物清单的完善
+    @Transactional(rollbackFor = Exception.class)
+    public Shipment initalizeShipment(POI startPOI, POI endPOI, Goods goods, Integer quantity) {
+        try {
+            String refNo = generateUniqueRefNo(goods.getSku());
+            if (goods.getWeightPerUnit() == null || goods.getVolumePerUnit() == null) {
+                throw new IllegalArgumentException("货物单位重量或体积不能为空");
+            }
+            Double totalWeight = quantity * goods.getWeightPerUnit();
+            Double totalVolume = quantity * goods.getVolumePerUnit();
+
+            Shipment shipment = new Shipment(refNo, startPOI, endPOI, totalWeight, totalVolume);
+            // 设置状态为已创建
+            shipment.setStatus(Shipment.ShipmentStatus.CREATED);
+
+            Shipment savedShipment = shipmentRepository.save(shipment);
+
+            // 添加到映射中，便于后续查找
+            String key = generatePoiPairKey(startPOI, endPOI);
+            poiPairShipmentMapping.put(key, savedShipment);
+
+            return savedShipment;
+
+        } catch (Exception e) {
+            System.out.print("生成运单失败 - 起点: "+ startPOI.getName() + ", 终点: "+endPOI.getName()+", 货物: "+goods.getName());
+            throw new RuntimeException("生成运单失败", e);
+        }
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    public ShipmentItem initalizeShipmentItem(Shipment shipment, Goods goods, Integer quantity) {
+        try {
+            ShipmentItem shipmentItem = new ShipmentItem(
+                    shipment,
+                    goods.getName(),
+                    quantity,
+                    goods.getSku(),
+                    goods.getWeightPerUnit() * quantity,
+                    goods.getVolumePerUnit() * quantity
+            );
+
+            // 关键：关联Goods实体
+            shipmentItem.setGoods(goods);
+
+            // 关键：确保双向关系（ShipmentItem构造函数中已调用setShipment）
+            // 但Shipment一侧也需要添加item（构造函数已处理）
+
+            ShipmentItem savedItem = shipmentItemRepository.save(shipmentItem);
+
+            return savedItem;
+
+        } catch (Exception e) {
+            System.out.println("生成运单明细失败 - 运单: " + shipment.getRefNo() + ", 货物: " + goods.getName());
+            throw new RuntimeException("生成运单明细失败", e);
+        }
+    }
+
+    private String generateUniqueRefNo(String sku) {
+        // 生成唯一refNo，例如: CEMENT_20240101_123456
+        String timestamp = new SimpleDateFormat("yyyyMMddHHmmss").format(new Date());
+        String random = String.format("%06d", new Random().nextInt(1000000));
+        return sku + "_" + timestamp + "_" + random;
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    public Shipment createCompleteGoodsTransport(POI startPOI, POI endPOI, Goods goods, Integer quantity) {
+        // 1. 创建Shipment
+        Shipment shipment = initalizeShipment(startPOI, endPOI, goods, quantity);
+
+        // 2. 创建ShipmentItem并关联
+        ShipmentItem shipmentItem = initalizeShipmentItem(shipment, goods, quantity);
+
+        // 3. 建立POI与Goods的Enrollment关系
+        initRelationBetweenPOIAndGoods(startPOI, goods, quantity);
+
+        return shipment;
+    }
+
+    @Transactional
+    public Assignment initalizeAssignment(Shipment shipment, Goods goods, Integer Quantity) {
+        return null;
+    }
+
     // POI点与货物关系的建立与删除
     @Transactional
     public void initRelationBetweenPOIAndGoods(POI poiForTest, Goods goodsForTest, Integer generateQuantity) {
         try{
             Enrollment enrollmentForTest = new Enrollment(poiForTest, goodsForTest, generateQuantity);
             enrollmentRepository.save(enrollmentForTest);
-            poiForTest.addGoodsEnrollment(enrollmentForTest);
-            goodsForTest.addPOIEnrollment(enrollmentForTest);
+            // 添加双向关联
+            if (!poiForTest.getEnrollments().contains(enrollmentForTest)) {
+                poiForTest.addGoodsEnrollment(enrollmentForTest);
+            }
+
+            if (!goodsForTest.getEnrollments().contains(enrollmentForTest)) {
+                goodsForTest.addPOIEnrollment(enrollmentForTest);
+            }
 
             System.out.println("为POI [" + poiForTest.getName() + "] 初始化关系，数量: " + generateQuantity);
         } catch (Exception e) {
@@ -401,22 +564,42 @@ public class DataInitializer{
     public void deleteRelationBetweenPOIAndGoods(POI poiForTest) {
         List<Enrollment> goalEnrollment = new ArrayList<>(poiForTest.getEnrollments());
 
-        // 目前只有 POI 的 enrollment 中一个 enrollment, 即一个 POI点 只生成一份 货物
         for (Enrollment enrollment : goalEnrollment) {
-            if (poiIsWithGoods.get(poiForTest) && enrollment.getGoods() != null){
+            if (enrollment.getGoods() != null){
                 Goods goalGoods = enrollment.getGoods();
 
-                poiForTest.removeGoodsEnrollment(enrollment);
-                goalGoods.removePOIEnrollment(enrollment);
+                // 找到相关的Shipment并删除
+                POI endPOI = startToEndMapping.get(poiForTest);
+                if (endPOI != null) {
+                    String key = generatePoiPairKey(poiForTest, endPOI);
+                    Shipment shipment = poiPairShipmentMapping.remove(key);
+
+                    if (shipment != null) {
+                        // 先删除ShipmentItem（级联或手动）
+                        for (ShipmentItem item : shipment.getItems()) {
+                            // 如果有Assignment关联，需要先解除
+                            if (item.getAssignment() != null) {
+                                item.setAssignment(null);
+                            }
+                            shipmentItemRepository.delete(item);
+                        }
+                        // 删除Shipment
+                        shipmentRepository.delete(shipment);
+                        System.out.println("已删除相关运单: " + shipment.getRefNo());
+                    }
+                }
 
                 // 删除Enrollment
+                poiForTest.removeGoodsEnrollment(enrollment);
+                goalGoods.removePOIEnrollment(enrollment);
                 enrollmentRepository.delete(enrollment);
 
                 System.out.println("已删除" + poiForTest.getName() + "中的货物" + goalGoods.getName());
+
+                // 保存更新
                 poiRepository.save(poiForTest);
                 goodsRepository.save(goalGoods);
             }
-
         }
     }
 
@@ -427,13 +610,8 @@ public class DataInitializer{
     public void cleanupOnShutdown() {
         System.out.println("项目关闭，清理模拟数据...");
         try {
-            // 使用编程式事务
-            TransactionTemplate transactionTemplate = new TransactionTemplate(transactionManager);
-            transactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-            transactionTemplate.execute(status -> {
-                cleanupExistingEnrollments();
-                return null;
-            });
+            // 使用专门的清理服务
+            cleanupService.cleanupAllSimulationData();
             System.out.println("模拟数据清理完成");
         } catch (Exception e) {
             System.err.println("清理数据时出错: " + e.getMessage());
