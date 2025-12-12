@@ -65,19 +65,19 @@ public class Shipment {
     private ShipmentStatus status = ShipmentStatus.CREATED;
 
     // 与客户的多对一关系
-    @NotNull(message = "客户不能为空")
+    // @NotNull(message = "客户不能为空")
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "customer_id")
     private Customer customer;
 
     // 起运地 / 目的地（与你项目里的 POI 实体关联）
     @NotNull(message = "起运地不能为空")
-    @ManyToOne(fetch = FetchType.LAZY, cascade = {CascadeType.PERSIST, CascadeType.MERGE})
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "origin_poi_id")
     private POI originPOI;
 
     @NotNull(message = "目的地不能为空")
-    @ManyToOne(fetch = FetchType.LAZY, cascade = {CascadeType.PERSIST, CascadeType.MERGE})
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "dest_poi_id")
     private POI destPOI;
 
@@ -99,9 +99,10 @@ public class Shipment {
 
     public Shipment() {}
 
-    public Shipment(String refNo, String cargoType, Double totalWeight, Double totalVolume) {
+    public Shipment(String refNo, POI startPOI, POI endPOI, Double totalWeight, Double totalVolume) {
         this.refNo = refNo;
-        this.cargoType = cargoType;
+        this.originPOI = startPOI;
+        this.destPOI = endPOI;
         this.totalWeight = totalWeight;
         this.totalVolume = totalVolume;
     }
