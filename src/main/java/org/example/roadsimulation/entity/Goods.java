@@ -30,6 +30,9 @@ public class Goods {
     @Column(name = "name", nullable = false)
     private String name;
 
+    @Column(name = "created_at")
+    private LocalDateTime createdAt = LocalDateTime.now();
+
     @Size(max = 100, message = "SKU长度不能超过100个字符")
     @Column(name = "sku", unique = true)
     private String sku;
@@ -66,14 +69,13 @@ public class Goods {
     @OneToMany(mappedBy = "goods", cascade = {CascadeType.PERSIST, CascadeType.MERGE}, fetch = FetchType.EAGER)
     private List<Enrollment> enrollments = new ArrayList<>();
 
-    @Column(name = "created_at")
-    private LocalDateTime createdAt = LocalDateTime.now();
-
+    // 进行修改的对象和时间
+    @Column(name = "updated_by", length = 50)
+    private String updatedBy;
     @Column(name = "updated_at")
     private LocalDateTime updatedAt = LocalDateTime.now();
+
     // Getter & Setter
-
-
     public Goods() {}
 
     public Goods(String name, String sku) {
@@ -112,12 +114,13 @@ public class Goods {
     public Integer getShelfLifeDays() { return shelfLifeDays; }
     public void setShelfLifeDays(Integer shelfLifeDays) { this.shelfLifeDays = shelfLifeDays; }
 
+    // 四元组字段的getter和setter
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
-
+    public String getUpdatedBy() {return updatedBy;}
+    public void setUpdatedBy(String updatedBy) {this.updatedBy = updatedBy;}
     public LocalDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
-
     public List<Enrollment> getEnrollments() { return enrollments; }
     public void setEnrollments(List<Enrollment> enrollments) { this.enrollments = enrollments; }
 

@@ -5,6 +5,8 @@ import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 
+import java.time.LocalDateTime;
+
 /**
  * 运单明细（与 Shipment 多对一；与 Goods 多对一）
  * 说明：冗余 name/sku 以便历史追溯（即使 Goods 主数据后来被修改）。
@@ -42,6 +44,10 @@ public class ShipmentItem {
     @Column(name = "name", nullable = false)
     private String name;
 
+    // 创建的时间
+    @Column(name = "created_time")
+    private LocalDateTime createdTime;
+
     // 商品唯一标识代码，用于区分和追踪库存中的不同商品；
     // 区别于SPU（产品编码），SKU用于对同一商品下的不同种类进行区分
     // 在这里我们暂设为商品唯一性标识 ToDo
@@ -61,6 +67,13 @@ public class ShipmentItem {
     @Min(value = 0, message = "体积不能为负数")
     @Column(name = "volume")
     private Double volume; // 单项总体积
+
+    // 进行修改的对象和时间
+    @Column(name = "updated_by", length = 50)
+    private String updatedBy;
+
+    @Column(name = "updated_time")
+    private LocalDateTime updatedTime;
 
     public ShipmentItem() {}
 
@@ -110,6 +123,15 @@ public class ShipmentItem {
 
     public Double getVolume() { return volume; }
     public void setVolume(Double volume) { this.volume = volume; }
+
+    // 四元组字段的getter和setter
+    public LocalDateTime getCreatedTime() {return createdTime;}
+    public void setCreatedTime(LocalDateTime createdTime) {this.createdTime = createdTime;}
+    public String getUpdatedBy() {return updatedBy;}
+    public void setUpdatedBy(String updatedBy) {this.updatedBy = updatedBy;}
+    public LocalDateTime getUpdatedTime() {return updatedTime;}
+    public void setUpdatedTime(LocalDateTime updatedTime) {this.updatedTime = updatedTime;}
+
 
     /// ShipmentItem与Assignment之间的方法
     public Assignment getAssignment() { return assignment; }

@@ -6,6 +6,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 
+import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -38,6 +39,10 @@ public class Route {
     @JoinColumn(name = "end_poi_id", nullable = false)
     private POI endPOI; // 对应图中的endPCI
 
+    // 创建的时间
+    @Column(name = "created_time")
+    private LocalDateTime createdTime;
+
     // 与Assignment的一对多的关系
     @OneToMany(mappedBy = "route", fetch = FetchType.LAZY, cascade = {CascadeType.MERGE})
     private Set<Assignment> assignments = new HashSet<>();
@@ -68,6 +73,13 @@ public class Route {
 
     @Column(name = "fuel_consumption")
     private Double fuelConsumption; // 预计燃油消耗（升）
+
+    // 进行修改的对象和时间
+    @Column(name = "updated_by", length = 50)
+    private String updatedBy;
+
+    @Column(name = "updated_time")
+    private LocalDateTime updatedTime;
 
     // 路线状态枚举
     public enum RouteStatus {
@@ -124,6 +136,15 @@ public class Route {
 
     public Double getFuelConsumption() { return fuelConsumption; }
     public void setFuelConsumption(Double fuelConsumption) { this.fuelConsumption = fuelConsumption; }
+
+    // 四元组字段的getter和setter
+    public LocalDateTime getCreatedTime() {return createdTime;}
+    public void setCreatedTime(LocalDateTime createdTime) {this.createdTime = createdTime;}
+    public String getUpdatedBy() {return updatedBy;}
+    public void setUpdatedBy(String updatedBy) {this.updatedBy = updatedBy;}
+    public LocalDateTime getUpdatedTime() {return updatedTime;}
+    public void setUpdatedTime(LocalDateTime updatedTime) {this.updatedTime = updatedTime;}
+
 
     public Set<Assignment> getAssignments() { return assignments; }
     public void setAssignments(Set<Assignment> assignments) { this.assignments = assignments; }

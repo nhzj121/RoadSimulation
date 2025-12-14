@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -26,6 +27,10 @@ public class POI {
 
     @Column(nullable = false)
     private String name; // POI 名称
+
+    // 创建的时间
+    @Column(name = "created_time")
+    private LocalDateTime createdTime;
 
     @Column(
         precision = 9,    // 总位数：3位整数 + 6位小数 = 9位
@@ -77,6 +82,13 @@ public class POI {
     @JsonIgnore
     private List<Enrollment> enrollments = new ArrayList<>();
 
+    // 进行修改的对象和时间
+    @Column(name = "updated_by", length = 50)
+    private String updatedBy;
+
+    @Column(name = "updated_time")
+    private LocalDateTime updatedTime;
+
     // ================= 构造方法 =================
     public POI() {}
 
@@ -107,6 +119,15 @@ public class POI {
 
     public List<Enrollment> getEnrollments() { return enrollments; }
     public void setEnrollments(List<Enrollment> enrollments) { this.enrollments = enrollments; }
+
+    // 四元组字段的getter和setter
+    public LocalDateTime getCreatedTime() {return createdTime;}
+    public void setCreatedTime(LocalDateTime createdTime) {this.createdTime = createdTime;}
+    public String getUpdatedBy() {return updatedBy;}
+    public void setUpdatedBy(String updatedBy) {this.updatedBy = updatedBy;}
+    public LocalDateTime getUpdatedTime() {return updatedTime;}
+    public void setUpdatedTime(LocalDateTime updatedTime) {this.updatedTime = updatedTime;}
+
     // =========== Enrollment和Goods 双向关系维护 ========
     /**
      * 添加货物到POI
