@@ -9,6 +9,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -23,6 +24,10 @@ public class Vehicle {
     @Size(max = 25, message = "车牌号长度不能超过25个字符")
     @Column(name = "license_plate", nullable = false, unique = true)
     private String licensePlate;
+
+    // 创建的时间
+    @Column(name = "created_time")
+    private LocalDateTime createdTime;
 
     @Min(value = 0, message = "载重量不能为负数")
     @Column(name = "max_load_capacity", precision = 10)
@@ -111,6 +116,13 @@ public class Vehicle {
     @Column(name = "current_status", length = 20)
     private VehicleStatus currentStatus;
 
+    // 进行修改的对象和时间
+    @Column(name = "updated_by", length = 50)
+    private String updatedBy;
+
+    @Column(name = "updated_time")
+    private LocalDateTime updatedTime;
+
     public Vehicle(){
 
     }
@@ -172,6 +184,14 @@ public class Vehicle {
     public void setCurrentLatitude(BigDecimal currentLatitude) {this.currentLatitude = currentLatitude;}
     public VehicleStatus getCurrentStatus() {return currentStatus;}
     public void setCurrentStatus(VehicleStatus currentStatus) {this.currentStatus = currentStatus;}
+
+    // 四元组字段的getter和setter
+    public LocalDateTime getCreatedTime() {return createdTime;}
+    public void setCreatedTime(LocalDateTime createdTime) {this.createdTime = createdTime;}
+    public String getUpdatedBy() {return updatedBy;}
+    public void setUpdatedBy(String updatedBy) {this.updatedBy = updatedBy;}
+    public LocalDateTime getUpdatedTime() {return updatedTime;}
+    public void setUpdatedTime(LocalDateTime updatedTime) {this.updatedTime = updatedTime;}
 
 
     /// 车辆与驾驶员关系的方法

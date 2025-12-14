@@ -81,6 +81,10 @@ public class Shipment {
     @JoinColumn(name = "dest_poi_id")
     private POI destPOI;
 
+    // 创建的时间
+    @Column(name = "created_time")
+    private LocalDateTime createdTime;
+
     @Column(name = "pickup_appoint")
     private LocalDateTime pickupAppoint;   // 预约提货时间
 
@@ -96,6 +100,13 @@ public class Shipment {
     // 与明细的一对多
     @OneToMany(mappedBy = "shipment", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     private Set<ShipmentItem> items = new HashSet<>();
+
+    // 进行修改的对象和时间
+    @Column(name = "updated_by", length = 50)
+    private String updatedBy;
+
+    @Column(name = "updated_time")
+    private LocalDateTime updatedTime;
 
     public Shipment() {}
 
@@ -163,6 +174,15 @@ public class Shipment {
 
     public Set<ShipmentItem> getItems() { return items; }
     public void setItems(Set<ShipmentItem> items) { this.items = items; }
+
+    // 四元组字段的getter和setter
+    public LocalDateTime getCreatedTime() {return createdTime;}
+    public void setCreatedTime(LocalDateTime createdTime) {this.createdTime = createdTime;}
+    public String getUpdatedBy() {return updatedBy;}
+    public void setUpdatedBy(String updatedBy) {this.updatedBy = updatedBy;}
+    public LocalDateTime getUpdatedTime() {return updatedTime;}
+    public void setUpdatedTime(LocalDateTime updatedTime) {this.updatedTime = updatedTime;}
+
 
     @PreUpdate
     public void touchUpdateTime() {
