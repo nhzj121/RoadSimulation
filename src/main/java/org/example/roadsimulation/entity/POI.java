@@ -30,7 +30,7 @@ public class POI {
 
     // 创建的时间
     @Column(name = "created_time")
-    private LocalDateTime createdTime;
+    private LocalDateTime createdTime = LocalDateTime.now();
 
     @Column(
         precision = 9,    // 总位数：3位整数 + 6位小数 = 9位
@@ -87,7 +87,7 @@ public class POI {
     private String updatedBy;
 
     @Column(name = "updated_time")
-    private LocalDateTime updatedTime;
+    private LocalDateTime updatedTime = LocalDateTime.now();
 
     // ================= 构造方法 =================
     public POI() {}

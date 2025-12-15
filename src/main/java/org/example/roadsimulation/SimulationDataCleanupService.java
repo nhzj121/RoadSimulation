@@ -55,15 +55,19 @@ public class SimulationDataCleanupService {
             System.out.println("已删除 " + shipmentCount + " 条Shipment记录");
 
             // 3. Enrollment
-            long enrollmentCount = enrollmentRepository.count();
-            enrollmentRepository.deleteAll();
-            System.out.println("已删除 " + enrollmentCount + " 条Enrollment记录");
-
-            // 4. Route（可选，根据需求）
-            long routeCount = routeRepository.count();
-            // 如果只想删除自己生成的Route，可以添加过滤条件
-            // routeRepository.deleteAll(); 
-            System.out.println("Route记录数: " + routeCount + "（保留不删除）");
+            List<Enrollment> existingEnrollments = enrollmentRepository.findAll();
+            int size = existingEnrollments.size();
+            for (Enrollment enrollment : existingEnrollments) {
+                if (enrollment.getPoi() != null) {
+                    enrollment.getPoi().getEnrollments().remove(enrollment);
+                }
+                if (enrollment.getGoods() != null) {
+                    enrollment.getGoods().getEnrollments().remove(enrollment);
+                }
+                enrollmentRepository.delete(enrollment);
+                System.out.println("删除关系[" + enrollment.getGoods().getName()+","+ enrollment.getPoi().getName() + "]");
+            }
+            System.out.println("清理完成，共删除 " + size + " 条旧记录");
 
             long endTime = System.currentTimeMillis();
             System.out.println("模拟数据清理完成，耗时 " + (endTime - startTime) + "ms");

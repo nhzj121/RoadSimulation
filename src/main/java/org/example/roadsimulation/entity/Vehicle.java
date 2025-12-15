@@ -27,7 +27,7 @@ public class Vehicle {
 
     // 创建的时间
     @Column(name = "created_time")
-    private LocalDateTime createdTime;
+    private LocalDateTime createdTime = LocalDateTime.now();
 
     @Min(value = 0, message = "载重量不能为负数")
     @Column(name = "max_load_capacity", precision = 10)
@@ -121,7 +121,7 @@ public class Vehicle {
     private String updatedBy;
 
     @Column(name = "updated_time")
-    private LocalDateTime updatedTime;
+    private LocalDateTime updatedTime = LocalDateTime.now();
 
     public Vehicle(){
 

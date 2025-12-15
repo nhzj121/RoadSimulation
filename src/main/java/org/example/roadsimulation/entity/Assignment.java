@@ -43,7 +43,7 @@ public class Assignment {
 
     // 创建的时间
     @Column(name = "created_time")
-    private LocalDateTime createdTime;
+    private LocalDateTime createdTime = LocalDateTime.now();
 
     @NotNull(message = "任务状态不能为空")
     @Enumerated(EnumType.STRING)
@@ -88,7 +88,7 @@ public class Assignment {
     private String updatedBy;
 
     @Column(name = "updated_time")
-    private LocalDateTime updatedTime;
+    private LocalDateTime updatedTime = LocalDateTime.now();
 
     // 无参构造函数
     public Assignment() {

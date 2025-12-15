@@ -31,7 +31,7 @@ public class Enrollment {
     private String updatedBy;
 
     @Column(name = "updated_time")
-    private LocalDateTime updatedTime;
+    private LocalDateTime updatedTime = LocalDateTime.now();
 
     // 构造方法
     public Enrollment() {}
