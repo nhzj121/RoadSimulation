@@ -32,7 +32,7 @@ public class SimulationMainLoop {
     /**
      * 主循环方法 - 每5秒执行一次循环
      */
-    @Scheduled(fixedRate = 5000)  // 每5秒一次循环
+    @Scheduled(fixedRate = 3000)  // 每5秒一次循环
     public void executeMainLoop() {
         // ToDo 控制主循环的启动与否，前端使用API进行控制，这里处于测试需要先注释掉
 //        if (!isRunning) {

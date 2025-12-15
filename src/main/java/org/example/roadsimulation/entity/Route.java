@@ -41,7 +41,7 @@ public class Route {
 
     // 创建的时间
     @Column(name = "created_time")
-    private LocalDateTime createdTime;
+    private LocalDateTime createdTime = LocalDateTime.now();
 
     // 与Assignment的一对多的关系
     @OneToMany(mappedBy = "route", fetch = FetchType.LAZY, cascade = {CascadeType.MERGE})
@@ -79,7 +79,7 @@ public class Route {
     private String updatedBy;
 
     @Column(name = "updated_time")
-    private LocalDateTime updatedTime;
+    private LocalDateTime updatedTime = LocalDateTime.now();
 
     // 路线状态枚举
     public enum RouteStatus {

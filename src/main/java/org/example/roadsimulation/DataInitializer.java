@@ -175,29 +175,6 @@ public class DataInitializer{
 //        }
     }
 
-    /**
-     * 清理已存在的Enrollment数据
-     */
-    private void cleanupExistingEnrollments() {
-        try {
-            List<Enrollment> existingEnrollments = enrollmentRepository.findAll();
-            int size = existingEnrollments.size();
-            for (Enrollment enrollment : existingEnrollments) {
-                if (enrollment.getPoi() != null) {
-                    enrollment.getPoi().getEnrollments().remove(enrollment);
-                }
-                if (enrollment.getGoods() != null) {
-                    enrollment.getGoods().getEnrollments().remove(enrollment);
-                }
-                enrollmentRepository.delete(enrollment);
-                System.out.println("删除关系[" + enrollment.getGoods().getName()+","+ enrollment.getPoi().getName() + "]");
-            }
-            System.out.println("清理完成，共删除 " + size + " 条旧记录");
-        } catch (Exception e) {
-            System.err.println("清理旧数据时出错: " + e.getMessage());
-        }
-    }
-
     /// 测试 关键词检索 获取 模拟所需POI
 //    @PostConstruct
 //    public void initFactory(String KeyWord){
@@ -289,8 +266,6 @@ public class DataInitializer{
                     Shipment goalShipment = createCompleteGoodsTransport(poi, endPOI, Cement, generateQuantity);
                     // Assignment goalAssignment = initalizeAssignment();
                     startToEndMapping.put(poi, endPOI); // 保存对应关系
-                    // 与货物通过Enrollment建立联系
-                    initRelationBetweenPOIAndGoods(poi, Cement, generateQuantity);
                 }
             }
         }
@@ -313,18 +288,34 @@ public class DataInitializer{
         List<POI> truePois = getCurrentTruePois();
         if (!truePois.isEmpty()) {
             Random random = new Random();
-            POI poiToReset = truePois.get(random.nextInt(truePois.size()));
+            POI selectedPoi = truePois.get(random.nextInt(truePois.size()));
 
-            POI correspondingEndPOI = startToEndMapping.remove(poiToReset);
+            // 关键：从数据库中重新加载POI，而不是使用map中的旧引用
+            POI freshSelectedPoi = poiRepository.findById(selectedPoi.getId())
+                    .orElseThrow(() -> new RuntimeException("POI not found: " + selectedPoi.getId()));
+
+            // 使用重新加载的POI
+            deleteRelationBetweenPOIAndGoods(selectedPoi);
+
+            // 更新映射关系
+            POI correspondingEndPOI = null;
+            for (Map.Entry<POI, POI> entry : startToEndMapping.entrySet()) {
+                if (entry.getKey().getId().equals(freshSelectedPoi.getId())) {
+                    correspondingEndPOI = entry.getValue();
+                    break;
+                }
+            }
+
             if (correspondingEndPOI != null) {
+                startToEndMapping.keySet().removeIf(key -> key.getId().equals(freshSelectedPoi.getId()));
                 System.out.println("同时移除对应的终点POI: " + correspondingEndPOI.getName());
             }
 
             trueProbability = trueProbability / 0.95;
 
-            deleteRelationBetweenPOIAndGoods(poiToReset);
-            setPoiToFalse(poiToReset);
-            System.out.println("POI [" + poiToReset.getName() + "] 已被重置为假");
+            // 更新状态，使用freshSelectedPoi
+            setPoiToFalse(selectedPoi);
+            System.out.println("POI [" + freshSelectedPoi.getName() + "] 已被重置为假");
         } else{
             System.out.println("无可重置的POI数据");
         }
@@ -562,45 +553,68 @@ public class DataInitializer{
 
     @Transactional
     public void deleteRelationBetweenPOIAndGoods(POI poiForTest) {
-        List<Enrollment> goalEnrollment = new ArrayList<>(poiForTest.getEnrollments());
+        // 只重新加载POI，其他保持不变
+        POI freshPOI = poiRepository.findById(poiForTest.getId())
+                .orElseThrow(() -> new RuntimeException("POI not found: " + poiForTest.getId()));
+
+        // 使用freshPOI而不是poiForTest
+        List<Enrollment> goalEnrollment = new ArrayList<>(freshPOI.getEnrollments());
 
         for (Enrollment enrollment : goalEnrollment) {
             if (enrollment.getGoods() != null){
                 Goods goalGoods = enrollment.getGoods();
 
                 // 找到相关的Shipment并删除
-                POI endPOI = startToEndMapping.get(poiForTest);
+                POI endPOI = startToEndMapping.get(poiForTest); // 仍然用旧对象从map获取
                 if (endPOI != null) {
-                    String key = generatePoiPairKey(poiForTest, endPOI);
+                    String key = generatePoiPairKey(freshPOI, endPOI); // 但生成key用freshPOI
                     Shipment shipment = poiPairShipmentMapping.remove(key);
 
                     if (shipment != null) {
-                        // 先删除ShipmentItem（级联或手动）
-                        for (ShipmentItem item : shipment.getItems()) {
-                            // 如果有Assignment关联，需要先解除
-                            if (item.getAssignment() != null) {
-                                item.setAssignment(null);
+                        // 重新加载Shipment以确保它在当前持久化上下文中
+                        Shipment freshShipment = shipmentRepository.findById(shipment.getId())
+                                .orElse(null);
+
+                        if (freshShipment != null) {
+                            // 先删除ShipmentItems（使用新的查询方式，避免直接操作集合）
+                            List<ShipmentItem> items = shipmentItemRepository.findByShipmentId(freshShipment.getId());
+                            for (ShipmentItem item : items) {
+                                // 先清除关联
+                                if (item.getAssignment() != null) {
+                                    item.setAssignment(null);
+                                    // 如果需要保存Assignment的修改
+                                    // assignmentRepository.save(item.getAssignment());
+                                }
+                                // 删除ShipmentItem
+                                shipmentItemRepository.delete(item);
                             }
-                            shipmentItemRepository.delete(item);
+
+                            // 清除Shipment的items集合（如果使用双向关联）
+                            freshShipment.getItems().clear();
+                            shipmentRepository.save(freshShipment); // 确保状态同步
+
+                            // 最后删除Shipment
+                            shipmentRepository.delete(freshShipment);
+                            System.out.println("已删除相关运单: " + freshShipment.getRefNo());
                         }
-                        // 删除Shipment
-                        shipmentRepository.delete(shipment);
-                        System.out.println("已删除相关运单: " + shipment.getRefNo());
                     }
                 }
 
-                // 删除Enrollment
-                poiForTest.removeGoodsEnrollment(enrollment);
+                // 关键修改：使用freshPOI而不是poiForTest
+                freshPOI.removeGoodsEnrollment(enrollment);
                 goalGoods.removePOIEnrollment(enrollment);
                 enrollmentRepository.delete(enrollment);
 
-                System.out.println("已删除" + poiForTest.getName() + "中的货物" + goalGoods.getName());
+                System.out.println("已删除" + freshPOI.getName() + "中的货物" + goalGoods.getName());
 
                 // 保存更新
-                poiRepository.save(poiForTest);
+                poiRepository.save(freshPOI);
                 goodsRepository.save(goalGoods);
             }
         }
+
+        // 更新本地map状态
+        poiIsWithGoods.put(freshPOI, false);
     }
 
     /**
@@ -617,12 +631,6 @@ public class DataInitializer{
             System.err.println("清理数据时出错: " + e.getMessage());
         }
     }
-//    @PreDestroy
-//    public void cleanupOnShutdown() {
-//        System.out.println("项目关闭，清理模拟数据...");
-//        cleanupExistingEnrollments();
-//        System.out.println("模拟数据清理完成");
-//    }
 
     /// 和其它模块的对接
     /**

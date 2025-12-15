@@ -39,13 +39,6 @@ public class Customer {
     @Column(name = "name", nullable = false, length = 100)
     private String name;
 
-    // 创建的来源以及创建的时间
-    @Column(name = "created_by", length = 50)
-    private String createdBy;
-
-    @Column(name = "created_time")
-    private LocalDateTime createdTime;
-
     @Size(max = 100, message = "联系人姓名长度不能超过100个字符")
     @Column(name = "contact_person", length = 100)
     private String contactPerson;
@@ -71,9 +64,6 @@ public class Customer {
     // 进行修改的对象和时间
     @Column(name = "updated_by", length = 50)
     private String updatedBy;
-
-    @Column(name = "updated_time")
-    private LocalDateTime updatedTime;
 
     public Customer() {}
 
@@ -126,14 +116,8 @@ public class Customer {
     public void setShipments(Set<Shipment> shipments) { this.shipments = shipments; }
 
     // 四元组字段的getter和setter
-    public String getCreatedBy() {return createdBy;}
-    public void setCreatedBy(String createdBy) {this.createdBy = createdBy;}
-    public LocalDateTime getCreatedTime() {return createdTime;}
-    public void setCreatedTime(LocalDateTime createdTime) {this.createdTime = createdTime;}
     public String getUpdatedBy() {return updatedBy;}
     public void setUpdatedBy(String updatedBy) {this.updatedBy = updatedBy;}
-    public LocalDateTime getUpdatedTime() {return updatedTime;}
-    public void setUpdatedTime(LocalDateTime updatedTime) {this.updatedTime = updatedTime;}
 
 
     @PreUpdate

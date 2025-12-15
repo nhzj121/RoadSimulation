@@ -28,7 +28,7 @@ public class Driver {
 
     // 创建的时间
     @Column(name = "created_time")
-    private LocalDateTime createdTime;
+    private LocalDateTime createdTime = LocalDateTime.now();
 
     // 在实体类中使用
     @Enumerated(EnumType.STRING)
@@ -54,7 +54,7 @@ public class Driver {
     private String updatedBy;
 
     @Column(name = "updated_time")
-    private LocalDateTime updatedTime;
+    private LocalDateTime updatedTime = LocalDateTime.now();
 
     // Getter 和 Setter 方法
     public Long getId() {return id;}

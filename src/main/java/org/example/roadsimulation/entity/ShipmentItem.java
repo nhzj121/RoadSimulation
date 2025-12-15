@@ -46,7 +46,7 @@ public class ShipmentItem {
 
     // 创建的时间
     @Column(name = "created_time")
-    private LocalDateTime createdTime;
+    private LocalDateTime createdTime = LocalDateTime.now();
 
     // 商品唯一标识代码，用于区分和追踪库存中的不同商品；
     // 区别于SPU（产品编码），SKU用于对同一商品下的不同种类进行区分
@@ -73,7 +73,7 @@ public class ShipmentItem {
     private String updatedBy;
 
     @Column(name = "updated_time")
-    private LocalDateTime updatedTime;
+    private LocalDateTime updatedTime = LocalDateTime.now();
 
     public ShipmentItem() {}
 

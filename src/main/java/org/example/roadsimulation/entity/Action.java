@@ -37,7 +37,7 @@ public class Action {
     private String createdBy;
 
     @Column(name = "created_time")
-    private LocalDateTime createdTime;
+    private LocalDateTime createdTime = LocalDateTime.now();
 
     @NotNull(message = "动作类型不能为空")
     @Enumerated(EnumType.STRING)
@@ -62,7 +62,7 @@ public class Action {
     private String updatedBy;
 
     @Column(name = "updated_time")
-    private LocalDateTime updatedTime;
+    private LocalDateTime updatedTime = LocalDateTime.now();
 
     // 必须的无参构造函数
     public Action() {
