@@ -102,14 +102,23 @@ public class Vehicle {
     private BigDecimal currentLatitude;
 
     public enum VehicleStatus {
-        IDLE,           // 空闲
-        TRANSPORTING,   // 运输中
-        UNLOADING,      // 卸货
-        MAINTAINING,    // 保养
-        REFUELING,      // 加油
-        RESTING,        // 休息
-        ACCIDENT        // 事故
+        // ==== 马尔可夫链用的“流程状态” ====
+        IDLE,               // 空闲
+        ORDER_DRIVING,      // 接单行驶：从当前位置到装货点
+        LOADING,            // 装货
+        TRANSPORT_DRIVING,  // 运货行驶：从装货点到卸货点
+        UNLOADING,          // 卸货
+        WAITING,            // 等待（排队、堵车、现场等待）
+        BREAKDOWN,          // 故障 / 抛锚 / 需要维修
+
+        // ==== 你原来业务里用的状态（兼容保留） ====
+        TRANSPORTING,       // 运输中（粗粒度，可视作 TRANSPORT_DRIVING）
+        MAINTAINING,        // 保养
+        REFUELING,          // 加油
+        RESTING,            // 休息
+        ACCIDENT            // 事故
     }
+
 
     // 在实体类中使用
     @Enumerated(EnumType.STRING)

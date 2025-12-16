@@ -3,6 +3,7 @@ package org.example.roadsimulation.entity;
 import jakarta.persistence.*;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.Size;
+
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -100,10 +101,10 @@ public class Goods {
     public void setDescription(String description) { this.description = description; }
 
     public Double getWeightPerUnit() { return weightPerUnit; }
-    public void setWeightPerUnit(Double weightPerUnit) { this.weightPerUnit = weightPerUnit; }
+    public void setWeightPerUnit(@Min(0L) Double weightPerUnit) { this.weightPerUnit = weightPerUnit; }
 
     public Double getVolumePerUnit() { return volumePerUnit; }
-    public void setVolumePerUnit(Double volumePerUnit) { this.volumePerUnit = volumePerUnit; }
+    public void setVolumePerUnit(@Min(0L) Double volumePerUnit) { this.volumePerUnit = volumePerUnit; }
 
     public Boolean getRequireTemp() { return requireTemp; }
     public void setRequireTemp(Boolean requireTemp) { this.requireTemp = requireTemp; }

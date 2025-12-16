@@ -1,300 +1,248 @@
 package org.example.roadsimulation.service.impl;
 
-import org.example.roadsimulation.entity.Vehicle;
 import org.example.roadsimulation.entity.Assignment;
+import org.example.roadsimulation.entity.Vehicle;
 import org.example.roadsimulation.service.StateTransitionService;
 import org.springframework.stereotype.Service;
 
+import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Random;
 
 /**
- * 车辆状态转移服务实现类
+ * 车辆状态转移服务实现类（马尔科夫版）
  *
- * 功能说明：
- * 1. 基于完整业务规则实现车辆状态自动转移
- * 2. 不依赖外部马尔科夫链，独立运行
- * 3. 支持单个车辆和批量车辆状态转移
- * 4. 预留马尔科夫链集成接口
+ * 职责：
+ * 1. 基于马尔科夫链的状态转移矩阵，为车辆计算下一状态
+ * 2. 提供单个 / 批量 / 带上下文 的状态选择方法
+ *
+ * 使用前提：
+ * - Vehicle.VehicleStatus 中包含：
+ *   IDLE, ORDER_DRIVING, LOADING, TRANSPORT_DRIVING,
+ *   UNLOADING, WAITING, BREAKDOWN 等状态
  */
 @Service
 public class StateTransitionServiceImpl implements StateTransitionService {
 
     private final Random random = new Random();
 
-    // 预留的马尔科夫链矩阵（目前为空，供后续扩展使用）
-    private Map<Vehicle.VehicleStatus, Map<Vehicle.VehicleStatus, Double>> markovMatrix = new HashMap<>();
+    /**
+     * 默认使用的小型货车马尔科夫矩阵
+     * （以后如果需要，可以按车型扩展多套矩阵）
+     */
+    private final Map<Vehicle.VehicleStatus,
+            Map<Vehicle.VehicleStatus, Double>> lightTruckMatrix;
 
+    public StateTransitionServiceImpl() {
+        this.lightTruckMatrix = createLightTruckMatrix();
+    }
+
+    // ============================================================
+    //                    对外接口实现
+    // ============================================================
+
+    /**
+     * 不带上下文，仅根据当前状态和默认矩阵选择下一状态
+     */
     @Override
     public Vehicle.VehicleStatus selectNextState(Vehicle.VehicleStatus currentStatus) {
-        if (currentStatus == null) {
-            throw new IllegalArgumentException("当前状态不能为null");
-        }
-
-        // 使用业务规则选择下一个状态
-        return selectNextStateByBusinessRules(currentStatus);
-    }
-
-    @Override
-    public Vehicle.VehicleStatus selectNextStateWithContext(Vehicle vehicle) {
-        if (vehicle == null) {
-            throw new IllegalArgumentException("车辆不能为null");
-        }
-
-        Vehicle.VehicleStatus currentStatus = vehicle.getCurrentStatus();
-        Assignment currentAssignment = vehicle.getCurrentAssignment();
-
-        // 基于完整上下文的决策逻辑
-        return selectNextStateWithFullContext(currentStatus, currentAssignment, vehicle);
-    }
-
-    @Override
-    public Map<Long, Vehicle.VehicleStatus> batchSelectNextState(Map<Long, Vehicle.VehicleStatus> currentStates) {
-        Map<Long, Vehicle.VehicleStatus> nextStates = new HashMap<>();
-
-        for (Map.Entry<Long, Vehicle.VehicleStatus> entry : currentStates.entrySet()) {
-            Vehicle.VehicleStatus nextStatus = selectNextState(entry.getValue());
-            nextStates.put(entry.getKey(), nextStatus);
-        }
-
-        return nextStates;
+        return selectNextStateWithMarkov(currentStatus, lightTruckMatrix);
     }
 
     /**
-     * 保留马尔科夫链的占位符 - 供队友后续集成使用
+     * 带车辆上下文（类型、任务等），目前先简单使用默认矩阵，
+     * 以后你可以在这里根据 vehicleType 选择不同矩阵。
+     */
+    @Override
+    public Vehicle.VehicleStatus selectNextStateWithContext(Vehicle vehicle) {
+        if (vehicle == null) {
+            return Vehicle.VehicleStatus.IDLE;
+        }
+        Vehicle.VehicleStatus currentStatus = vehicle.getCurrentStatus();
+
+        // TODO: 如果以后按车型区分矩阵，可以在这里做：
+        // Map<VehicleStatus, Map<VehicleStatus, Double>> matrix = resolveMatrixByVehicle(vehicle);
+        Map<Vehicle.VehicleStatus, Map<Vehicle.VehicleStatus, Double>> matrix = this.lightTruckMatrix;
+
+        return selectNextStateWithMarkov(currentStatus, matrix);
+    }
+
+    /**
+     * 批量计算下一状态
+     */
+    @Override
+    public Map<Long, Vehicle.VehicleStatus> batchSelectNextState(
+            Map<Long, Vehicle.VehicleStatus> currentStates) {
+
+        Map<Long, Vehicle.VehicleStatus> result = new HashMap<>();
+        if (currentStates == null || currentStates.isEmpty()) {
+            return result;
+        }
+
+        for (Map.Entry<Long, Vehicle.VehicleStatus> entry : currentStates.entrySet()) {
+            Vehicle.VehicleStatus next = selectNextState(entry.getValue());
+            result.put(entry.getKey(), next);
+        }
+        return result;
+    }
+
+    /**
+     * 核心：使用指定的马尔科夫矩阵，从当前状态随机抽样一个下一状态
      */
     @Override
     public Vehicle.VehicleStatus selectNextStateWithMarkov(
             Vehicle.VehicleStatus currentStatus,
             Map<Vehicle.VehicleStatus, Map<Vehicle.VehicleStatus, Double>> markovMatrix) {
 
-        // 目前暂不实现马尔科夫链的逻辑，直接使用业务规则
-        return selectNextStateByBusinessRules(currentStatus);
-    }
-
-    /**
-     * 基于业务规则的状态选择 - 核心算法
-     */
-    private Vehicle.VehicleStatus selectNextStateByBusinessRules(Vehicle.VehicleStatus currentStatus) {
-        switch (currentStatus) {
-            case IDLE:
-                return handleIdleState();
-            case TRANSPORTING:
-                return handleTransportingState();
-            case UNLOADING:
-                return handleUnloadingState();
-            case MAINTAINING:
-                return handleMaintainingState();
-            case REFUELING:
-                return handleRefuelingState();
-            case RESTING:
-                return handleRestingState();
-            case ACCIDENT:
-                return handleAccidentState();
-            default:
-                return Vehicle.VehicleStatus.IDLE;
-        }
-    }
-
-    /**
-     * 空闲状态处理 - 完整业务逻辑
-     * 业务场景：车辆处于空闲状态，等待任务分配
-     */
-    private Vehicle.VehicleStatus handleIdleState() {
-        double rand = random.nextDouble();
-
-        if (rand < 0.70) {
-            // 70% 接到新运输任务
-            return Vehicle.VehicleStatus.TRANSPORTING;
-        } else if (rand < 0.78) {
-            // 8% 定期保养检查
-            return Vehicle.VehicleStatus.MAINTAINING;
-        } else if (rand < 0.85) {
-            // 7% 加油准备
-            return Vehicle.VehicleStatus.REFUELING;
-        } else if (rand < 0.92) {
-            // 7% 司机换班休息
-            return Vehicle.VehicleStatus.RESTING;
-        } else if (rand < 0.96) {
-            // 4% 车辆清洁整理
-            return Vehicle.VehicleStatus.IDLE; // 保持空闲但进行其他作业
-        } else {
-            // 4% 等待调度指令
+        if (currentStatus == null) {
             return Vehicle.VehicleStatus.IDLE;
         }
-    }
 
-    /**
-     * 运输中状态处理 - 完整业务逻辑
-     * 业务场景：车辆正在执行运输任务
-     */
-    private Vehicle.VehicleStatus handleTransportingState() {
-        double rand = random.nextDouble();
+        Map<Vehicle.VehicleStatus, Map<Vehicle.VehicleStatus, Double>> matrix =
+                (markovMatrix != null ? markovMatrix : this.lightTruckMatrix);
 
-        if (rand < 0.75) {
-            // 75% 正常到达装货点或卸货点
-            return Vehicle.VehicleStatus.UNLOADING;
-        } else if (rand < 0.80) {
-            // 5% 途中需要加油
-            return Vehicle.VehicleStatus.REFUELING;
-        } else if (rand < 0.85) {
-            // 5% 司机休息
-            return Vehicle.VehicleStatus.RESTING;
-        } else if (rand < 0.88) {
-            // 3% 交通拥堵，继续运输
-            return Vehicle.VehicleStatus.TRANSPORTING;
-        } else if (rand < 0.91) {
-            // 3% 路线变更，继续运输
-            return Vehicle.VehicleStatus.TRANSPORTING;
-        } else if (rand < 0.94) {
-            // 3% 车辆故障需要保养
-            return Vehicle.VehicleStatus.MAINTAINING;
-        } else if (rand < 0.97) {
-            // 3% 轻微事故
-            return Vehicle.VehicleStatus.ACCIDENT;
-        } else {
-            // 3% 任务取消返回
-            return Vehicle.VehicleStatus.IDLE;
+        if (matrix == null || matrix.isEmpty()) {
+            return currentStatus;
         }
-    }
 
-    /**
-     * 卸货状态处理 - 完整业务逻辑
-     * 业务场景：车辆到达目的地正在进行卸货作业
-     */
-    private Vehicle.VehicleStatus handleUnloadingState() {
-        double rand = random.nextDouble();
+        Map<Vehicle.VehicleStatus, Double> row = matrix.get(currentStatus);
 
-        if (rand < 0.65) {
-            // 65% 卸货完成，等待新任务
-            return Vehicle.VehicleStatus.IDLE;
-        } else if (rand < 0.80) {
-            // 15% 立即接新任务继续运输
-            return Vehicle.VehicleStatus.TRANSPORTING;
-        } else if (rand < 0.85) {
-            // 5% 卸货设备故障
-            return Vehicle.VehicleStatus.UNLOADING; // 继续卸货
-        } else if (rand < 0.90) {
-            // 5% 货物验收问题
-            return Vehicle.VehicleStatus.UNLOADING; // 处理问题
-        } else if (rand < 0.94) {
-            // 4% 卸货后需要加油
-            return Vehicle.VehicleStatus.REFUELING;
-        } else if (rand < 0.97) {
-            // 3% 卸货后司机休息
-            return Vehicle.VehicleStatus.RESTING;
-        } else {
-            // 3% 卸货后发现车辆问题需要保养
-            return Vehicle.VehicleStatus.MAINTAINING;
+        // 如果这一行没有配置，默认保持当前状态
+        if (row == null || row.isEmpty()) {
+            return currentStatus;
         }
-    }
 
-    /**
-     * 保养状态处理 - 完整业务逻辑
-     * 业务场景：车辆正在进行维护保养
-     */
-    private Vehicle.VehicleStatus handleMaintainingState() {
-        double rand = random.nextDouble();
+        double r = random.nextDouble(); // [0,1)
+        double cumulative = 0.0;
+        Vehicle.VehicleStatus last = currentStatus;
 
-        if (rand < 0.85) {
-            // 85% 保养完成
-            return Vehicle.VehicleStatus.IDLE;
-        } else if (rand < 0.90) {
-            // 5% 需要继续保养
-            return Vehicle.VehicleStatus.MAINTAINING;
-        } else if (rand < 0.94) {
-            // 4% 保养后需要测试运行
-            return Vehicle.VehicleStatus.TRANSPORTING;
-        } else if (rand < 0.97) {
-            // 3% 等待配件
-            return Vehicle.VehicleStatus.MAINTAINING;
-        } else {
-            // 3% 保养发现问题需要维修
-            return Vehicle.VehicleStatus.MAINTAINING;
+        for (Map.Entry<Vehicle.VehicleStatus, Double> entry : row.entrySet()) {
+            last = entry.getKey();
+            Double p = entry.getValue();
+            if (p == null || p <= 0) {
+                continue;
+            }
+            cumulative += p;
+            if (r <= cumulative) {
+                return entry.getKey();
+            }
         }
+
+        // 兜底：浮点误差导致没命中时，返回最后一个状态
+        return last;
+    }
+
+    // ============================================================
+    //                  内部：马尔科夫矩阵构造
+    // ============================================================
+
+    /**
+     * 小型货车的马尔科夫状态转移矩阵。
+     * 概率参考 mc.java 思路，可以根据老师的表格调整。
+     */
+    private Map<Vehicle.VehicleStatus, Map<Vehicle.VehicleStatus, Double>> createLightTruckMatrix() {
+        Map<Vehicle.VehicleStatus, Map<Vehicle.VehicleStatus, Double>> matrix =
+                new EnumMap<>(Vehicle.VehicleStatus.class);
+
+        // 1. IDLE -> 空闲状态
+        // 70% 接到新订单开始接单行驶，22% 继续等待，5% 保持空闲，3% 发生故障
+        matrix.put(Vehicle.VehicleStatus.IDLE, row(
+                Vehicle.VehicleStatus.ORDER_DRIVING, 0.70,
+                Vehicle.VehicleStatus.WAITING,       0.22,
+                Vehicle.VehicleStatus.IDLE,          0.05,
+                Vehicle.VehicleStatus.BREAKDOWN,     0.03
+        ));
+
+        // 2. ORDER_DRIVING -> 接单行驶（去装货点）
+        // 80% 到达装货地开始装货，10% 进入等待，7% 继续行驶，3% 故障
+        matrix.put(Vehicle.VehicleStatus.ORDER_DRIVING, row(
+                Vehicle.VehicleStatus.LOADING,        0.80,
+                Vehicle.VehicleStatus.WAITING,        0.10,
+                Vehicle.VehicleStatus.ORDER_DRIVING,  0.07,
+                Vehicle.VehicleStatus.BREAKDOWN,      0.03
+        ));
+
+        // 3. LOADING -> 装货
+        // 80% 装完开始运货行驶，5% 装错/直接进入卸货，5% 等待，3% 继续装货，7% 故障
+        matrix.put(Vehicle.VehicleStatus.LOADING, row(
+                Vehicle.VehicleStatus.TRANSPORT_DRIVING, 0.80,
+                Vehicle.VehicleStatus.UNLOADING,         0.05,
+                Vehicle.VehicleStatus.WAITING,           0.05,
+                Vehicle.VehicleStatus.LOADING,           0.03,
+                Vehicle.VehicleStatus.BREAKDOWN,         0.07
+        ));
+
+        // 4. TRANSPORT_DRIVING -> 运货行驶
+        // 86% 到达目的地卸货，8% 等待（排队等卸），3% 继续行驶，3% 故障
+        matrix.put(Vehicle.VehicleStatus.TRANSPORT_DRIVING, row(
+                Vehicle.VehicleStatus.UNLOADING,         0.86,
+                Vehicle.VehicleStatus.WAITING,           0.08,
+                Vehicle.VehicleStatus.TRANSPORT_DRIVING, 0.03,
+                Vehicle.VehicleStatus.BREAKDOWN,         0.03
+        ));
+
+        // 5. UNLOADING -> 卸货
+        // 75% 卸完回空闲，18% 直接接新单，3% 等待，2% 继续卸货，2% 故障
+        matrix.put(Vehicle.VehicleStatus.UNLOADING, row(
+                Vehicle.VehicleStatus.IDLE,              0.75,
+                Vehicle.VehicleStatus.ORDER_DRIVING,     0.18,
+                Vehicle.VehicleStatus.WAITING,           0.03,
+                Vehicle.VehicleStatus.UNLOADING,         0.02,
+                Vehicle.VehicleStatus.BREAKDOWN,         0.02
+        ));
+
+        // 6. WAITING -> 等待
+        // 40% 开始接单行驶，25% 进入装货，15% 再次运输行驶，15% 跳到卸货，5% 故障
+        matrix.put(Vehicle.VehicleStatus.WAITING, row(
+                Vehicle.VehicleStatus.ORDER_DRIVING,     0.40,
+                Vehicle.VehicleStatus.LOADING,           0.25,
+                Vehicle.VehicleStatus.TRANSPORT_DRIVING, 0.15,
+                Vehicle.VehicleStatus.UNLOADING,         0.15,
+                Vehicle.VehicleStatus.BREAKDOWN,         0.05
+        ));
+
+        // 7. BREAKDOWN -> 故障
+        // 70% 修好变为空闲，30% 继续故障
+        matrix.put(Vehicle.VehicleStatus.BREAKDOWN, row(
+                Vehicle.VehicleStatus.IDLE,              0.70,
+                Vehicle.VehicleStatus.BREAKDOWN,         0.30
+        ));
+
+        return matrix;
     }
 
     /**
-     * 加油状态处理 - 完整业务逻辑
-     * 业务场景：车辆正在加油
+     * 小工具：把 (状态1, 概率1, 状态2, 概率2, ...) 变成一行转移概率 Map
      */
-    private Vehicle.VehicleStatus handleRefuelingState() {
-        double rand = random.nextDouble();
-
-        if (rand < 0.90) {
-            // 90% 加油完成
-            return Vehicle.VehicleStatus.IDLE;
-        } else if (rand < 0.94) {
-            // 4% 加油后立即执行任务
-            return Vehicle.VehicleStatus.TRANSPORTING;
-        } else if (rand < 0.97) {
-            // 3% 加油设备故障
-            return Vehicle.VehicleStatus.REFUELING;
-        } else {
-            // 3% 加油后发现车辆问题
-            return Vehicle.VehicleStatus.MAINTAINING;
+    private Map<Vehicle.VehicleStatus, Double> row(Object... args) {
+        Map<Vehicle.VehicleStatus, Double> map = new EnumMap<>(Vehicle.VehicleStatus.class);
+        if (args.length % 2 != 0) {
+            throw new IllegalArgumentException("row(...) 参数必须是 成对的 状态, 概率");
         }
-    }
-
-    /**
-     * 休息状态处理 - 完整业务逻辑
-     * 业务场景：司机休息中
-     */
-    private Vehicle.VehicleStatus handleRestingState() {
-        double rand = random.nextDouble();
-
-        if (rand < 0.80) {
-            // 80% 休息结束
-            return Vehicle.VehicleStatus.IDLE;
-        } else if (rand < 0.90) {
-            // 10% 休息后立即执行任务
-            return Vehicle.VehicleStatus.TRANSPORTING;
-        } else if (rand < 0.95) {
-            // 5% 延长休息
-            return Vehicle.VehicleStatus.RESTING;
-        } else {
-            // 5% 休息期间发现身体不适需要调整
-            return Vehicle.VehicleStatus.IDLE;
+        for (int i = 0; i < args.length; i += 2) {
+            Vehicle.VehicleStatus status = (Vehicle.VehicleStatus) args[i];
+            Double prob = (Double) args[i + 1];
+            map.put(status, prob);
         }
+        return map;
     }
 
-    /**
-     * 事故状态处理 - 完整业务逻辑
-     * 业务场景：车辆发生事故
-     */
-    private Vehicle.VehicleStatus handleAccidentState() {
-        double rand = random.nextDouble();
-
-        if (rand < 0.60) {
-            // 60% 事故处理完成，需要保养
-            return Vehicle.VehicleStatus.MAINTAINING;
-        } else if (rand < 0.80) {
-            // 20% 轻微事故，可直接继续
-            return Vehicle.VehicleStatus.TRANSPORTING;
-        } else if (rand < 0.90) {
-            // 10% 事故处理中
-            return Vehicle.VehicleStatus.ACCIDENT;
-        } else if (rand < 0.95) {
-            // 5% 事故后司机需要休息
-            return Vehicle.VehicleStatus.RESTING;
-        } else {
-            // 5% 车辆报废，等待处理（保持事故状态）
-            return Vehicle.VehicleStatus.ACCIDENT;
-        }
-    }
+    // ============================================================
+    //            （可选）更复杂上下文的扩展点示例
+    // ============================================================
 
     /**
-     * 基于完整上下文的状态选择
-     * 预留方法：可根据车辆具体情况进行更精确决策
+     * 示例：如果你以后想根据 assignment / 车辆类型做更复杂决策，
+     * 可以在这里引入上下文逻辑，目前只是示例未被直接调用。
      */
+    @SuppressWarnings("unused")
     private Vehicle.VehicleStatus selectNextStateWithFullContext(
             Vehicle.VehicleStatus currentStatus,
             Assignment assignment,
             Vehicle vehicle) {
 
-        // 目前先使用基础业务规则
-        // 后续可根据assignment任务状态、vehicle位置等信息进行更精确决策
-        return selectNextStateByBusinessRules(currentStatus);
+        // 目前仍然只是简单使用马尔科夫矩阵
+        return selectNextStateWithMarkov(currentStatus, lightTruckMatrix);
     }
 }

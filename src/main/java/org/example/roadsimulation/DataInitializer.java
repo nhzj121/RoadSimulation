@@ -7,6 +7,7 @@ import org.example.roadsimulation.entity.*;
 import org.example.roadsimulation.repository.*;
 import org.example.roadsimulation.service.GoodsPOIGenerateService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Profile;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -14,6 +15,7 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.math.BigDecimal;
 import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -30,7 +32,6 @@ import java.util.stream.Collectors;
  * 4. 每个POI点只生成一次货物
  *
  */
-
 @Component
 public class DataInitializer{
 
@@ -150,7 +151,7 @@ public class DataInitializer{
         this.CementPlantList = getFilteredPOIByNameAndType("水泥", POI.POIType.FACTORY);
         this.MaterialMarketList = getFilterdPOIByType(POI.POIType.MATERIAL_MARKET);
         // this.goalFactoryList = getFilteredPOIByNameAndType("水泥", POI.POIType.FACTORY);
-        this.Cement = getGoodsForTest("CEMENT");
+        this.Cement = getGoodsForTest("CEMENT_001");  // 避免与旧数据冲突
         System.out.println("DataInitializer 初始化完成，共加载 " + CementPlantList.size() + " 个起点POI 和 " + MaterialMarketList.size() + "个终点POI");
 
         initalizePOIStatus();
@@ -229,19 +230,66 @@ public class DataInitializer{
     /**
      * 根据 sku 进行货物的获取
      */
+//    public Goods getGoodsForTest(String sku) {
+//        Optional<Goods> existingGoods = goodsRepository.findBySku(sku);
+//        if (existingGoods.isPresent()) {
+//            Goods goods = existingGoods.get();
+//            System.out.println("从数据库加载货物: " + goods.getName() + " (SKU: " + sku + ")");
+//            return goods;
+//        }
+//
+//        // 根据传入 SKU 创建对应货物，避免硬编码
+//        String name = switch (sku) {
+//            case "CEMENT" -> "水泥";
+//            case "GLASS"  -> "玻璃";
+//            // 可扩展其他类型
+//            default       -> "未知货物_" + sku;
+//        };
+//
+//        Goods newGoods = new Goods(name, sku);  // 假设 Goods 构造函数为 (name, sku)
+//        // 可选：设置其他必要字段，如 weightPerUnit、volumePerUnit 等
+//        // newGoods.setWeightPerUnit(...);
+//        // newGoods.setVolumePerUnit(...);
+//
+//        Goods savedGoods = goodsRepository.save(newGoods);
+//        System.out.println("创建新货物: " + savedGoods.getName() + " (SKU: " + sku + ")");
+//        return savedGoods;
+//    }
+    /**
+     * 根据 sku 进行货物的获取
+     */
     public Goods getGoodsForTest(String sku) {
         Optional<Goods> existingGoods = goodsRepository.findBySku(sku);
-        Goods goalGoods = null;
+        Goods goods;
         if (existingGoods.isPresent()) {
-            goalGoods = existingGoods.get();
-            System.out.println("从数据库加载货物: " + goalGoods.getName());
-        } else{
-            // 如果不存在，创建并保存
-            goalGoods = new Goods("玻璃", "00001");
-            goodsRepository.save(goalGoods);
-            System.out.println("创建新货物: " + goalGoods.getName());
+            goods = existingGoods.get();
+            System.out.println("从数据库加载货物: " + goods.getName() + " (SKU: " + sku + ")");
+        } else {
+            String name = switch (sku) {
+                case "CEMENT_001" -> "水泥";  // 修正为实际使用的SKU
+                case "GLASS"     -> "玻璃";
+                default          -> "未知货物_" + sku;
+            };
+
+            goods = new Goods(name, sku);
+            goodsRepository.save(goods);  // 先保存以获取ID
+            System.out.println("创建新货物: " + goods.getName() + " (SKU: " + sku + ")");
         }
-        return goalGoods;
+
+        // ===== 新增：强制设置水泥的默认单位重量和体积 =====
+        if ("CEMENT_001".equals(sku)) {
+            if (goods.getWeightPerUnit() == null || goods.getWeightPerUnit() == 0.0) {
+                goods.setWeightPerUnit(1.0);
+            }
+            if (goods.getVolumePerUnit() == null || goods.getVolumePerUnit() == 0.0) {
+                goods.setVolumePerUnit(0.7);
+            }
+            goodsRepository.save(goods);
+            System.out.println("为水泥货物设置默认单位重量(1.0吨)和体积(0.7m³)");
+        }
+        // ===== 结束新增 =====
+
+        return goods;
     }
 
     /**
@@ -456,7 +504,7 @@ public class DataInitializer{
         return 0.0;
     }
 
-    // 货物，货物清单，货物清单的完善
+     //货物，货物清单，货物清单的完善
     @Transactional(rollbackFor = Exception.class)
     public Shipment initalizeShipment(POI startPOI, POI endPOI, Goods goods, Integer quantity) {
         try {
