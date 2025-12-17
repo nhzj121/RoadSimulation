@@ -1,6 +1,8 @@
 package org.example.roadsimulation.dto;
 
 public class VehicleMatchingCriteria {
+    // ... 已有字段 ...
+
     private Double minLoadCapacity;      // 最小载重需求
     private Double maxLoadCapacity;      // 最大载重需求
     private Double requiredVolume;       // 所需容积
@@ -11,6 +13,11 @@ public class VehicleMatchingCriteria {
     private Double minHeight;            // 最小高度需求
     private String vehicleType;          // 特定车型要求
     private String brand;                // 品牌要求
+
+    // 新增字段：用于就近匹配
+    private Long originPoiId;           // 货物出发地POI ID
+    private Double maxDistanceKm;        // 最大可接受距离（公里）
+    private Boolean prioritizeDistance;  // 是否优先考虑距离
 
     // 构造器
     public VehicleMatchingCriteria() {}
@@ -45,4 +52,14 @@ public class VehicleMatchingCriteria {
 
     public String getBrand() { return brand; }
     public void setBrand(String brand) { this.brand = brand; }
+
+    // 新增字段的Getter和Setter
+    public Long getOriginPoiId() { return originPoiId; }
+    public void setOriginPoiId(Long originPoiId) { this.originPoiId = originPoiId; }
+
+    public Double getMaxDistanceKm() { return maxDistanceKm; }
+    public void setMaxDistanceKm(Double maxDistanceKm) { this.maxDistanceKm = maxDistanceKm; }
+
+    public Boolean getPrioritizeDistance() { return prioritizeDistance; }
+    public void setPrioritizeDistance(Boolean prioritizeDistance) { this.prioritizeDistance = prioritizeDistance; }
 }

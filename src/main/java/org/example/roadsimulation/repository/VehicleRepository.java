@@ -83,4 +83,14 @@ public interface VehicleRepository extends JpaRepository<Vehicle, Long> {
     // 查询所有车辆类型（去重）
     @Query("SELECT DISTINCT v.vehicleType FROM Vehicle v WHERE v.vehicleType IS NOT NULL")
     List<String> findAllVehicleTypes();
+    @Query("SELECT v FROM Vehicle v WHERE " +
+            "v.currentStatus = 'IDLE' AND " +
+            "v.currentPOI.id IN (" +
+            "  SELECT p.id FROM POI p WHERE " +
+            "  (6371 * acos(cos(radians(:latitude)) * cos(radians(p.latitude)) * " +
+            "  cos(radians(p.longitude) - radians(:longitude)) + " +
+            "  sin(radians(:latitude)) * sin(radians(p.latitude)))) <= :radiusKm)")
+    List<Vehicle> findVehiclesNearLocation(@Param("latitude") Double latitude,
+                                           @Param("longitude") Double longitude,
+                                           @Param("radiusKm") Double radiusKm);
 }
