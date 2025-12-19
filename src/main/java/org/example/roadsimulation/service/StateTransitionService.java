@@ -1,5 +1,6 @@
 package org.example.roadsimulation.service;
 
+import org.example.roadsimulation.entity.Assignment;
 import org.example.roadsimulation.entity.Vehicle;
 import java.util.Map;
 
@@ -29,8 +30,10 @@ public interface StateTransitionService {
      * @param vehicle 车辆实体（包含任务信息）
      * @return 下一个状态
      */
-    Vehicle.VehicleStatus selectNextStateWithContext(Vehicle vehicle);
-
+    Vehicle.VehicleStatus selectNextStateWithFullContext(
+            Vehicle.VehicleStatus currentStatus,
+            Assignment assignment,
+            Vehicle vehicle);
     /**
      * 批量状态选择
      * 高效处理多个车辆的状态转移
@@ -50,4 +53,6 @@ public interface StateTransitionService {
     Vehicle.VehicleStatus selectNextStateWithMarkov(
             Vehicle.VehicleStatus currentStatus,
             Map<Vehicle.VehicleStatus, Map<Vehicle.VehicleStatus, Double>> markovMatrix);
+    void updateVehicleStateWithContext(Vehicle vehicle);
+    void batchUpdateAllVehicleStates();
 }

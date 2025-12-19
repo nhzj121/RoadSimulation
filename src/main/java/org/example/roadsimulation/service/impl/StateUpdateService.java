@@ -1,195 +1,189 @@
-// StateUpdateService.java - 状态更新服务
 package org.example.roadsimulation.service.impl;
 
 import org.example.roadsimulation.core.SimulationTime;
 import org.example.roadsimulation.core.TimeEventScheduler;
-import org.example.roadsimulation.entity.Vehicle;
 import org.example.roadsimulation.entity.Assignment;
-import org.example.roadsimulation.repository.VehicleRepository;
+import org.example.roadsimulation.entity.Assignment.AssignmentStatus;
+import org.example.roadsimulation.entity.Vehicle;
+import org.example.roadsimulation.entity.Vehicle.VehicleStatus;
 import org.example.roadsimulation.repository.AssignmentRepository;
+import org.example.roadsimulation.repository.VehicleRepository;
+import org.example.roadsimulation.service.StateTransitionService;  // 使用接口
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
+import java.util.Random;
+import java.util.stream.Collectors;
 
 /**
- * 状态更新服务
- * 负责在模拟时间推进时更新实体状态
+ * 状态更新服务（最终完整版：修复构造函数注入问题）
  */
 @Service
 public class StateUpdateService implements TimeEventScheduler.TimeEventListener {
 
     private final SimulationTime simulationTime;
     private final TimeEventScheduler eventScheduler;
-    private final StateTransitionServiceImpl stateTransitionService;
+    private final StateTransitionService stateTransitionService;  // 使用接口
     private final VehicleRepository vehicleRepository;
     private final AssignmentRepository assignmentRepository;
+    private final Random random = new Random();
 
+    /**
+     * 构造函数注入（唯一方式，删除所有字段上的 @Autowired）
+     */
     @Autowired
-    public StateUpdateService(StateTransitionServiceImpl stateTransitionService,
+    public StateUpdateService(StateTransitionService stateTransitionService,
                               VehicleRepository vehicleRepository,
                               AssignmentRepository assignmentRepository) {
-        this.simulationTime = new SimulationTime(LocalDateTime.now(), 1.0);
-        this.eventScheduler = new TimeEventScheduler(simulationTime);
         this.stateTransitionService = stateTransitionService;
         this.vehicleRepository = vehicleRepository;
         this.assignmentRepository = assignmentRepository;
 
-        // 注册自己作为事件监听器
+        this.simulationTime = new SimulationTime(LocalDateTime.now(), 1.0);
+        this.eventScheduler = new TimeEventScheduler(simulationTime);
+
         eventScheduler.addListener(this);
-
-        // 启动状态更新周期任务
         scheduleStateUpdates();
+
+        // 启动后30分钟开始第一次状态统计，以后每30分钟一次
+        eventScheduler.scheduleRelativeEvent(30, this::printStateStatistics, "state_statistics");
     }
 
     /**
-     * 安排周期性的状态更新
+     * 打印所有车辆当前状态分布统计（每30分钟模拟时间执行一次）
      */
+    private void printStateStatistics() {
+        List<Vehicle> vehicles = vehicleRepository.findAll();
+        Map<VehicleStatus, Long> stats = vehicles.stream()
+                .collect(Collectors.groupingBy(Vehicle::getCurrentStatus, Collectors.counting()));
+
+        System.out.printf("[状态统计] 时间: %s | 车辆总数: %d | 分布: %s%n",
+                simulationTime.getCurrentTime(),
+                vehicles.size(),
+                stats);
+    }
+
     private void scheduleStateUpdates() {
-        // 每模拟5分钟更新一次车辆状态
-        eventScheduler.scheduleRelativeEvent(5, this::updateVehicleStates, "vehicle_state_update");
-
-        // 每模拟10分钟更新一次任务状态
-        eventScheduler.scheduleRelativeEvent(10, this::updateAssignmentStates, "assignment_state_update");
-
-        // 每模拟30分钟检查超期任务
-        eventScheduler.scheduleRelativeEvent(30, this::checkOverdueAssignments, "overdue_assignment_check");
+        eventScheduler.scheduleRelativeEvent(1, this::updateVehicleStates, "vehicle_state_update");
     }
 
-    /**
-     * 更新所有车辆状态
-     */
     public void updateVehicleStates() {
         List<Vehicle> vehicles = vehicleRepository.findAll();
+        LocalDateTime now = simulationTime.getCurrentTime();
 
         for (Vehicle vehicle : vehicles) {
             try {
-                Vehicle.VehicleStatus nextStatus = stateTransitionService.selectNextStateWithContext(vehicle);
+                Assignment assignment = getCurrentAssignment(vehicle);
 
-                if (nextStatus != vehicle.getCurrentStatus()) {
-                    // 记录状态变更
-                    System.out.printf("时间: %s, 车辆: %s, 状态变更: %s -> %s%n",
-                            simulationTime.getCurrentTime(),
-                            vehicle.getLicensePlate(),
-                            vehicle.getCurrentStatus(),
-                            nextStatus);
-
-                    vehicle.setCurrentStatus(nextStatus);
+                if (vehicle.getStatusStartTime() == null) {
+                    vehicle.setStatusStartTime(now);
                     vehicleRepository.save(vehicle);
+                    continue;
+                }
+
+                long minutesInCurrentState = Duration.between(vehicle.getStatusStartTime(), now).toMinutes();
+
+                if (shouldEndCurrentState(vehicle.getCurrentStatus(), minutesInCurrentState)) {
+                    VehicleStatus nextStatus = stateTransitionService.selectNextStateWithFullContext(
+                            vehicle.getCurrentStatus(), assignment, vehicle);
+
+                    if (nextStatus != vehicle.getCurrentStatus()) {
+                        String taskInfo = assignment != null ? "是(ID=" + assignment.getId() + ")" : "否";
+
+                        System.out.printf("[状态转移] 时间: %s | 车辆: %s | %s → %s | 持续: %d分 | 有任务: %s%n",
+                                now,
+                                vehicle.getLicensePlate(),
+                                vehicle.getCurrentStatus(),
+                                nextStatus,
+                                minutesInCurrentState,
+                                taskInfo);
+
+                        vehicle.setCurrentStatus(nextStatus);
+                        vehicle.setStatusStartTime(now);
+                        vehicleRepository.save(vehicle);
+                    }
                 }
             } catch (Exception e) {
-                System.err.println("更新车辆状态失败: " + vehicle.getId() + ", 错误: " + e.getMessage());
+                System.err.println("更新车辆状态失败: " + (vehicle != null ? vehicle.getId() : "null") + ", 错误: " + e.getMessage());
             }
         }
 
-        // 重新安排下一次更新
-        eventScheduler.scheduleRelativeEvent(5, this::updateVehicleStates, "vehicle_state_update");
+        // 重新调度下次状态更新（每1分钟模拟时间）
+        eventScheduler.scheduleRelativeEvent(1, this::updateVehicleStates, "vehicle_state_update");
+
+        // 每30分钟再次调度状态统计（形成循环）
+        eventScheduler.scheduleRelativeEvent(30, this::printStateStatistics, "state_statistics");
     }
 
-    /**
-     * 更新任务分配状态
-     */
-    public void updateAssignmentStates() {
-//        List<Assignment> assignments = assignmentRepository.findByStatusIn(
-//                List.of(Assignment.AssignmentStatus.ASSIGNED, Assignment.AssignmentStatus.IN_PROGRESS)
-//        );
-//
-//        for (Assignment assignment : assignments) {
-//            updateAssignmentProgress(assignment);
-//        }
-//
-//        // 重新安排下一次更新
-//        eventScheduler.scheduleRelativeEvent(10, this::updateAssignmentStates, "assignment_state_update");
+    private boolean shouldEndCurrentState(VehicleStatus status, long minutesInCurrentState) {
+        return switch (status) {
+            case IDLE -> minutesInCurrentState >= 10;
+            case ORDER_DRIVING -> minutesInCurrentState >= randomRange(5, 15);
+            case LOADING -> minutesInCurrentState >= randomRange(10, 30);
+            case TRANSPORT_DRIVING -> minutesInCurrentState >= randomRange(60, 300);
+            case UNLOADING -> minutesInCurrentState >= randomRange(10, 30);
+            case WAITING -> minutesInCurrentState >= randomRange(5, 20);
+            case BREAKDOWN -> minutesInCurrentState >= randomRange(30, 120);
+            default -> false;
+        };
     }
 
-    /**
-     * 检查超期任务
-     */
-    public void checkOverdueAssignments() {
-//        LocalDateTime now = simulationTime.getCurrentTime();
-//        List<Assignment> overdueAssignments = assignmentRepository.findOverdueAssignments(now);
-//
-//        for (Assignment assignment : overdueAssignments) {
-//            System.out.printf("时间: %s, 任务超期: %s, 预计完成: %s%n",
-//                    now, assignment.getId(), assignment.getEndTime());
-//
-//            // 可以在这里触发通知或其他处理逻辑
-//        }
-//
-//        // 重新安排下一次检查
-//        eventScheduler.scheduleRelativeEvent(30, this::checkOverdueAssignments, "overdue_assignment_check");
+    private int randomRange(int min, int max) {
+        return min + random.nextInt(max - min + 1);
     }
 
-    /**
-     * 更新单个任务进度
-     */
-    private void updateAssignmentProgress(Assignment assignment) {
-        if (assignment.isInProgress() && assignment.getCurrentActionIndex() != null) {
-            // 模拟任务进度推进
-            // 这里可以根据业务逻辑更新任务进度
-
-            // 示例：随机决定是否推进到下一个动作
-            if (Math.random() > 0.7) { // 30%概率推进
-                assignment.moveToNextAction();
-                assignmentRepository.save(assignment);
-
-                System.out.printf("时间: %s, 任务: %s, 推进到动作索引: %d%n",
-                        simulationTime.getCurrentTime(),
-                        assignment.getId(),
-                        assignment.getCurrentActionIndex());
-            }
-        }
+    private Assignment getCurrentAssignment(Vehicle vehicle) {
+        return assignmentRepository.findAll().stream()
+                .filter(a -> a.getAssignedVehicle() != null && a.getAssignedVehicle().equals(vehicle))
+                .filter(a -> a.getStatus() == AssignmentStatus.ASSIGNED || a.getStatus() == AssignmentStatus.IN_PROGRESS)
+                .findFirst()
+                .orElse(null);
     }
 
-    /**
-     * 推进模拟时间
-     */
-    public void advanceTime(long milliseconds) {
-        simulationTime.advanceTime(milliseconds);
-        eventScheduler.processDueEvents();
-    }
-
-    /**
-     * 启动模拟
-     */
+    // ================ 仿真控制方法 ================
     public void startSimulation() {
         simulationTime.resume();
-        System.out.println("模拟开始: " + simulationTime.getCurrentTime());
+        System.out.println("模拟已启动: " + simulationTime.getCurrentTime());
     }
 
-    /**
-     * 暂停模拟
-     */
     public void pauseSimulation() {
         simulationTime.pause();
-        System.out.println("模拟暂停: " + simulationTime.getCurrentTime());
+        System.out.println("模拟已暂停: " + simulationTime.getCurrentTime());
     }
 
-    /**
-     * 设置时间缩放
-     */
     public void setTimeScale(double scale) {
         simulationTime.setTimeScale(scale);
         System.out.println("时间缩放设置为: " + scale + "x");
     }
 
-    // 实现 TimeEventListener 接口
+    public void advanceTime(long milliseconds) {
+        simulationTime.advanceTime(milliseconds);
+        eventScheduler.processDueEvents();
+        System.out.println("时间推进 " + milliseconds + " 毫秒，当前时间: " + simulationTime.getCurrentTime());
+
+        // 新增：确认批量更新被触发
+        System.out.println(">>> 触发车辆状态批量更新 <<<");
+        if (stateTransitionService instanceof StateTransitionServiceImpl impl) {
+            impl.batchUpdateAllVehicleStates();
+        }
+    }
+
+    // =====================================================================
+
     @Override
     public void onEventExecuted(TimeEventScheduler.TimeEvent event) {
-        System.out.printf("时间: %s, 事件执行: %s%n",
-                simulationTime.getCurrentTime(), event.getEventId());
+        System.out.printf("时间: %s, 事件执行: %s%n", simulationTime.getCurrentTime(), event.getEventId());
     }
 
     @Override
     public void onEventScheduled(TimeEventScheduler.TimeEvent event) {
-        System.out.printf("时间: %s, 事件安排: %s, 计划时间: %s%n",
-                simulationTime.getCurrentTime(),
-                event.getEventId(),
-                event.getScheduledTime());
+        System.out.printf("时间: %s, 事件安排: %s, 计划时间: %s%n", simulationTime.getCurrentTime(), event.getEventId(), event.getScheduledTime());
     }
 
-    // Getter 方法
     public SimulationTime getSimulationTime() {
         return simulationTime;
     }
