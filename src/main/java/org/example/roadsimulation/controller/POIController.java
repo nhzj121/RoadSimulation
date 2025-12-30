@@ -364,7 +364,7 @@ public class POIController {
         private final T data;
         private final long timestamp;
 
-        private ApiResponse(boolean success, String message, T data) {
+        public ApiResponse(boolean success, String message, T data) {
             this.success = success;
             this.message = message;
             this.data = data;

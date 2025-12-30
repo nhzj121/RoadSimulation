@@ -31,6 +31,7 @@
           </div>
           <div class="control-group" style="margin-top: 15px;">
             <ElButton type="primary" @click="startSimulation">▶ 开始</ElButton>
+            <ElButton type="primary" @click="stopSimulation">⏯ 暂停</ElButton>
             <ElButton @click="resetSimulation">↻ 重置</ElButton>
           </div>
         </ElCard>
@@ -95,6 +96,7 @@
 import { ref, reactive, computed, onMounted, onUnmounted } from "vue";
 import { useRouter } from 'vue-router';
 import { poiManagerApi } from "../api/poiManagerApi";
+import { simulationController} from "@/api/simulationController";
 import request from "../utils/request";
 import AMapLoader from "@amap/amap-jsapi-loader";
 import factoryIcon from '../../public/icons/factory.png';
@@ -175,6 +177,8 @@ const getPOIIcon = (poiType) => {
 const startSimulation = async () => {
   try {
     console.log("开始仿真");
+
+    await simulationController.startSimulation();
     isSimulationRunning.value = true;
 
     // 初始加载POI数据
@@ -225,6 +229,21 @@ const startSimulation = async () => {
 };
 
 /**
+ * 暂停仿真
+ */
+const stopSimulation = async () => {
+  try {
+    console.log("已暂停仿真");
+    await simulationController.stopSimulation();
+    isSimulationRunning.value = false;
+  } catch (error) {
+    console.error("暂停仿真失败：", error);
+    ElMessage.error('暂停仿真失败：' + error.message);
+    isSimulationRunning.value = true;
+  }
+}
+
+/**
  * 重置仿真
  */
 const resetSimulation = async () => {
@@ -242,6 +261,7 @@ const resetSimulation = async () => {
 
     if (confirmResult === 'confirm') {
       console.log("重置仿真");
+      await simulationController.resetSimulation();
       isSimulationRunning.value = false;
 
       // 停止定时器
