@@ -11,6 +11,12 @@ public class VehicleMatchResult {
     private Double weightUtilization;    // 重量利用率
     private Double volumeUtilization;    // 容积利用率
 
+    // 新增字段：距离相关信息
+    private Double distanceKm;           // 车辆与出发地距离（公里）
+    private Double distanceScore;        // 距离评分（0-100）
+    private String originPoiName;        // 出发地名称
+    private Double estimatedTimeHours;   // 预计到达时间（小时）
+
     public VehicleMatchResult() {}
 
     public VehicleMatchResult(Vehicle vehicle, Double matchScore, Boolean isFullyMatched, String matchDescription) {
@@ -41,4 +47,17 @@ public class VehicleMatchResult {
 
     public Double getVolumeUtilization() { return volumeUtilization; }
     public void setVolumeUtilization(Double volumeUtilization) { this.volumeUtilization = volumeUtilization; }
+
+    // 新增字段的Getter和Setter
+    public Double getDistanceKm() { return distanceKm; }
+    public void setDistanceKm(Double distanceKm) { this.distanceKm = distanceKm; }
+
+    public Double getDistanceScore() { return distanceScore; }
+    public void setDistanceScore(Double distanceScore) { this.distanceScore = distanceScore; }
+
+    public String getOriginPoiName() { return originPoiName; }
+    public void setOriginPoiName(String originPoiName) { this.originPoiName = originPoiName; }
+
+    public Double getEstimatedTimeHours() { return estimatedTimeHours; }
+    public void setEstimatedTimeHours(Double estimatedTimeHours) { this.estimatedTimeHours = estimatedTimeHours; }
 }

@@ -64,4 +64,24 @@ public interface VehicleMatchingService {
      * @return 车辆类型列表
      */
     List<String> getAllVehicleTypes();
+
+    /**
+     * 就近匹配 - 考虑车辆当前位置与出发地距离
+     * @param criteria 匹配条件（包含出发地信息）
+     * @return 按距离排序的匹配结果
+     */
+    List<VehicleMatchResult> matchVehiclesByProximity(VehicleMatchingCriteria criteria);
+
+    /**
+     * 智能匹配 - 综合考量匹配度和距离
+     * @param criteria 匹配条件
+     * @param distanceWeight 距离权重（0-1）
+     * @return 综合排序的匹配结果
+     */
+    List<VehicleMatchResult> smartMatchWithDistance(VehicleMatchingCriteria criteria, Double distanceWeight);
+
+    /**
+     * 获取推荐车辆（根据货物出发地推荐最近车辆）
+     */
+    List<Vehicle> getRecommendedVehicles(Long originPoiId, VehicleMatchingCriteria criteria);
 }

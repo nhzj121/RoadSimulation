@@ -132,14 +132,21 @@ public class VehicleDataImportServiceImpl implements VehicleDataImportService {
         vehicle.setWidth(width);
         vehicle.setHeight(height);
 
-        // 计算货箱容积（长×宽×高）
-        if (length != null && width != null && height != null) {
-            double volume = length * width * height;
-            vehicle.setCargoVolume(volume);
-            logger.debug("计算货箱容积: {} × {} × {} = {} 立方米", length, width, height, volume);
+        // 直接解析货箱容积（而不是通过尺寸计算）
+        String cargoVolumeStr = (String) vehicleData.get("cargo_volume");
+        if (cargoVolumeStr != null && !cargoVolumeStr.equals("none")) {
+            Double cargoVolume = parseCargoVolume(cargoVolumeStr);
+            vehicle.setCargoVolume(cargoVolume);
+            if (cargoVolume != null) {
+                logger.debug("直接导入货箱容积: {} 立方米", cargoVolume);
+            } else {
+                logger.warn("货箱容积解析失败: {}", cargoVolumeStr);
+                // 如果解析失败，可以尝试通过尺寸计算作为后备方案
+                vehicle.setCargoVolume(calculateVolumeFromDimensions(length, width, height));
+            }
         } else {
-            vehicle.setCargoVolume(null);
-            logger.warn("尺寸数据不完整，无法计算货箱容积: 长={}, 宽={}, 高={}", length, width, height);
+            // 如果没有提供cargo_volume，则通过尺寸计算
+            vehicle.setCargoVolume(calculateVolumeFromDimensions(length, width, height));
         }
 
         // 解析速度数据
@@ -168,6 +175,9 @@ public class VehicleDataImportServiceImpl implements VehicleDataImportService {
         if (name.contains("解放")) return "解放";
         if (name.contains("福田")) return "福田";
         if (name.contains("江淮")) return "江淮";
+        if (name.contains("金杯")) return "金杯";
+        if (name.contains("远程")) return "远程";
+        if (name.contains("江铃")) return "江铃";
 
         return "其他品牌";
     }
@@ -213,6 +223,41 @@ public class VehicleDataImportServiceImpl implements VehicleDataImportService {
         } catch (NumberFormatException e) {
             logger.warn("载重数据解析失败: {}", loadStr);
             return 0.0;
+        }
+    }
+
+    /**
+     * 解析货箱容积
+     * @param volumeStr 容积字符串（如："15.5立方米"）
+     * @return 容积数值
+     */
+    private Double parseCargoVolume(String volumeStr) {
+        if (volumeStr == null || volumeStr.equals("none") || volumeStr.trim().isEmpty()) {
+            return null;
+        }
+        try {
+            return Double.parseDouble(volumeStr.replace("立方米", "").trim());
+        } catch (NumberFormatException e) {
+            logger.warn("货箱容积解析失败: {}", volumeStr);
+            return null;
+        }
+    }
+
+    /**
+     * 通过尺寸计算容积（后备方案）
+     * @param length 长度
+     * @param width 宽度
+     * @param height 高度
+     * @return 计算得到的容积，如果尺寸不完整则返回null
+     */
+    private Double calculateVolumeFromDimensions(Double length, Double width, Double height) {
+        if (length != null && width != null && height != null) {
+            double volume = length * width * height;
+            logger.debug("通过尺寸计算货箱容积: {} × {} × {} = {} 立方米", length, width, height, volume);
+            return volume;
+        } else {
+            logger.warn("尺寸数据不完整，无法计算货箱容积: 长={}, 宽={}, 高={}", length, width, height);
+            return null;
         }
     }
 
