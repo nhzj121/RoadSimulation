@@ -169,7 +169,7 @@ public class VehicleInitializationServiceImpl implements VehicleInitializationSe
                 .orElseThrow(() -> new RuntimeException("车辆不存在，ID: " + vehicleId));
 
         // 检查车辆状态，只有在空闲或运输完成状态下才能清空载重
-        if (vehicle.getCurrentStatus() == Vehicle.VehicleStatus.TRANSPORTING) {
+        if (vehicle.getCurrentStatus() == Vehicle.VehicleStatus.TRANSPORT_DRIVING) {
             throw new IllegalStateException("车辆正在运输中，无法清空载重");
         }
 
@@ -193,7 +193,7 @@ public class VehicleInitializationServiceImpl implements VehicleInitializationSe
         for (Vehicle vehicle : vehicles) {
             try {
                 // 跳过正在运输的车辆
-                if (vehicle.getCurrentStatus() == Vehicle.VehicleStatus.TRANSPORTING) {
+                if (vehicle.getCurrentStatus() == Vehicle.VehicleStatus.TRANSPORT_DRIVING) {
                     logger.warn("车辆 {} 正在运输中，跳过清空载重", vehicle.getId());
                     continue;
                 }
@@ -361,12 +361,12 @@ public class VehicleInitializationServiceImpl implements VehicleInitializationSe
         Vehicle.VehicleStatus status = vehicle.getCurrentStatus();
 
         // 以下状态不能初始化
-        if (status == Vehicle.VehicleStatus.TRANSPORTING) {
+        if (status == Vehicle.VehicleStatus.TRANSPORT_DRIVING) {
             logger.debug("车辆 {} 正在运输中，无法初始化", vehicleId);
             return false;
         }
 
-        if (status == Vehicle.VehicleStatus.ACCIDENT) {
+        if (status == Vehicle.VehicleStatus.BREAKDOWN) {
             logger.debug("车辆 {} 处于事故状态，无法初始化", vehicleId);
             return false;
         }
@@ -513,7 +513,7 @@ public class VehicleInitializationServiceImpl implements VehicleInitializationSe
         }
 
         // 事故状态的车辆不能设置为空闲
-        if (vehicle.getCurrentStatus() == Vehicle.VehicleStatus.ACCIDENT) {
+        if (vehicle.getCurrentStatus() == Vehicle.VehicleStatus.BREAKDOWN) {
             logger.warn("车辆 {} 处于事故状态，不能设置为空闲", vehicle.getId());
             return false;
         }
