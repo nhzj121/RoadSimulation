@@ -1,166 +1,122 @@
 package org.example.roadsimulation.service.impl;
 
-import org.example.roadsimulation.core.SimulationTime;
-import org.example.roadsimulation.core.TimeEventScheduler;
-import org.example.roadsimulation.entity.Assignment;
-import org.example.roadsimulation.entity.Assignment.AssignmentStatus;
 import org.example.roadsimulation.entity.Vehicle;
 import org.example.roadsimulation.entity.Vehicle.VehicleStatus;
-import org.example.roadsimulation.repository.AssignmentRepository;
 import org.example.roadsimulation.repository.VehicleRepository;
-import org.example.roadsimulation.service.StateTransitionService;  // 使用接口
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
-import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
-import java.util.Random;
 import java.util.stream.Collectors;
 
 /**
- * 状态更新服务（最终完整版：修复构造函数注入问题）
+ * 状态更新服务（主循环版）
+ *
+ * ✅ 统一时间框架：由 SimulationMainLoop 传入 simNow（仿真时间）
+ * ✅ 每循环一次：MainLoop 每次循环调用 tick()
+ * ✅ 调试增强：第一次 tick 自动 reset 一次车辆状态窗口（解决 endTime 太远导致长期不转移）
  */
 @Service
-public class StateUpdateService implements TimeEventScheduler.TimeEventListener {
+public class StateUpdateService {
 
-    private final SimulationTime simulationTime;
-    private final TimeEventScheduler eventScheduler;
-    private final StateTransitionService stateTransitionService;  // 使用接口
+    // ✅ 改成注入具体实现：这样可以稳定调用 resetVehicleStateWindows
+    private final StateTransitionServiceImpl stateTransitionService;
     private final VehicleRepository vehicleRepository;
-    private final AssignmentRepository assignmentRepository;
-    private final Random random = new Random();
 
     /**
-     * 构造函数注入（唯一方式，删除所有字段上的 @Autowired）
+     * 统计打印频率：每隔多少个 loop 打印一次
+     * MINUTES_PER_LOOP=30：
+     * - loopsPerStats=2 -> 每 1 小时打印一次
      */
+    private final int loopsPerStats = 2;
+
+    // ✅ 确保 reset 只执行一次
+    private boolean windowsResetDone = false;
+
     @Autowired
-    public StateUpdateService(StateTransitionService stateTransitionService,
-                              VehicleRepository vehicleRepository,
-                              AssignmentRepository assignmentRepository) {
+    public StateUpdateService(StateTransitionServiceImpl stateTransitionService,
+                              VehicleRepository vehicleRepository) {
         this.stateTransitionService = stateTransitionService;
         this.vehicleRepository = vehicleRepository;
-        this.assignmentRepository = assignmentRepository;
-
-        this.simulationTime = new SimulationTime(LocalDateTime.now(), 1.0);
-        this.eventScheduler = new TimeEventScheduler(simulationTime);
-
-        eventScheduler.addListener(this);
-        scheduleStateUpdates();
-
-        // 启动后30分钟开始第一次状态统计，以后每30分钟一次
-        eventScheduler.scheduleRelativeEvent(30, this::printStateStatistics, "state_statistics");
     }
 
     /**
-     * 打印所有车辆当前状态分布统计（每30分钟模拟时间执行一次）
+     * 主循环每次调用一次（每循环一次）
+     *
+     * @param simNow         当前仿真时间（由 SimulationMainLoop 计算并传入）
+     * @param minutesPerLoop 每个 loop 对应的仿真分钟数（你们是 30）
+     * @param loopCount      当前第几个 loop（用于控制统计打印频率）
      */
-    private void printStateStatistics() {
+    public void tick(LocalDateTime simNow, int minutesPerLoop, int loopCount) {
+        try {
+            // ✅ 第一次 tick：先 reset 一次，把所有车的窗口挪到 simNow
+            // 这样最晚 1~2 个循环就能看到“状态更新”
+            if (!windowsResetDone) {
+                System.out.println(">>> [StateUpdateService] 首次tick：重置车辆状态窗口（调试用）");
+                resetWindowsOnce(simNow, minutesPerLoop);
+                windowsResetDone = true;
+            }
+
+            // ✅ 唯一状态更新入口：到点才转移等逻辑都在 StateTransitionServiceImpl 内部
+            stateTransitionService.batchUpdateAllVehicleStates(simNow, minutesPerLoop);
+
+            // ✅ 统计打印：按 loop 节奏输出
+            if (loopsPerStats > 0 && loopCount % loopsPerStats == 0) {
+                printStateStatistics(simNow);
+            }
+
+        } catch (Exception e) {
+            System.err.println("[StateUpdateService] tick 执行失败: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * ✅ 手动/首次调用都可用：重置所有车辆的 statusStartTime/statusDuration 窗口
+     */
+    public void resetWindowsOnce(LocalDateTime simNow, int minutesPerLoop) {
+        stateTransitionService.resetVehicleStateWindows(simNow, minutesPerLoop);
+    }
+
+    /**
+     * 打印所有车辆当前状态分布统计（由主循环控制频率）
+     */
+    private void printStateStatistics(LocalDateTime simNow) {
         List<Vehicle> vehicles = vehicleRepository.findAll();
         Map<VehicleStatus, Long> stats = vehicles.stream()
                 .collect(Collectors.groupingBy(Vehicle::getCurrentStatus, Collectors.counting()));
 
-        System.out.printf("[状态统计] 时间: %s | 车辆总数: %d | 分布: %s%n",
-                simulationTime.getCurrentTime(),
+        System.out.printf("[状态统计] 仿真时间: %s | 车辆总数: %d | 分布: %s%n",
+                simNow,
                 vehicles.size(),
                 stats);
     }
 
-    private void scheduleStateUpdates() {
-        eventScheduler.scheduleRelativeEvent(1, this::updateVehicleStates, "vehicle_state_update");
-    }
+    // ==========================
+    // 旧框架控制方法已废弃
+    // ==========================
 
-    public void updateVehicleStates() {
-        List<Vehicle> vehicles = vehicleRepository.findAll();
-        LocalDateTime now = simulationTime.getCurrentTime();
-
-        for (Vehicle vehicle : vehicles) {
-            try {
-                Assignment assignment = getCurrentAssignment(vehicle);
-
-                if (vehicle.getStatusStartTime() == null) {
-                    vehicle.setStatusStartTime(now);
-                    vehicleRepository.save(vehicle);
-                    continue;
-                }
-
-                long minutesInCurrentState = Duration.between(vehicle.getStatusStartTime(), now).toMinutes();
-
-                if (shouldEndCurrentState(vehicle.getCurrentStatus(), minutesInCurrentState)) {
-                    VehicleStatus nextStatus = stateTransitionService.selectNextStateWithFullContext(
-                            vehicle.getCurrentStatus(), assignment, vehicle);
-
-                    if (nextStatus != vehicle.getCurrentStatus()) {
-                        String taskInfo = assignment != null ? "是(ID=" + assignment.getId() + ")" : "否";
-
-                        System.out.printf("[状态转移] 时间: %s | 车辆: %s | %s → %s | 持续: %d分 | 有任务: %s%n",
-                                now,
-                                vehicle.getLicensePlate(),
-                                vehicle.getCurrentStatus(),
-                                nextStatus,
-                                minutesInCurrentState,
-                                taskInfo);
-
-                        vehicle.setCurrentStatus(nextStatus);
-                        vehicle.setStatusStartTime(now);
-                        vehicleRepository.save(vehicle);
-                    }
-                }
-            } catch (Exception e) {
-                System.err.println("更新车辆状态失败: " + (vehicle != null ? vehicle.getId() : "null") + ", 错误: " + e.getMessage());
-            }
-        }
-
-        // 重新调度下次状态更新（每1分钟模拟时间）
-        eventScheduler.scheduleRelativeEvent(1, this::updateVehicleStates, "vehicle_state_update");
-
-        // 每30分钟再次调度状态统计（形成循环）
-        eventScheduler.scheduleRelativeEvent(30, this::printStateStatistics, "state_statistics");
-    }
-
-    private boolean shouldEndCurrentState(VehicleStatus status, long minutesInCurrentState) {
-        return switch (status) {
-            case IDLE -> minutesInCurrentState >= 10;
-            case ORDER_DRIVING -> minutesInCurrentState >= randomRange(5, 15);
-            case LOADING -> minutesInCurrentState >= randomRange(10, 30);
-            case TRANSPORT_DRIVING -> minutesInCurrentState >= randomRange(60, 300);
-            case UNLOADING -> minutesInCurrentState >= randomRange(10, 30);
-            case WAITING -> minutesInCurrentState >= randomRange(5, 20);
-            case BREAKDOWN -> minutesInCurrentState >= randomRange(30, 120);
-            default -> false;
-        };
-    }
-
-    private int randomRange(int min, int max) {
-        return min + random.nextInt(max - min + 1);
-    }
-
-    private Assignment getCurrentAssignment(Vehicle vehicle) {
-        return assignmentRepository.findAll().stream()
-                .filter(a -> a.getAssignedVehicle() != null && a.getAssignedVehicle().equals(vehicle))
-                .filter(a -> a.getStatus() == AssignmentStatus.ASSIGNED || a.getStatus() == AssignmentStatus.IN_PROGRESS)
-                .findFirst()
-                .orElse(null);
-    }
-
-    // ================ 仿真控制方法 ================
+    @Deprecated
     public void startSimulation() {
-        simulationTime.resume();
-        System.out.println("模拟已启动: " + simulationTime.getCurrentTime());
+        throw new UnsupportedOperationException("已改为 SimulationMainLoop 驱动：请调用 SimulationMainLoop.start()");
     }
 
+    @Deprecated
     public void pauseSimulation() {
-        simulationTime.pause();
-        System.out.println("模拟已暂停: " + simulationTime.getCurrentTime());
+        throw new UnsupportedOperationException("已改为 SimulationMainLoop 驱动：请调用 SimulationMainLoop.stop()");
     }
 
+    @Deprecated
     public void setTimeScale(double scale) {
-        simulationTime.setTimeScale(scale);
-        System.out.println("时间缩放设置为: " + scale + "x");
+        throw new UnsupportedOperationException("已改为 SimulationMainLoop 驱动：不再使用旧的 timeScale");
     }
 
+    @Deprecated
     public void advanceTime(long milliseconds) {
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
         simulationTime.advanceTime(milliseconds);
         eventScheduler.processDueEvents();
         System.out.println("时间推进 " + milliseconds + " 毫秒，当前时间: " + simulationTime.getCurrentTime());
@@ -170,25 +126,11 @@ public class StateUpdateService implements TimeEventScheduler.TimeEventListener 
 //        if (stateTransitionService instanceof StateTransitionServiceImpl impl) {
 //            impl.batchUpdateAllVehicleStates();
 //        }
-    }
-
-    // =====================================================================
-
-    @Override
-    public void onEventExecuted(TimeEventScheduler.TimeEvent event) {
-        System.out.printf("时间: %s, 事件执行: %s%n", simulationTime.getCurrentTime(), event.getEventId());
-    }
-
-    @Override
-    public void onEventScheduled(TimeEventScheduler.TimeEvent event) {
-        System.out.printf("时间: %s, 事件安排: %s, 计划时间: %s%n", simulationTime.getCurrentTime(), event.getEventId(), event.getScheduledTime());
-    }
-
-    public SimulationTime getSimulationTime() {
-        return simulationTime;
-    }
-
-    public TimeEventScheduler getEventScheduler() {
-        return eventScheduler;
+=======
+        throw new UnsupportedOperationException("已改为 SimulationMainLoop 驱动：不再使用旧的 advanceTime");
+>>>>>>> Stashed changes
+=======
+        throw new UnsupportedOperationException("已改为 SimulationMainLoop 驱动：不再使用旧的 advanceTime");
+>>>>>>> Stashed changes
     }
 }
