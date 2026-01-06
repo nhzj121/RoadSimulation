@@ -1,12 +1,22 @@
 package org.example.roadsimulation.config;
 
-import org.example.roadsimulation.service.impl.StateUpdateService;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
+/**
+ * 旧时间框架定时器（已停用）
+ *
+ * 原先用于每 1 秒推进 SimulationTime / 调度 TimeEventScheduler。
+ * 现在项目统一改为 SimulationMainLoop 驱动仿真时间与状态更新，
+ * 为避免“双驱动”导致状态乱跳，默认禁用。
+ *
+ * 如确实需要启用旧框架（不建议），可在 application.properties 设置：
+ * legacy.timer.enabled=true
+ */
 @Component
+@ConditionalOnProperty(name = "legacy.timer.enabled", havingValue = "true")
 public class SimulationTimer {
+<<<<<<< Updated upstream
 
     @Autowired
     private StateUpdateService stateUpdateService;
@@ -22,3 +32,7 @@ public class SimulationTimer {
 //        }
 //    }
 }
+=======
+    // ✅ 主循环模式下不需要任何实现；保留该类仅用于兼容/占位。
+}
+>>>>>>> Stashed changes

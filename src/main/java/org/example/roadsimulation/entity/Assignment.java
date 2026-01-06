@@ -248,7 +248,25 @@ public class Assignment {
             return false;
         }
     }
+    public boolean moveToNextAction(LocalDateTime simNow) {
+        List<Long> actionIds = getActionLine();
 
+        // ✅ 空行为链：不推进、不完结（避免瞬间 COMPLETED）
+        if (actionIds == null || actionIds.isEmpty()) {
+            return true;
+        }
+
+        if (currentActionIndex == null) currentActionIndex = 0;
+
+        if (currentActionIndex < actionIds.size() - 1) {
+            currentActionIndex++;
+            return true;
+        } else {
+            this.status = AssignmentStatus.COMPLETED;
+            this.endTime = simNow;   // ✅ 用仿真时间
+            return false;
+        }
+    }
     /**
      * 获取当前动作ID
      * @return 当前动作ID，如果没有返回null
