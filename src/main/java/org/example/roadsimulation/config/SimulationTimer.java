@@ -17,6 +17,7 @@ import org.springframework.stereotype.Component;
 @ConditionalOnProperty(name = "legacy.timer.enabled", havingValue = "true")
 public class SimulationTimer {
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
 
     @Autowired
     private StateUpdateService stateUpdateService;
@@ -32,6 +33,10 @@ public class SimulationTimer {
 //        }
 //    }
 }
+=======
+    // ✅ 主循环模式下不需要任何实现；保留该类仅用于兼容/占位。
+}
+>>>>>>> Stashed changes
 =======
     // ✅ 主循环模式下不需要任何实现；保留该类仅用于兼容/占位。
 }

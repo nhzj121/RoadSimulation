@@ -27,6 +27,7 @@ public class SimulationMainLoop {
 
     // 仿真起始时间（用于把 loopCount 映射为 simNow）
     private static final LocalDateTime SIM_START = LocalDateTime.of(2026, 1, 1, 0, 0);
+<<<<<<< Updated upstream
 
 <<<<<<< Updated upstream
 =======
@@ -48,6 +49,27 @@ public class SimulationMainLoop {
 //            return;
 //        }
 
+=======
+
+    @Autowired
+    SimulationMainLoop(DataInitializer dataInitializer,
+                       StateUpdateService stateUpdateService) {
+        this.dataInitializer = dataInitializer;
+        this.stateUpdateService = stateUpdateService;
+    }
+
+    /**
+     * 主循环方法 - 每 7 秒执行一次循环（现实时间）
+     * 每次循环推进 MINUTES_PER_LOOP（仿真时间）
+     */
+    @Scheduled(fixedRate = 7000)
+    public void executeMainLoop() {
+        // 前端/API 控制是否运行
+//        if (!isRunning) {
+//            return;
+//        }
+
+>>>>>>> Stashed changes
         // ✅ 计算仿真当前时间（统一时间框架核心）
         int simMinutes = loopCount * MINUTES_PER_LOOP;
         LocalDateTime simNow = SIM_START.plusMinutes(simMinutes);

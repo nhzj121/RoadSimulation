@@ -31,4 +31,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 public class TimeModuleConfig {
     // 主循环模式无需额外 Bean
 }
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
