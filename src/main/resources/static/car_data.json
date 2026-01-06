@@ -33,7 +33,7 @@
     "speed": "90km/h"
   },
   "苏D·FG777": {
-    "cargo_volume": "none",
+    "cargo_volume": "14.5立方米",
     "id": "苏D·FG777",
     "name": "金杯T3 2025款经典型 1.5L汽油 102马力 4X2 后单轮 3.1米单排栏板微卡",
     "vehicle_type": "载货车",
@@ -166,7 +166,7 @@
     "speed": "90km/h"
   },
   "苏D·FGD77": {
-    "cargo_volume": "none",
+    "cargo_volume": "14.5立方米",
     "id": "苏D·FGD77",
     "name": "金杯T3 2025款经典型 1.5L汽油 102马力 4X2 后单轮 3.1米单排栏板微卡",
     "vehicle_type": "载货车",
@@ -298,7 +298,7 @@
     "speed": "90km/h"
   },
   "苏D·FGF77": {
-    "cargo_volume": "none",
+    "cargo_volume": "14.5立方米",
     "id": "苏D·FGF77",
     "name": "金杯T3 2025款经典型 1.5L汽油 102马力 4X2 后单轮 3.1米单排栏板微卡",
     "vehicle_type": "载货车",
