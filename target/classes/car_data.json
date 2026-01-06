@@ -1,7 +1,7 @@
 {
-  "ZZ1047C3314F145": {
+  "京A·8X9Y0": {
     "cargo_volume": "15.5立方米",
-    "id": "ZZ1047C3314F145",
+    "id": "京A·8X9Y0",
     "name": "中国重汽HOWO 悍将M 创富版 地库王 140马力 4.15米单排栏板轻卡(ZZ1047C3314F145)",
     "vehicle_type": "载货车",
     "current_load": "1.8吨",
@@ -10,12 +10,9 @@
     "width": "2.1米",
     "speed": "95km/h"
   },
-
-
-
-  "ZZ1047G3215F144B": {
+  "沪B·2T3U4": {
     "cargo_volume": "17.2立方米",
-    "id": "ZZ1047G3215F144B",
+    "id": "沪B·2T3U4",
     "name": "中国重汽HOWO 悍将 151马力 4.15米单排栏板轻卡(ZZ1047G3215F144B)",
     "vehicle_type": "载货车",
     "current_load": "1.965吨",
@@ -24,10 +21,9 @@
     "width": "2.2米",
     "speed": "95km/h"
   },
-
-  "JGL5047XXYBEVGP8": {
+  "粤C·VW123": {
     "cargo_volume": "22.8立方米",
-    "id": "JGL5047XXYBEVGP8",
+    "id": "粤C·VW123",
     "name": "远程 星智H8E 智运版 4.5T 4.15米单排纯电动厢式轻卡(JGL5047XXYBEVGP8)100.46kWh",
     "vehicle_type": "厢式载货车",
     "current_load": "1.475吨",
@@ -36,10 +32,9 @@
     "width": "2.2米",
     "speed": "90km/h"
   },
-
-  "JKC1030DS6BL4": {
+  "苏D·FG777": {
     "cargo_volume": "none",
-    "id": "JKC1030DS6BL4",
+    "id": "苏D·FG777",
     "name": "金杯T3 2025款经典型 1.5L汽油 102马力 4X2 后单轮 3.1米单排栏板微卡",
     "vehicle_type": "载货车",
     "current_load": "1.495吨",
@@ -48,11 +43,9 @@
     "width": "1.72米",
     "speed": "100km/h"
   },
-
-
-  "CA3310P66L7T4BEVA2": {
+  "浙E·9H0J1": {
     "cargo_volume": "16.5立方米",
-    "id": "CA3310P66L7T4BEVA2",
+    "id": "浙E·9H0J1",
     "name": "一汽解放 J6P 8X4 6.5米换电式纯电动自卸车(CA3310P66L7T4BEVA2)350.07kWh",
     "vehicle_type": "none",
     "current_load": "7.87吨",
@@ -61,13 +54,9 @@
     "width": "2.55米",
     "speed": "89km/h"
   },
-
-
-
-
-  "ZZ5097CCYG3315F191": {
+  "鲁F·SS666": {
     "cargo_volume": "19.5立方米",
-    "id": "ZZ5097CCYG3315F191",
+    "id": "鲁F·SS666",
     "name": "重汽HOWO统帅 2.5L柴油 180马力 中国重汽12档 4.15米单排仓栅式轻卡",
     "vehicle_type": "仓栅载货车",
     "current_load": "5.495吨",
@@ -76,11 +65,9 @@
     "width": "2.2米",
     "speed": "95km/h"
   },
-
-
-  "CA5250CCYP62K1L5T3E6": {
+  "川A·DD999": {
     "cargo_volume": "55立方米",
-    "id": "CA5250CCYP62K1L5T3E6",
+    "id": "川A·DD999",
     "name": "一汽解放J6G 领航版 7.8L柴油 360马力 6X2 一汽解放10档 高顶 6.8米仓栅式载货车",
     "vehicle_type": "仓栅载货车",
     "current_load": "15.7吨",
@@ -89,11 +76,9 @@
     "width": "2.55米",
     "speed": "89km/h"
   },
-
-
-  "LZ5180XXYH5AC1": {
+  "湘B·BC888": {
     "cargo_volume": "52立方米",
-    "id": "LZ5180XXYH5AC1",
+    "id": "湘B·BC888",
     "name": "东风柳汽 乘龙H5 创富版 6.9L柴油 350马力 4X2 万里扬10档 AMT自动档 6.8米厢式载货车",
     "vehicle_type": "厢式载货车",
     "current_load": "9.99吨",
@@ -102,10 +87,9 @@
     "width": "2.55米",
     "speed": "89km/h"
   },
-
-  "BJ5045XXYEVZ5-01": {
+  "豫C·1D2E3": {
     "cargo_volume": "20.5立方米",
-    "id": "BJ5045XXYEVZ5-01",
+    "id": "豫C·1D2E3",
     "name": "福田奥铃 智蓝EL-Plus 重载长续航版 8.5T 4.14米单排纯电动厢式轻卡156.4kWh",
     "vehicle_type": "载货车",
     "current_load": "4.25吨",
@@ -114,10 +98,9 @@
     "width": "2.185米",
     "speed": "90km/h"
   },
-
-  "JX5074XXYTRB2BEV": {
+  "辽D·5Z6A7": {
     "cargo_volume": "42立方米",
-    "id": "JX5074XXYTRB2BEV",
+    "id": "辽D·5Z6A7",
     "name": "江铃 乐行E路达 7.3T 4X2 6.8米纯电动厢式载货车100.46kWh",
     "vehicle_type": "厢式载货车",
     "current_load": "3.59吨",
@@ -126,9 +109,9 @@
     "width": "2.28米",
     "speed": "100km/h"
   },
-  "ZZ1187K421DF1": {
+  "陕E·7777P": {
     "cargo_volume": "38立方米",
-    "id": "ZZ1187K421DF1",
+    "id": "陕E·7777P",
     "name": "中国重汽HOWO G5X中卡 270马力 5.4米排半栏板载货车(国六)(ZZ1187K421DF1)",
     "vehicle_type": "载货车",
     "current_load": "10.705吨",
@@ -137,16 +120,235 @@
     "width": "2.55米",
     "speed": "95km/h"
   },
-
-
-  "CA5180XXYP28K8L2E6A90": {
+  "鄂F·CC888": {
     "cargo_volume": "51立方米",
-    "id": "CA5180XXYP28K8L2E6A90",
+    "id": "鄂F·CC888",
     "name": "青岛解放 JK6中卡 240马力 4X2 6.8米厢式载货车",
     "vehicle_type": "厢式载货车",
     "current_load": "9.99吨",
     "length": "9米",
     "height": "3.995米",
+    "width": "2.55米",
+    "speed": "89km/h"
+  },
+
+  "京A·8XNY0": {
+    "cargo_volume": "15.5立方米",
+    "id": "京A·8XNY0",
+    "name": "中国重汽HOWO 悍将M 创富版 地库王 140马力 4.15米单排栏板轻卡(ZZ1047C3314F145)",
+    "vehicle_type": "载货车",
+    "current_load": "1.8吨",
+    "length": "5.99米",
+    "height": "2.09米",
+    "width": "2.1米",
+    "speed": "95km/h"
+  },
+  "沪B·2T4U4": {
+    "cargo_volume": "17.2立方米",
+    "id": "沪B·2T4U4",
+    "name": "中国重汽HOWO 悍将 151马力 4.15米单排栏板轻卡(ZZ1047G3215F144B)",
+    "vehicle_type": "载货车",
+    "current_load": "1.965吨",
+    "length": "5.99米",
+    "height": "2.4米",
+    "width": "2.2米",
+    "speed": "95km/h"
+  },
+  "粤C·VW143": {
+    "cargo_volume": "22.8立方米",
+    "id": "粤C·VW143",
+    "name": "远程 星智H8E 智运版 4.5T 4.15米单排纯电动厢式轻卡(JGL5047XXYBEVGP8)100.46kWh",
+    "vehicle_type": "厢式载货车",
+    "current_load": "1.475吨",
+    "length": "5.995米",
+    "height": "2.98米",
+    "width": "2.2米",
+    "speed": "90km/h"
+  },
+  "苏D·FGD77": {
+    "cargo_volume": "none",
+    "id": "苏D·FGD77",
+    "name": "金杯T3 2025款经典型 1.5L汽油 102马力 4X2 后单轮 3.1米单排栏板微卡",
+    "vehicle_type": "载货车",
+    "current_load": "1.495吨",
+    "length": "5.01米",
+    "height": "2米",
+    "width": "1.72米",
+    "speed": "100km/h"
+  },
+  "浙E·900J1": {
+    "cargo_volume": "16.5立方米",
+    "id": "浙E·900J1",
+    "name": "一汽解放 J6P 8X4 6.5米换电式纯电动自卸车(CA3310P66L7T4BEVA2)350.07kWh",
+    "vehicle_type": "none",
+    "current_load": "7.87吨",
+    "length": "10.35米",
+    "height": "3.6米",
+    "width": "2.55米",
+    "speed": "89km/h"
+  },
+  "鲁F·SGH66": {
+    "cargo_volume": "19.5立方米",
+    "id": "鲁F·SGH66",
+    "name": "重汽HOWO统帅 2.5L柴油 180马力 中国重汽12档 4.15米单排仓栅式轻卡",
+    "vehicle_type": "仓栅载货车",
+    "current_load": "5.495吨",
+    "length": "5.99米",
+    "height": "3.25米",
+    "width": "2.2米",
+    "speed": "95km/h"
+  },
+  "川A·DHH99": {
+    "cargo_volume": "55立方米",
+    "id": "川A·DHH99",
+    "name": "一汽解放J6G 领航版 7.8L柴油 360马力 6X2 一汽解放10档 高顶 6.8米仓栅式载货车",
+    "vehicle_type": "仓栅载货车",
+    "current_load": "15.7吨",
+    "length": "9.06米",
+    "height": "4米",
+    "width": "2.55米",
+    "speed": "89km/h"
+  },
+  "湘B·BC123": {
+    "cargo_volume": "52立方米",
+    "id": "湘B·BC123",
+    "name": "东风柳汽 乘龙H5 创富版 6.9L柴油 350马力 4X2 万里扬10档 AMT自动档 6.8米厢式载货车",
+    "vehicle_type": "厢式载货车",
+    "current_load": "9.99吨",
+    "length": "9.1米",
+    "height": "4米",
+    "width": "2.55米",
+    "speed": "89km/h"
+  },
+  "豫C·1D114": {
+    "cargo_volume": "20.5立方米",
+    "id": "豫C·1D114",
+    "name": "福田奥铃 智蓝EL-Plus 重载长续航版 8.5T 4.14米单排纯电动厢式轻卡156.4kWh",
+    "vehicle_type": "载货车",
+    "current_load": "4.25吨",
+    "length": "5.995米",
+    "height": "2.26米",
+    "width": "2.185米",
+    "speed": "90km/h"
+  },
+  "辽D·5Z514": {
+    "cargo_volume": "42立方米",
+    "id": "辽D·5Z514",
+    "name": "江铃 乐行E路达 7.3T 4X2 6.8米纯电动厢式载货车100.46kWh",
+    "vehicle_type": "厢式载货车",
+    "current_load": "3.59吨",
+    "length": "8.59米",
+    "height": "3.15米",
+    "width": "2.28米",
+    "speed": "100km/h"
+  },
+  "陕E·8964P": {
+    "cargo_volume": "38立方米",
+    "id": "陕E·8964P",
+    "name": "中国重汽HOWO G5X中卡 270马力 5.4米排半栏板载货车(国六)(ZZ1187K421DF1)",
+    "vehicle_type": "载货车",
+    "current_load": "10.705吨",
+    "length": "7.645米",
+    "height": "3.57米",
+    "width": "2.55米",
+    "speed": "95km/h"
+  },
+  "鄂F·CHJM8": {
+    "cargo_volume": "51立方米",
+    "id": "鄂F·CHJM8",
+    "name": "青岛解放 JK6中卡 240马力 4X2 6.8米厢式载货车",
+    "vehicle_type": "厢式载货车",
+    "current_load": "9.99吨",
+    "length": "9米",
+    "height": "3.995米",
+    "width": "2.55米",
+    "speed": "89km/h"
+  },
+  "京A·DDDY0": {
+    "cargo_volume": "15.5立方米",
+    "id": "京A·DDDY0",
+    "name": "中国重汽HOWO 悍将M 创富版 地库王 140马力 4.15米单排栏板轻卡(ZZ1047C3314F145)",
+    "vehicle_type": "载货车",
+    "current_load": "1.8吨",
+    "length": "5.99米",
+    "height": "2.09米",
+    "width": "2.1米",
+    "speed": "95km/h"
+  },
+  "沪B·2H3U4": {
+    "cargo_volume": "17.2立方米",
+    "id": "沪B·2H3U4",
+    "name": "中国重汽HOWO 悍将 151马力 4.15米单排栏板轻卡(ZZ1047G3215F144B)",
+    "vehicle_type": "载货车",
+    "current_load": "1.965吨",
+    "length": "5.99米",
+    "height": "2.4米",
+    "width": "2.2米",
+    "speed": "95km/h"
+  },
+  "粤C·VWD23": {
+    "cargo_volume": "22.8立方米",
+    "id": "粤C·VWD23",
+    "name": "远程 星智H8E 智运版 4.5T 4.15米单排纯电动厢式轻卡(JGL5047XXYBEVGP8)100.46kWh",
+    "vehicle_type": "厢式载货车",
+    "current_load": "1.475吨",
+    "length": "5.995米",
+    "height": "2.98米",
+    "width": "2.2米",
+    "speed": "90km/h"
+  },
+  "苏D·FGF77": {
+    "cargo_volume": "none",
+    "id": "苏D·FGF77",
+    "name": "金杯T3 2025款经典型 1.5L汽油 102马力 4X2 后单轮 3.1米单排栏板微卡",
+    "vehicle_type": "载货车",
+    "current_load": "1.495吨",
+    "length": "5.01米",
+    "height": "2米",
+    "width": "1.72米",
+    "speed": "100km/h"
+  },
+  "浙E·90HJ1": {
+    "cargo_volume": "16.5立方米",
+    "id": "浙E·90HJ1",
+    "name": "一汽解放 J6P 8X4 6.5米换电式纯电动自卸车(CA3310P66L7T4BEVA2)350.07kWh",
+    "vehicle_type": "none",
+    "current_load": "7.87吨",
+    "length": "10.35米",
+    "height": "3.6米",
+    "width": "2.55米",
+    "speed": "89km/h"
+  },
+  "鲁F·SKK66": {
+    "cargo_volume": "19.5立方米",
+    "id": "鲁F·SKK66",
+    "name": "重汽HOWO统帅 2.5L柴油 180马力 中国重汽12档 4.15米单排仓栅式轻卡",
+    "vehicle_type": "仓栅载货车",
+    "current_load": "5.495吨",
+    "length": "5.99米",
+    "height": "3.25米",
+    "width": "2.2米",
+    "speed": "95km/h"
+  },
+  "川A·DHJ99": {
+    "cargo_volume": "55立方米",
+    "id": "川A·DHJ99",
+    "name": "一汽解放J6G 领航版 7.8L柴油 360马力 6X2 一汽解放10档 高顶 6.8米仓栅式载货车",
+    "vehicle_type": "仓栅载货车",
+    "current_load": "15.7吨",
+    "length": "9.06米",
+    "height": "4米",
+    "width": "2.55米",
+    "speed": "89km/h"
+  },
+  "湘B·BC188": {
+    "cargo_volume": "52立方米",
+    "id": "湘B·BC188",
+    "name": "东风柳汽 乘龙H5 创富版 6.9L柴油 350马力 4X2 万里扬10档 AMT自动档 6.8米厢式载货车",
+    "vehicle_type": "厢式载货车",
+    "current_load": "9.99吨",
+    "length": "9.1米",
+    "height": "4米",
     "width": "2.55米",
     "speed": "89km/h"
   }

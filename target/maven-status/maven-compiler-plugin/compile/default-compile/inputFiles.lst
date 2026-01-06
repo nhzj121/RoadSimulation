@@ -11,6 +11,7 @@ E:\web-project01\RoadSimulation\src\main\java\org\example\roadsimulation\control
 E:\web-project01\RoadSimulation\src\main\java\org\example\roadsimulation\controller\ShipmentController.java
 E:\web-project01\RoadSimulation\src\main\java\org\example\roadsimulation\controller\ShipmentItemController.java
 E:\web-project01\RoadSimulation\src\main\java\org\example\roadsimulation\controller\VehicleController.java
+E:\web-project01\RoadSimulation\src\main\java\org\example\roadsimulation\controller\VehicleInitializationController.java
 E:\web-project01\RoadSimulation\src\main\java\org\example\roadsimulation\controller\VehicleMatchingController.java
 E:\web-project01\RoadSimulation\src\main\java\org\example\roadsimulation\DataInitializer.java
 E:\web-project01\RoadSimulation\src\main\java\org\example\roadsimulation\dto\AssignmentRequestDTO.java
@@ -72,6 +73,7 @@ E:\web-project01\RoadSimulation\src\main\java\org\example\roadsimulation\service
 E:\web-project01\RoadSimulation\src\main\java\org\example\roadsimulation\service\impl\ShipmentServiceImpl.java
 E:\web-project01\RoadSimulation\src\main\java\org\example\roadsimulation\service\impl\StateTransitionServiceImpl.java
 E:\web-project01\RoadSimulation\src\main\java\org\example\roadsimulation\service\impl\VehicleDataImportServiceImpl.java
+E:\web-project01\RoadSimulation\src\main\java\org\example\roadsimulation\service\impl\VehicleInitializationServiceImpl.java
 E:\web-project01\RoadSimulation\src\main\java\org\example\roadsimulation\service\impl\VehicleMatchingServiceImpl.java
 E:\web-project01\RoadSimulation\src\main\java\org\example\roadsimulation\service\impl\VehicleServiceImpl.java
 E:\web-project01\RoadSimulation\src\main\java\org\example\roadsimulation\service\POIManagerService.java
@@ -81,5 +83,6 @@ E:\web-project01\RoadSimulation\src\main\java\org\example\roadsimulation\service
 E:\web-project01\RoadSimulation\src\main\java\org\example\roadsimulation\service\ShipmentService.java
 E:\web-project01\RoadSimulation\src\main\java\org\example\roadsimulation\service\StateTransitionService.java
 E:\web-project01\RoadSimulation\src\main\java\org\example\roadsimulation\service\VehicleDataImportService.java
+E:\web-project01\RoadSimulation\src\main\java\org\example\roadsimulation\service\VehicleInitializationService.java
 E:\web-project01\RoadSimulation\src\main\java\org\example\roadsimulation\service\VehicleMatchingService.java
 E:\web-project01\RoadSimulation\src\main\java\org\example\roadsimulation\service\VehicleService.java

@@ -361,24 +361,24 @@ public class VehicleInitializationServiceImpl implements VehicleInitializationSe
         Vehicle.VehicleStatus status = vehicle.getCurrentStatus();
 
         // 以下状态不能初始化
-        if (status == Vehicle.VehicleStatus.TRANSPORTING) {
-            logger.debug("车辆 {} 正在运输中，无法初始化", vehicleId);
-            return false;
-        }
-
-        if (status == Vehicle.VehicleStatus.ACCIDENT) {
-            logger.debug("车辆 {} 处于事故状态，无法初始化", vehicleId);
-            return false;
-        }
-
-        // 检查是否有进行中的任务
-        if (vehicle.getCurrentAssignment() != null) {
-            Assignment assignment = vehicle.getCurrentAssignment();
-            if (assignment.isInProgress()) {
-                logger.debug("车辆 {} 有进行中的任务，无法初始化", vehicleId);
-                return false;
-            }
-        }
+//        if (status == Vehicle.VehicleStatus.TRANSPORTING) {
+//            logger.debug("车辆 {} 正在运输中，无法初始化", vehicleId);
+//            return false;
+//        }
+//
+//        if (status == Vehicle.VehicleStatus.ACCIDENT) {
+//            logger.debug("车辆 {} 处于事故状态，无法初始化", vehicleId);
+//            return false;
+//        }
+//
+//        // 检查是否有进行中的任务
+//        if (vehicle.getCurrentAssignment() != null) {
+//            Assignment assignment = vehicle.getCurrentAssignment();
+//            if (assignment.isInProgress()) {
+//                logger.debug("车辆 {} 有进行中的任务，无法初始化", vehicleId);
+//                return false;
+//            }
+//        }
 
         return true;
     }
