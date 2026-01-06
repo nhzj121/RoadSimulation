@@ -61,6 +61,10 @@ public class Customer {
     @OneToMany(mappedBy = "customer", cascade = {CascadeType.PERSIST, CascadeType.MERGE, CascadeType.REFRESH}, fetch = FetchType.LAZY)
     private Set<Shipment> shipments = new HashSet<>();
 
+    // 进行修改的对象和时间
+    @Column(name = "updated_by", length = 50)
+    private String updatedBy;
+
     public Customer() {}
 
     public Customer(String code, String name) {
@@ -110,6 +114,11 @@ public class Customer {
 
     public Set<Shipment> getShipments() { return shipments; }
     public void setShipments(Set<Shipment> shipments) { this.shipments = shipments; }
+
+    // 四元组字段的getter和setter
+    public String getUpdatedBy() {return updatedBy;}
+    public void setUpdatedBy(String updatedBy) {this.updatedBy = updatedBy;}
+
 
     @PreUpdate
     public void touchUpdateTime() {

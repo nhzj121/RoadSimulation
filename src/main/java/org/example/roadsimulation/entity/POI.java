@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -26,6 +27,10 @@ public class POI {
 
     @Column(nullable = false)
     private String name; // POI 名称
+
+    // 创建的时间
+    @Column(name = "created_time")
+    private LocalDateTime createdTime = LocalDateTime.now();
 
     @Column(
         precision = 9,    // 总位数：3位整数 + 6位小数 = 9位
@@ -55,7 +60,8 @@ public class POI {
         REST_AREA,               // 休息区
         MATERIAL_MARKET,         // 建材市场
         VEGETABLE_BASE,         // 蔬菜基地
-        VEGETABLE_MARKET       // 蔬菜市场
+        VEGETABLE_MARKET,       // 蔬菜市场
+        TEST
     }
 
     @Enumerated(EnumType.STRING)
@@ -66,13 +72,22 @@ public class POI {
      * 一对多关系：一个 POI 可以包含多辆车
      */
     @OneToMany(mappedBy = "currentPOI", cascade = CascadeType.PERSIST, fetch = FetchType.LAZY)
+    @JsonIgnore
     private Set<Vehicle> vehiclesAtLocation = new HashSet<>();
 
     /**
      * 一对多关系： 一个 POI 可以产生或接受多个种类的货物
      */
-    @OneToMany(mappedBy = "poi", cascade = CascadeType.PERSIST, fetch = FetchType.LAZY)
+    @OneToMany(mappedBy = "poi", cascade = CascadeType.PERSIST, fetch = FetchType.EAGER)
+    @JsonIgnore
     private List<Enrollment> enrollments = new ArrayList<>();
+
+    // 进行修改的对象和时间
+    @Column(name = "updated_by", length = 50)
+    private String updatedBy;
+
+    @Column(name = "updated_time")
+    private LocalDateTime updatedTime = LocalDateTime.now();
 
     // ================= 构造方法 =================
     public POI() {}
@@ -104,6 +119,15 @@ public class POI {
 
     public List<Enrollment> getEnrollments() { return enrollments; }
     public void setEnrollments(List<Enrollment> enrollments) { this.enrollments = enrollments; }
+
+    // 四元组字段的getter和setter
+    public LocalDateTime getCreatedTime() {return createdTime;}
+    public void setCreatedTime(LocalDateTime createdTime) {this.createdTime = createdTime;}
+    public String getUpdatedBy() {return updatedBy;}
+    public void setUpdatedBy(String updatedBy) {this.updatedBy = updatedBy;}
+    public LocalDateTime getUpdatedTime() {return updatedTime;}
+    public void setUpdatedTime(LocalDateTime updatedTime) {this.updatedTime = updatedTime;}
+
     // =========== Enrollment和Goods 双向关系维护 ========
     /**
      * 添加货物到POI

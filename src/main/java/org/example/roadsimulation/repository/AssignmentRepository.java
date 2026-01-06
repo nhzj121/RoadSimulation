@@ -2,6 +2,7 @@ package org.example.roadsimulation.repository;
 
 import org.example.roadsimulation.entity.Assignment;
 import org.example.roadsimulation.entity.Assignment.AssignmentStatus;
+import org.example.roadsimulation.entity.Vehicle;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -57,4 +58,5 @@ public interface AssignmentRepository extends JpaRepository<Assignment, Long> {
     // 查询车辆当前任务负载
     @Query("SELECT a.assignedVehicle.id, COUNT(a) FROM Assignment a WHERE a.status IN :activeStatuses GROUP BY a.assignedVehicle.id")
     List<Object[]> countActiveAssignmentsPerVehicle(@Param("activeStatuses") List<AssignmentStatus> activeStatuses);
+    List<Assignment> findByAssignedVehicleAndStatusIn(Vehicle vehicle, List<AssignmentStatus> statuses);
 }

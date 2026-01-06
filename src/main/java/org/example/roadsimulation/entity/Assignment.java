@@ -41,6 +41,10 @@ public class Assignment {
         DELAYED         // 延迟
     }
 
+    // 创建的时间
+    @Column(name = "created_time")
+    private LocalDateTime createdTime;
+
     @NotNull(message = "任务状态不能为空")
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 20)
@@ -79,16 +83,28 @@ public class Assignment {
     @JoinColumn(name = "route_id")
     private Route route;
 
+    // 进行修改的对象和时间
+    @Column(name = "updated_by", length = 50)
+    private String updatedBy;
+
+    @Column(name = "updated_time")
+    private LocalDateTime updatedTime;
+
     // 无参构造函数
     public Assignment() {
     }
 
     // 有参构造函数
-    public Assignment(Shipment shipment, Vehicle vehicle, Driver driver) {
-        // this.shipment = shipment;
-        this.assignedVehicle = vehicle;
-        this.assignedDriver = driver;
-        this.status = AssignmentStatus.ASSIGNED;
+    public Assignment(ShipmentItem shipmentItem, Route route) {
+        if(shipmentItem != null) {
+            addShipmentItem(shipmentItem);
+        }
+        this.route = route;
+        this.status = AssignmentStatus.WAITING;
+        this.currentActionIndex = 0;
+        this.createdTime = LocalDateTime.now();
+        this.updatedTime = LocalDateTime.now();
+        this.updatedBy = "初始化运输任务";
     }
 
     // Getters and Setters
@@ -107,6 +123,15 @@ public class Assignment {
     public Driver getAssignedDriver() {return assignedDriver;}
     public Route getRoute() { return route; }
     public void setRoute(Route route) { this.route = route; }
+
+    // 四元组字段的getter和setter
+    public LocalDateTime getCreatedTime() {return createdTime;}
+    public void setCreatedTime(LocalDateTime createdTime) {this.createdTime = createdTime;}
+    public String getUpdatedBy() {return updatedBy;}
+    public void setUpdatedBy(String updatedBy) {this.updatedBy = updatedBy;}
+    public LocalDateTime getUpdatedTime() {return updatedTime;}
+    public void setUpdatedTime(LocalDateTime updatedTime) {this.updatedTime = updatedTime;}
+
 
     public void setAssignedDriver(Driver assignedDriver) {
         this.assignedDriver = assignedDriver;
@@ -149,7 +174,6 @@ public class Assignment {
     public void removeShipmentItem(ShipmentItem item) {
         if (item != null) {
             this.shipmentItems.remove(item);
-            item.setAssignment(null);
         }
     }
     /**

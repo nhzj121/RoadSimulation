@@ -13,6 +13,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 import org.example.roadsimulation.dto.GaodeRouteRequest;
 import org.example.roadsimulation.dto.GaodeRouteResponse;
@@ -31,7 +32,11 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/api/routes")
-@CrossOrigin(origins = "*", maxAge = 3600)
+@CrossOrigin(origins = {"http://localhost:5173", "http://127.0.0.1:5173"},
+        maxAge = 3600,
+        allowedHeaders = "*",
+        methods = {RequestMethod.GET, RequestMethod.POST, RequestMethod.PUT, RequestMethod.DELETE, RequestMethod.OPTIONS})
+@Validated
 public class RouteController {
 
     private static final Logger logger = LoggerFactory.getLogger(RouteController.class);
@@ -562,6 +567,7 @@ public class RouteController {
     /**
      * 直接使用坐标规划路线
      */
+    // 前端最可能使用的方法。
     @GetMapping("/gaode/plan-by-coordinates")
     public ResponseEntity<ApiResponse<GaodeRouteResponse>> planRouteByCoordinates(
             @RequestParam String startLon,

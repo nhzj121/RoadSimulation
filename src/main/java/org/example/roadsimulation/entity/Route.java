@@ -6,8 +6,11 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 
+import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.Set;
+
+// ToDo 为了测试的方便，我们对一些不能为空的属性进行修改
 
 @Entity
 @Table(name = "route")
@@ -16,12 +19,12 @@ public class Route {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @NotBlank(message = "路线编号不能为空")
+    //@NotBlank(message = "路线编号不能为空")
     @Size(max = 50, message = "路线编号长度不能超过50个字符")
     @Column(name = "route_code", nullable = false, unique = true)
     private String routeCode;
 
-    @NotBlank(message = "路线名称不能为空")
+    //@NotBlank(message = "路线名称不能为空")
     @Size(max = 100, message = "路线名称长度不能超过100个字符")
     @Column(name = "name", nullable = false)
     private String name;
@@ -36,16 +39,20 @@ public class Route {
     @JoinColumn(name = "end_poi_id", nullable = false)
     private POI endPOI; // 对应图中的endPCI
 
+    // 创建的时间
+    @Column(name = "created_time")
+    private LocalDateTime createdTime = LocalDateTime.now();
+
     // 与Assignment的一对多的关系
     @OneToMany(mappedBy = "route", fetch = FetchType.LAZY, cascade = {CascadeType.MERGE})
     private Set<Assignment> assignments = new HashSet<>();
 
-    @NotNull(message = "距离不能为空")
+    //@NotNull(message = "距离不能为空")
     @Min(value = 0, message = "距离不能为负数")
     @Column(name = "distance")
     private Double distance; // 路线距离（公里）
 
-    @NotNull(message = "预计时间不能为空")
+    //@NotNull(message = "预计时间不能为空")
     @Min(value = 0, message = "预计时间不能为负数")
     @Column(name = "estimated_time")
     private Double estimatedTime; // 预计行驶时间（小时）
@@ -57,7 +64,7 @@ public class Route {
     @Column(name = "status", length = 20)
     private RouteStatus status; // 路线状态
 
-    @NotNull(message = "路线类型不能为空")
+    //@NotNull(message = "路线类型不能为空")
     @Column(name = "route_type")
     private String routeType; // 路线类型（高速、国道、省道等）
 
@@ -66,6 +73,13 @@ public class Route {
 
     @Column(name = "fuel_consumption")
     private Double fuelConsumption; // 预计燃油消耗（升）
+
+    // 进行修改的对象和时间
+    @Column(name = "updated_by", length = 50)
+    private String updatedBy;
+
+    @Column(name = "updated_time")
+    private LocalDateTime updatedTime = LocalDateTime.now();
 
     // 路线状态枚举
     public enum RouteStatus {
@@ -80,15 +94,10 @@ public class Route {
         this.status = RouteStatus.ACTIVE;
     }
 
-    public Route(String routeCode, String name, POI startPOI, POI endPOI,
-                 Double distance, Double estimatedTime) {
-        this();
-        this.routeCode = routeCode;
-        this.name = name;
+    public Route(POI startPOI, POI endPOI) {
+        this.status = RouteStatus.ACTIVE;
         this.startPOI = startPOI;
         this.endPOI = endPOI;
-        this.distance = distance;
-        this.estimatedTime = estimatedTime;
     }
 
     // Getter和Setter方法
@@ -127,6 +136,15 @@ public class Route {
 
     public Double getFuelConsumption() { return fuelConsumption; }
     public void setFuelConsumption(Double fuelConsumption) { this.fuelConsumption = fuelConsumption; }
+
+    // 四元组字段的getter和setter
+    public LocalDateTime getCreatedTime() {return createdTime;}
+    public void setCreatedTime(LocalDateTime createdTime) {this.createdTime = createdTime;}
+    public String getUpdatedBy() {return updatedBy;}
+    public void setUpdatedBy(String updatedBy) {this.updatedBy = updatedBy;}
+    public LocalDateTime getUpdatedTime() {return updatedTime;}
+    public void setUpdatedTime(LocalDateTime updatedTime) {this.updatedTime = updatedTime;}
+
 
     public Set<Assignment> getAssignments() { return assignments; }
     public void setAssignments(Set<Assignment> assignments) { this.assignments = assignments; }

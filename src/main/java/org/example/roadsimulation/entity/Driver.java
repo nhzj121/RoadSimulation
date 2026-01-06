@@ -3,6 +3,7 @@ package org.example.roadsimulation.entity;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 
+import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -25,6 +26,10 @@ public class Driver {
         OFF         // 下线
     }
 
+    // 创建的时间
+    @Column(name = "created_time")
+    private LocalDateTime createdTime = LocalDateTime.now();
+
     // 在实体类中使用
     @Enumerated(EnumType.STRING)
     @Column(name = "current_status", length = 20)
@@ -44,6 +49,13 @@ public class Driver {
     @JsonIgnore
     private Set<Assignment> assignments = new HashSet<>();
 
+    // 进行修改的对象和时间
+    @Column(name = "updated_by", length = 50)
+    private String updatedBy;
+
+    @Column(name = "updated_time")
+    private LocalDateTime updatedTime = LocalDateTime.now();
+
     // Getter 和 Setter 方法
     public Long getId() {return id;}
     public void setId(Long id) {this.id = id;}
@@ -55,6 +67,14 @@ public class Driver {
     public void setCurrentStatus(DriverStatus currentStatus) {this.currentStatus = currentStatus;}
     public Set<Vehicle> getVehicles() {return vehicles;}
     public void setVehicles(Set<Vehicle> vehicles) {this.vehicles = vehicles;}
+
+    // 四元组字段的getter和setter
+    public LocalDateTime getCreatedTime() {return createdTime;}
+    public void setCreatedTime(LocalDateTime createdTime) {this.createdTime = createdTime;}
+    public String getUpdatedBy() {return updatedBy;}
+    public void setUpdatedBy(String updatedBy) {this.updatedBy = updatedBy;}
+    public LocalDateTime getUpdatedTime() {return updatedTime;}
+    public void setUpdatedTime(LocalDateTime updatedTime) {this.updatedTime = updatedTime;}
 
     // 添加和移除车辆的辅助方法
     public void addVehicle(Vehicle vehicle) {

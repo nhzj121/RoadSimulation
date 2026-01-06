@@ -6,6 +6,7 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 
 import java.time.Duration;
+import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "Action")
@@ -31,6 +32,13 @@ public class Action {
         MAINTENANCE // 维护
     }
 
+    // 创建的来源以及创建的时间
+    @Column(name = "created_by", length = 50)
+    private String createdBy;
+
+    @Column(name = "created_time")
+    private LocalDateTime createdTime = LocalDateTime.now();
+
     @NotNull(message = "动作类型不能为空")
     @Enumerated(EnumType.STRING)
     @Column(name = "action_type", nullable = false, length = 20)
@@ -48,6 +56,13 @@ public class Action {
 
     @Column(name = "is_locked")
     private Boolean isLocked = false;
+
+    // 进行修改的对象和时间
+    @Column(name = "updated_by", length = 50)
+    private String updatedBy;
+
+    @Column(name = "updated_time")
+    private LocalDateTime updatedTime = LocalDateTime.now();
 
     // 必须的无参构造函数
     public Action() {
@@ -93,6 +108,17 @@ public class Action {
     public void setDescription(String description) {this.description = description;}
     public Boolean getIsLocked() {return isLocked;}
     public void setIsLocked(Boolean isLocked) {this.isLocked = isLocked;}
+
+    // 四元组字段的getter和setter
+    public String getCreatedBy() {return createdBy;}
+    public void setCreatedBy(String createdBy) {this.createdBy = createdBy;}
+    public LocalDateTime getCreatedTime() {return createdTime;}
+    public void setCreatedTime(LocalDateTime createdTime) {this.createdTime = createdTime;}
+    public String getUpdatedBy() {return updatedBy;}
+    public void setUpdatedBy(String updatedBy) {this.updatedBy = updatedBy;}
+    public LocalDateTime getUpdatedTime() {return updatedTime;}
+    public void setUpdatedTime(LocalDateTime updatedTime) {this.updatedTime = updatedTime;}
+
 
     // 业务方法
 

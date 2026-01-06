@@ -92,6 +92,25 @@
             </el-button>
 
             <el-button @click="testSaveWithSimpleData" type="info">测试保存</el-button>
+
+            <!-- 文件上传 -->
+            <div class="file-upload-section">
+              <el-upload
+                  class="upload-demo"
+                  action=""
+                  :auto-upload="false"
+                  :show-file-list="false"
+                  :on-change="handleFileUpload"
+                  accept=".json"
+              >
+                <el-button type="primary" style="width: 100%; margin-bottom: 10px;">
+                  <i class="el-icon-upload"></i>
+                  上传POI数据文件
+                </el-button>
+              </el-upload>
+              <p class="upload-tip">支持JSON格式的POI数据文件</p>
+            </div>
+
           </div>
 
           <!-- 数据信息统计 -->
@@ -120,14 +139,14 @@
             <el-button size="small" @click="clearAllData">清空数据</el-button>
           </div>
 
-          <div>
-            <el-button @click="resetAutoIncrement" type="danger" style="margin-top: 10px;">
-              重置数据库ID（危险！）
-            </el-button>
-            <el-button @click="safeResetAutoIncrement" type="warning" style="margin-top: 5px;">
-              安全重置ID
-            </el-button>
-          </div>
+<!--          <div>-->
+<!--            <el-button @click="resetAutoIncrement" type="danger" style="margin-top: 10px;">-->
+<!--              重置数据库ID（危险！）-->
+<!--            </el-button>-->
+<!--            <el-button @click="safeResetAutoIncrement" type="warning" style="margin-top: 5px;">-->
+<!--              安全重置ID-->
+<!--            </el-button>-->
+<!--          </div>-->
         </el-aside>
 
         <el-main>
@@ -153,6 +172,7 @@ import transportIcon from '../../public/icons/distribution-center.png';
 import materialMarketIcon from '../../public/icons/materialMarket.png';
 import vegetableBaseIcon from '../../public/icons/vegetable-base.png';
 import vegetableMarketIcon from '../../public/icons/vegetable-market.png';
+import testIcon from '../../public/icons/test.png';
 import { useRouter } from 'vue-router'
 
 // VueRouter配置
@@ -204,7 +224,8 @@ const poiData = ref<Record<string, POI[]>>({
   transport: [],
   materialMarket: [],
   vegetableBase: [],
-  vegetableMarket: []
+  vegetableMarket: [],
+  test: [],
 })
 
 // POI分类配置
@@ -213,63 +234,70 @@ const poiCategories = ref<POICategory[]>([
     name: 'factory',
     label: '工厂',
     types: ['170300'],
-    keywords: ['木材厂','家具厂'],//'水泥', '砂石'
+    keywords: ['水泥'],//'木材厂','家具厂'
     visible: true
   },
   {
     name: 'warehouse',
     label: '仓库',
     types: ['070501'],
-    keywords: ['仓库', '物流园', '仓储'],//
+    keywords: [],//'仓库', '物流园', '仓储','京东物流'
     visible: true
   },
   {
     name: 'gasStation',
     label: '加油站',
     types: ['010100'],
-    keywords: ['加油站', '中国石油', '中国石化'],//
+    keywords: [],//'加油站', '中国石化'
     visible: true
   },
   {
     name: 'maintenance',
     label: '维修中心',
     types: ['035000'],
-    keywords: ['货车维修'],
+    keywords: [],//'货车维修'
     visible: true
   },
   {
     name: 'restArea',
     label: '休息区',
     types: ['180300'],
-    keywords: ['服务区','休息区'],//
+    keywords: [],//'服务区','休息区'
     visible: true
   },
   {
     name: 'transport',
     label: '运输中心',
     types: ['070500', '150107', '150210'],
-    keywords: ['配送中心', '物流'],//
+    keywords: [],//'配送中心', '物流'
     visible: true
   },
   {
     name: 'materialMarket',
     label: '建材市场',
     types: ['060603'],
-    keywords: ['建材市场'],
+    keywords: ['建材市场'],//'建材市场'
     visible: true
   },
   {
     name: 'vegetableBase',
     label: '蔬菜基地',
     types: ['170400'],
-    keywords: ['蔬菜基地', '蔬菜'],
+    keywords: [],//'蔬菜基地', '蔬菜'
     visible: true
   },
   {
     name: 'vegetableMarket',
     label: '蔬菜市场',
     types: ['060705'],
-    keywords: ['蔬菜市场'],
+    keywords: [],//'蔬菜市场'
+    visible: true
+  },
+  {
+    name: 'test',
+    label: '测试',
+    types: ['060705'],
+    keywords: [],
     visible: true
   }
 ]);
@@ -346,6 +374,12 @@ const poiIcons = {
     size: [22, 22],
     anchor: 'bottom-center',
     color: '#8BC34A' // 浅绿色
+  },
+  '测试': {
+    url: testIcon,
+    size: [22,22],
+    anchor: 'bottom-center',
+    color: '#ff0000'
   }
 };
 
@@ -369,7 +403,8 @@ const typeMapping = {
   'transport': 'DISTRIBUTION_CENTER',
   'materialMarket': 'MATERIAL_MARKET',
   'vegetableBase': 'VEGETABLE_BASE',
-  'vegetableMarket': 'VEGETABLE_MARKET'
+  'vegetableMarket': 'VEGETABLE_MARKET',
+  'test': 'TEST',
 } as const;
 
 const reverseTypeMapping = {
@@ -381,7 +416,8 @@ const reverseTypeMapping = {
   'DISTRIBUTION_CENTER': 'transport',
   'MATERIAL_MARKET': 'materialMarket',
   'VEGETABLE_BASE': 'vegetableBase',
-  'VEGETABLE_MARKET': 'vegetableMarket'
+  'VEGETABLE_MARKET': 'vegetableMarket',
+  'TEST': 'test'
 } as const;
 
 // 地图初始化
@@ -1075,6 +1111,160 @@ const addIndividualMarkers = (): void => {
   console.groupEnd()
 }
 
+/// ToDo
+
+// 文件上传处理
+const handleFileUpload = (file: any): void => {
+  const reader = new FileReader()
+
+  reader.onload = (e) => {
+    try {
+      const content = e.target?.result as string
+      const jsonData = JSON.parse(content)
+
+      // 验证数据格式
+      if (!Array.isArray(jsonData)) {
+        ElMessage.error('文件格式错误：数据应该是数组格式')
+        return
+      }
+
+      // 确认数据
+      ElMessageBox.confirm(
+          `确定要加载 ${jsonData.length} 个POI数据吗？这将替换当前所有数据。`,
+          '确认加载文件数据',
+          {
+            confirmButtonText: '确定',
+            cancelButtonText: '取消',
+            type: 'warning'
+          }
+      ).then(async () => {
+        await processUploadedPOIData(jsonData)
+      }).catch(() => {
+        ElMessage.info('已取消加载')
+      })
+
+    } catch (error) {
+      console.error('文件解析失败:', error)
+      ElMessage.error('文件解析失败，请检查文件格式')
+    }
+  }
+
+  reader.onerror = () => {
+    ElMessage.error('文件读取失败')
+  }
+
+  reader.readAsText(file.raw)
+}
+
+// 处理上传的POI数据
+const processUploadedPOIData = async (uploadedData: any[]): Promise<void> => {
+  try {
+    ElMessage.info('开始处理上传的POI数据...')
+
+    // 转换数据格式
+    const convertedPOIs = convertUploadedDataToFrontend(uploadedData)
+
+    if (convertedPOIs.length === 0) {
+      ElMessage.warning('没有有效的POI数据可加载')
+      return
+    }
+
+    // 分类存储数据
+    classifyPOIData(convertedPOIs)
+
+    // 更新地图显示
+    updateMapDisplay()
+
+    ElMessage.success(`成功加载 ${convertedPOIs.length} 个POI数据`)
+
+    // 显示统计信息
+    const endTime = Date.now()
+    dataStats.value = {
+      total: convertedPOIs.length,
+      loadTime: endTime - Date.now(),
+      source: '文件上传'
+    }
+
+  } catch (error) {
+    console.error('处理上传数据失败:', error)
+    ElMessage.error('处理POI数据失败: ' + (error as Error).message)
+  }
+}
+
+// 转换上传数据为前端格式
+const convertUploadedDataToFrontend = (uploadedData: any[]): POI[] => {
+  console.group('📤 处理上传的POI数据')
+  console.log(`开始转换 ${uploadedData.length} 条上传记录`)
+
+  const convertedPOIs = uploadedData.map((item, index) => {
+    // 防御性编程：确保item存在
+    if (!item) {
+      console.warn(`[${index}] 数据项为空，跳过`)
+      return null
+    }
+
+    // 验证必需字段
+    if (!item.name || !item.location || !item.category) {
+      console.warn(`[${index}] POI数据缺少必需字段:`, item)
+      return null
+    }
+
+    // 处理分类映射
+    let frontendCategory = item.category
+
+    // 如果category是后端类型，尝试映射到前端分类
+    if (item.category in reverseTypeMapping) {
+      frontendCategory = reverseTypeMapping[item.category as keyof typeof reverseTypeMapping]
+    }
+
+    // 验证分类是否有效
+    if (!(frontendCategory in poiData.value)) {
+      console.warn(`[${index}] 无效的分类: "${frontendCategory}"，POI: ${item.name}`)
+      return null
+    }
+
+    // 处理坐标格式
+    let lng: number, lat: number
+    if (typeof item.location === 'object' && item.location.lng !== undefined && item.location.lat !== undefined) {
+      lng = Number(item.location.lng)
+      lat = Number(item.location.lat)
+    } else {
+      console.warn(`[${index}] 无效的坐标格式:`, item.location)
+      return null
+    }
+
+    // 验证坐标有效性
+    if (isNaN(lng) || isNaN(lat) || lng === 0 || lat === 0) {
+      console.warn(`[${index}] 无效的坐标值:`, { lng, lat })
+      return null
+    }
+
+    // 创建转换后的POI对象
+    const converted: POI = {
+      id: item.id?.toString() || `uploaded-${Date.now()}-${index}`,
+      name: item.name || '未知名称',
+      poiType: item.poiType || 'UNKNOWN',
+      location: {
+        lng: lng,
+        lat: lat
+      },
+      address: item.address || '未知地址',
+      tel: item.tel || '',
+      category: frontendCategory
+    }
+
+    console.log(`✅ 转换成功: "${converted.name}" -> ${converted.category}`)
+    return converted
+  }).filter(poi => poi !== null) as POI[]
+
+  console.log(`转换完成: ${convertedPOIs.length} 条有效记录`)
+  console.groupEnd()
+
+  return convertedPOIs
+}
+
+/// ToDo
+
 // 显示POI信息窗口
 const showPOIInfoWindow = (poi: POI, position: any): void => {
   if (!map.value || !AMap.value) return;
@@ -1278,6 +1468,26 @@ onUnmounted(() => {
   align-items: center;
   margin: 8px 0;
   padding: 4px 0;
+}
+
+/* 文件上传区域样式 */
+.file-upload-section {
+  margin-bottom: 15px;
+  padding: 10px;
+  background: #f8f9fa;
+  border-radius: 6px;
+  border: 1px dashed #dcdfe6;
+}
+
+.upload-tip {
+  font-size: 12px;
+  color: #909399;
+  text-align: center;
+  margin: 5px 0 0 0;
+}
+
+:deep(.upload-demo) {
+  width: 100%;
 }
 
 /* 统计信息样式 */

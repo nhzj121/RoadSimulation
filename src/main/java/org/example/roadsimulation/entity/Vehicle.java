@@ -2,120 +2,140 @@ package org.example.roadsimulation.entity;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
-import org.example.roadsimulation.entity.Action;
-import org.example.roadsimulation.entity.POI;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
 import java.math.BigDecimal;
+import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.Set;
 
+/**
+ * 车辆实体类 - 最终优化完整版
+ */
 @Entity
 @Table(name = "vehicle")
 public class Vehicle {
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
     @NotBlank(message = "车牌号不能为空")
     @Size(max = 25, message = "车牌号长度不能超过25个字符")
-    @Column(name = "license_plate", nullable = false, unique = true)
+    @Column(name = "license_plate", nullable = false, unique = true, length = 25)
     private String licensePlate;
+
+    @Column(name = "created_time", nullable = false, updatable = false)
+    private LocalDateTime createdTime = LocalDateTime.now();
 
     @Min(value = 0, message = "载重量不能为负数")
     @Column(name = "max_load_capacity", precision = 10)
     private Double maxLoadCapacity;
 
-    // 对其他数值字段也可以添加类似的验证
     @Min(value = 0, message = "容积不能为负数")
-    @Column(name = "cargo_volume")
+    @Column(name = "cargo_volume", precision = 10)
     private Double cargoVolume;
 
-    @Column(name = "brand")
-    private String brand; // 品牌名称，如：东风、解放
+    @Column(name = "brand", length = 50)
+    private String brand;
 
-    @Column(name = "model_type")
-    private String modelType; // 具体车型
+    @Column(name = "model_type", length = 100)
+    private String modelType;
 
-    @Column(name = "vehicle_type")
-    private String vehicleType; // 平板车，高护栏，全封闭等
-    // 在 Vehicle 实体类中添加这个字段（不要重复添加 vehicleType）
-    @Column(name = "driver_name")
-    private String driverName; // 当前司机姓名
+    @Column(name = "vehicle_type", length = 50)
+    private String vehicleType;
 
-    // 添加对应的getter和setter方法
-    public String getDriverName() {
-        return driverName;
-    }
+    @Column(name = "driver_name", length = 50)
+    private String driverName;
 
-    public void setDriverName(String driverName) {
-        this.driverName = driverName;
-    }
-    @Column(name = "current_load")
-    private Double currentLoad; // 载重能力（吨）
+    // 当前状态
+    @Enumerated(EnumType.STRING)
+    @Column(name = "current_status", length = 30)
+    private VehicleStatus currentStatus;
+
+    // 新增：上一个状态（用于日志和审计）
+    @Enumerated(EnumType.STRING)
+    @Column(name = "previous_status", length = 30)
+    private VehicleStatus previousStatus;
+
+    // 状态开始时间
+    @Column(name = "status_start_time")
+    private LocalDateTime statusStartTime;
+
+    // 状态持续时间（秒）
+    @Column(name = "status_duration_seconds")
+    private Long statusDurationSeconds;
+
+    @Column(name = "current_load", precision = 10)
+    private Double currentLoad;
 
     @Min(value = 0, message = "长度不能为负数")
-    @Column(name = "length")
+    @Column(name = "length", precision = 8)
     private Double length;
 
     @Min(value = 0, message = "宽度不能为负数")
-    @Column(name = "width")
+    @Column(name = "width", precision = 8)
     private Double width;
 
     @Min(value = 0, message = "高度不能为负数")
-    @Column(name = "height")
+    @Column(name = "height", precision = 8)
     private Double height;
 
-    // @ManyToOne: 多对一的关系，多辆车可以关联到一个POI或一个Action
-    // fetch = FetchType.LAZY: 懒加载，只有在访问关联对象时才从数据库加载
-    // @JoinColumn: 指定外键列名，即从表的外键字段名
-    /*
-    * 主表：被关联的一方（这里是 POI 表），它有自己的主键（比如 poi_id），是 “一” 的那一方（一个 POI 可以对应多个订单）；
-    * 从表：主动关联的一方（比如 Order 订单表，即当前实体对应的表），它需要通过 “外键” 关联主表的主键，是 “多” 的那一方（多个订单可能对应同一个 POI）。
-    * */
-    // 多辆车可以位于同一个POI
+    // 当前位置 POI
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "current_poi_id")
     private POI currentPOI;
 
-    // 多对多关系 - 车辆可以被多个司机驾驶
-    @ManyToMany(mappedBy = "vehicles") // 由Driver实体维护关系
+    // 当前坐标
+    @Column(name = "current_longitude", precision = 10)
+    private BigDecimal currentLongitude;
+
+    @Column(name = "current_latitude", precision = 10)
+    private BigDecimal currentLatitude;
+
+    // 与司机多对多
+    @ManyToMany(mappedBy = "vehicles")
     private Set<Driver> drivers = new HashSet<>();
 
-    // 一对多关系：一辆车可以有多个任务分配
-    @OneToMany(mappedBy = "assignedVehicle", fetch = FetchType.LAZY, cascade = CascadeType.ALL)
+    // 与任务一对多
+    @OneToMany(mappedBy = "assignedVehicle", fetch = FetchType.LAZY, cascade = CascadeType.ALL, orphanRemoval = true)
     @JsonIgnore
     private Set<Assignment> assignments = new HashSet<>();
 
-    // 当前所在的经度
-    @Column(name = "current_longitude")
-    private BigDecimal currentLongitude;
-    // 当前所在的纬度
-    @Column(name = "current_latitude")
-    private BigDecimal currentLatitude;
+    // 四元组字段
+    @Column(name = "updated_by", length = 50)
+    private String updatedBy;
 
+    @Column(name = "updated_time")
+    private LocalDateTime updatedTime = LocalDateTime.now();
+
+    // 自动更新 updatedTime
+    @PreUpdate
+    public void preUpdate() {
+        this.updatedTime = LocalDateTime.now();
+    }
+
+    // ==================== 枚举 ====================
     public enum VehicleStatus {
-        IDLE,           // 空闲
-        TRANSPORTING,   // 运输中
-        UNLOADING,      // 卸货
-        MAINTAINING,    // 保养
-        REFUELING,      // 加油
-        RESTING,        // 休息
-        ACCIDENT        // 事故
+        IDLE(0),
+        ORDER_DRIVING(1),
+        LOADING(2),
+        TRANSPORT_DRIVING(3),
+        UNLOADING(4),
+        WAITING(5),
+        BREAKDOWN(6);
+
+        private final int index;
+        VehicleStatus(int index) { this.index = index; }
+        public int getIndex() { return index; }
     }
 
-    // 在实体类中使用
-    @Enumerated(EnumType.STRING)
-    @Column(name = "current_status", length = 20)
-    private VehicleStatus currentStatus;
+    // ==================== 构造器 ====================
+    public Vehicle() {}
 
-    public Vehicle(){
-
-    }
-
-    // 内容有参构造
     public Vehicle(String licensePlate, String brand, String modelType, Double maxLoadCapacity) {
         this.licensePlate = licensePlate;
         this.brand = brand;
@@ -123,144 +143,119 @@ public class Vehicle {
         this.maxLoadCapacity = maxLoadCapacity;
     }
 
-    public Long getId() {
-        return id;
+    // ==================== Getter & Setter ====================
+    public Long getId() { return id; }
+    public void setId(Long id) { this.id = id; }
+
+    public String getLicensePlate() { return licensePlate; }
+    public void setLicensePlate(String licensePlate) { this.licensePlate = licensePlate; }
+
+    public LocalDateTime getCreatedTime() { return createdTime; }
+    public void setCreatedTime(LocalDateTime createdTime) { this.createdTime = createdTime; }
+
+    public Double getMaxLoadCapacity() { return maxLoadCapacity; }
+    public void setMaxLoadCapacity(Double maxLoadCapacity) { this.maxLoadCapacity = maxLoadCapacity; }
+
+    public Double getCargoVolume() { return cargoVolume; }
+    public void setCargoVolume(Double cargoVolume) { this.cargoVolume = cargoVolume; }
+
+    public String getBrand() { return brand; }
+    public void setBrand(String brand) { this.brand = brand; }
+
+    public String getModelType() { return modelType; }
+    public void setModelType(String modelType) { this.modelType = modelType; }
+
+    public String getVehicleType() { return vehicleType; }
+    public void setVehicleType(String vehicleType) { this.vehicleType = vehicleType; }
+
+    public String getDriverName() { return driverName; }
+    public void setDriverName(String driverName) { this.driverName = driverName; }
+
+    public VehicleStatus getCurrentStatus() { return currentStatus; }
+    public void setCurrentStatus(VehicleStatus currentStatus) { this.currentStatus = currentStatus; }
+
+    public VehicleStatus getPreviousStatus() { return previousStatus; }
+    public void setPreviousStatus(VehicleStatus previousStatus) { this.previousStatus = previousStatus; }
+
+    public LocalDateTime getStatusStartTime() { return statusStartTime; }
+    public void setStatusStartTime(LocalDateTime statusStartTime) { this.statusStartTime = statusStartTime; }
+
+    public Duration getStatusDuration() {
+        return statusDurationSeconds != null ? Duration.ofSeconds(statusDurationSeconds) : Duration.ZERO;
     }
-    public void setId(Long id) {
-        this.id = id;
+    public void setStatusDuration(Duration duration) {
+        this.statusDurationSeconds = duration != null ? duration.getSeconds() : 0L;
     }
-    public String getLicensePlate() {
-        return licensePlate;
-    }
-    public void setLicensePlate(String licensePlate) {
-        this.licensePlate = licensePlate;
-    }
-    public Double getMaxLoadCapacity() {return maxLoadCapacity;}
-    public void setMaxLoadCapacity(Double maxLoadCapacity) {this.maxLoadCapacity = maxLoadCapacity;}
-    public String getBrand() {return brand;}
-    public void setBrand(String brand) {this.brand = brand;}
-    public String getModelType() {
-        return modelType;
-    }
-    public void setModelType(String modelType) {
-        this.modelType = modelType;
-    }
-    public String getVehicleType() {
-        return vehicleType;
-    }
-    public void setVehicleType(String vehicleType) {
-        this.vehicleType = vehicleType;
+    public LocalDateTime getStatusEndTime() {
+        return statusStartTime != null ? statusStartTime.plus(getStatusDuration()) : null;
     }
 
-    public Double getCurrentLoad() {
-        return currentLoad;
-    }
-    public void setCurrentLoad(Double currentLoad) {
-        this.currentLoad = currentLoad;
-    }
-    public Double getCargoVolume() {return cargoVolume;}
-    public void setCargoVolume(Double cargoVolume) {this.cargoVolume = cargoVolume;}
-    public Double getLength() {return length;}
-    public void setLength(Double length) {this.length = length;}
-    public Double getWidth() {return width;}
-    public void setWidth(Double width) {this.width = width;}
-    public Double getHeight() {return height;}
-    public void setHeight(Double height) {this.height = height;}
-    public BigDecimal getCurrentLongitude() {return currentLongitude;}
-    public void setCurrentLongitude(BigDecimal currentLongitude) {this.currentLongitude = currentLongitude;}
-    public BigDecimal getCurrentLatitude() {return currentLatitude;}
-    public void setCurrentLatitude(BigDecimal currentLatitude) {this.currentLatitude = currentLatitude;}
-    public VehicleStatus getCurrentStatus() {return currentStatus;}
-    public void setCurrentStatus(VehicleStatus currentStatus) {this.currentStatus = currentStatus;}
+    public Double getCurrentLoad() { return currentLoad; }
+    public void setCurrentLoad(Double currentLoad) { this.currentLoad = currentLoad; }
 
+    public Double getLength() { return length; }
+    public void setLength(Double length) { this.length = length; }
 
-    /// 车辆与驾驶员关系的方法
-    // 添加getter和setter
-    public Set<Driver> getDrivers() {
-        return drivers;
+    public Double getWidth() { return width; }
+    public void setWidth(Double width) { this.width = width; }
+
+    public Double getHeight() { return height; }
+    public void setHeight(Double height) { this.height = height; }
+
+    public POI getCurrentPOI() { return currentPOI; }
+    public void setCurrentPOI(POI currentPOI) {
+        if (this.currentPOI == currentPOI) return;
+        POI oldPOI = this.currentPOI;
+        if (oldPOI != null) oldPOI.internalRemoveVehicle(this);
+        this.currentPOI = currentPOI;
+        if (currentPOI != null) currentPOI.internalAddVehicle(this);
     }
-    // 添加司机到车辆
+
+    public BigDecimal getCurrentLongitude() { return currentLongitude; }
+    public void setCurrentLongitude(BigDecimal currentLongitude) { this.currentLongitude = currentLongitude; }
+
+    public BigDecimal getCurrentLatitude() { return currentLatitude; }
+    public void setCurrentLatitude(BigDecimal currentLatitude) { this.currentLatitude = currentLatitude; }
+
+    public Set<Driver> getDrivers() { return drivers; }
+    public void setDrivers(Set<Driver> drivers) {
+        for (Driver d : new HashSet<>(this.drivers)) removeDriver(d);
+        for (Driver d : drivers) addDriver(d);
+    }
     public void addDriver(Driver driver) {
         this.drivers.add(driver);
         driver.getVehicles().add(this);
     }
-
-    // 从车辆移除司机
     public void removeDriver(Driver driver) {
         this.drivers.remove(driver);
         driver.getVehicles().remove(this);
     }
-    public void setDrivers(Set<Driver> drivers) {
-        // 先清除现有关系
-        for (Driver driver : new HashSet<>(this.drivers)) {
-            this.removeDriver(driver);
-        }
 
-        // 添加新关系
-        for (Driver driver : drivers) {
-            this.addDriver(driver);
-        }
-    }
-
-    /// 车辆与关键点的关系点的方法
-    public POI getCurrentPOI() {
-        return currentPOI;
-    }
-
-    // 核心方法：设置车辆当前所在的POI，并维护双向关系
-    public void setCurrentPOI(POI currentPOI) {
-        // 如果当前POI与要设置的POI相同，则不执行任何操作
-        if (this.currentPOI == currentPOI) {
-            return;
-        }
-
-        // 如果当前已有POI，先从该POI的集合中移除自己
-        POI oldPOI = this.currentPOI;
-        if (oldPOI != null) {
-            oldPOI.internalRemoveVehicle(this);
-        }
-
-        // 设置新的POI
-        this.currentPOI = currentPOI;
-
-        // 如果新POI不为空，将自己添加到新POI的集合中
-        if (currentPOI != null) {
-            currentPOI.internalAddVehicle(this);
-        }
-
-    }
-
-
-    ///  Vehicle和Assignment之间关系的维护代码
-    // 获取车辆的所有任务分配
-    public Set<Assignment> getAssignments() {
-        return assignments;
-    }
-
-    // 设置车辆的任务分配
-    public void setAssignments(Set<Assignment> assignments) {
-        this.assignments = assignments;
-    }
-
-    // 添加任务分配到车辆
+    public Set<Assignment> getAssignments() { return assignments; }
+    public void setAssignments(Set<Assignment> assignments) { this.assignments = assignments; }
     public void addAssignment(Assignment assignment) {
         this.assignments.add(assignment);
         assignment.setAssignedVehicle(this);
     }
-
-    // 从车辆移除任务分配
     public void removeAssignment(Assignment assignment) {
         this.assignments.remove(assignment);
         assignment.setAssignedVehicle(null);
     }
 
-    // 获取当前进行中的任务
+    // 关键：获取当前活跃任务（兼容 ASSIGNED 和 IN_PROGRESS）
     public Assignment getCurrentAssignment() {
         return assignments.stream()
-                .filter(Assignment::isInProgress)
+                .filter(a -> a.getStatus() == Assignment.AssignmentStatus.IN_PROGRESS ||
+                        a.getStatus() == Assignment.AssignmentStatus.ASSIGNED)
                 .findFirst()
                 .orElse(null);
     }
+
+    public String getUpdatedBy() { return updatedBy; }
+    public void setUpdatedBy(String updatedBy) { this.updatedBy = updatedBy; }
+
+    public LocalDateTime getUpdatedTime() { return updatedTime; }
+    public void setUpdatedTime(LocalDateTime updatedTime) { this.updatedTime = updatedTime; }
 
     @Override
     public String toString() {
@@ -269,6 +264,9 @@ public class Vehicle {
                 ", licensePlate='" + licensePlate + '\'' +
                 ", modelType='" + modelType + '\'' +
                 ", currentStatus=" + currentStatus +
+                ", previousStatus=" + previousStatus +
+                ", statusStartTime=" + statusStartTime +
+                ", statusDuration=" + getStatusDuration() +
                 ", currentPOI=" + (currentPOI != null && currentPOI.getId() != null ? currentPOI.getId() : "null") +
                 '}';
     }
