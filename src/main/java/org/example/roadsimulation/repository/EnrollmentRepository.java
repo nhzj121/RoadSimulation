@@ -9,6 +9,7 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface EnrollmentRepository extends JpaRepository<Enrollment, Long> {
@@ -21,4 +22,6 @@ public interface EnrollmentRepository extends JpaRepository<Enrollment, Long> {
     // 按货物SKU查询
     @Query("SELECT e FROM Enrollment e WHERE e.goods.sku = :sku")
     List<Enrollment> findByGoodsSku(@Param("sku") String sku);
+
+    Optional<Enrollment> findByPoiAndGoods(POI poi, Goods goods);
 }

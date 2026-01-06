@@ -3,6 +3,9 @@ package org.example.roadsimulation;
 
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
+import lombok.Getter;
+import lombok.Setter;
+import org.example.roadsimulation.dto.POIPairDTO;
 import org.example.roadsimulation.entity.*;
 import org.example.roadsimulation.repository.*;
 import org.example.roadsimulation.service.GoodsPOIGenerateService;
@@ -15,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.text.SimpleDateFormat;
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
@@ -41,6 +45,7 @@ public class DataInitializer{
     private final PlatformTransactionManager transactionManager;
     private final RouteRepository routeRepository;
     private final CustomerRepository customerRepository;
+    private final AssignmentRepository assignmentRepository;
     private final ShipmentRepository shipmentRepository;
     private final ShipmentItemRepository shipmentItemRepository;
     private final SimulationDataCleanupService cleanupService;
@@ -51,6 +56,35 @@ public class DataInitializer{
     // 生成唯一键的方法
     private String generatePoiPairKey(POI startPOI, POI endPOI) {
         return startPOI.getId() + "_" + endPOI.getId();
+    }
+    // 记录每个配对的状态
+    private final Map<String, PairStatus> pairStatusMap = new ConcurrentHashMap<>();
+    private static class PairStatus {
+        @Getter
+        private final String pairId;
+        @Getter
+        private final LocalDateTime createdAt;
+        @Setter
+        @Getter
+        private LocalDateTime lastUpdated;
+        @Setter
+        @Getter
+        private boolean isActive;
+        @Setter
+        @Getter
+        private boolean isDrawn; // 是否已被前端绘制
+        @Setter
+        @Getter
+        private Long shipmentId;
+
+        public PairStatus(String pairId, Long shipmentId) {
+            this.pairId = pairId;
+            this.shipmentId = shipmentId;
+            this.createdAt = LocalDateTime.now();
+            this.lastUpdated = this.createdAt;
+            this.isActive = true;
+            this.isDrawn = false;
+        }
     }
 
     public List<POI> CementPlantList; // 水泥厂
@@ -77,7 +111,8 @@ public class DataInitializer{
                            CustomerRepository customerRepository,
                            ShipmentRepository shipmentRepository,
                            ShipmentItemRepository shipmentItemRepository,
-                           SimulationDataCleanupService cleanupService) {
+                           SimulationDataCleanupService cleanupService,
+                           AssignmentRepository assignmentRepository) {
         this.goodsPOIGenerateService = goodsPOIGenerateService;
         this.enrollmentRepository = enrollmentRepository;
         this.goodsRepository = goodsRepository;
@@ -88,6 +123,7 @@ public class DataInitializer{
         this.shipmentRepository = shipmentRepository;
         this.shipmentItemRepository = shipmentItemRepository;
         this.cleanupService = cleanupService;
+        this.assignmentRepository = assignmentRepository;
     }
 
     /**
@@ -222,6 +258,15 @@ public class DataInitializer{
     }
 
     /**
+     * 在创建配对时记录状态
+     */
+    private void createPairStatus(POI startPOI, POI endPOI, Shipment shipment) {
+        String pairId = generatePoiPairKey(startPOI, endPOI);
+        PairStatus status = new PairStatus(pairId, shipment.getId());
+        pairStatusMap.put(pairId, status);
+    }
+
+    /**
      *  周期性的随机判断 - 每5秒执行一次
      *  用于随机选择 起点POI
      */
@@ -261,11 +306,20 @@ public class DataInitializer{
                     POI endPOI = this.MaterialMarketList.get(random.nextInt(this.MaterialMarketList.size()));
 
                     Integer generateQuantity = generateRandomQuantity();
-
-                    initializeRoute(poi, endPOI); // 初始化路径
-                    Shipment goalShipment = createCompleteGoodsTransport(poi, endPOI, Cement, generateQuantity);
-                    // Assignment goalAssignment = initalizeAssignment();
+                    Vehicle vehicle = null; // ToDo 初始化货物对应车辆，这里暂时设置为null
+                    Route route = initializeRoute(poi, endPOI); // 初始化路径
+                    // 初始化的运单，运单清单，记录
+                    ShipmentItem goalShipmentItem = createCompleteGoodsTransport(poi, endPOI, Cement, generateQuantity);
+                    // 初始化运输任务
+                    Assignment goalAssignment = initalizeAssignment(goalShipmentItem, route);
                     startToEndMapping.put(poi, endPOI); // 保存对应关系
+
+                    // 记录配对关系
+                    String key = generatePoiPairKey(poi, endPOI);
+                    Shipment shipment = poiPairShipmentMapping.get(key);
+                    if (shipment != null) {
+                        createPairStatus(poi, endPOI, shipment);
+                    }
                 }
             }
         }
@@ -408,7 +462,7 @@ public class DataInitializer{
 
     // 起点与终点之间通过 route 实现的关系建立
     @Transactional
-    public void initializeRoute(POI startpoi, POI endPOI) {
+    public Route initializeRoute(POI startpoi, POI endPOI) {
         List<Route> goalRoute = routeRepository.findByStartPOIIdAndEndPOIId(startpoi.getId(), endPOI.getId());
 
         // 现在先默认选择id最小的route
@@ -427,9 +481,11 @@ public class DataInitializer{
             route.setEstimatedTime(calculateEstimatedTime(startpoi, endPOI));
             routeRepository.save(route);
             System.out.println("新建路径：" + route.getRouteCode());
+            return route;
         } else{
             Route route = goalRoute.get(0);
             System.out.println("使用现有路径：" + route.getRouteCode());
+            return route;
         }
 
     }
@@ -512,7 +568,7 @@ public class DataInitializer{
     }
 
     @Transactional(rollbackFor = Exception.class)
-    public Shipment createCompleteGoodsTransport(POI startPOI, POI endPOI, Goods goods, Integer quantity) {
+    public ShipmentItem createCompleteGoodsTransport(POI startPOI, POI endPOI, Goods goods, Integer quantity) {
         // 1. 创建Shipment
         Shipment shipment = initalizeShipment(startPOI, endPOI, goods, quantity);
 
@@ -522,12 +578,20 @@ public class DataInitializer{
         // 3. 建立POI与Goods的Enrollment关系
         initRelationBetweenPOIAndGoods(startPOI, goods, quantity);
 
-        return shipment;
+        return shipmentItem;
     }
 
     @Transactional
-    public Assignment initalizeAssignment(Shipment shipment, Goods goods, Integer Quantity) {
-        return null;
+    public Assignment initalizeAssignment(ShipmentItem shipmentItem, Route route) {
+        if(shipmentItem == null){
+            throw new IllegalArgumentException("运单清单为空");
+        } else if(route == null){
+            throw new IllegalArgumentException("运输线路规划出错");
+        } else{
+            Assignment assignment = new Assignment(shipmentItem, route);
+            assignmentRepository.save(assignment);
+            return assignment;
+        }
     }
 
     // POI点与货物关系的建立与删除
@@ -580,10 +644,23 @@ public class DataInitializer{
                             List<ShipmentItem> items = shipmentItemRepository.findByShipmentId(freshShipment.getId());
                             for (ShipmentItem item : items) {
                                 // 先清除关联
-                                if (item.getAssignment() != null) {
+                                Assignment assignment = item.getAssignment();
+                                if (assignment != null) {
+                                    if (assignment.getShipmentItems() != null) {
+                                        assignment.getShipmentItems().remove(item);
+                                    }
                                     item.setAssignment(null);
-                                    // 如果需要保存Assignment的修改
-                                    // assignmentRepository.save(item.getAssignment());
+                                    if (assignment.getShipmentItems().isEmpty()) {
+                                        // 解除与Vehicle和Driver的关联
+                                        assignment.setAssignedVehicle(null);
+                                        assignment.setAssignedDriver(null);
+                                        // 删除这个Assignment
+                                        assignmentRepository.delete(assignment);
+                                        System.out.println("删除空Assignment: " + assignment.getId());
+                                    } else {
+                                        // 如果还有其他item，则保存更新
+                                        assignmentRepository.save(assignment);
+                                    }
                                 }
                                 // 删除ShipmentItem
                                 shipmentItemRepository.delete(item);
@@ -611,6 +688,14 @@ public class DataInitializer{
                 poiRepository.save(freshPOI);
                 goodsRepository.save(goalGoods);
             }
+        }
+        POI endPOI = startToEndMapping.get(poiForTest);
+        if (endPOI != null) {
+            String pairId = generatePoiPairKey(freshPOI, endPOI);
+            markPairAsCompleted(pairId);
+
+            // 从映射中移除
+            startToEndMapping.remove(poiForTest);
         }
 
         // 更新本地map状态
@@ -649,6 +734,105 @@ public class DataInitializer{
             }
         }
         return AbleToShow;
+    }
+
+    /**
+     * 获取当前所有POI配对
+     */
+    public List<POIPairDTO> getCurrentPOIPairs() {
+        List<POIPairDTO> pairs = new ArrayList<>();
+
+        for (Map.Entry<POI, POI> entry : startToEndMapping.entrySet()) {
+            POI startPOI = entry.getKey();
+            POI endPOI = entry.getValue();
+
+            String pairId = generatePoiPairKey(startPOI, endPOI);
+            PairStatus status = pairStatusMap.get(pairId);
+
+            // 如果配对不存在或未激活，跳过
+            if (status == null || !status.isActive()) {
+                continue;
+            }
+
+            // 从数据库中重新加载确保数据最新
+            POI freshStartPOI = poiRepository.findById(startPOI.getId())
+                    .orElse(null);
+            POI freshEndPOI = poiRepository.findById(endPOI.getId())
+                    .orElse(null);
+
+            if (freshStartPOI != null && freshEndPOI != null) {
+                POIPairDTO pair = new POIPairDTO();
+                pair.setPairId(pairId);
+                pair.setStartPOIId(freshStartPOI.getId());
+                pair.setStartPOIName(freshStartPOI.getName());
+                pair.setStartLng(freshStartPOI.getLongitude());
+                pair.setStartLat(freshStartPOI.getLatitude());
+                pair.setStartPOIType(freshStartPOI.getPoiType().toString());
+
+                pair.setEndPOIId(freshEndPOI.getId());
+                pair.setEndPOIName(freshEndPOI.getName());
+                pair.setEndLng(freshEndPOI.getLongitude());
+                pair.setEndLat(freshEndPOI.getLatitude());
+                pair.setEndPOIType(freshEndPOI.getPoiType().toString());
+
+                // 获取货物信息（通过Enrollment）
+                Optional<Enrollment> enrollment = enrollmentRepository
+                        .findByPoiAndGoods(freshStartPOI, Cement);
+                enrollment.ifPresent(e -> {
+                    pair.setGoodsName(Cement.getName());
+                    pair.setQuantity(e.getQuantity());
+                });
+
+                // 获取运单信息
+                String key = generatePoiPairKey(freshStartPOI, freshEndPOI);
+                Shipment shipment = poiPairShipmentMapping.get(key);
+                if (shipment != null) {
+                    pair.setShipmentRefNo(shipment.getRefNo());
+                }
+
+                pair.setCreatedAt(status.getCreatedAt());
+                pair.setLastUpdated(status.getLastUpdated());
+                pair.setStatus(status.isActive() ? "ACTIVE" : "COMPLETED");
+                pairs.add(pair);
+            }
+        }
+
+        return pairs;
+    }
+
+    /**
+     * 获取新增的POI配对（未被标记为已绘制的）
+     */
+    public List<POIPairDTO> getNewPOIPairs() {
+        return getCurrentPOIPairs().stream()
+                .filter(pair -> {
+                    PairStatus status = pairStatusMap.get(pair.getPairId());
+                    return status != null && status.isActive() && !status.isDrawn();
+                })
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * 标记配对为已绘制
+     */
+    public void markPairAsDrawn(String pairId) {
+        PairStatus status = pairStatusMap.get(pairId);
+        if (status != null) {
+            status.setDrawn(true);
+            status.setLastUpdated(LocalDateTime.now());
+        }
+    }
+
+    /**
+     * 标记配对为已完成（货物已送达）
+     */
+    public void markPairAsCompleted(String pairId) {
+        PairStatus status = pairStatusMap.get(pairId);
+        if (status != null) {
+            status.setActive(false);
+            status.setDrawn(false); // 允许前端清理绘制
+            status.setLastUpdated(LocalDateTime.now());
+        }
     }
 }
 
