@@ -165,11 +165,11 @@ public class StateUpdateService implements TimeEventScheduler.TimeEventListener 
         eventScheduler.processDueEvents();
         System.out.println("时间推进 " + milliseconds + " 毫秒，当前时间: " + simulationTime.getCurrentTime());
 
-        // 新增：确认批量更新被触发
-        System.out.println(">>> 触发车辆状态批量更新 <<<");
-        if (stateTransitionService instanceof StateTransitionServiceImpl impl) {
-            impl.batchUpdateAllVehicleStates();
-        }
+//        // 新增：确认批量更新被触发
+//        System.out.println(">>> 触发车辆状态批量更新 <<<");
+//        if (stateTransitionService instanceof StateTransitionServiceImpl impl) {
+//            impl.batchUpdateAllVehicleStates();
+//        }
     }
 
     // =====================================================================

@@ -146,7 +146,7 @@ public class ShipmentItem {
         // 如果当前已有分配任务，先从该任务的集合中移除自己
         Assignment oldAssignment = this.assignment;
         if (oldAssignment != null) {
-            oldAssignment.removeShipmentItem(this);
+            oldAssignment.getShipmentItems().remove(this);
         }
 
         // 设置新的分配任务

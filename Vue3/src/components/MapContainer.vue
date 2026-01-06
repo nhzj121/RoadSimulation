@@ -144,6 +144,10 @@ const poiMarkers = ref([]); // 存储POI标记
 const currentPOIs = ref([]); // 当前显示的POI数据
 const isSimulationRunning = ref(false); // 仿真运行状态
 
+// 响应式数据
+const drawnPairIds = ref(new Set()); // 已绘制的配对ID
+const activeRoutes = ref(new Map()); // 当前活动的路线映射，key为pairId，value为路线数据
+
 // 图标配置 - 根据POI类型使用不同的图标
 const poiIcons = {
   'FACTORY': factoryIcon,
@@ -181,43 +185,11 @@ const startSimulation = async () => {
     await simulationController.startSimulation();
     isSimulationRunning.value = true;
 
-    // 初始加载POI数据
-    await updatePOIData();
-
     // 启动定时更新
-    //startSimulationTimer();
+    startSimulationTimer();
 
-    // 使用一个简单且已知有效的测试坐标
-    const testEndpoints = [
-      {
-        id: 'test-1',
-        start: [104.123712, 30.511696],  // 北京天安门
-        end: [104.059277, 30.505305]     // 附近点
-      }
-    ]
-
-    console.log('使用测试坐标进行路线规划:', testEndpoints);
-
-    try {
-      const routes = await computeRoutesOnBackend(testEndpoints);
-      console.log('测试路线规划成功，获取到路线:', routes);
-      drawComputedRoutes(routes);
-    } catch (error) {
-      console.error('测试路线规划失败:', error);
-
-      // 如果测试坐标也失败，说明是后端服务问题
-      if (error.response?.status === 400) {
-        const errorDetail = error.response?.data;
-        console.error('后端返回的错误详情:', errorDetail);
-        ElMessage.error(`路线规划服务错误: ${errorDetail?.message || '未知错误'}`);
-      } else {
-        ElMessage.error('路线规划失败: ' + error.message);
-      }
-
-      drawComputedRoutes([]);
-    }
-    // 启动车辆动画和路线规划
-    await startVehicleSimulation();
+    // 初始车辆动画和路线规划
+    await fetchAndDrawNewPOIPairs();
 
     ElMessage.success('仿真已启动');
 
@@ -267,6 +239,15 @@ const resetSimulation = async () => {
       // 停止定时器
       stopSimulationTimer();
 
+      // 清理所有绘制的路线
+      activeRoutes.value.forEach(routeData => {
+        if (routeData.cleanup) {
+          routeData.cleanup();
+        }
+      });
+      activeRoutes.value.clear();
+      drawnPairIds.value.clear();
+
       // 清除所有可视化元素
       clearPOIMarkers();
       clearDrawnRoutes();
@@ -293,8 +274,16 @@ const startSimulationTimer = () => {
 
   simulationTimer.value = setInterval(async () => {
     if (isSimulationRunning.value) {
-      await updatePOIData();
-      // 这里可以添加其他定时更新的数据，如车辆状态、任务状态等
+      // 增量获取并绘制新配对
+      await fetchAndDrawNewPOIPairs();
+
+      // 定期检查并清理已完成的配对
+      await checkAndCleanupCompletedPairs();
+
+      // 更新车辆状态
+      await fetchVehicles();
+
+      // ToDo这里可以添加其他定时更新的数据，如车辆状态、任务状态等
     }
   }, simulationInterval.value);
 };
@@ -340,6 +329,40 @@ const updatePOIData = async () => {
   } catch (error) {
     console.error("更新POI数据失败：", error);
     // 不抛出错误，避免影响其他定时任务
+  }
+};
+
+const fetchPOIPairs = async () => {
+  try {
+    const response = await request.get('/api/simulation/pairs/current');
+    const pairs = response.data;
+    console.log('获取到POI配对:', pairs);
+
+    if (pairs && pairs.length > 0) {
+      // 将配对转换为路线规划的endpoints
+      const endpoints = pairs.map(pair => ({
+        id: `${pair.startPOIId}_${pair.endPOIId}`,
+        start: [pair.startLng, pair.startLat],
+        end: [pair.endLng, pair.endLat],
+        info: {
+          startName: pair.startPOIName,
+          endName: pair.endPOIName,
+          goodsName: pair.goodsName,
+          quantity: pair.quantity
+        }
+      }));
+
+      // 调用路线规划
+      const computedRoutes = await computeRoutesOnBackend(endpoints);
+      drawComputedRoutes(computedRoutes);
+
+      // 更新统计信息
+      stats.tasks = pairs.length;
+    } else {
+      console.log('当前没有活跃的POI配对');
+    }
+  } catch (error) {
+    console.error('获取POI配对失败:', error);
   }
 };
 
@@ -558,7 +581,7 @@ const haversineDistance = (a, b) => {
 
 // marker 匀速沿 path 移动（path: [[lng,lat],...], speed 米/秒），返回 cancel 函数
 // 方法基于车辆在 path 相邻两项之间 沿直线 匀速运动
-const animateAlongPath = (marker, path, speed = 20) => {
+const animateAlongPath = (marker, path, speed = 30) => {
   // 确保运动路径的有效性
   if (!path || path.length < 2) return () => {};
   const segLengths = [];
@@ -613,62 +636,242 @@ const animateAlongPath = (marker, path, speed = 20) => {
   };
 };
 
-// 在起点添加 van 图标并匀速沿 path 移动
-const drawComputedRoutes = (routes) => {
-  if (!AMapLib || !map) return;
-  clearDrawnRoutes();
-  for (const r of routes) {
-    try {
-      const path = Array.isArray(r.path) ? r.path : (r.path || []);
-      // 绘制折线
-      const poly = new AMapLib.Polyline({
-        path: path,
-        strokeColor: '#3388ff',
-        strokeOpacity: 1,
-        strokeWeight: 4,
-        lineJoin: 'round',
-      });
-      poly.setMap(map);
-      drawnRoutes.push(poly);
+// 清除特定配对的路线
+const clearRouteByPairId = (pairId) => {
+  const routeData = activeRoutes.value.get(pairId);
+  if (routeData) {
+    // 清理动画
+    routeData.animations.forEach(anim => {
+      anim.cancel && anim.cancel();
+      try {
+        anim.marker && anim.marker.setMap && anim.marker.setMap(null);
+      } catch (_) {}
+    });
 
-      // 起点静态标记
-      if (r.start) {
-        const m1 = new AMapLib.Marker({
-          position: r.start,
-          title: '起点',
-        });
-        m1.setMap(map);
-        drawnRoutes.push(m1);
-      }
+    // 清理地图元素
+    routeData.elements.forEach(el => {
+      try {
+        el.setMap && el.setMap(null);
+      } catch (_) {}
+    });
 
-      // 终点静态标记
-      if (r.end) {
-        const m2 = new AMapLib.Marker({
-          position: r.end,
-          title: '终点',
-        });
-        m2.setMap(map);
-        drawnRoutes.push(m2);
-      }
+    // 从映射中移除
+    activeRoutes.value.delete(pairId);
+    drawnPairIds.value.delete(pairId);
 
-      // 如果有路径，则在起点放置 van（可移动）
-      if (path && path.length > 0) {
-        const vanEl = createSvgVanEl(32, '#ff7f50');
-        const movingMarker = new AMapLib.Marker({
-          position: path[0],
-          content: vanEl,
-          offset: new AMapLib.Pixel(-16, -16),
-          title: `van-${r.id || Math.random().toString(36).slice(2,6)}`,
-        });
-        movingMarker.setMap(map);
-        // 速度：优先使用后端返回的 r.speedMps，否则用默认 8 m/s
-        const speedMps = typeof r.speedMps === 'number' ? r.speedMps : 8;
-        const cancel = animateAlongPath(movingMarker, path, speedMps);
-        vehicleAnimations.push({ marker: movingMarker, cancel });
-      }
-    } catch (e) {
-      console.error('drawComputedRoutes error', e);
+    console.log(`已清理配对 ${pairId} 的路线`);
+  }
+};
+
+// 增量获取并绘制POI配对
+const fetchAndDrawNewPOIPairs = async () => {
+  try {
+    // 1. 获取新增的POI配对
+    const response = await request.get('/api/simulation/pairs/new');
+    const newPairs = response.data;
+
+    if (!newPairs || newPairs.length === 0) {
+      console.log('没有新增的POI配对');
+      return;
     }
+
+    console.log(`获取到 ${newPairs.length} 个新增POI配对`);
+
+    // 2. 转换为路线规划的endpoints
+    const endpoints = newPairs.map(pair => ({
+      id: pair.pairId,
+      start: [pair.startLng, pair.startLat],
+      end: [pair.endLng, pair.endLat],
+      info: {
+        pairId: pair.pairId,
+        startName: pair.startPOIName,
+        endName: pair.endPOIName,
+        goodsName: pair.goodsName,
+        quantity: pair.quantity,
+        shipmentRefNo: pair.shipmentRefNo
+      }
+    }));
+
+    // 3. 批量规划路线
+    const computedRoutes = await computeRoutesOnBackend(endpoints);
+
+    // 4. 绘制新路线
+    for (const route of computedRoutes) {
+      if (route && route.info && route.info.pairId) {
+        // 确保该配对尚未绘制
+        if (!drawnPairIds.value.has(route.info.pairId)) {
+          await drawSingleRoute(route);
+
+          // 标记为已绘制
+          drawnPairIds.value.add(route.info.pairId);
+
+          // 通知后端该配对已绘制
+          try {
+            await request.post(`/api/simulation/pairs/mark-drawn/${route.info.pairId}`);
+          } catch (error) {
+            console.error(`标记配对 ${route.info.pairId} 为已绘制失败:`, error);
+          }
+        }
+      }
+    }
+
+    // 5. 更新统计信息
+    stats.tasks = drawnPairIds.value.size;
+
+  } catch (error) {
+    console.error('获取并绘制新增POI配对失败:', error);
+  }
+};
+
+// 绘制单个路线
+const drawSingleRoute = async (route) => {
+  if (!AMapLib || !map) return null;
+
+  try {
+    const path = Array.isArray(route.path) ? route.path : (route.path || []);
+    const elements = [];
+    const animations = [];
+
+    // 绘制折线
+    const poly = new AMapLib.Polyline({
+      path: path,
+      strokeColor: '#3388ff',
+      strokeOpacity: 0.8,
+      strokeWeight: 4,
+      lineJoin: 'round',
+    });
+    poly.setMap(map);
+    elements.push(poly);
+
+    // 起点标记
+    if (route.start) {
+      const startMarker = new AMapLib.Marker({
+        position: route.start,
+        title: `起点: ${route.info?.startName || '未知'}`,
+        icon: new AMapLib.Icon({
+          image: factoryIcon,
+          size: new AMapLib.Size(24, 24),
+          imageSize: new AMapLib.Size(24, 24)
+        })
+      });
+      startMarker.setMap(map);
+      elements.push(startMarker);
+
+      // 起点信息窗口
+      startMarker.on('click', () => {
+        const infoWindow = new AMapLib.InfoWindow({
+          content: `
+            <div style="padding: 10px; min-width: 200px; color: #000;">
+              <h3 style="margin: 0 0 8px 0; color: #000;">起点: ${route.info?.startName || '未知'}</h3>
+              <p style="margin: 4px 0; color: #000;"><strong>货物:</strong> ${route.info?.goodsName || '未知'}</p>
+              <p style="margin: 4px 0; color: #000;"><strong>数量:</strong> ${route.info?.quantity || 0}</p>
+              <p style="margin: 4px 0; color: #000;"><strong>运单号:</strong> ${route.info?.shipmentRefNo || 'N/A'}</p>
+              <p style="margin: 4px 0; color: #000;"><strong>目的地:</strong> ${route.info?.endName || '未知'}</p>
+            </div>
+          `,
+          offset: new AMapLib.Pixel(0, -30)
+        });
+        infoWindow.open(map, route.start);
+      });
+    }
+
+    // 终点标记
+    if (route.end) {
+      const endMarker = new AMapLib.Marker({
+        position: route.end,
+        title: `终点: ${route.info?.endName || '未知'}`,
+        icon: new AMapLib.Icon({
+          image: materialMarketIcon,
+          size: new AMapLib.Size(24, 24),
+          imageSize: new AMapLib.Size(24, 24)
+        })
+      });
+      endMarker.setMap(map);
+      elements.push(endMarker);
+    }
+
+    // 车辆动画
+    if (path && path.length > 0) {
+      const vanEl = createSvgVanEl(32, '#ff7f50');
+      const movingMarker = new AMapLib.Marker({
+        position: path[0],
+        content: vanEl,
+        offset: new AMapLib.Pixel(-16, -16),
+        title: `${route.info?.goodsName || '货物'}运输`,
+      });
+      movingMarker.setMap(map);
+      elements.push(movingMarker);
+
+      // 车辆信息窗口
+      movingMarker.on('click', () => {
+        const infoWindow = new AMapLib.InfoWindow({
+          content: `
+            <div style="padding: 10px; min-width: 220px; color: #000;">
+              <h3 style="margin: 0 0 8px 0; color: #000;">运输车辆</h3>
+              <p style="margin: 4px 0; color: #000;"><strong>配对ID:</strong> ${route.info?.pairId || 'N/A'}</p>
+              <p style="margin: 4px 0; color: #000;"><strong>货物:</strong> ${route.info?.goodsName || '未知'}</p>
+              <p style="margin: 4px 0; color: #000;"><strong>数量:</strong> ${route.info?.quantity || 0}</p>
+              <p style="margin: 4px 0; color: #000;"><strong>路线:</strong> ${route.info?.startName || '起点'} → ${route.info?.endName || '终点'}</p>
+              <p style="margin: 4px 0; color: #000;"><strong>距离:</strong> ${route.distance ? (route.distance / 1000).toFixed(2) + ' km' : 'N/A'}</p>
+              <p style="margin: 4px 0; color: #000;"><strong>预计时间:</strong> ${route.duration ? Math.round(route.duration / 60) + ' 分钟' : 'N/A'}</p>
+            </div>
+          `,
+          offset: new AMapLib.Pixel(0, -40)
+        });
+        infoWindow.open(map, movingMarker.getPosition());
+      });
+
+      const speedMps = typeof route.speedMps === 'number' ? route.speedMps : 500;
+      const cancelAnimation = animateAlongPath(movingMarker, path, speedMps);
+      animations.push({ marker: movingMarker, cancel: cancelAnimation });
+    }
+
+    // 保存路线数据
+    const routeData = {
+      id: route.info?.pairId || route.id,
+      elements,
+      animations,
+      cleanup: () => {
+        animations.forEach(anim => {
+          anim.cancel && anim.cancel();
+          try {
+            anim.marker && anim.marker.setMap && anim.marker.setMap(null);
+          } catch (_) {}
+        });
+        elements.forEach(el => {
+          try {
+            el.setMap && el.setMap(null);
+          } catch (_) {}
+        });
+      }
+    };
+
+    activeRoutes.value.set(route.info?.pairId || route.id, routeData);
+
+    console.log(`成功绘制配对 ${route.info?.pairId} 的路线`);
+    return routeData;
+
+  } catch (e) {
+    console.error('绘制单个路线错误', e);
+    return null;
+  }
+};
+
+// 定期检查并清理已完成的配对
+const checkAndCleanupCompletedPairs = async () => {
+  try {
+    // 获取需要清理的配对ID列表
+    const response = await request.get('/api/simulation/pairs/to-cleanup');
+    const pairIdsToCleanup = response.data;
+
+    if (pairIdsToCleanup && pairIdsToCleanup.length > 0) {
+      pairIdsToCleanup.forEach(pairId => {
+        clearRouteByPairId(pairId);
+      });
+      console.log(`清理了 ${pairIdsToCleanup.length} 个已完成的配对`);
+    }
+  } catch (error) {
+    console.error('检查并清理已完成配对失败:', error);
   }
 };
 
@@ -717,71 +920,75 @@ const fetchRawRoutes = async () => {
 const computeRoutesOnBackend = async (endpoints) => {
   try {
     const plans = await Promise.all(
-        endpoints.map(ep => {
-          const params = {
-            startLon: String(ep.start[0]),
-            startLat: String(ep.start[1]),
-            endLon: String(ep.end[0]),
-            endLat: String(ep.end[1]),
-            strategy: '0'
-          };
+        endpoints.map(async (ep) => {
+          try {
+            const params = {
+              startLon: String(ep.start[0]),
+              startLat: String(ep.start[1]),
+              endLon: String(ep.end[0]),
+              endLat: String(ep.end[1]),
+              strategy: '0'
+            };
 
-          return request
-              .get('/api/routes/gaode/plan-by-coordinates', { params })
-              .then(res => {
-                const response = res.data;
+            const res = await request.get(
+                '/api/routes/gaode/plan-by-coordinates',
+                { params }
+            );
 
-                if (!response.success) {
-                  throw new Error(response.message);
-                }
+            const response = res.data;
 
-                // 获取高德地图数据
-                const gaodeData = response.data?.data;
+            if (!response.success) {
+              console.error(`路线 ${ep.id} 规划失败:`, response.message);
+              return null;
+            }
 
-                // 检查是否有路径数据
-                if (!gaodeData?.paths?.length) {
-                  throw new Error('没有找到路径方案');
-                }
+            const gaodeData = response.data?.data;
 
-                const pathInfo = gaodeData.paths[0];
+            if (!gaodeData?.paths?.length) {
+              console.error(`路线 ${ep.id}: 没有找到路径方案`);
+              return null;
+            }
 
-                // 从 steps 的 polyline 构建完整路径
-                let fullPath = [];
-                if (pathInfo.steps) {
-                  pathInfo.steps.forEach(step => {
-                    if (step.polyline) {
-                      const points = step.polyline.split(';');
-                      points.forEach(pointStr => {
-                        const [lng, lat] = pointStr.split(',').map(Number);
-                        fullPath.push([lng, lat]);
-                      });
-                    }
+            const pathInfo = gaodeData.paths[0];
+
+            // 从steps的polyline构建完整路径
+            let fullPath = [];
+            if (pathInfo.steps) {
+              pathInfo.steps.forEach(step => {
+                if (step.polyline) {
+                  const points = step.polyline.split(';');
+                  points.forEach(pointStr => {
+                    const [lng, lat] = pointStr.split(',').map(Number);
+                    fullPath.push([lng, lat]);
                   });
                 }
-
-                console.log(`路线 ${ep.id} 规划成功，路径点数: ${fullPath.length}`);
-
-                return {
-                  id: ep.id,
-                  path: fullPath,
-                  start: fullPath[0] || ep.start,
-                  end: fullPath[fullPath.length - 1] || ep.end,
-                  distance: pathInfo.distance,
-                  duration: pathInfo.duration,
-                  speedMps: pathInfo.distance / pathInfo.duration
-                };
-              })
-              .catch(error => {
-                const errorMsg = error.response?.data?.message || error.message;
-                throw new Error(`路线 ${ep.id} 规划失败: ${errorMsg}`);
               });
+            }
+
+            console.log(`路线 ${ep.id} 规划成功，路径点数: ${fullPath.length}`);
+
+            return {
+              id: ep.id,
+              path: fullPath,
+              start: fullPath[0] || ep.start,
+              end: fullPath[fullPath.length - 1] || ep.end,
+              distance: pathInfo.distance,
+              duration: pathInfo.duration,
+              speedMps: pathInfo.distance / pathInfo.duration,
+              info: ep.info // 传递配对信息
+            };
+          } catch (error) {
+            console.error(`路线 ${ep.id} 规划出错:`, error);
+            return null;
+          }
         })
     );
 
-    return plans;
+    // 过滤掉失败的规划
+    return plans.filter(plan => plan !== null);
   } catch (e) {
     console.error('路线规划整体失败', e);
-    throw e;
+    return [];
   }
 };
 
@@ -865,25 +1072,6 @@ onMounted(() => {
           zoom: 11,
           center: [104.066158, 30.657150],
         });
-
-        // 保留原有的驾车路线规划示例
-        var driving = new AMap.Driving({
-          map: map,
-          policy: AMap.DrivingPolicy.LEAST_TIME,
-        });
-
-        var points = [
-          { keyword: "成都市政府", city: "成都" },
-          { keyword: "成都东站", city: "成都" },
-        ];
-
-        driving.search(points, function (status, result) {
-          if (status === 'complete') {
-            console.log('绘制驾车路线完成');
-          } else {
-            console.error('获取驾车数据失败：' + result);
-          }
-        });
       })
       .catch((e) => {
         console.log(e);
@@ -893,7 +1081,14 @@ onMounted(() => {
 onUnmounted(() => {
   stopSimulationTimer();
   map?.destroy();
-  clearDrawnRoutes();
+  // 清理所有绘制的路线
+  activeRoutes.value.forEach(routeData => {
+    if (routeData.cleanup) {
+      routeData.cleanup();
+    }
+  });
+  activeRoutes.value.clear();
+  drawnPairIds.value.clear();
 });
 </script>
 

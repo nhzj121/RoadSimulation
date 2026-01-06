@@ -43,7 +43,6 @@ public class SimulationMainLoop {
             return;
         }
 
-
         System.out.println("=== 主循环第 " + loopCount + " 次 ===");
         System.out.println("模拟时间: " + (loopCount * MINUTES_PER_LOOP / 60.0) + " 小时");
 

@@ -1,12 +1,7 @@
 package org.example.roadsimulation;
 
-import org.example.roadsimulation.entity.Enrollment;
-import org.example.roadsimulation.entity.Shipment;
-import org.example.roadsimulation.entity.ShipmentItem;
-import org.example.roadsimulation.repository.EnrollmentRepository;
-import org.example.roadsimulation.repository.RouteRepository;
-import org.example.roadsimulation.repository.ShipmentItemRepository;
-import org.example.roadsimulation.repository.ShipmentRepository;
+import org.example.roadsimulation.entity.*;
+import org.example.roadsimulation.repository.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -31,6 +26,15 @@ public class SimulationDataCleanupService {
     private RouteRepository routeRepository;
 
     @Autowired
+    private AssignmentRepository assignmentRepository;
+
+    @Autowired
+    private VehicleRepository vehicleRepository;
+
+    @Autowired
+    private DriverRepository driverRepository;
+
+    @Autowired
     private PlatformTransactionManager transactionManager;
 
     /**
@@ -44,6 +48,44 @@ public class SimulationDataCleanupService {
 
         try {
             // 删除顺序：子表 -> 父表
+            long assignmentCount = assignmentRepository.count();
+            List<Assignment> assignments = assignmentRepository.findAll();
+            for (Assignment assignment : assignments) {
+                try{
+                    if(assignment.getAssignedVehicle() != null){
+                        Vehicle vehicle = assignment.getAssignedVehicle();
+                        if(vehicle.getAssignments() != null){
+                            vehicle.getAssignments().remove(assignment);
+                            vehicleRepository.save(vehicle);
+                        }
+                        assignment.setAssignedVehicle(null);
+                    }
+                    if(assignment.getAssignedDriver() != null){
+                        Driver driver = assignment.getAssignedDriver();
+                        if(driver.getAssignments() != null){
+                            driver.getAssignments().remove(assignment);
+                            driverRepository.save(driver);
+                        }
+                        assignment.setAssignedDriver(null);
+                    }
+
+                    // 解除与ShipmentItem的关联
+                    if (assignment.getShipmentItems() != null && !assignment.getShipmentItems().isEmpty()) {
+                        for (ShipmentItem item : assignment.getShipmentItems()) {
+                            item.setAssignment(null);
+                            shipmentItemRepository.save(item);
+                        }
+                    }
+                    assignmentRepository.save(assignment);
+                } catch (Exception e) {
+                    System.err.println("清理Assignment " + assignment.getId() + " 时出错: " + e.getMessage());
+                }
+
+            }
+            // 最后删除所有Assignment
+            assignmentRepository.deleteAll();
+            System.out.println("已删除 " + assignmentCount + " 条Assignment记录");
+
             // 1. ShipmentItem（最底层）
             long itemCount = shipmentItemRepository.count();
             shipmentItemRepository.deleteAll();
