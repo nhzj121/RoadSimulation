@@ -60,11 +60,11 @@ public class SimulationMainLoop {
             dataInitializer.generateGoods(loopCount);
         }
 
-        // 2) 货物运出（每 2 小时）
-        if (loopCount % 4 == 0) {
-            System.out.println(">>> 执行货物运出逻辑");
-            dataInitializer.shipOutGoods(loopCount);
-        }
+//        // 2) 货物运出（每 2 小时）
+//        if (loopCount % 4 == 0) {
+//            System.out.println(">>> 执行货物运出逻辑");
+//            dataInitializer.shipOutGoods(loopCount);
+//        }
 
         // 3) 打印仿真状态（每 5 小时）
         if (loopCount % 10 == 0) {

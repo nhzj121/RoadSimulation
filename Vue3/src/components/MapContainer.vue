@@ -750,8 +750,7 @@ const haversineDistance = (a, b) => {
 
 // marker 匀速沿 path 移动（path: [[lng,lat],...], speed 米/秒），返回 cancel 函数
 // 方法基于车辆在 path 相邻两项之间 沿直线 匀速运动
-const animateAlongPath = (marker, path, speed = 50) => {
-  // 确保运动路径的有效性
+const animateAlongPath = (marker, path, speed = 500, onArrivalCallback = null) => {
   if (!path || path.length < 2) return () => {};
   const segLengths = [];
   let total = 0;
@@ -764,7 +763,6 @@ const animateAlongPath = (marker, path, speed = 50) => {
   let rafId = null;
   let canceled = false;
 
-  // 根据行驶距离计算当前位置坐标
   const seek = (d) => {
     if (d <= 0) return path[0];
     if (d >= total) return path[path.length-1];
@@ -783,20 +781,29 @@ const animateAlongPath = (marker, path, speed = 50) => {
 
   const step = (ts) => {
     if (canceled) return;
-    // 初始化时间
     if (start === null) start = ts;
 
     const elapsed = (ts - start)/1000;
-    // 计算当下行驶的距离
     const dist = Math.min(elapsed * speed, total);
-    // 通过距离确定具体的位置
     const pos = seek(dist);
-    // 应该是进行图标marker 的地图上的展示
-    try { marker.setPosition(pos); } catch (e) {}
-    if (dist >= total) return; // 到终点停止
-    // 继续下一帧
+
+    try {
+      marker.setPosition(pos);
+
+      // 检查是否到达终点
+      if (dist + speed >= total && onArrivalCallback) {
+        // 添加一个小延迟，确保动画完全完成
+        setTimeout(() => {
+          onArrivalCallback(pos);
+        }, 100);
+        return;
+      }
+    } catch (e) {}
+
+    if (dist >= total) return;
     rafId = requestAnimationFrame(step);
   };
+
   rafId = requestAnimationFrame(step);
 
   return () => {
@@ -950,7 +957,8 @@ const fetchAndDrawNewAssignments = async () => {
         shipmentRefNo: assignment.shipmentRefNo,
         vehicleLicensePlate: assignment.licensePlate,
         vehicleId: assignment.vehicleId,
-        // 新增：传递Assignment对象用于绘制车辆图标
+        endPOIId: assignment.endPOIId,
+        // 传递Assignment对象用于绘制车辆图标
         assignment: assignment
       }
     }));
@@ -1164,8 +1172,31 @@ const drawSingleRoute = async (route) => {
         infoWindow.open(map, movingMarker.getPosition());
       });
 
-      const speedMps = typeof route.speedMps === 'number' ? route.speedMps : 20;
-      const cancelAnimation = animateAlongPath(movingMarker, path, speedMps);
+      // 到达终点回调函数
+      const handleArrival = async (position) => {
+        console.log(`车辆 ${route.info?.vehicleLicensePlate} 已到达终点`);
+
+        try {
+          // 通知后端车辆到达终点
+          if (route.info?.assignmentId && route.info?.vehicleId && route.info?.endPOIId) {
+            await request.post('/api/simulation/vehicle-arrived', {
+              vehicleId: route.info.vehicleId,
+              endPOIId: route.info.endPOIId
+            });
+
+            console.log(`已通知后端车辆到达终点: ${route.info.vehicleLicensePlate}`);
+
+            // 更新车辆状态
+            await updateVehicleInfo();
+          }
+        } catch (error) {
+          console.error('通知车辆到达终点失败:', error);
+        }
+      };
+
+      //const speedMps = typeof route.speedMps === 'number' ? route.speedMps : 20;
+      const speedMps = 900;
+      const cancelAnimation = animateAlongPath(movingMarker, path, speedMps, handleArrival);
       animations.push({ marker: movingMarker, cancel: cancelAnimation });
     }
 
