@@ -165,20 +165,20 @@ public class DataInitializer{
         periodicJudgement();
     }
 
-    /**
-     * 运出货物 - 由主循环调用
-     */
-    @Transactional
-    public void shipOutGoods(int loopCount) {
-        List<POI> truePois = getCurrentTruePois();
-
-        if (truePois.isEmpty()) {
-            System.out.println("当前没有可运出的货物");
-            return;
-        }
-
-        periodicReset();
-    }
+//    /**
+//     * 运出货物 - 由主循环调用
+//     */
+//    @Transactional
+//    public void shipOutGoods(int loopCount) {
+//        List<POI> truePois = getCurrentTruePois();
+//
+//        if (truePois.isEmpty()) {
+//            System.out.println("当前没有可运出的货物");
+//            return;
+//        }
+//
+//        periodicReset();
+//    }
 
     /**
      * 打印仿真状态 - 由主循环调用
@@ -393,55 +393,82 @@ public class DataInitializer{
     }
 
     /**
-     * 周期性的重置判断 - 每12秒执行一次
+     * 运出货物 - 这个方法不再被主循环调用，改为由车辆到达终点触发
+     * 保留方法，但移除 @Scheduled 注解和循环调用
      */
-    //@Scheduled(fixedRate = 15000) // 12秒一个周期
     @Transactional
-    public void periodicReset() {
-        if (CementPlantList.isEmpty() || MaterialMarketList.isEmpty()) {
-            return;
-        }
-
-        System.out.println("开始重置POI判断状态...");
-
-        // 随机选择一个为真的POI重置为假
-        List<POI> truePois = getCurrentTruePois();
-        if (!truePois.isEmpty()) {
-            Random random = new Random();
-            POI selectedPoi = truePois.get(random.nextInt(truePois.size()));
-
-            // 关键：从数据库中重新加载POI，而不是使用map中的旧引用
-            POI freshSelectedPoi = poiRepository.findById(selectedPoi.getId())
-                    .orElseThrow(() -> new RuntimeException("POI not found: " + selectedPoi.getId()));
+    public void shipOutGoodsWhenVehicleArrives(POI startPOI, POI endPOI, Vehicle vehicle) {
+        try {
+            System.out.println("车辆 " + vehicle.getLicensePlate() +
+                    " 已到达终点 " + endPOI.getName() +
+                    "，开始执行货物运出操作");
 
             // 使用重新加载的POI
-            deleteRelationBetweenPOIAndGoods(selectedPoi);
+            POI freshStartPOI = poiRepository.findById(startPOI.getId())
+                    .orElseThrow(() -> new RuntimeException("POI not found: " + startPOI.getId()));
 
-            // 更新映射关系
-            POI correspondingEndPOI = null;
-            for (Map.Entry<POI, POI> entry : startToEndMapping.entrySet()) {
-                if (entry.getKey().getId().equals(freshSelectedPoi.getId())) {
-                    correspondingEndPOI = entry.getValue();
-                    break;
-                }
-            }
+            // 执行删除操作
+            deleteRelationBetweenPOIAndGoods(freshStartPOI, vehicle);
 
-            if (correspondingEndPOI != null) {
-                startToEndMapping.keySet().removeIf(key -> key.getId().equals(freshSelectedPoi.getId()));
-                System.out.println("同时移除对应的终点POI: " + correspondingEndPOI.getName());
-            }
+            System.out.println("POI [" + freshStartPOI.getName() +
+                    "] 的货物已由车辆 " + vehicle.getLicensePlate() + " 送达并删除");
 
-            trueProbability = trueProbability / 0.95;
-
-            // 更新状态，使用freshSelectedPoi
-            setPoiToFalse(selectedPoi);
-            System.out.println("POI [" + freshSelectedPoi.getName() + "] 已被重置为假");
-        } else{
-            System.out.println("无可重置的POI数据");
+        } catch (Exception e) {
+            System.err.println("车辆到达终点时删除货物失败: " + e.getMessage());
+            throw new RuntimeException("货物删除失败", e);
         }
-
-        printCurrentStatus();
     }
+
+//    /**
+//     * 周期性的重置判断 - 每12秒执行一次
+//     */
+//    //@Scheduled(fixedRate = 15000) // 12秒一个周期
+//    @Transactional
+//    public void periodicReset() {
+//        if (CementPlantList.isEmpty() || MaterialMarketList.isEmpty()) {
+//            return;
+//        }
+//
+//        System.out.println("开始重置POI判断状态...");
+//
+//        // 随机选择一个为真的POI重置为假
+//        List<POI> truePois = getCurrentTruePois();
+//        if (!truePois.isEmpty()) {
+//            Random random = new Random();
+//            POI selectedPoi = truePois.get(random.nextInt(truePois.size()));
+//
+//            // 关键：从数据库中重新加载POI，而不是使用map中的旧引用
+//            POI freshSelectedPoi = poiRepository.findById(selectedPoi.getId())
+//                    .orElseThrow(() -> new RuntimeException("POI not found: " + selectedPoi.getId()));
+//
+//            // 使用重新加载的POI
+//            deleteRelationBetweenPOIAndGoods(selectedPoi);
+//
+//            // 更新映射关系
+//            POI correspondingEndPOI = null;
+//            for (Map.Entry<POI, POI> entry : startToEndMapping.entrySet()) {
+//                if (entry.getKey().getId().equals(freshSelectedPoi.getId())) {
+//                    correspondingEndPOI = entry.getValue();
+//                    break;
+//                }
+//            }
+//
+//            if (correspondingEndPOI != null) {
+//                startToEndMapping.keySet().removeIf(key -> key.getId().equals(freshSelectedPoi.getId()));
+//                System.out.println("同时移除对应的终点POI: " + correspondingEndPOI.getName());
+//            }
+//
+//            trueProbability = trueProbability / 0.95;
+//
+//            // 更新状态，使用freshSelectedPoi
+//            setPoiToFalse(selectedPoi);
+//            System.out.println("POI [" + freshSelectedPoi.getName() + "] 已被重置为假");
+//        } else{
+//            System.out.println("无可重置的POI数据");
+//        }
+//
+//        printCurrentStatus();
+//    }
 
     /**
      * 伪随机判断逻辑
@@ -874,120 +901,177 @@ public class DataInitializer{
     }
 
     @Transactional
-    public void deleteRelationBetweenPOIAndGoods(POI poiForTest) {
-        // 只重新加载POI，其他保持不变
-        POI freshPOI = poiRepository.findById(poiForTest.getId())
-                .orElseThrow(() -> new RuntimeException("POI not found: " + poiForTest.getId()));
+    public void deleteRelationBetweenPOIAndGoods(POI startPOI, Vehicle vehicle) {
+        POI freshStartPOI = poiRepository.findById(startPOI.getId())
+                .orElseThrow(() -> new RuntimeException("POI not found: " + startPOI.getId()));
 
-        // 使用freshPOI而不是poiForTest
-        List<Enrollment> goalEnrollment = new ArrayList<>(freshPOI.getEnrollments());
+        List<Enrollment> goalEnrollment = new ArrayList<>(freshStartPOI.getEnrollments());
 
         for (Enrollment enrollment : goalEnrollment) {
             if (enrollment.getGoods() != null){
                 Goods goalGoods = enrollment.getGoods();
 
                 // 找到相关的Shipment并删除
-                POI endPOI = startToEndMapping.get(poiForTest); // 仍然用旧对象从map获取
+                POI endPOI = startToEndMapping.get(startPOI);
                 if (endPOI != null) {
-                    String key = generatePoiPairKey(freshPOI, endPOI); // 但生成key用freshPOI
+                    String key = generatePoiPairKey(freshStartPOI, endPOI);
                     Shipment shipment = poiPairShipmentMapping.remove(key);
 
                     if (shipment != null) {
-                        // 重新加载Shipment以确保它在当前持久化上下文中
                         Shipment freshShipment = shipmentRepository.findById(shipment.getId()).orElse(null);
 
                         if (freshShipment != null) {
-                            // 先删除ShipmentItems（使用新的查询方式，避免直接操作集合）
+                            // 只删除与当前车辆相关的ShipmentItems
                             List<ShipmentItem> items = shipmentItemRepository.findByShipmentId(freshShipment.getId());
                             for (ShipmentItem item : items) {
-                                // 先清除关联
                                 Assignment assignment = item.getAssignment();
-                                if (assignment != null) {
+                                if (assignment != null && assignment.getAssignedVehicle() != null
+                                        && assignment.getAssignedVehicle().getId().equals(vehicle.getId())) {
+
                                     // 标记 Assignment 为已完成
                                     markAssignmentAsCompleted(assignment.getId());
-                                    if (assignment.getAssignedVehicle() != null){
-                                        Vehicle assignedVehicle = vehicleRepository.findById(
-                                                assignment.getAssignedVehicle().getId()
-                                        ).orElse(null);
-                                        if (assignedVehicle != null) {
-                                            // 解除双向关联
-                                            assignedVehicle.removeAssignment(assignment);
-                                            // 检查车辆是否还有其他进行中的任务
-                                            boolean hasOtherActiveAssignments = assignedVehicle.getAssignments()
-                                                    .stream()
-                                                    .anyMatch(a ->
-                                                            a.getStatus() == Assignment.AssignmentStatus.ASSIGNED ||
-                                                                    a.getStatus() == Assignment.AssignmentStatus.IN_PROGRESS
-                                                    );
 
-                                            // 如果没有其他进行中的任务，才重置状态
-                                            if (!hasOtherActiveAssignments) {
-                                                assignedVehicle.setCurrentStatus(Vehicle.VehicleStatus.IDLE);
-                                                assignedVehicle.setPreviousStatus(Vehicle.VehicleStatus.ORDER_DRIVING);
-                                                assignedVehicle.setStatusStartTime(LocalDateTime.now());
-                                                assignedVehicle.setCurrentPOI(null);
-                                            }
-                                            assignedVehicle.setUpdatedTime(LocalDateTime.now());
-                                            vehicleRepository.save(assignedVehicle);
+                                    // 解除车辆与任务的关联
+                                    Vehicle assignedVehicle = vehicleRepository.findById(vehicle.getId())
+                                            .orElse(null);
+                                    if (assignedVehicle != null) {
+                                        assignedVehicle.removeAssignment(assignment);
+
+                                        // 检查车辆是否还有其他进行中的任务
+                                        boolean hasOtherActiveAssignments = assignedVehicle.getAssignments()
+                                                .stream()
+                                                .anyMatch(a ->
+                                                        a.getStatus() == Assignment.AssignmentStatus.ASSIGNED ||
+                                                                a.getStatus() == Assignment.AssignmentStatus.IN_PROGRESS
+                                                );
+
+                                        // 如果没有其他进行中的任务，重置状态
+                                        if (!hasOtherActiveAssignments) {
+                                            assignedVehicle.setCurrentStatus(Vehicle.VehicleStatus.IDLE);
+                                            assignedVehicle.setPreviousStatus(Vehicle.VehicleStatus.UNLOADING);
+                                            assignedVehicle.setStatusStartTime(LocalDateTime.now());
+                                            assignedVehicle.setCurrentPOI(endPOI);
+                                            assignedVehicle.setCurrentLongitude(endPOI.getLongitude());
+                                            assignedVehicle.setCurrentLatitude(endPOI.getLatitude());
+                                            assignedVehicle.setCurrentLoad(0.0);
+                                            assignedVehicle.setCurrentVolumn(0.0);
                                         }
-                                    } else {
-                                        // 如果没有分配车辆，记录日志
-                                        System.out.println("Assignment " + assignment.getId() + " 没有分配车辆");
+                                        assignedVehicle.setUpdatedTime(LocalDateTime.now());
+                                        vehicleRepository.save(assignedVehicle);
                                     }
-                                    if (assignment.getShipmentItems() != null) {
-                                        assignment.getShipmentItems().remove(item);
-                                    }
+
+                                    // 删除ShipmentItem
                                     item.setAssignment(null);
+                                    assignment.getShipmentItems().remove(item);
+
                                     if (assignment.getShipmentItems().isEmpty()) {
-                                        // 解除与Vehicle和Driver的关联
-                                        assignment.setAssignedVehicle(null);
-                                        assignment.setAssignedDriver(null);
                                         // 删除这个Assignment
                                         assignmentRepository.delete(assignment);
                                         System.out.println("删除空Assignment: " + assignment.getId());
                                     } else {
-                                        // 如果还有其他item，则保存更新
                                         assignmentRepository.save(assignment);
                                     }
+
+                                    shipmentItemRepository.delete(item);
                                 }
-                                // 删除ShipmentItem
-                                shipmentItemRepository.delete(item);
                             }
 
-                            // 清除Shipment的items集合（如果使用双向关联）
-                            freshShipment.getItems().clear();
-                            shipmentRepository.save(freshShipment); // 确保状态同步
-
-                            // 最后删除Shipment
-                            shipmentRepository.delete(freshShipment);
-                            System.out.println("已删除相关运单: " + freshShipment.getRefNo());
+                            // 检查Shipment是否还有items，如果没有则删除
+                            List<ShipmentItem> remainingItems = shipmentItemRepository.findByShipmentId(freshShipment.getId());
+                            if (remainingItems.isEmpty()) {
+                                freshShipment.getItems().clear();
+                                shipmentRepository.save(freshShipment);
+                                shipmentRepository.delete(freshShipment);
+                                System.out.println("已删除相关运单: " + freshShipment.getRefNo());
+                            } else {
+                                // 更新Shipment的总重量和体积
+                                double totalWeight = remainingItems.stream()
+                                        .mapToDouble(ShipmentItem::getWeight)
+                                        .sum();
+                                double totalVolume = remainingItems.stream()
+                                        .mapToDouble(ShipmentItem::getVolume)
+                                        .sum();
+                                freshShipment.setTotalWeight(totalWeight);
+                                freshShipment.setTotalVolume(totalVolume);
+                                shipmentRepository.save(freshShipment);
+                            }
                         }
                     }
                 }
 
-                // 关键修改：使用freshPOI而不是poiForTest
-                freshPOI.removeGoodsEnrollment(enrollment);
-                goalGoods.removePOIEnrollment(enrollment);
-                enrollmentRepository.delete(enrollment);
+                // 减少Enrollment中的货物数量，而不是直接删除
+                // 这里假设每个Enrollment对应一个起点POI的货物
+                int remainingQuantity = enrollment.getQuantity();
+                if (remainingQuantity > 0) {
+                    // 计算车辆运输的货物数量
+                    // 这里需要根据实际情况调整，这里简化处理
+                    enrollment.setQuantity(remainingQuantity - 1); // 假设每次运1单位
+                    if (enrollment.getQuantity() <= 0) {
+                        // 如果货物全部运完，删除Enrollment
+                        freshStartPOI.removeGoodsEnrollment(enrollment);
+                        goalGoods.removePOIEnrollment(enrollment);
+                        enrollmentRepository.delete(enrollment);
+                        System.out.println("已删除" + freshStartPOI.getName() + "中的货物" + goalGoods.getName());
+                    } else {
+                        enrollmentRepository.save(enrollment);
+                    }
+                }
 
-                System.out.println("已删除" + freshPOI.getName() + "中的货物" + goalGoods.getName());
-
-                // 保存更新
-                poiRepository.save(freshPOI);
+                poiRepository.save(freshStartPOI);
                 goodsRepository.save(goalGoods);
             }
         }
-        POI endPOI = startToEndMapping.get(poiForTest);
-        if (endPOI != null) {
-            String pairId = generatePoiPairKey(freshPOI, endPOI);
-            markPairAsCompleted(pairId);
 
-            // 从映射中移除
-            startToEndMapping.remove(poiForTest);
+        // 检查是否还有Enrollment，如果没有，则移除配对关系
+        List<Enrollment> remainingEnrollments = new ArrayList<>(freshStartPOI.getEnrollments());
+        if (remainingEnrollments.isEmpty()) {
+            POI endPOI = startToEndMapping.get(startPOI);
+            if (endPOI != null) {
+                String pairId = generatePoiPairKey(freshStartPOI, endPOI);
+                markPairAsCompleted(pairId);
+                startToEndMapping.remove(startPOI);
+
+                // 更新POI状态
+                poiIsWithGoods.put(freshStartPOI, false);
+                trueProbability = trueProbability / 0.95;
+            }
         }
+    }
 
-        // 更新本地map状态
-        poiIsWithGoods.put(freshPOI, false);
+    // 添加一个新方法，供前端通知车辆到达终点
+    @Transactional
+    public void vehicleArrivedAtDestination(Long vehicleId, Long endPOIId) {
+        try {
+            Vehicle vehicle = vehicleRepository.findById(vehicleId)
+                    .orElseThrow(() -> new RuntimeException("车辆不存在: " + vehicleId));
+
+            POI endPOI = poiRepository.findById(endPOIId)
+                    .orElseThrow(() -> new RuntimeException("终点POI不存在: " + endPOIId));
+
+            // 找到车辆当前的Assignment
+            List<Assignment> vehicleAssignments = assignmentRepository.findByAssignedVehicleId(vehicleId);
+            Assignment activeAssignment = vehicleAssignments.stream()
+                    .filter(a -> a.getStatus() == Assignment.AssignmentStatus.IN_PROGRESS)
+                    .findFirst()
+                    .orElse(null);
+
+            if (activeAssignment != null) {
+                // 获取起点POI
+                POI startPOI = activeAssignment.getRoute().getStartPOI();
+
+                // 执行货物删除操作
+                shipOutGoodsWhenVehicleArrives(startPOI, endPOI, vehicle);
+
+                System.out.println("车辆 " + vehicle.getLicensePlate() +
+                        " 已确认到达终点 " + endPOI.getName());
+            } else {
+                System.out.println("车辆 " + vehicle.getLicensePlate() +
+                        " 没有活跃的运输任务");
+            }
+        } catch (Exception e) {
+            System.err.println("处理车辆到达终点时出错: " + e.getMessage());
+            throw new RuntimeException("处理车辆到达失败", e);
+        }
     }
 
     /**
