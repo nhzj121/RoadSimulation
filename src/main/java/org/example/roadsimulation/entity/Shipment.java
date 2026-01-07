@@ -29,7 +29,6 @@ import java.util.Set;
         }
 )
 public class Shipment {
-
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;

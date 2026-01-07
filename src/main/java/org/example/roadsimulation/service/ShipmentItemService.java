@@ -1,6 +1,8 @@
 package org.example.roadsimulation.service;
 
 import org.example.roadsimulation.dto.BatchOperationResult;
+import org.example.roadsimulation.entity.Goods;
+import org.example.roadsimulation.entity.Shipment;
 import org.example.roadsimulation.entity.ShipmentItem;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -40,5 +42,5 @@ public interface ShipmentItemService {
     // 删除运单清单
     void deleteShipmentItem(Long shipmentItemId);
 
-
+    ShipmentItem initalizeShipmentItem(Shipment shipment, Goods goods, Integer quantity);
 }

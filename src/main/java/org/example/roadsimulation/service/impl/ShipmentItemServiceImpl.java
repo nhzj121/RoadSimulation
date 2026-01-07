@@ -3,6 +3,7 @@ package org.example.roadsimulation.service.impl;
 import org.example.roadsimulation.dto.BatchOperationResult;
 import org.example.roadsimulation.dto.BatchError;
 import org.example.roadsimulation.entity.Assignment;
+import org.example.roadsimulation.entity.Goods;
 import org.example.roadsimulation.entity.Shipment;
 import org.example.roadsimulation.entity.ShipmentItem;
 import org.example.roadsimulation.repository.ShipmentItemRepository;
@@ -312,5 +313,27 @@ public class ShipmentItemServiceImpl implements ShipmentItemService {
         summary.put("totalVolume", shipmentItemRepository.sumVolumeByShipmentId(shipmentId));
         summary.put("totalWeight", shipmentItemRepository.sumWeightByShipmentId(shipmentId));
         return summary;
+    }
+
+    public ShipmentItem initalizeShipmentItem(Shipment shipment, Goods goods, Integer quantity) {
+        try {
+            ShipmentItem shipmentItem = new ShipmentItem(
+                    shipment,
+                    goods.getName(),
+                    quantity,
+                    goods.getSku(),
+                    goods.getWeightPerUnit() * quantity,
+                    goods.getVolumePerUnit() * quantity
+            );
+
+            // 关键：关联Goods实体
+            shipmentItem.setGoods(goods);
+
+            return shipmentItemRepository.save(shipmentItem);
+
+        } catch (Exception e) {
+            System.out.println("生成运单明细失败 - 运单: " + shipment.getRefNo() + ", 货物: " + goods.getName());
+            throw new RuntimeException("生成运单明细失败", e);
+        }
     }
 }

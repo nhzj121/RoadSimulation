@@ -581,7 +581,7 @@ const haversineDistance = (a, b) => {
 
 // marker 匀速沿 path 移动（path: [[lng,lat],...], speed 米/秒），返回 cancel 函数
 // 方法基于车辆在 path 相邻两项之间 沿直线 匀速运动
-const animateAlongPath = (marker, path, speed = 20) => {
+const animateAlongPath = (marker, path, speed = 50) => {
   // 确保运动路径的有效性
   if (!path || path.length < 2) return () => {};
   const segLengths = [];

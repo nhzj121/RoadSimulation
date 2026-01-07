@@ -9,6 +9,7 @@ import org.example.roadsimulation.dto.POIPairDTO;
 import org.example.roadsimulation.entity.*;
 import org.example.roadsimulation.repository.*;
 import org.example.roadsimulation.service.GoodsPOIGenerateService;
+import org.example.roadsimulation.service.ShipmentItemService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -36,9 +37,9 @@ import java.util.stream.Collectors;
  *
  * 货物与车辆对应设置：
  * 水泥：
- *     1t级别：金杯T3
- *     5t级别：重汽HOWO统帅 仓栅式轻卡
- *     10t级别：中国重汽HOWO G5X 中卡
+ *     20袋 1t级别：金杯T3
+ *     100袋 5t级别：重汽HOWO统帅 仓栅式轻卡
+ *     200袋 10t级别：中国重汽HOWO G5X 中卡
  *
  */
 
@@ -56,6 +57,7 @@ public class DataInitializer{
     private final ShipmentRepository shipmentRepository;
     private final ShipmentItemRepository shipmentItemRepository;
     private final SimulationDataCleanupService cleanupService;
+    private final ShipmentItemService shipmentItemService;
     private final VehicleRepository vehicleRepository;
 
     private final Map<POI, POI> startToEndMapping = new ConcurrentHashMap<>(); // 起点到终点的映射关系
@@ -121,7 +123,8 @@ public class DataInitializer{
                            ShipmentItemRepository shipmentItemRepository,
                            SimulationDataCleanupService cleanupService,
                            AssignmentRepository assignmentRepository,
-                           VehicleRepository vehicleRepository) {
+                           VehicleRepository vehicleRepository,
+                           ShipmentItemService shipmentItemService) {
         this.goodsPOIGenerateService = goodsPOIGenerateService;
         this.enrollmentRepository = enrollmentRepository;
         this.goodsRepository = goodsRepository;
@@ -134,6 +137,7 @@ public class DataInitializer{
         this.cleanupService = cleanupService;
         this.assignmentRepository = assignmentRepository;
         this.vehicleRepository = vehicleRepository;
+        this.shipmentItemService = shipmentItemService;
     }
 
     /**
@@ -335,19 +339,17 @@ public class DataInitializer{
                         setPoiToFalse(poi); // 重置状态
                         continue;
                     }
-                    Random vehicleRandom = new Random();
-                    Vehicle vehicle = idleVehicles.get(vehicleRandom.nextInt(idleVehicles.size()));
-                    Vehicle freshVehicle = vehicleRepository.findById(vehicle.getId())
-                            .orElseThrow(() -> new RuntimeException("车辆不存在: " + vehicle.getId()));
                     Route route = initializeRoute(poi, endPOI); // 初始化路径
                     // 初始化的运单，运单清单，记录
-                    ShipmentItem goalShipmentItem = createCompleteGoodsTransport(poi, endPOI, Cement, generateQuantity);
+                    Map<Vehicle, ShipmentItem> vehicleShipmentItemMap = createCompleteGoodsTransport(poi, endPOI, Cement, generateQuantity, idleVehicles);
+
+
                     // 初始化运输任务
-                    Assignment goalAssignment = initalizeAssignment(goalShipmentItem, route);
+                    List<Assignment> goalAssignments = initalizeAssignment(vehicleShipmentItemMap, route);
 
                     // ToDo 车辆分配运输任务逻辑，这里先简单实现进行流程信息完整性测试
                     // 完整建立车辆与任务的双向关联
-                    establishVehicleAssignmentRelationship(freshVehicle, goalAssignment, poi, endPOI);
+                    establishVehicleAssignmentRelationship(goalAssignments, poi, endPOI);
 
                     startToEndMapping.put(poi, endPOI); // 保存对应关系
 
@@ -494,7 +496,7 @@ public class DataInitializer{
      */
     private Integer generateRandomQuantity() {
         Random random = new Random();
-        return random.nextInt(25) + 10; // 100-600之间的随机数
+        return random.nextInt(250) + 50; // 100-600之间的随机数
     }
 
     // 起点与终点之间通过 route 实现的关系建立
@@ -605,80 +607,156 @@ public class DataInitializer{
     }
 
     @Transactional(rollbackFor = Exception.class)
-    public ShipmentItem createCompleteGoodsTransport(POI startPOI, POI endPOI, Goods goods, Integer quantity) {
+    public Map<Vehicle, ShipmentItem> createCompleteGoodsTransport(POI startPOI, POI endPOI, Goods goods, Integer quantity, List<Vehicle> vehicles) {
         // 1. 创建Shipment
         Shipment shipment = initalizeShipment(startPOI, endPOI, goods, quantity);
 
-        // 2. 创建ShipmentItem并关联
-        ShipmentItem shipmentItem = initalizeShipmentItem(shipment, goods, quantity);
+        Map<Vehicle, ShipmentItem> vehicleShipmentItemMap = splitAndCreateShipmentItems(shipment, goods, quantity, vehicles);
 
         // 3. 建立POI与Goods的Enrollment关系
         initRelationBetweenPOIAndGoods(startPOI, goods, quantity);
 
-        return shipmentItem;
+        return vehicleShipmentItemMap;
+    }
+
+    // ToDo 对于剩余货物暂时没有车辆可以用于运输的情况需要另外考虑
+    private Map<Vehicle, ShipmentItem> splitAndCreateShipmentItems(
+            Shipment shipment, Goods goods, Integer totalQuantity, List<Vehicle> sortedVehicles) {
+
+        Map<Vehicle, ShipmentItem> vehicleShipmentItemMap = new LinkedHashMap<>();
+        int remainingQuantity = totalQuantity;
+
+        System.out.println("开始拆分货物，总数量: " + totalQuantity + "，可用车辆: " + sortedVehicles.size());
+
+        // 为每辆车分配货物，直到货物全部分配完或没有可用车辆
+        for (Vehicle vehicle : sortedVehicles) {
+            if (remainingQuantity <= 0) {
+                break;
+            }
+
+            // 计算这辆车能运输的最大货物量（基于载重限制）
+            Double maxLoad = vehicle.getMaxLoadCapacity();
+            if (maxLoad == null || goods.getWeightPerUnit() == null) {
+                System.out.println("车辆 " + vehicle.getLicensePlate() + " 缺少载重或货物重量信息，跳过");
+                continue;
+            }
+
+            // 计算车辆能承载的货物数量（向下取整）
+            int capacityInUnits = (int) Math.floor(maxLoad / goods.getWeightPerUnit());
+
+            // 本次分配的数量 = min(车辆容量, 剩余货物量)
+            int assignQuantity = Math.min(capacityInUnits, remainingQuantity);
+
+            if (assignQuantity > 0) {
+                // 为这辆车创建运单清单
+                ShipmentItem shipmentItem = shipmentItemService.initalizeShipmentItem(shipment, goods, assignQuantity);
+                vehicleShipmentItemMap.put(vehicle, shipmentItem);
+
+                // 更新剩余货物量
+                remainingQuantity -= assignQuantity;
+
+                System.out.printf(
+                        "车辆 %s (载重%.2ft) 分配 %d 件货物，剩余 %d 件%n",
+                        vehicle.getLicensePlate(), maxLoad, assignQuantity, remainingQuantity
+                );
+            }
+        }
+
+        // 检查是否还有剩余货物
+        if (remainingQuantity > 0) {
+            System.out.println("警告: 仍有 " + remainingQuantity + " 件货物未分配，需要更多车辆或更大载重车辆");
+            // 为剩余货物创建一个运单清单（不指定车辆）
+            ShipmentItem remainingItem = shipmentItemService.initalizeShipmentItem(shipment, goods, remainingQuantity);
+            vehicleShipmentItemMap.put(null, remainingItem); // 车辆为null表示未分配
+        }
+
+        System.out.println("货物拆分完成，共创建 " + vehicleShipmentItemMap.size() + " 个运单清单");
+        return vehicleShipmentItemMap;
     }
 
     @Transactional
-    public Assignment initalizeAssignment(ShipmentItem shipmentItem, Route route) {
-        if(shipmentItem == null){
-            throw new IllegalArgumentException("运单清单为空");
-        } else if(route == null){
-            throw new IllegalArgumentException("运输线路规划出错");
-        } else{
-            Assignment assignment = new Assignment(shipmentItem, route);
-            assignmentRepository.save(assignment);
-            return assignment;
+    public List<Assignment> initalizeAssignment(Map<Vehicle, ShipmentItem> vehicleShipmentItemMap, Route route) {
+        List<Assignment> assignments = new ArrayList<>();
+        for (Map.Entry<Vehicle, ShipmentItem> entry : vehicleShipmentItemMap.entrySet()) {
+            Vehicle vehicle = entry.getKey();
+            ShipmentItem shipmentItem = entry.getValue();
+
+            if (shipmentItem == null) {
+                throw new IllegalArgumentException("运单清单为空");
+            } else if (route == null) {
+                throw new IllegalArgumentException("运输线路规划出错");
+            } else {
+                Assignment assignment = new Assignment(shipmentItem, route);
+
+                // 关键：如果车辆不为null，则分配给任务
+                if (vehicle != null) {
+                    assignment.setAssignedVehicle(vehicle);
+                }
+
+                assignmentRepository.save(assignment);
+                assignments.add(assignment);
+            }
         }
+        return assignments;
     }
 
     /**
      * 建立车辆与任务的双向关联
      */
     // ToDO 这里的逻辑是基于车辆在起点来实现的，具体的车辆匹配函数需要后续再完善。
-    private void establishVehicleAssignmentRelationship(Vehicle vehicle, Assignment assignment, POI startPOI, POI endPOI) {
+    private void establishVehicleAssignmentRelationship(List<Assignment> assignments, POI startPOI, POI endPOI) {
         try {
-            // 1. 重新从数据库加载POI实体，确保它们在当前Session中
+            // 1. 重新从数据库加载POI实体
             POI managedStartPOI = poiRepository.findById(startPOI.getId())
                     .orElseThrow(() -> new RuntimeException("起点POI不存在: " + startPOI.getId()));
             POI managedEndPOI = poiRepository.findById(endPOI.getId())
                     .orElseThrow(() -> new RuntimeException("终点POI不存在: " + endPOI.getId()));
 
-            // 2. 重新加载车辆实体
-            Vehicle managedVehicle = vehicleRepository.findById(vehicle.getId())
-                    .orElseThrow(() -> new RuntimeException("车辆不存在: " + vehicle.getId()));
+            for (Assignment assignment : assignments) {
+                Vehicle vehicle = assignment.getAssignedVehicle();
 
-            // 3. 双向关联：车辆添加任务
-            managedVehicle.addAssignment(assignment);
+                // 检查是否有分配的车辆
+                if (vehicle == null) {
+                    System.out.println("警告：Assignment " + assignment.getId() + " 没有分配车辆，跳过");
+                    continue;
+                }
 
-            // 4. 更新车辆状态
-            managedVehicle.setCurrentStatus(Vehicle.VehicleStatus.ORDER_DRIVING);
-            managedVehicle.setPreviousStatus(Vehicle.VehicleStatus.IDLE);
-            managedVehicle.setStatusStartTime(LocalDateTime.now());
-            managedVehicle.setStatusDurationSeconds(0L); // 重置持续时间
+                // 2. 重新加载车辆实体
+                Vehicle managedVehicle = vehicleRepository.findById(vehicle.getId())
+                        .orElseThrow(() -> new RuntimeException("车辆不存在: " + vehicle.getId()));
 
-            // 5. 使用重新加载的POI设置当前位置
-            managedVehicle.setCurrentPOI(managedStartPOI);
-            if (managedStartPOI.getLongitude() != null && managedStartPOI.getLatitude() != null) {
-                managedVehicle.setCurrentLongitude(managedStartPOI.getLongitude());
-                managedVehicle.setCurrentLatitude(managedStartPOI.getLatitude());
+                // 3. 双向关联：车辆添加任务
+                managedVehicle.addAssignment(assignment);
+
+                // 4. 更新车辆状态
+                managedVehicle.setCurrentStatus(Vehicle.VehicleStatus.ORDER_DRIVING);
+                managedVehicle.setPreviousStatus(Vehicle.VehicleStatus.IDLE);
+                managedVehicle.setStatusStartTime(LocalDateTime.now());
+                managedVehicle.setStatusDurationSeconds(0L);
+
+                // 5. 设置当前位置
+                managedVehicle.setCurrentPOI(managedStartPOI);
+                if (managedStartPOI.getLongitude() != null && managedStartPOI.getLatitude() != null) {
+                    managedVehicle.setCurrentLongitude(managedStartPOI.getLongitude());
+                    managedVehicle.setCurrentLatitude(managedStartPOI.getLatitude());
+                }
+
+                // 6. 设置任务状态
+                assignment.setStatus(Assignment.AssignmentStatus.ASSIGNED);
+                assignment.setUpdatedTime(LocalDateTime.now());
+                assignment.setUpdatedBy("DataInitializer -- 运输任务成功分配");
+
+                // 7. 更新车辆信息
+                managedVehicle.setUpdatedBy("DataInitializer -- 车辆接收运输任务");
+                managedVehicle.setUpdatedTime(LocalDateTime.now());
+
+                // 8. 保存所有更改
+                vehicleRepository.save(managedVehicle);
+                assignmentRepository.save(assignment);
+
+                System.out.println("成功分配车辆 " + managedVehicle.getLicensePlate() +
+                        " 给任务，从 " + managedStartPOI.getName() + " 到 " + managedEndPOI.getName());
             }
-
-            // 6. 设置任务状态
-            assignment.setStatus(Assignment.AssignmentStatus.ASSIGNED);
-            assignment.setUpdatedTime(LocalDateTime.now());
-            assignment.setUpdatedBy("DataInitializer -- 运输任务成功分配");
-
-            // 7. 更新车辆的四元组信息
-            managedVehicle.setUpdatedBy("DataInitializer -- 车辆接收运输任务");
-            managedVehicle.setUpdatedTime(LocalDateTime.now());
-
-            // 8. 保存所有更改
-            vehicleRepository.save(managedVehicle);
-            assignmentRepository.save(assignment);
-
-            System.out.println("成功分配车辆 " + managedVehicle.getLicensePlate() +
-                    " 给任务，从 " + managedStartPOI.getName() + " 到 " + managedEndPOI.getName());
-
         } catch (Exception e) {
             System.err.println("建立车辆任务关联失败: " + e.getMessage());
             throw new RuntimeException("车辆任务关联失败", e);
@@ -736,29 +814,34 @@ public class DataInitializer{
                                 // 先清除关联
                                 Assignment assignment = item.getAssignment();
                                 if (assignment != null) {
-                                    Vehicle assignedVehicle = vehicleRepository.findById(
-                                            assignment.getAssignedVehicle().getId()
-                                    ).orElse(null);
-                                    if (assignedVehicle != null) {
-                                        // 解除双向关联
-                                        assignedVehicle.removeAssignment(assignment);
-                                        // 检查车辆是否还有其他进行中的任务
-                                        boolean hasOtherActiveAssignments = assignedVehicle.getAssignments()
-                                                .stream()
-                                                .anyMatch(a ->
-                                                        a.getStatus() == Assignment.AssignmentStatus.ASSIGNED ||
-                                                                a.getStatus() == Assignment.AssignmentStatus.IN_PROGRESS
-                                                );
+                                    if (assignment.getAssignedVehicle() != null){
+                                        Vehicle assignedVehicle = vehicleRepository.findById(
+                                                assignment.getAssignedVehicle().getId()
+                                        ).orElse(null);
+                                        if (assignedVehicle != null) {
+                                            // 解除双向关联
+                                            assignedVehicle.removeAssignment(assignment);
+                                            // 检查车辆是否还有其他进行中的任务
+                                            boolean hasOtherActiveAssignments = assignedVehicle.getAssignments()
+                                                    .stream()
+                                                    .anyMatch(a ->
+                                                            a.getStatus() == Assignment.AssignmentStatus.ASSIGNED ||
+                                                                    a.getStatus() == Assignment.AssignmentStatus.IN_PROGRESS
+                                                    );
 
-                                        // 如果没有其他进行中的任务，才重置状态
-                                        if (!hasOtherActiveAssignments) {
-                                            assignedVehicle.setCurrentStatus(Vehicle.VehicleStatus.IDLE);
-                                            assignedVehicle.setPreviousStatus(Vehicle.VehicleStatus.ORDER_DRIVING);
-                                            assignedVehicle.setStatusStartTime(LocalDateTime.now());
-                                            assignedVehicle.setCurrentPOI(null);
+                                            // 如果没有其他进行中的任务，才重置状态
+                                            if (!hasOtherActiveAssignments) {
+                                                assignedVehicle.setCurrentStatus(Vehicle.VehicleStatus.IDLE);
+                                                assignedVehicle.setPreviousStatus(Vehicle.VehicleStatus.ORDER_DRIVING);
+                                                assignedVehicle.setStatusStartTime(LocalDateTime.now());
+                                                assignedVehicle.setCurrentPOI(null);
+                                            }
+                                            assignedVehicle.setUpdatedTime(LocalDateTime.now());
+                                            vehicleRepository.save(assignedVehicle);
                                         }
-                                        assignedVehicle.setUpdatedTime(LocalDateTime.now());
-                                        vehicleRepository.save(assignedVehicle);
+                                    } else {
+                                        // 如果没有分配车辆，记录日志
+                                        System.out.println("Assignment " + assignment.getId() + " 没有分配车辆");
                                     }
                                     if (assignment.getShipmentItems() != null) {
                                         assignment.getShipmentItems().remove(item);
