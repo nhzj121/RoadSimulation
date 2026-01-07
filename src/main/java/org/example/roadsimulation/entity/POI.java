@@ -178,6 +178,9 @@ public class POI {
      * 内部方法，仅供 Vehicle 实体调用
      */
     protected void internalAddVehicle(Vehicle vehicle) {
+        if (vehiclesAtLocation == null) {
+            vehiclesAtLocation = new HashSet<>();
+        }
         this.vehiclesAtLocation.add(vehicle);
     }
 
@@ -185,7 +188,9 @@ public class POI {
      * 内部方法，仅供 Vehicle 实体调用
      */
     protected void internalRemoveVehicle(Vehicle vehicle) {
-        this.vehiclesAtLocation.remove(vehicle);
+        if (vehiclesAtLocation != null) {
+            this.vehiclesAtLocation.remove(vehicle);
+        }
     }
 
     @Override

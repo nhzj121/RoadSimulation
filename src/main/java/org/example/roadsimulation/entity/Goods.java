@@ -47,7 +47,7 @@ public class Goods {
 
     @Min(value = 0, message = "单件重量不能为负数")
     @Column(name = "weight_per_unit")
-    private Double weightPerUnit; // kg
+    private Double weightPerUnit; // t
 
     @Min(value = 0, message = "单件体积不能为负数")
     @Column(name = "volume_per_unit")

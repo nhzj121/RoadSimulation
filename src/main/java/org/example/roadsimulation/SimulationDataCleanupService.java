@@ -7,6 +7,8 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 
 // SimulationDataCleanupService.java
@@ -24,6 +26,9 @@ public class SimulationDataCleanupService {
 
     @Autowired
     private RouteRepository routeRepository;
+
+    @Autowired
+    private POIRepository poiRepository;
 
     @Autowired
     private AssignmentRepository assignmentRepository;
@@ -163,14 +168,90 @@ public class SimulationDataCleanupService {
                 }
             }
 
-            System.out.println(String.format(
-                    "清理完成：ShipmentItem=%d, Shipment=%d, Enrollment=%d",
+            System.out.printf(
+                    "清理完成：ShipmentItem=%d, Shipment=%d, Enrollment=%d%n",
                     deletedItems, deletedShipments, deletedEnrollments
-            ));
+            );
 
         } catch (Exception e) {
             System.err.println("清理水泥模拟数据时出错: " + e.getMessage());
             throw e;
         }
+    }
+
+    /**
+     * 重置所有车辆到指定POI（成都市中心）
+     */
+    @Transactional
+    public void resetAllVehiclesToPOI(Long poiId) {
+        System.out.println("开始重置所有车辆到POI ID: " + poiId + " (成都市中心)...");
+
+        try {
+            // 获取目标POI（成都市中心）
+            POI chengduCenter = poiRepository.findById(poiId)
+                    .orElseThrow(() -> new RuntimeException("未找到POI ID为 " + poiId + " 的POI（成都市中心）"));
+
+            // 获取所有车辆
+            List<Vehicle> allVehicles = vehicleRepository.findAll();
+            int resetCount = 0;
+
+            for (Vehicle vehicle : allVehicles) {
+                try {
+                    // 1. 解除所有任务的关联
+                    List<Assignment> vehicleAssignments = new ArrayList<>(vehicle.getAssignments());
+                    for (Assignment assignment : vehicleAssignments) {
+                        vehicle.removeAssignment(assignment);
+                        assignment.setAssignedVehicle(null);
+                        assignmentRepository.save(assignment);
+                    }
+
+                    // 2. 重置车辆状态
+                    vehicle.setCurrentStatus(Vehicle.VehicleStatus.IDLE);
+                    vehicle.setPreviousStatus(null);
+                    vehicle.setStatusStartTime(LocalDateTime.now());
+                    vehicle.setStatusDurationSeconds(0L);
+
+                    // 3. 重置位置到成都市中心
+                    vehicle.setCurrentPOI(chengduCenter);
+                    if (chengduCenter.getLongitude() != null && chengduCenter.getLatitude() != null) {
+                        vehicle.setCurrentLongitude(chengduCenter.getLongitude());
+                        vehicle.setCurrentLatitude(chengduCenter.getLatitude());
+                    }
+
+                    // 4. 重置当前负载
+                    vehicle.setCurrentLoad(0.0);
+
+                    // 5. 清除司机关联（如果需要）
+                    // vehicle.getDrivers().clear(); // 根据业务需求决定是否清除司机关联
+
+                    // 6. 更新四元组信息
+                    vehicle.setUpdatedBy("System - Vehicle Reset");
+                    vehicle.setUpdatedTime(LocalDateTime.now());
+
+                    vehicleRepository.save(vehicle);
+                    resetCount++;
+
+                    System.out.println("已重置车辆: " + vehicle.getLicensePlate() +
+                            " 到POI: " + chengduCenter.getName());
+
+                } catch (Exception e) {
+                    System.err.println("重置车辆 " + vehicle.getLicensePlate() + " 时出错: " + e.getMessage());
+                }
+            }
+
+            System.out.println("车辆重置完成，共重置 " + resetCount + " 辆车辆到成都市中心");
+
+        } catch (Exception e) {
+            System.err.println("重置车辆到POI时出错: " + e.getMessage());
+            throw new RuntimeException("重置车辆失败", e);
+        }
+    }
+
+    /**
+     * 重置所有车辆到成都市中心（POI ID: 3466）
+     */
+    @Transactional
+    public void resetAllVehiclesToChengduCenter() {
+        resetAllVehiclesToPOI(3466L);
     }
 }

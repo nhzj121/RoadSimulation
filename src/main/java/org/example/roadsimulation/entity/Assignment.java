@@ -146,7 +146,7 @@ public class Assignment {
         // 如果当前已有车辆，先从该车辆的集合中移除自己
         Vehicle oldVehicle = this.assignedVehicle;
         if (oldVehicle != null) {
-            oldVehicle.removeAssignment(this);
+            oldVehicle.getAssignments().remove(this);
         }
 
         // 设置新的车辆
@@ -154,7 +154,7 @@ public class Assignment {
 
         // 如果新车辆不为空，将自己添加到新车辆的集合中
         if (vehicle != null) {
-            vehicle.addAssignment(this);
+            vehicle.getAssignments().add(this);
         }
     }
 
