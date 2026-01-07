@@ -93,4 +93,6 @@ public interface VehicleRepository extends JpaRepository<Vehicle, Long> {
     List<Vehicle> findVehiclesNearLocation(@Param("latitude") Double latitude,
                                            @Param("longitude") Double longitude,
                                            @Param("radiusKm") Double radiusKm);
+
+    List<Vehicle> findBySuitableGoods(String suitableGoods);
 }

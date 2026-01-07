@@ -88,6 +88,7 @@ public class VehicleInitializationServiceImpl implements VehicleInitializationSe
                 successCount, skipCount, errorCount);
     }
 
+    ///
     @Override
     public Vehicle resetVehicleToPOI(Long vehicleId, Long poiId) {
         logger.info("重置车辆 {} 到 POI {}", vehicleId, poiId);
@@ -350,6 +351,7 @@ public class VehicleInitializationServiceImpl implements VehicleInitializationSe
         logger.info("设置默认POI为: {}", poiId);
     }
 
+    ///
     @Override
     public boolean canInitializeVehicle(Long vehicleId) {
         Vehicle vehicle = vehicleRepository.findById(vehicleId).orElse(null);

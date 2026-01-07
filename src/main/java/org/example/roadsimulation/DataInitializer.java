@@ -17,6 +17,7 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.math.BigDecimal;
 import java.text.SimpleDateFormat;
 import java.time.LocalDateTime;
 import java.util.*;
@@ -32,6 +33,12 @@ import java.util.stream.Collectors;
  *  2.2. 因为我们还没有进行具体的 货物 和 POI 对应关系的考虑，所以只能先进行简单的模拟
  * 3. 每个POI点每12秒进行随机的货物删除，模拟车辆运出货物
  * 4. 每个POI点只生成一次货物
+ *
+ * 货物与车辆对应设置：
+ * 水泥：
+ *     1t级别：金杯T3
+ *     5t级别：重汽HOWO统帅 仓栅式轻卡
+ *     10t级别：中国重汽HOWO G5X 中卡
  *
  */
 
@@ -49,6 +56,7 @@ public class DataInitializer{
     private final ShipmentRepository shipmentRepository;
     private final ShipmentItemRepository shipmentItemRepository;
     private final SimulationDataCleanupService cleanupService;
+    private final VehicleRepository vehicleRepository;
 
     private final Map<POI, POI> startToEndMapping = new ConcurrentHashMap<>(); // 起点到终点的映射关系
     // 修改成员变量，使用起点-终点对作为键
@@ -112,7 +120,8 @@ public class DataInitializer{
                            ShipmentRepository shipmentRepository,
                            ShipmentItemRepository shipmentItemRepository,
                            SimulationDataCleanupService cleanupService,
-                           AssignmentRepository assignmentRepository) {
+                           AssignmentRepository assignmentRepository,
+                           VehicleRepository vehicleRepository) {
         this.goodsPOIGenerateService = goodsPOIGenerateService;
         this.enrollmentRepository = enrollmentRepository;
         this.goodsRepository = goodsRepository;
@@ -124,6 +133,7 @@ public class DataInitializer{
         this.shipmentItemRepository = shipmentItemRepository;
         this.cleanupService = cleanupService;
         this.assignmentRepository = assignmentRepository;
+        this.vehicleRepository = vehicleRepository;
     }
 
     /**
@@ -306,12 +316,39 @@ public class DataInitializer{
                     POI endPOI = this.MaterialMarketList.get(random.nextInt(this.MaterialMarketList.size()));
 
                     Integer generateQuantity = generateRandomQuantity();
-                    Vehicle vehicle = null; // ToDo 初始化货物对应车辆，这里暂时设置为null
+
+                    // ToDo 初始化货物对应车辆，这里默认为水泥
+                    // 1. 查询适合货物的车辆（多个）
+                    List<Vehicle> vehicles = vehicleRepository.findBySuitableGoods("CEMENT");
+                    if(vehicles.isEmpty()){
+                        System.out.println("警告：没有适配水泥的车辆，跳过此次配对");
+                        setPoiToFalse(poi); // 重置状态
+                        continue;
+                    }
+                    // 2. 筛选空闲车辆
+                    List<Vehicle> idleVehicles = vehicles.stream()
+                            .filter(v -> v.getCurrentStatus() == Vehicle.VehicleStatus.IDLE)
+                            .collect(Collectors.toList());
+
+                    if(idleVehicles.isEmpty()){
+                        System.out.println("警告：所有适配车辆都在忙碌中，跳过此次配对");
+                        setPoiToFalse(poi); // 重置状态
+                        continue;
+                    }
+                    Random vehicleRandom = new Random();
+                    Vehicle vehicle = idleVehicles.get(vehicleRandom.nextInt(idleVehicles.size()));
+                    Vehicle freshVehicle = vehicleRepository.findById(vehicle.getId())
+                            .orElseThrow(() -> new RuntimeException("车辆不存在: " + vehicle.getId()));
                     Route route = initializeRoute(poi, endPOI); // 初始化路径
                     // 初始化的运单，运单清单，记录
                     ShipmentItem goalShipmentItem = createCompleteGoodsTransport(poi, endPOI, Cement, generateQuantity);
                     // 初始化运输任务
                     Assignment goalAssignment = initalizeAssignment(goalShipmentItem, route);
+
+                    // ToDo 车辆分配运输任务逻辑，这里先简单实现进行流程信息完整性测试
+                    // 完整建立车辆与任务的双向关联
+                    establishVehicleAssignmentRelationship(freshVehicle, goalAssignment, poi, endPOI);
+
                     startToEndMapping.put(poi, endPOI); // 保存对应关系
 
                     // 记录配对关系
@@ -594,6 +631,60 @@ public class DataInitializer{
         }
     }
 
+    /**
+     * 建立车辆与任务的双向关联
+     */
+    // ToDO 这里的逻辑是基于车辆在起点来实现的，具体的车辆匹配函数需要后续再完善。
+    private void establishVehicleAssignmentRelationship(Vehicle vehicle, Assignment assignment, POI startPOI, POI endPOI) {
+        try {
+            // 1. 重新从数据库加载POI实体，确保它们在当前Session中
+            POI managedStartPOI = poiRepository.findById(startPOI.getId())
+                    .orElseThrow(() -> new RuntimeException("起点POI不存在: " + startPOI.getId()));
+            POI managedEndPOI = poiRepository.findById(endPOI.getId())
+                    .orElseThrow(() -> new RuntimeException("终点POI不存在: " + endPOI.getId()));
+
+            // 2. 重新加载车辆实体
+            Vehicle managedVehicle = vehicleRepository.findById(vehicle.getId())
+                    .orElseThrow(() -> new RuntimeException("车辆不存在: " + vehicle.getId()));
+
+            // 3. 双向关联：车辆添加任务
+            managedVehicle.addAssignment(assignment);
+
+            // 4. 更新车辆状态
+            managedVehicle.setCurrentStatus(Vehicle.VehicleStatus.ORDER_DRIVING);
+            managedVehicle.setPreviousStatus(Vehicle.VehicleStatus.IDLE);
+            managedVehicle.setStatusStartTime(LocalDateTime.now());
+            managedVehicle.setStatusDurationSeconds(0L); // 重置持续时间
+
+            // 5. 使用重新加载的POI设置当前位置
+            managedVehicle.setCurrentPOI(managedStartPOI);
+            if (managedStartPOI.getLongitude() != null && managedStartPOI.getLatitude() != null) {
+                managedVehicle.setCurrentLongitude(managedStartPOI.getLongitude());
+                managedVehicle.setCurrentLatitude(managedStartPOI.getLatitude());
+            }
+
+            // 6. 设置任务状态
+            assignment.setStatus(Assignment.AssignmentStatus.ASSIGNED);
+            assignment.setUpdatedTime(LocalDateTime.now());
+            assignment.setUpdatedBy("DataInitializer -- 运输任务成功分配");
+
+            // 7. 更新车辆的四元组信息
+            managedVehicle.setUpdatedBy("DataInitializer -- 车辆接收运输任务");
+            managedVehicle.setUpdatedTime(LocalDateTime.now());
+
+            // 8. 保存所有更改
+            vehicleRepository.save(managedVehicle);
+            assignmentRepository.save(assignment);
+
+            System.out.println("成功分配车辆 " + managedVehicle.getLicensePlate() +
+                    " 给任务，从 " + managedStartPOI.getName() + " 到 " + managedEndPOI.getName());
+
+        } catch (Exception e) {
+            System.err.println("建立车辆任务关联失败: " + e.getMessage());
+            throw new RuntimeException("车辆任务关联失败", e);
+        }
+    }
+
     // POI点与货物关系的建立与删除
     @Transactional
     public void initRelationBetweenPOIAndGoods(POI poiForTest, Goods goodsForTest, Integer generateQuantity) {
@@ -636,8 +727,7 @@ public class DataInitializer{
 
                     if (shipment != null) {
                         // 重新加载Shipment以确保它在当前持久化上下文中
-                        Shipment freshShipment = shipmentRepository.findById(shipment.getId())
-                                .orElse(null);
+                        Shipment freshShipment = shipmentRepository.findById(shipment.getId()).orElse(null);
 
                         if (freshShipment != null) {
                             // 先删除ShipmentItems（使用新的查询方式，避免直接操作集合）
@@ -646,6 +736,30 @@ public class DataInitializer{
                                 // 先清除关联
                                 Assignment assignment = item.getAssignment();
                                 if (assignment != null) {
+                                    Vehicle assignedVehicle = vehicleRepository.findById(
+                                            assignment.getAssignedVehicle().getId()
+                                    ).orElse(null);
+                                    if (assignedVehicle != null) {
+                                        // 解除双向关联
+                                        assignedVehicle.removeAssignment(assignment);
+                                        // 检查车辆是否还有其他进行中的任务
+                                        boolean hasOtherActiveAssignments = assignedVehicle.getAssignments()
+                                                .stream()
+                                                .anyMatch(a ->
+                                                        a.getStatus() == Assignment.AssignmentStatus.ASSIGNED ||
+                                                                a.getStatus() == Assignment.AssignmentStatus.IN_PROGRESS
+                                                );
+
+                                        // 如果没有其他进行中的任务，才重置状态
+                                        if (!hasOtherActiveAssignments) {
+                                            assignedVehicle.setCurrentStatus(Vehicle.VehicleStatus.IDLE);
+                                            assignedVehicle.setPreviousStatus(Vehicle.VehicleStatus.ORDER_DRIVING);
+                                            assignedVehicle.setStatusStartTime(LocalDateTime.now());
+                                            assignedVehicle.setCurrentPOI(null);
+                                        }
+                                        assignedVehicle.setUpdatedTime(LocalDateTime.now());
+                                        vehicleRepository.save(assignedVehicle);
+                                    }
                                     if (assignment.getShipmentItems() != null) {
                                         assignment.getShipmentItems().remove(item);
                                     }
@@ -709,7 +823,9 @@ public class DataInitializer{
     public void cleanupOnShutdown() {
         System.out.println("项目关闭，清理模拟数据...");
         try {
-            // 使用专门的清理服务
+            // 重置所有车辆到成都市中心
+            cleanupService.resetAllVehiclesToChengduCenter();
+            // 清理模拟数据（Enrollment，Assignment，ShipmentItem，Shipment）
             cleanupService.cleanupAllSimulationData();
             System.out.println("模拟数据清理完成");
         } catch (Exception e) {

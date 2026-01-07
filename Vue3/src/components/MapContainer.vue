@@ -137,7 +137,7 @@ const decSpeed = () => speedFactor.value = Math.max(0.5, speedFactor.value - 0.5
 const incSpeed = () => speedFactor.value = Math.min(5, speedFactor.value + 0.5);
 
 const simulationTimer = ref(null);
-const simulationInterval = ref(2000); // 5秒更新一次
+const simulationInterval = ref(8000); // 8秒更新一次
 
 // --- 原有POI功能 ---
 const poiMarkers = ref([]); // 存储POI标记
@@ -581,7 +581,7 @@ const haversineDistance = (a, b) => {
 
 // marker 匀速沿 path 移动（path: [[lng,lat],...], speed 米/秒），返回 cancel 函数
 // 方法基于车辆在 path 相邻两项之间 沿直线 匀速运动
-const animateAlongPath = (marker, path, speed = 30) => {
+const animateAlongPath = (marker, path, speed = 20) => {
   // 确保运动路径的有效性
   if (!path || path.length < 2) return () => {};
   const segLengths = [];
@@ -821,7 +821,7 @@ const drawSingleRoute = async (route) => {
         infoWindow.open(map, movingMarker.getPosition());
       });
 
-      const speedMps = typeof route.speedMps === 'number' ? route.speedMps : 500;
+      const speedMps = typeof route.speedMps === 'number' ? route.speedMps : 20;
       const cancelAnimation = animateAlongPath(movingMarker, path, speedMps);
       animations.push({ marker: movingMarker, cancel: cancelAnimation });
     }

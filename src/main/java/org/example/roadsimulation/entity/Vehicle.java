@@ -5,6 +5,8 @@ import jakarta.persistence.*;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
+import lombok.Getter;
+import lombok.Setter;
 
 import java.math.BigDecimal;
 import java.time.Duration;
@@ -95,6 +97,12 @@ public class Vehicle {
 
     @Column(name = "current_latitude", precision = 10)
     private BigDecimal currentLatitude;
+
+    // 适配货物
+    @Getter
+    @Setter
+    @Column(name = "suitable-goods")
+    private String suitableGoods;
 
     // 与司机多对多
     @ManyToMany(mappedBy = "vehicles")
@@ -250,6 +258,9 @@ public class Vehicle {
                 .findFirst()
                 .orElse(null);
     }
+
+    public Long getStatusDurationSeconds() { return statusDurationSeconds; }
+    public void setStatusDurationSeconds(Long statusDurationSeconds) { this.statusDurationSeconds = statusDurationSeconds; }
 
     public String getUpdatedBy() { return updatedBy; }
     public void setUpdatedBy(String updatedBy) { this.updatedBy = updatedBy; }
