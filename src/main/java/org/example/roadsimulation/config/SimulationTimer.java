@@ -1,5 +1,7 @@
 package org.example.roadsimulation.config;
 
+import org.example.roadsimulation.service.impl.StateUpdateService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
@@ -16,9 +18,6 @@ import org.springframework.stereotype.Component;
 @Component
 @ConditionalOnProperty(name = "legacy.timer.enabled", havingValue = "true")
 public class SimulationTimer {
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-
     @Autowired
     private StateUpdateService stateUpdateService;
 
@@ -33,11 +32,3 @@ public class SimulationTimer {
 //        }
 //    }
 }
-=======
-    // ✅ 主循环模式下不需要任何实现；保留该类仅用于兼容/占位。
-}
->>>>>>> Stashed changes
-=======
-    // ✅ 主循环模式下不需要任何实现；保留该类仅用于兼容/占位。
-}
->>>>>>> Stashed changes

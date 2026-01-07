@@ -78,7 +78,7 @@ public class SimulationMainLoop {
         }
 
         // ✅ 4) 车辆状态更新（每循环一次）：统一接入主循环
-        stateUpdateService.tick(simNow, MINUTES_PER_LOOP, loopCount);
+        // stateUpdateService.tick(simNow, MINUTES_PER_LOOP, loopCount);
 
         // ======================
         loopCount++;

@@ -58,13 +58,50 @@
             </div>
           </template>
           <div class="vehicle-list">
-            <div v-for="v in vehicles" :key="v.id" class="vehicle-item">
+            <div v-for="v in vehicles" :key="v.id" class="vehicle-item" @click="handleVehicleClick(v)" style="cursor: pointer;">
               <span class="status-dot" :style="{ backgroundColor: statusMap[v.status]?.color || '#ccc' }"></span>
               <div class="vehicle-info">
-                <div class="vehicle-id">{{ v.id }}</div>
-                <div class="vehicle-location">{{ v.location || (v.lat && v.lng ? `${v.lng}, ${v.lat}` : '-') }} | {{ statusMap[v.status]?.text || v.status }}</div>
+                <div class="vehicle-id">{{ v.licensePlate }}</div>
+                <div class="vehicle-stats">
+                  <!-- 载重信息 -->
+                  <div class="load-info">
+                    <span class="label">载重:</span>
+                    <span class="value">{{ v.currentLoad.toFixed(1) }}/{{ v.maxLoadCapacity.toFixed(1) }}t</span>
+                    <div class="progress-bar">
+                      <div
+                          class="progress-fill load-progress"
+                          :style="{ width: `${v.loadPercentage}%` }"
+                      ></div>
+                    </div>
+                  </div>
+                  <!-- 载容信息 -->
+                  <div class="volume-info">
+                    <span class="label">载容:</span>
+                    <span class="value">{{ v.currentVolume.toFixed(1) }}/{{ v.maxVolumeCapacity.toFixed(1) }}m³</span>
+                    <div class="progress-bar">
+                      <div
+                          class="progress-fill volume-progress"
+                          :style="{ width: `${v.volumePercentage}%` }"
+                      ></div>
+                    </div>
+                  </div>
+                  <!-- 位置和状态 -->
+                  <div class="vehicle-location">
+                    {{ v.location || '-' }} | {{ statusMap[v.status]?.text || v.status }}
+                  </div>
+                </div>
+                <template v-if="v.currentAssignment">
+                  <br><small>任务: {{ v.currentAssignment }}</small>
+                </template>
               </div>
-              <ElButton text :icon="InfoFilled" />
+              <ElButton
+                  text
+                  :icon="InfoFilled"
+                  @click.stop="handleVehicleClick(v)"
+              />
+            </div>
+            <div v-if="vehicles.length === 0" class="no-vehicle">
+              暂无运输任务
             </div>
           </div>
         </ElCard>
@@ -145,8 +182,9 @@ const currentPOIs = ref([]); // 当前显示的POI数据
 const isSimulationRunning = ref(false); // 仿真运行状态
 
 // 响应式数据
-const drawnPairIds = ref(new Set()); // 已绘制的配对ID
-const activeRoutes = ref(new Map()); // 当前活动的路线映射，key为pairId，value为路线数据
+const drawnPairIds = ref(new Set()); // 已绘制的配对ID (可以删除)
+const drawnAssignmentIds = ref(new Set()); // 已绘制的Assignment ID
+const activeRoutes = ref(new Map()); // 当前活动的路线映射，key为assignmentId
 
 // 图标配置 - 根据POI类型使用不同的图标
 const poiIcons = {
@@ -188,8 +226,11 @@ const startSimulation = async () => {
     // 启动定时更新
     startSimulationTimer();
 
-    // 初始车辆动画和路线规划
-    await fetchAndDrawNewPOIPairs();
+    // 初始加载当前活跃的Assignment
+    await fetchCurrentAssignments();
+
+    // 初始化车辆信息
+    await updateVehicleInfo();
 
     ElMessage.success('仿真已启动');
 
@@ -246,7 +287,7 @@ const resetSimulation = async () => {
         }
       });
       activeRoutes.value.clear();
-      drawnPairIds.value.clear();
+      drawnAssignmentIds.value.clear();
 
       // 清除所有可视化元素
       clearPOIMarkers();
@@ -275,13 +316,13 @@ const startSimulationTimer = () => {
   simulationTimer.value = setInterval(async () => {
     if (isSimulationRunning.value) {
       // 增量获取并绘制新配对
-      await fetchAndDrawNewPOIPairs();
+      await fetchAndDrawNewAssignments();
 
-      // 定期检查并清理已完成的配对
-      await checkAndCleanupCompletedPairs();
+      // 定期检查并清理已完成的Assignment
+      await checkAndCleanupCompletedAssignments();
 
-      // 更新车辆状态
-      await fetchVehicles();
+      // 更新车辆信息
+      await updateVehicleInfo();
 
       // ToDo这里可以添加其他定时更新的数据，如车辆状态、任务状态等
     }
@@ -498,13 +539,141 @@ const toggleFilter = (key) => {
 
 // --- 车辆状态 ---
 const statusMap = {
+  IDLE: { text: '空闲', color: '#95a5a6' },
+  ORDER_DRIVING: { text: '前往接货', color: '#43f312' },
+  LOADING: { text: '装货中', color: '#f39c12' },
+  TRANSPORT_DRIVING: { text: '运输中', color: '#2ecc71' },
+  UNLOADING: { text: '卸货中', color: '#f39c12' },
+  WAITING: { text: '等待中', color: '#e74c3c' },
+  BREAKDOWN: { text: '故障', color: '#e74c3c' },
   running: { text: '运输中', color: '#2ecc71' },
   loading: { text: '装卸货', color: '#f39c12' },
   maintenance: { text: '保养中', color: '#e74c3c' },
   stopped: { text: '停靠中', color: '#95a5a6' },
 };
 
-const vehicles = reactive([]); // 从后端拉取车辆列表
+const vehicles = reactive([]); // 车辆列表，将从Assignment中获取
+
+// 更新车辆信息的方法
+const updateVehicleInfo = async () => {
+  try {
+    // 从Assignment获取车辆信息
+    const response = await request.get('/api/assignments/active');
+    const activeAssignments = response.data;
+
+    // 清空当前车辆列表
+    vehicles.splice(0, vehicles.length);
+
+    // 从Assignment中提取车辆信息
+    const vehicleMap = new Map(); // 用于去重，key为vehicleId
+
+    activeAssignments.forEach(assignment => {
+      if (assignment.vehicleId && assignment.licensePlate) {
+        // 如果车辆已在map中，合并信息
+        if (vehicleMap.has(assignment.vehicleId)) {
+          const existingVehicle = vehicleMap.get(assignment.vehicleId);
+          // 如果当前assignment有更详细的信息，更新
+          if (assignment.vehicleStatus) {
+            existingVehicle.status = assignment.vehicleStatus;
+          }
+          // 添加当前assignment到车辆的任务列表中
+          if (!existingVehicle.assignments) {
+            existingVehicle.assignments = [];
+          }
+          existingVehicle.assignments.push({
+            id: assignment.assignmentId,
+            routeName: assignment.routeName,
+            goodsName: assignment.goodsName,
+            quantity: assignment.quantity
+          });
+        } else {
+          // 创建新车辆记录
+          const vehicle = {
+            id: assignment.vehicleId,
+            licensePlate: assignment.licensePlate,
+            status: assignment.vehicleStatus || 'running',
+            assignments: [{
+              id: assignment.assignmentId,
+              routeName: assignment.routeName,
+              goodsName: assignment.goodsName,
+              quantity: assignment.quantity
+            }],
+            // 位置信息
+            location: assignment.startLat && assignment.startLng ?
+                `${assignment.startLng.toFixed(4)}, ${assignment.startLat.toFixed(4)}` : '-',
+            lat: assignment.startLat,
+            lng: assignment.startLng,
+            // 任务信息
+            currentAssignment: assignment.routeName,
+            goodsInfo: assignment.goodsName,
+            quantity: assignment.quantity,
+            startPOI: assignment.startPOIName,
+            endPOI: assignment.endPOIName,
+            // 载重信息
+            currentLoad: assignment.currentLoad || 0,
+            maxLoadCapacity: assignment.maxLoadCapacity || 0,
+            // 载容信息
+            currentVolume: assignment.currentVolume || 0,
+            maxVolumeCapacity: assignment.maxVolumeCapacity || 0,
+            // 货物单位信息
+            goodsWeightPerUnit: assignment.goodsWeightPerUnit || 0,
+            goodsVolumePerUnit: assignment.goodsVolumePerUnit || 0
+          };
+
+          // 计算载重和载容的百分比（用于进度条显示）
+          vehicle.loadPercentage = vehicle.maxLoadCapacity > 0 ?
+              Math.min(100, (vehicle.currentLoad / vehicle.maxLoadCapacity) * 100) : 0;
+          vehicle.volumePercentage = vehicle.maxVolumeCapacity > 0 ?
+              Math.min(100, (vehicle.currentVolume / vehicle.maxVolumeCapacity) * 100) : 0;
+          vehicleMap.set(assignment.vehicleId, vehicle);
+        }
+      }
+    });
+    // 计算总载重统计
+    let totalLoad = 0;
+    let totalCapacity = 0;
+    let totalVolume = 0;
+    let totalVolumeCapacity = 0;
+
+    vehicleMap.forEach(vehicle => {
+      totalLoad += vehicle.currentLoad || 0;
+      totalCapacity += vehicle.maxLoadCapacity || 0;
+      totalVolume += vehicle.currentVolume || 0;
+      totalVolumeCapacity += vehicle.maxVolumeCapacity || 0;
+    });
+
+    // 更新统计信息
+    stats.totalLoad = totalLoad;
+    stats.totalCapacity = totalCapacity;
+    stats.totalVolume = totalVolume;
+    stats.totalVolumeCapacity = totalVolumeCapacity;
+    stats.loadUtilization = totalCapacity > 0 ? (totalLoad / totalCapacity * 100) : 0;
+    stats.volumeUtilization = totalVolumeCapacity > 0 ? (totalVolume / totalVolumeCapacity * 100) : 0;
+
+    // 将map中的车辆添加到列表中
+    vehicleMap.forEach(vehicle => {
+      vehicles.push(vehicle);
+    });
+
+    // 更新统计信息
+    stats.running = vehicles.length;
+    console.log(`更新了 ${vehicles.length} 辆车辆信息`);
+
+  } catch (error) {
+    console.error('获取车辆信息失败:', error);
+  }
+};
+
+// 获取车辆详细信息
+const getVehicleDetail = async (vehicleId) => {
+  try {
+    const response = await request.get(`/api/vehicles/${vehicleId}`);
+    return response.data;
+  } catch (error) {
+    console.error(`获取车辆${vehicleId}详细信息失败:`, error);
+    return null;
+  }
+};
 
 // --- 新增：车辆动画和路线规划功能 ---
 
@@ -636,6 +805,33 @@ const animateAlongPath = (marker, path, speed = 50) => {
   };
 };
 
+// 清除特定Assignment的路线
+const clearRouteByAssignmentId = (assignmentId) => {
+  const routeData = activeRoutes.value.get(assignmentId);
+  if (routeData) {
+    // 清理动画
+    routeData.animations.forEach(anim => {
+      anim.cancel && anim.cancel();
+      try {
+        anim.marker && anim.marker.setMap && anim.marker.setMap(null);
+      } catch (_) {}
+    });
+
+    // 清理地图元素
+    routeData.elements.forEach(el => {
+      try {
+        el.setMap && el.setMap(null);
+      } catch (_) {}
+    });
+
+    // 从映射中移除
+    activeRoutes.value.delete(assignmentId);
+    drawnAssignmentIds.value.delete(assignmentId);
+
+    console.log(`已清理Assignment ${assignmentId} 的路线`);
+  }
+};
+
 // 清除特定配对的路线
 const clearRouteByPairId = (pairId) => {
   const routeData = activeRoutes.value.get(pairId);
@@ -663,32 +859,36 @@ const clearRouteByPairId = (pairId) => {
   }
 };
 
+// ToDo 接下来继续前端数据基础的依据修改
+
 // 增量获取并绘制POI配对
 const fetchAndDrawNewPOIPairs = async () => {
   try {
-    // 1. 获取新增的POI配对
-    const response = await request.get('/api/simulation/pairs/new');
-    const newPairs = response.data;
+    // 1. 获取新增的Assignment（用于前端绘制）
+    const response = await request.get('/api/assignments/new');
+    const newAssignments = response.data;
 
-    if (!newPairs || newPairs.length === 0) {
-      console.log('没有新增的POI配对');
+    if (!newAssignments || newAssignments.length === 0) {
+      console.log('没有新增的Assignment');
       return;
     }
 
-    console.log(`获取到 ${newPairs.length} 个新增POI配对`);
+    console.log(`获取到 ${newAssignments.length} 个新增Assignment`);
 
     // 2. 转换为路线规划的endpoints
-    const endpoints = newPairs.map(pair => ({
-      id: pair.pairId,
-      start: [pair.startLng, pair.startLat],
-      end: [pair.endLng, pair.endLat],
+    const endpoints = newAssignments.map(assignment => ({
+      id: assignment.assignmentId,
+      start: [assignment.startLng, assignment.startLat],
+      end: [assignment.endLng, assignment.endLat],
       info: {
-        pairId: pair.pairId,
-        startName: pair.startPOIName,
-        endName: pair.endPOIName,
-        goodsName: pair.goodsName,
-        quantity: pair.quantity,
-        shipmentRefNo: pair.shipmentRefNo
+        assignmentId: assignment.assignmentId,
+        pairId: assignment.pairId, // 保留pairId用于兼容
+        startName: assignment.startPOIName,
+        endName: assignment.endPOIName,
+        goodsName: assignment.goodsName,
+        quantity: assignment.quantity,
+        shipmentRefNo: assignment.shipmentRefNo,
+        vehicleLicensePlate: assignment.licensePlate
       }
     }));
 
@@ -697,30 +897,161 @@ const fetchAndDrawNewPOIPairs = async () => {
 
     // 4. 绘制新路线
     for (const route of computedRoutes) {
-      if (route && route.info && route.info.pairId) {
-        // 确保该配对尚未绘制
-        if (!drawnPairIds.value.has(route.info.pairId)) {
+      if (route && route.info && route.info.assignmentId) {
+        // 确保该Assignment尚未绘制
+        if (!drawnAssignmentIds.value.has(route.info.assignmentId)) {
           await drawSingleRoute(route);
 
           // 标记为已绘制
-          drawnPairIds.value.add(route.info.pairId);
+          drawnAssignmentIds.value.add(route.info.assignmentId);
 
-          // 通知后端该配对已绘制
+          // 通知后端该Assignment已绘制
           try {
-            await request.post(`/api/simulation/pairs/mark-drawn/${route.info.pairId}`);
+            await request.post(`/api/assignments/mark-drawn/${route.info.assignmentId}`);
           } catch (error) {
-            console.error(`标记配对 ${route.info.pairId} 为已绘制失败:`, error);
+            console.error(`标记Assignment ${route.info.assignmentId} 为已绘制失败:`, error);
           }
         }
       }
     }
 
     // 5. 更新统计信息
-    stats.tasks = drawnPairIds.value.size;
+    stats.tasks = drawnAssignmentIds.value.size;
 
   } catch (error) {
-    console.error('获取并绘制新增POI配对失败:', error);
+    console.error('获取并绘制新增Assignment失败:', error);
   }
+};
+
+const fetchAndDrawNewAssignments = async () => {
+  try {
+    const response = await request.get('/api/assignments/new');
+    const newAssignments = response.data;
+
+    if (!newAssignments || newAssignments.length === 0) {
+      console.log('没有新增的Assignment');
+      return;
+    }
+
+    console.log(`获取到 ${newAssignments.length} 个新增Assignment`);
+
+    // 转换为路线规划的endpoints
+    const endpoints = newAssignments.map(assignment => ({
+      id: assignment.assignmentId,
+      start: [assignment.startLng, assignment.startLat],
+      end: [assignment.endLng, assignment.endLat],
+      info: {
+        assignmentId: assignment.assignmentId,
+        pairId: assignment.pairId,
+        startName: assignment.startPOIName,
+        endName: assignment.endPOIName,
+        goodsName: assignment.goodsName,
+        quantity: assignment.quantity,
+        shipmentRefNo: assignment.shipmentRefNo,
+        vehicleLicensePlate: assignment.licensePlate,
+        vehicleId: assignment.vehicleId,
+        // 新增：传递Assignment对象用于绘制车辆图标
+        assignment: assignment
+      }
+    }));
+
+    // 批量规划路线
+    const computedRoutes = await computeRoutesOnBackend(endpoints);
+
+    // 绘制新路线
+    for (const route of computedRoutes) {
+      if (route && route.info && route.info.assignmentId) {
+        if (!drawnAssignmentIds.value.has(route.info.assignmentId)) {
+          await drawSingleRoute(route);
+
+          drawnAssignmentIds.value.add(route.info.assignmentId);
+
+          try {
+            await request.post(`/api/assignments/mark-drawn/${route.info.assignmentId}`);
+          } catch (error) {
+            console.error(`标记Assignment ${route.info.assignmentId} 为已绘制失败:`, error);
+          }
+        }
+      }
+    }
+
+    stats.tasks = drawnAssignmentIds.value.size;
+
+  } catch (error) {
+    console.error('获取并绘制新增Assignment失败:', error);
+  }
+};
+
+const drawVehicleIconAtStart = async (assignment) => {
+  if (!AMapLib || !map) return null;
+
+  try {
+    const { vehicleStartLng, vehicleStartLat, licensePlate, vehicleId } = assignment;
+
+    // 如果没有起始位置，跳过
+    if (!vehicleStartLng || !vehicleStartLat) {
+      console.warn(`Assignment ${assignment.assignmentId} 没有车辆起始位置信息`);
+      return null;
+    }
+
+    // 创建车辆图标
+    const vanEl = createSvgVanEl(32, '#ff7f50'); // 橙色车辆图标
+    const vehicleIcon = new AMapLib.Icon({
+      image: createSvgDataUrl(vanEl), // 需要将DOM元素转换为图片URL
+      size: new AMapLib.Size(32, 32),
+      imageSize: new AMapLib.Size(32, 32)
+    });
+
+    // 创建车辆标记
+    const vehicleMarker = new AMapLib.Marker({
+      position: [vehicleStartLng, vehicleStartLat],
+      icon: vehicleIcon,
+      offset: new AMapLib.Pixel(-16, -16),
+      title: `${licensePlate} - 待出发`,
+      extData: {
+        type: 'vehicle',
+        vehicleId: vehicleId,
+        assignmentId: assignment.assignmentId,
+        licensePlate: licensePlate
+      }
+    });
+
+    // 添加到地图
+    vehicleMarker.setMap(map);
+
+    // 添加点击事件
+    vehicleMarker.on('click', () => {
+      handleVehicleMarkerClick(assignment);
+    });
+
+    console.log(`在起点(${vehicleStartLng}, ${vehicleStartLat})创建车辆图标: ${licensePlate}`);
+    return vehicleMarker;
+
+  } catch (error) {
+    console.error('绘制车辆图标失败:', error);
+    return null;
+  }
+};
+
+// 将DOM元素转换为图片URL的辅助方法
+const createSvgDataUrl = (domElement) => {
+  // 创建一个canvas来绘制DOM元素
+  const canvas = document.createElement('canvas');
+  canvas.width = 32;
+  canvas.height = 32;
+  const ctx = canvas.getContext('2d');
+
+  // 设置背景
+  ctx.fillStyle = '#ff7f50';
+  ctx.beginPath();
+  ctx.arc(16, 16, 16, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 绘制车辆SVG图标
+  ctx.fillStyle = '#fff';
+  ctx.fillText('🚚', 8, 22); // 使用文本表情作为简单图标
+
+  return canvas.toDataURL();
 };
 
 // 绘制单个路线
@@ -731,6 +1062,17 @@ const drawSingleRoute = async (route) => {
     const path = Array.isArray(route.path) ? route.path : (route.path || []);
     const elements = [];
     const animations = [];
+
+    const assignment = route.info?.assignment;
+
+    // 如果有关联的Assignment且有车辆起始位置，先绘制车辆图标
+    let vehicleMarker = null;
+    if (assignment && assignment.vehicleStartLng && assignment.vehicleStartLat) {
+      vehicleMarker = await drawVehicleIconAtStart(assignment);
+      if (vehicleMarker) {
+        elements.push(vehicleMarker);
+      }
+    }
 
     // 绘制折线
     const poly = new AMapLib.Polyline({
@@ -761,14 +1103,15 @@ const drawSingleRoute = async (route) => {
       startMarker.on('click', () => {
         const infoWindow = new AMapLib.InfoWindow({
           content: `
-            <div style="padding: 10px; min-width: 200px; color: #000;">
-              <h3 style="margin: 0 0 8px 0; color: #000;">起点: ${route.info?.startName || '未知'}</h3>
-              <p style="margin: 4px 0; color: #000;"><strong>货物:</strong> ${route.info?.goodsName || '未知'}</p>
-              <p style="margin: 4px 0; color: #000;"><strong>数量:</strong> ${route.info?.quantity || 0}</p>
-              <p style="margin: 4px 0; color: #000;"><strong>运单号:</strong> ${route.info?.shipmentRefNo || 'N/A'}</p>
-              <p style="margin: 4px 0; color: #000;"><strong>目的地:</strong> ${route.info?.endName || '未知'}</p>
-            </div>
-          `,
+      <div style="padding: 10px; min-width: 200px; color: #000;">
+        <h3 style="margin: 0 0 8px 0; color: #000;">起点: ${route.info?.startName || '未知'}</h3>
+        <p style="margin: 4px 0; color: #000;"><strong>Assignment ID:</strong> ${route.info?.assignmentId || 'N/A'}</p>
+        <p style="margin: 4px 0; color: #000;"><strong>货物:</strong> ${route.info?.goodsName || '未知'}</p>
+        <p style="margin: 4px 0; color: #000;"><strong>数量:</strong> ${route.info?.quantity || 0}</p>
+        <p style="margin: 4px 0; color: #000;"><strong>运单号:</strong> ${route.info?.shipmentRefNo || 'N/A'}</p>
+        <p style="margin: 4px 0; color: #000;"><strong>目的地:</strong> ${route.info?.endName || '未知'}</p>
+      </div>
+    `,
           offset: new AMapLib.Pixel(0, -30)
         });
         infoWindow.open(map, route.start);
@@ -831,6 +1174,8 @@ const drawSingleRoute = async (route) => {
       id: route.info?.pairId || route.id,
       elements,
       animations,
+      vehicleMarker: vehicleMarker, // 保存车辆标记引用
+      movingMarker: movingMarker, // 保存移动车辆标记引用
       cleanup: () => {
         animations.forEach(anim => {
           anim.cancel && anim.cancel();
@@ -854,6 +1199,184 @@ const drawSingleRoute = async (route) => {
   } catch (e) {
     console.error('绘制单个路线错误', e);
     return null;
+  }
+};
+
+// 处理车辆标记点击事件
+const handleVehicleMarkerClick = async (assignment) => {
+  console.log('点击车辆标记:', assignment);
+
+  try {
+    // 获取车辆详细信息
+    const vehicleDetail = await getVehicleDetail(assignment.vehicleId);
+
+    // 显示车辆信息窗口
+    showVehicleInfoWindowFromMarker(assignment, vehicleDetail);
+  } catch (error) {
+    console.error('获取车辆信息失败:', error);
+    // 显示基本信息
+    showVehicleInfoWindowFromMarker(assignment, null);
+  }
+};
+
+// 从标记点击显示车辆信息窗口
+const showVehicleInfoWindowFromMarker = (assignment, vehicleDetail) => {
+  if (!map) return;
+
+  // 构建信息窗口内容
+  let content = `
+    <div style="padding: 12px; min-width: 320px; color: #000;">
+      <div style="display: flex; align-items: center; margin-bottom: 10px;">
+        <div style="width: 32px; height: 32px; background-color: #ff7f50; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin-right: 10px; color: #fff; font-size: 18px;">🚚</div>
+        <div>
+          <h3 style="margin: 0; color: #000; font-size: 16px;">${assignment.licensePlate || '未知车辆'}</h3>
+          <p style="margin: 2px 0 0 0; color: #606266; font-size: 12px;">车辆ID: ${assignment.vehicleId}</p>
+        </div>
+      </div>
+  `;
+
+  // 状态信息
+  const status = assignment.vehicleStatus || 'ORDER_DRIVING';
+  const statusText = statusMap[status]?.text || status;
+  const statusColor = statusMap[status]?.color || '#ccc';
+
+  content += `
+    <div style="margin-bottom: 12px;">
+      <div style="display: flex; align-items: center;">
+        <div style="width: 8px; height: 8px; border-radius: 50%; background-color: ${statusColor}; margin-right: 6px;"></div>
+        <strong>状态:</strong> ${statusText}
+      </div>
+      <p style="margin: 4px 0; color: #000;"><strong>任务状态:</strong> ${assignment.status || 'ASSIGNED'}</p>
+    </div>
+  `;
+
+  // 任务信息
+  content += `
+    <div style="margin-bottom: 12px; padding: 8px; background-color: #f8f9fa; border-radius: 4px;">
+      <p style="margin: 4px 0; color: #000; font-weight: bold;">运输任务详情</p>
+      <p style="margin: 2px 0; color: #606266; font-size: 12px;"><strong>Assignment ID:</strong> ${assignment.assignmentId}</p>
+      <p style="margin: 2px 0; color: #606266; font-size: 12px;"><strong>路线:</strong> ${assignment.routeName || '未命名路线'}</p>
+      <p style="margin: 2px 0; color: #606266; font-size: 12px;"><strong>起点:</strong> ${assignment.startPOIName || '未知'}</p>
+      <p style="margin: 2px 0; color: #606266; font-size: 12px;"><strong>终点:</strong> ${assignment.endPOIName || '未知'}</p>
+      <p style="margin: 2px 0; color: #606266; font-size: 12px;"><strong>货物:</strong> ${assignment.goodsName || '未知'} (${assignment.quantity || 0}件)</p>
+      <p style="margin: 2px 0; color: #606266; font-size: 12px;"><strong>运单号:</strong> ${assignment.shipmentRefNo || 'N/A'}</p>
+    </div>
+  `;
+
+  // 载重信息（如果有）
+  if (assignment.currentLoad !== undefined && assignment.maxLoadCapacity !== undefined) {
+    const loadPercentage = assignment.maxLoadCapacity > 0 ?
+        Math.min(100, (assignment.currentLoad / assignment.maxLoadCapacity) * 100) : 0;
+
+    content += `
+      <div style="margin-bottom: 10px;">
+        <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+          <span><strong>载重:</strong> ${assignment.currentLoad.toFixed(1)} / ${assignment.maxLoadCapacity.toFixed(1)} 吨</span>
+          <span style="color: #67c23a; font-weight: bold;">${loadPercentage.toFixed(1)}%</span>
+        </div>
+        <div style="height: 6px; background-color: #ebeef5; border-radius: 3px; overflow: hidden;">
+          <div style="width: ${loadPercentage}%; height: 100%; background-color: #67c23a;"></div>
+        </div>
+      </div>
+    `;
+  //   <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+  //     <span><strong>载容:</strong> ${vehicle.currentVolume.toFixed(1)} / ${vehicle.maxVolumeCapacity.toFixed(1)} m³</span>
+  //     <span style="color: #409eff; font-weight: bold;">${vehicle.volumePercentage.toFixed(1)}%</span>
+  //   </div>
+  //   <div style="height: 8px; background-color: #ebeef5; border-radius: 4px; overflow: hidden; margin-bottom: 8px;">
+  //     <div style="width: ${vehicle.volumePercentage}%; height: 100%; background-color: #409eff;"></div>
+  //   </div>
+  // </div>
+  //   `;
+  }
+
+  // 车辆详细信息（如果有）
+  if (vehicleDetail) {
+    content += `
+      <div style="margin-top: 12px; padding-top: 8px; border-top: 1px solid #eee;">
+        <p style="margin: 4px 0; color: #000; font-weight: bold;">车辆详情</p>
+        <p style="margin: 2px 0; color: #606266; font-size: 12px;"><strong>车型:</strong> ${vehicleDetail.brand || '未知'} ${vehicleDetail.modelType || ''}</p>
+        <p style="margin: 2px 0; color: #606266; font-size: 12px;"><strong>车辆类型:</strong> ${vehicleDetail.vehicleType || '未知'}</p>
+        <p style="margin: 2px 0; color: #606266; font-size: 12px;"><strong>载重能力:</strong> ${vehicleDetail.maxLoadCapacity || 0} 吨</p>
+        ${vehicleDetail.driverName ? `<p style="margin: 2px 0; color: #606266; font-size: 12px;"><strong>驾驶员:</strong> ${vehicleDetail.driverName}</p>` : ''}
+      </div>
+    `;
+  }
+
+  content += `</div>`;
+
+  // 计算信息窗口位置
+  const position = assignment.vehicleStartLng && assignment.vehicleStartLat ?
+      [assignment.vehicleStartLng, assignment.vehicleStartLat] :
+      [assignment.startLng, assignment.startLat];
+
+  if (position[0] && position[1]) {
+    const infoWindow = new AMapLib.InfoWindow({
+      content: content,
+      offset: new AMapLib.Pixel(0, -40)
+    });
+
+    infoWindow.open(map, position);
+  }
+};
+
+// 定期检查并清理已完成的Assignment
+const checkAndCleanupCompletedAssignments = async () => {
+  try {
+    // 获取需要清理的Assignment ID列表
+    const response = await request.get('/api/assignments/to-cleanup');
+    const assignmentIdsToCleanup = response.data;
+
+    if (assignmentIdsToCleanup && assignmentIdsToCleanup.length > 0) {
+      assignmentIdsToCleanup.forEach(assignmentId => {
+        clearRouteByAssignmentId(assignmentId);
+      });
+      console.log(`清理了 ${assignmentIdsToCleanup.length} 个已完成的Assignment`);
+    }
+  } catch (error) {
+    console.error('检查并清理已完成Assignment失败:', error);
+  }
+};
+
+// 获取当前活跃的Assignment（用于初始加载）
+const fetchCurrentAssignments = async () => {
+  try {
+    const response = await request.get('/api/assignments/active');
+    const assignments = response.data;
+
+    if (assignments && assignments.length > 0) {
+      // 转换为路线规划的endpoints
+      const endpoints = assignments.map(assignment => ({
+        id: assignment.assignmentId,
+        start: [assignment.startLng, assignment.startLat],
+        end: [assignment.endLng, assignment.endLat],
+        info: {
+          assignmentId: assignment.assignmentId,
+          pairId: assignment.pairId,
+          startName: assignment.startPOIName,
+          endName: assignment.endPOIName,
+          goodsName: assignment.goodsName,
+          quantity: assignment.quantity,
+          shipmentRefNo: assignment.shipmentRefNo
+        }
+      }));
+
+      // 批量规划路线
+      const computedRoutes = await computeRoutesOnBackend(endpoints);
+
+      // 绘制路线
+      for (const route of computedRoutes) {
+        if (route && route.info && route.info.assignmentId) {
+          await drawSingleRoute(route);
+          drawnAssignmentIds.value.add(route.info.assignmentId);
+        }
+      }
+
+      // 更新统计信息
+      stats.tasks = drawnAssignmentIds.value.size;
+    }
+  } catch (error) {
+    console.error('获取当前Assignment失败:', error);
   }
 };
 
@@ -1201,6 +1724,183 @@ onUnmounted(() => {
 .stats-info div {
   font-size: 14px;
   line-height: 1.8;
+}
+
+/*
+  车辆相关样式
+ */
+.vehicle-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  border-radius: 4px;
+  margin-bottom: 8px;
+  transition: background-color 0.2s;
+}
+
+.vehicle-item:hover {
+  background-color: #f5f5f5;
+}
+
+.status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.vehicle-info {
+  flex-grow: 1;
+  min-width: 0; /* 防止内容溢出 */
+}
+
+.vehicle-id {
+  font-weight: 500;
+  font-size: 14px;
+  color: #303133;
+}
+
+.vehicle-location {
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.4;
+}
+
+.vehicle-location small {
+  color: #67c23a;
+  font-size: 11px;
+}
+
+.no-vehicle {
+  text-align: center;
+  padding: 20px;
+  color: #909399;
+  font-size: 14px;
+}
+
+/* 车辆标记样式 */
+:deep(.amap-marker-content) {
+  transition: transform 0.2s;
+}
+
+:deep(.amap-marker-content):hover {
+  transform: scale(1.1);
+}
+
+/* 车辆信息窗口样式 */
+.vehicle-marker-info {
+  max-width: 300px;
+}
+
+/* 确保信息窗口内容可读 */
+:deep(.amap-info-content) {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  line-height: 1.4;
+}
+
+:deep(.amap-info-sharp) {
+  border-top-color: #fff !important;
+}
+
+/* 车辆统计信息样式 */
+.vehicle-stats {
+  margin-top: 4px;
+}
+
+.load-info,
+.volume-info {
+  display: flex;
+  align-items: center;
+  margin-bottom: 4px;
+  font-size: 11px;
+}
+
+.label {
+  min-width: 32px;
+  color: #606266;
+  font-weight: 500;
+}
+
+.value {
+  min-width: 60px;
+  color: #303133;
+  margin-right: 6px;
+}
+
+.progress-bar {
+  flex: 1;
+  height: 6px;
+  background-color: #ebeef5;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  border-radius: 3px;
+}
+
+.load-progress {
+  background-color: #67c23a; /* 绿色，表示载重 */
+}
+
+.volume-progress {
+  background-color: #409eff; /* 蓝色，表示载容 */
+}
+
+.vehicle-location {
+  font-size: 11px;
+  color: #909399;
+  margin-top: 4px;
+  line-height: 1.2;
+}
+
+/* 车辆列表项悬停效果 */
+.vehicle-item:hover {
+  background-color: #f5f7fa;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+/* 信息按钮 */
+.info-btn {
+  opacity: 0.7;
+  transition: opacity 0.2s;
+}
+
+.info-btn:hover {
+  opacity: 1;
+}
+
+/* 无车辆时的提示 */
+.no-vehicle {
+  text-align: center;
+  padding: 20px;
+  color: #c0c4cc;
+  font-size: 13px;
+  background-color: #fafafa;
+  border-radius: 4px;
+  margin-top: 10px;
+}
+
+/* 响应式调整 */
+@media (max-width: 1400px) {
+  .load-info,
+  .volume-info {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .label,
+  .value {
+    margin-bottom: 2px;
+  }
+
+  .progress-bar {
+    width: 100%;
+    margin-top: 2px;
+  }
 }
 
 #container {
