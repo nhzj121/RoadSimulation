@@ -5,7 +5,8 @@ import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.Getter;
 import lombok.Setter;
-import org.example.roadsimulation.dto.POIPairDTO;
+import org.example.roadsimulation.dto.*;
+import org.example.roadsimulation.dto.AssignmentStatusDTO;
 import org.example.roadsimulation.entity.*;
 import org.example.roadsimulation.repository.*;
 import org.example.roadsimulation.service.GoodsPOIGenerateService;
@@ -19,6 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.text.SimpleDateFormat;
 import java.time.LocalDateTime;
 import java.util.*;
@@ -67,6 +69,13 @@ public class DataInitializer{
     private String generatePoiPairKey(POI startPOI, POI endPOI) {
         return startPOI.getId() + "_" + endPOI.getId();
     }
+
+    // Assignment状态记录配对
+    private final Map<String, AssignmentStatusDTO> assignmentStatusMap = new ConcurrentHashMap<>();
+    // 管理 Assignment 状态
+    private final Map<Long, AssignmentBriefDTO> assignmentBriefMap = new ConcurrentHashMap<>();
+
+    // ToDO 等待合适时删除中间代码
     // 记录每个配对的状态
     private final Map<String, PairStatus> pairStatusMap = new ConcurrentHashMap<>();
     private static class PairStatus {
@@ -96,6 +105,7 @@ public class DataInitializer{
             this.isDrawn = false;
         }
     }
+    // ToDO
 
     public List<POI> CementPlantList; // 水泥厂
     public List<POI> MaterialMarketList; // 建材市场
@@ -343,13 +353,30 @@ public class DataInitializer{
                     // 初始化的运单，运单清单，记录
                     Map<Vehicle, ShipmentItem> vehicleShipmentItemMap = createCompleteGoodsTransport(poi, endPOI, Cement, generateQuantity, idleVehicles);
 
-
                     // 初始化运输任务
                     List<Assignment> goalAssignments = initalizeAssignment(vehicleShipmentItemMap, route);
 
                     // ToDo 车辆分配运输任务逻辑，这里先简单实现进行流程信息完整性测试
                     // 完整建立车辆与任务的双向关联
                     establishVehicleAssignmentRelationship(goalAssignments, poi, endPOI);
+
+                    // 7. 为每个Assignment记录状态信息
+                    for (Assignment assignment : goalAssignments) {
+                        Vehicle assignedVehicle = assignment.getAssignedVehicle();
+                        if (assignedVehicle != null) {
+                            // 获取关联的Shipment
+                            Shipment shipment = null;
+                            for (ShipmentItem item : assignment.getShipmentItems()) {
+                                if (item.getShipment() != null) {
+                                    shipment = item.getShipment();
+                                    break;
+                                }
+                            }
+
+                            // 创建并保存Assignment状态信息
+                            createAssignmentStatusRecord(assignment, poi, endPOI, shipment);
+                        }
+                    }
 
                     startToEndMapping.put(poi, endPOI); // 保存对应关系
 
@@ -430,6 +457,45 @@ public class DataInitializer{
         }
 
         return false;
+    }
+
+    /**
+     * 创建Assignment状态记录
+     */
+    private void createAssignmentStatusRecord(Assignment assignment, POI startPOI, POI endPOI, Shipment shipment) {
+        try {
+            // 1. 生成配对ID（兼容旧系统）
+            String pairId = generatePoiPairKey(startPOI, endPOI);
+
+            // 2. 创建AssignmentStatusDTO
+            AssignmentStatusDTO statusDTO = new AssignmentStatusDTO(
+                    assignment.getId(),
+                    pairId,
+                    assignment.getAssignedVehicle().getId(),
+                    shipment != null ? shipment.getId() : null
+            );
+
+            // 保存到状态映射表
+            assignmentStatusMap.put(pairId, statusDTO);
+
+            // 3. 创建AssignmentBriefDTO
+            AssignmentBriefDTO briefDTO = createAssignmentBriefDTO(assignment, startPOI, endPOI, shipment);
+
+            // 保存到简要信息映射表
+            assignmentBriefMap.put(assignment.getId(), briefDTO);
+
+            // 4. 如果存在运单，保存到运单映射表（兼容旧系统）
+            if (shipment != null) {
+                String key = generatePoiPairKey(startPOI, endPOI);
+                poiPairShipmentMapping.put(key, shipment);
+            }
+
+            System.out.println("创建Assignment状态记录: " + assignment.getId() +
+                    ", 车辆: " + assignment.getAssignedVehicle().getLicensePlate());
+
+        } catch (Exception e) {
+            System.err.println("创建Assignment状态记录失败: " + e.getMessage());
+        }
     }
 
     /**
@@ -642,7 +708,7 @@ public class DataInitializer{
             }
 
             // 计算车辆能承载的货物数量（向下取整）
-            int capacityInUnits = (int) Math.floor(maxLoad / goods.getWeightPerUnit());
+            int capacityInUnits = (int) Math.floor(maxLoad / goods.getWeightPerUnit()) - 3;
 
             // 本次分配的数量 = min(车辆容量, 剩余货物量)
             int assignQuantity = Math.min(capacityInUnits, remainingQuantity);
@@ -651,6 +717,15 @@ public class DataInitializer{
                 // 为这辆车创建运单清单
                 ShipmentItem shipmentItem = shipmentItemService.initalizeShipmentItem(shipment, goods, assignQuantity);
                 vehicleShipmentItemMap.put(vehicle, shipmentItem);
+                BigDecimal assignedWeight = BigDecimal.valueOf(goods.getWeightPerUnit())
+                        .multiply(BigDecimal.valueOf(assignQuantity))
+                        .setScale(2, RoundingMode.HALF_UP); // 保留2位小数，四舍五入
+                vehicle.setCurrentLoad(assignedWeight.doubleValue());
+
+                BigDecimal assignedVolume = BigDecimal.valueOf(goods.getVolumePerUnit())
+                        .multiply(BigDecimal.valueOf(assignQuantity))
+                        .setScale(2, RoundingMode.HALF_UP);
+                vehicle.setCurrentLoad(assignedVolume.doubleValue());
 
                 // 更新剩余货物量
                 remainingQuantity -= assignQuantity;
@@ -662,6 +737,7 @@ public class DataInitializer{
             }
         }
 
+        // ToDo 这里的逻辑可能需要完善 即针对剩余无车辆可以运输的货物的处理方法
         // 检查是否还有剩余货物
         if (remainingQuantity > 0) {
             System.out.println("警告: 仍有 " + remainingQuantity + " 件货物未分配，需要更多车辆或更大载重车辆");
@@ -756,10 +832,23 @@ public class DataInitializer{
 
                 System.out.println("成功分配车辆 " + managedVehicle.getLicensePlate() +
                         " 给任务，从 " + managedStartPOI.getName() + " 到 " + managedEndPOI.getName());
+
+                // 记录车辆起始位置到AssignmentBriefDTO
+                updateAssignmentBriefWithVehicleStartPosition(assignment.getId(), managedStartPOI);
             }
         } catch (Exception e) {
             System.err.println("建立车辆任务关联失败: " + e.getMessage());
             throw new RuntimeException("车辆任务关联失败", e);
+        }
+    }
+
+    // 更新AssignmentBriefDTO的车辆起始位置信息
+    private void updateAssignmentBriefWithVehicleStartPosition(Long assignmentId, POI startPOI) {
+        AssignmentBriefDTO brief = assignmentBriefMap.get(assignmentId);
+        if (brief != null && startPOI != null) {
+            brief.setVehicleStartLng(startPOI.getLongitude());
+            brief.setVehicleStartLat(startPOI.getLatitude());
+            assignmentBriefMap.put(assignmentId, brief);
         }
     }
 
@@ -814,6 +903,8 @@ public class DataInitializer{
                                 // 先清除关联
                                 Assignment assignment = item.getAssignment();
                                 if (assignment != null) {
+                                    // 标记 Assignment 为已完成
+                                    markAssignmentAsCompleted(assignment.getId());
                                     if (assignment.getAssignedVehicle() != null){
                                         Vehicle assignedVehicle = vehicleRepository.findById(
                                                 assignment.getAssignedVehicle().getId()
@@ -916,6 +1007,346 @@ public class DataInitializer{
         }
     }
 
+    // 生成配对键（兼容旧系统）
+    private String generatePairKey(POI startPOI, POI endPOI) {
+        return startPOI.getId() + "_" + endPOI.getId();
+    }
+
+    // 创建 Assignment 状态记录
+    private void createAssignmentStatus(Assignment assignment, POI startPOI, POI endPOI, Shipment shipment) {
+        String pairId = generatePairKey(startPOI, endPOI);
+        AssignmentStatusDTO status = new AssignmentStatusDTO(
+                assignment.getId(),
+                pairId,
+                assignment.getAssignedVehicle() != null ? assignment.getAssignedVehicle().getId() : null,
+                shipment.getId()
+        );
+        assignmentStatusMap.put(pairId, status);
+
+        // 创建简要信息
+        AssignmentBriefDTO brief = createAssignmentBriefDTO(assignment, startPOI, endPOI, shipment);
+        assignmentBriefMap.put(assignment.getId(), brief);
+    }
+
+    // 创建 AssignmentBriefDTO
+    private AssignmentBriefDTO createAssignmentBriefDTO(Assignment assignment, POI startPOI, POI endPOI, Shipment shipment) {
+        AssignmentBriefDTO brief = new AssignmentBriefDTO();
+        brief.setAssignmentId(assignment.getId());
+        brief.setStatus(assignment.getStatus() != null ? assignment.getStatus().toString() : "WAITING");
+        brief.setCreatedTime(assignment.getCreatedTime());
+        brief.setStartTime(assignment.getStartTime());
+
+        // 车辆信息
+        Vehicle vehicle = assignment.getAssignedVehicle();
+        if (vehicle != null) {
+            brief.setVehicleId(vehicle.getId());
+            brief.setLicensePlate(vehicle.getLicensePlate());
+            brief.setVehicleStatus(vehicle.getCurrentStatus() != null ?
+                    vehicle.getCurrentStatus().toString() : "IDLE");
+
+            // 载重信息
+            brief.setCurrentLoad(vehicle.getCurrentLoad());
+            brief.setMaxLoadCapacity(vehicle.getMaxLoadCapacity());
+
+        }
+
+        // 路线信息
+        Route route = assignment.getRoute();
+        if (route != null) {
+            brief.setRouteId(route.getId());
+            brief.setRouteName(route.getName());
+        }
+
+        // 起点信息
+        brief.setStartPOIId(startPOI.getId());
+        brief.setStartPOIName(startPOI.getName());
+        brief.setStartLng(startPOI.getLongitude());
+        brief.setStartLat(startPOI.getLatitude());
+
+        // 终点信息
+        brief.setEndPOIId(endPOI.getId());
+        brief.setEndPOIName(endPOI.getName());
+        brief.setEndLng(endPOI.getLongitude());
+        brief.setEndLat(endPOI.getLatitude());
+
+        // 货物信息
+        Set<ShipmentItem> items = assignment.getShipmentItems();
+        if (items != null && !items.isEmpty()) {
+            ShipmentItem firstItem = items.iterator().next();
+            brief.setGoodsName(firstItem.getName());
+            brief.setQuantity(firstItem.getQty());
+
+            // 货物单位重量和体积
+            if (firstItem.getGoods() != null) {
+                Goods goods = firstItem.getGoods();
+                brief.setGoodsWeightPerUnit(goods.getWeightPerUnit());
+                brief.setGoodsVolumePerUnit(goods.getVolumePerUnit());
+            }
+        }
+
+        // 运单信息
+        if (shipment != null) {
+            brief.setShipmentRefNo(shipment.getRefNo());
+        }
+
+        // 兼容字段
+        brief.setPairId(generatePairKey(startPOI, endPOI));
+        brief.setDrawn(false);
+
+        return brief;
+    }
+
+    /// 数据转换相关方法
+    /**
+     * 将 Assignment 转换为完整的 AssignmentDTO
+     */
+    public AssignmentDTO convertToAssignmentDTO(Assignment assignment) {
+        if (assignment == null) return null;
+
+        AssignmentDTO dto = new AssignmentDTO();
+        dto.setId(assignment.getId());
+        dto.setStatus(assignment.getStatus().toString());
+        dto.setCreatedTime(assignment.getCreatedTime());
+        dto.setUpdatedTime(assignment.getUpdatedTime());
+        dto.setStartTime(assignment.getStartTime());
+        dto.setEndTime(assignment.getEndTime());
+
+        // 车辆信息
+        Vehicle vehicle = assignment.getAssignedVehicle();
+        if (vehicle != null) {
+            dto.setVehicle(convertToVehicleDTO(vehicle));
+        }
+
+        // 路线信息
+        Route route = assignment.getRoute();
+        if (route != null) {
+            dto.setRoute(convertToRouteDTO(route));
+        }
+
+        // 货物清单信息
+        Set<ShipmentItem> items = assignment.getShipmentItems();
+        if (items != null && !items.isEmpty()) {
+            List<ShipmentItemDTO> itemDTOs = items.stream()
+                    .map(this::convertToShipmentItemDTO)
+                    .collect(Collectors.toList());
+            dto.setShipmentItems(itemDTOs);
+
+            // 设置简要货物信息
+            ShipmentItem firstItem = items.iterator().next();
+            dto.setGoodsName(firstItem.getName());
+            dto.setTotalQuantity(firstItem.getQty());
+
+            // 获取运单号
+            if (firstItem.getShipment() != null) {
+                dto.setShipmentRefNo(firstItem.getShipment().getRefNo());
+            }
+        }
+
+        // 状态跟踪
+        AssignmentBriefDTO brief = assignmentBriefMap.get(assignment.getId());
+        if (brief != null) {
+            dto.setIsDrawn(brief.isDrawn());
+            dto.setLastDrawnTime(brief.getLastDrawnTime());
+        }
+
+        return dto;
+    }
+
+    /**
+     * 将 Vehicle 转换为 VehicleDTO
+     */
+    private VehicleDTO convertToVehicleDTO(Vehicle vehicle) {
+        if (vehicle == null) return null;
+
+        VehicleDTO dto = new VehicleDTO();
+        dto.setId(vehicle.getId());
+        dto.setLicensePlate(vehicle.getLicensePlate());
+        dto.setBrand(vehicle.getBrand());
+        dto.setModelType(vehicle.getModelType());
+        dto.setVehicleType(vehicle.getVehicleType());
+        dto.setMaxLoadCapacity(vehicle.getMaxLoadCapacity());
+        dto.setCurrentLoad(vehicle.getCurrentLoad());
+        dto.setSuitableGoods(vehicle.getSuitableGoods());
+
+        // 状态信息
+        if (vehicle.getCurrentStatus() != null) {
+            dto.setCurrentStatus(vehicle.getCurrentStatus().toString());
+        }
+        if (vehicle.getPreviousStatus() != null) {
+            dto.setPreviousStatus(vehicle.getPreviousStatus().toString());
+        }
+
+        dto.setStatusStartTime(vehicle.getStatusStartTime());
+        dto.setStatusDurationSeconds(vehicle.getStatusDurationSeconds());
+
+        // 位置信息
+        if (vehicle.getCurrentPOI() != null) {
+            dto.setCurrentPOIId(vehicle.getCurrentPOI().getId());
+            dto.setCurrentPOIName(vehicle.getCurrentPOI().getName());
+        }
+
+        dto.setCurrentLongitude(vehicle.getCurrentLongitude());
+        dto.setCurrentLatitude(vehicle.getCurrentLatitude());
+        dto.setDriverName(vehicle.getDriverName());
+
+        // 任务信息
+        Assignment currentAssignment = vehicle.getCurrentAssignment();
+        if (currentAssignment != null) {
+            dto.setCurrentAssignmentId(currentAssignment.getId());
+            dto.setHasActiveAssignment(true);
+        }
+
+        dto.setCreatedTime(vehicle.getCreatedTime());
+        dto.setUpdatedTime(vehicle.getUpdatedTime());
+        dto.setUpdatedBy(vehicle.getUpdatedBy());
+
+        // 状态显示文本和颜色
+        Map<String, String> statusConfig = getVehicleStatusConfig(vehicle);
+        dto.setStatusText(statusConfig.get("text"));
+        dto.setStatusColor(statusConfig.get("color"));
+
+        return dto;
+    }
+
+    /**
+     * 将 Route 转换为 RouteDTO
+     */
+    private RouteDTO convertToRouteDTO(Route route) {
+        if (route == null) return null;
+
+        RouteDTO dto = new RouteDTO();
+        dto.setId(route.getId());
+        dto.setRouteCode(route.getRouteCode());
+        dto.setName(route.getName());
+        dto.setDistance(route.getDistance());
+        dto.setEstimatedTime(route.getEstimatedTime());
+        dto.setRouteType(route.getRouteType());
+        dto.setStatus(route.getStatus() != null ? route.getStatus().toString() : null);
+        dto.setDescription(route.getDescription());
+
+        // 起点信息
+        POI startPOI = route.getStartPOI();
+        if (startPOI != null) {
+            dto.setStartPOIId(startPOI.getId());
+            dto.setStartPOIName(startPOI.getName());
+            dto.setStartLng(startPOI.getLongitude());
+            dto.setStartLat(startPOI.getLatitude());
+            dto.setStartPOIType(startPOI.getPoiType().toString());
+        }
+
+        // 终点信息
+        POI endPOI = route.getEndPOI();
+        if (endPOI != null) {
+            dto.setEndPOIId(endPOI.getId());
+            dto.setEndPOIName(endPOI.getName());
+            dto.setEndLng(endPOI.getLongitude());
+            dto.setEndLat(endPOI.getLatitude());
+            dto.setEndPOIType(endPOI.getPoiType().toString());
+        }
+
+        dto.setTollCost(route.getTollCost());
+        dto.setFuelConsumption(route.getFuelConsumption());
+        dto.setCreatedTime(route.getCreatedTime());
+        dto.setUpdatedTime(route.getUpdatedTime());
+
+        return dto;
+    }
+
+    /**
+     * 将 ShipmentItem 转换为 ShipmentItemDTO
+     */
+    private ShipmentItemDTO convertToShipmentItemDTO(ShipmentItem item) {
+        if (item == null) return null;
+
+        ShipmentItemDTO dto = new ShipmentItemDTO();
+        dto.setId(item.getId());
+        dto.setName(item.getName());
+        dto.setSku(item.getSku());
+        dto.setQty(item.getQty());
+        dto.setWeight(item.getWeight());
+        dto.setVolume(item.getVolume());
+
+        // 关联信息
+        if (item.getShipment() != null) {
+            dto.setShipmentId(item.getShipment().getId());
+            dto.setShipmentRefNo(item.getShipment().getRefNo());
+        }
+
+        if (item.getGoods() != null) {
+            dto.setGoodsId(item.getGoods().getId());
+            dto.setGoodsName(item.getGoods().getName());
+        }
+
+        dto.setAssignmentId(item.getAssignment() != null ? item.getAssignment().getId() : null);
+
+        // 位置信息（从关联的 Assignment 获取）
+        if (item.getAssignment() != null && item.getAssignment().getRoute() != null) {
+            Route route = item.getAssignment().getRoute();
+            if (route.getStartPOI() != null) {
+                dto.setOriginPOIId(route.getStartPOI().getId());
+                dto.setOriginPOIName(route.getStartPOI().getName());
+            }
+            if (route.getEndPOI() != null) {
+                dto.setDestPOIId(route.getEndPOI().getId());
+                dto.setDestPOIName(route.getEndPOI().getName());
+            }
+        }
+
+        dto.setCreatedTime(item.getCreatedTime());
+        dto.setUpdatedTime(item.getUpdatedTime());
+
+        return dto;
+    }
+
+    /**
+     * 获取车辆状态显示配置
+     */
+    private Map<String, String> getVehicleStatusConfig(Vehicle vehicle) {
+        Map<String, String> config = new HashMap<>();
+
+        if (vehicle.getCurrentStatus() == null) {
+            config.put("text", "未知");
+            config.put("color", "#ccc");
+            return config;
+        }
+
+        switch (vehicle.getCurrentStatus()) {
+            case IDLE:
+                config.put("text", "空闲");
+                config.put("color", "#95a5a6");
+                break;
+            case ORDER_DRIVING:
+                config.put("text", "前往接货");
+                config.put("color", "#f39c12");
+                break;
+            case LOADING:
+                config.put("text", "装货中");
+                config.put("color", "#f39c12");
+                break;
+            case TRANSPORT_DRIVING:
+                config.put("text", "运输中");
+                config.put("color", "#2ecc71");
+                break;
+            case UNLOADING:
+                config.put("text", "卸货中");
+                config.put("color", "#f39c12");
+                break;
+            case WAITING:
+                config.put("text", "等待中");
+                config.put("color", "#e74c3c");
+                break;
+            case BREAKDOWN:
+                config.put("text", "故障");
+                config.put("color", "#e74c3c");
+                break;
+            default:
+                config.put("text", vehicle.getCurrentStatus().toString());
+                config.put("color", "#ccc");
+        }
+
+        return config;
+    }
+
     /// 和其它模块的对接
     /**
      * 获取当前可以展示的POI列表，只展示有货物的POI
@@ -935,6 +1366,7 @@ public class DataInitializer{
         return AbleToShow;
     }
 
+    // ToDo 等待合适时候删除中间代码
     /**
      * 获取当前所有POI配对
      */
@@ -1032,6 +1464,103 @@ public class DataInitializer{
             status.setDrawn(false); // 允许前端清理绘制
             status.setLastUpdated(LocalDateTime.now());
         }
+    }
+    // ToDO
+
+    /// Assignment对应数据
+    /**
+     * 获取当前所有的 Assignment 信息
+     */
+    public List<AssignmentBriefDTO> getCurrentAssignments() {
+        return new ArrayList<>(assignmentBriefMap.values());
+    }
+
+    /**
+     * 获取新增的 Assignment（用于前端绘制）
+     */
+    public List<AssignmentBriefDTO> getNewAssignmentsForDrawing() {
+        List<AssignmentBriefDTO> newAssignments = getNewAssignments();
+
+        // 标记为已绘制
+        newAssignments.forEach(dto -> {
+            dto.setDrawn(true);
+            dto.setLastDrawnTime(LocalDateTime.now());
+            assignmentBriefMap.put(dto.getAssignmentId(), dto);
+
+            // 同时更新 status map
+            if (dto.getPairId() != null) {
+                AssignmentStatusDTO status = assignmentStatusMap.get(dto.getPairId());
+                if (status != null) {
+                    status.setDrawn(true);
+                    status.setLastUpdated(LocalDateTime.now());
+                }
+            }
+        });
+
+        return newAssignments;
+    }
+
+    /**
+     * 标记 Assignment 为已绘制
+     */
+    public void markAssignmentAsDrawn(Long assignmentId) {
+        AssignmentBriefDTO dto = assignmentBriefMap.get(assignmentId);
+        if (dto != null) {
+            dto.setDrawn(true);
+            dto.setLastDrawnTime(LocalDateTime.now());
+            assignmentBriefMap.put(assignmentId, dto);
+        }
+    }
+
+    /**
+     * 标记 Assignment 为已完成
+     */
+    public void markAssignmentAsCompleted(Long assignmentId) {
+        AssignmentBriefDTO dto = assignmentBriefMap.get(assignmentId);
+        if (dto != null) {
+            dto.setStatus("COMPLETED");
+            assignmentBriefMap.put(assignmentId, dto);
+        }
+    }
+
+    /**
+     * 获取当前活跃的 Assignment 列表
+     */
+    public List<AssignmentBriefDTO> getActiveAssignments() {
+        return assignmentBriefMap.values().stream()
+                .filter(dto -> {
+                    // 活跃状态：ASSIGNED, IN_PROGRESS
+                    return "ASSIGNED".equals(dto.getStatus()) || "IN_PROGRESS".equals(dto.getStatus());
+                })
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * 获取新增的 Assignment（尚未被前端绘制的）
+     */
+    public List<AssignmentBriefDTO> getNewAssignments() {
+        return assignmentBriefMap.values().stream()
+                .filter(dto -> {
+                    // 活跃且未绘制
+                    return ("ASSIGNED".equals(dto.getStatus()) || "IN_PROGRESS".equals(dto.getStatus()))
+                            && !dto.isDrawn();
+                })
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * 获取需要清理的 Assignment（已完成的）
+     */
+    public List<Long> getCompletedAssignments() {
+        List<Long> completedIds = new ArrayList<>();
+
+        assignmentBriefMap.forEach((id, dto) -> {
+            if ("COMPLETED".equals(dto.getStatus()) || "CANCELLED".equals(dto.getStatus())) {
+                completedIds.add(id);
+            }
+        });
+
+        return completedIds;
     }
 }
 

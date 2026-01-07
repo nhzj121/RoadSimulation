@@ -1,5 +1,7 @@
 package org.example.roadsimulation.service;
 
+import org.example.roadsimulation.dto.AssignmentBriefDTO;
+import org.example.roadsimulation.dto.AssignmentDTO;
 import org.example.roadsimulation.dto.AssignmentRequestDTO;
 import org.example.roadsimulation.dto.AssignmentResponseDTO;
 import org.example.roadsimulation.entity.Assignment;
@@ -33,12 +35,15 @@ public interface AssignmentService {
     AssignmentResponseDTO moveToNextAction(Long id);
     AssignmentResponseDTO updateAssignmentStatus(Long id, AssignmentStatus status);
 
-    // 统计和分析
-    Map<AssignmentStatus, Long> getAssignmentStatistics();
-    List<AssignmentResponseDTO> getOverdueAssignments();
-    List<AssignmentResponseDTO> getActiveAssignmentsByDriver(Long driverId);
-
     // 批量操作
     List<AssignmentResponseDTO> batchCreateAssignments(List<AssignmentRequestDTO> requestDTOs);
     void batchUpdateStatus(List<Long> assignmentIds, AssignmentStatus status);
+
+    // 前后端数据传输
+    List<AssignmentBriefDTO> getActiveAssignments();
+    List<AssignmentBriefDTO> getNewAssignments();
+    AssignmentDTO getAssignmentDetail(Long assignmentId); // ToDo 这里需要从数据库获取完整的 Assignment 信息并转换
+    void markAssignmentAsDrawn(Long assignmentId);
+    List<Long> getCompletedAssignments();
+
 }

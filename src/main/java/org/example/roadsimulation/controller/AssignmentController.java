@@ -1,6 +1,8 @@
 package org.example.roadsimulation.controller;
 
 import jakarta.validation.Valid;
+import org.example.roadsimulation.dto.AssignmentBriefDTO;
+import org.example.roadsimulation.dto.AssignmentDTO;
 import org.example.roadsimulation.dto.AssignmentRequestDTO;
 import org.example.roadsimulation.dto.AssignmentResponseDTO;
 import org.example.roadsimulation.entity.Assignment;
@@ -403,67 +405,44 @@ public class AssignmentController {
         }
     }
 
-    // ============================
-    // 统计和分析接口
-    // ============================
-
     /**
-     * 获取任务分配统计信息
+     * 获取当前活跃的 Assignment
      */
-    @GetMapping("/statistics")
-    public ResponseEntity<Map<Assignment.AssignmentStatus, Long>> getAssignmentStatistics() {
-        logger.debug("开始获取任务分配统计信息");
-
-        try {
-            Map<Assignment.AssignmentStatus, Long> statistics = assignmentService.getAssignmentStatistics();
-            logger.debug("任务分配统计信息获取完成，统计项数量: {}", statistics.size());
-            return ResponseEntity.ok(statistics);
-        } catch (Exception e) {
-            logger.error("获取任务分配统计信息系统异常: ", e);
-            return ResponseEntity.internalServerError().body(null);
-        }
+    @GetMapping("/active")
+    public List<AssignmentBriefDTO> getActiveAssignments() {
+        return assignmentService.getActiveAssignments();
     }
 
     /**
-     * 获取逾期任务
+     * 获取新增的 Assignment（尚未绘制的）
      */
-    @GetMapping("/overdue")
-    public ResponseEntity<List<AssignmentResponseDTO>> getOverdueAssignments() {
-        logger.debug("开始获取逾期任务分配列表");
-
-        try {
-            List<AssignmentResponseDTO> overdueAssignments = assignmentService.getOverdueAssignments();
-            logger.debug("逾期任务分配列表获取完成，数量: {}", overdueAssignments.size());
-            return ResponseEntity.ok(overdueAssignments);
-        } catch (Exception e) {
-            logger.error("获取逾期任务分配列表系统异常: ", e);
-            return ResponseEntity.internalServerError().body(null);
-        }
+    @GetMapping("/new")
+    public List<AssignmentBriefDTO> getNewAssignments() {
+        return assignmentService.getNewAssignments();
     }
 
     /**
-     * 获取驾驶员的活跃任务
+     * 获取完整的 Assignment 信息
      */
-    @GetMapping("/driver/{driverId}/active")
-    public ResponseEntity<List<AssignmentResponseDTO>> getActiveAssignmentsByDriver(@PathVariable Long driverId) {
-        logger.debug("开始获取驾驶员的活跃任务，驾驶员ID: {}", driverId);
-
-        try {
-            List<AssignmentResponseDTO> activeAssignments = assignmentService.getActiveAssignmentsByDriver(driverId);
-            logger.debug("驾驶员活跃任务获取完成，驾驶员ID: {}, 数量: {}", driverId, activeAssignments.size());
-            return ResponseEntity.ok(activeAssignments);
-        } catch (Exception e) {
-            logger.error("获取驾驶员活跃任务系统异常，驾驶员ID: {}: ", driverId, e);
-            return ResponseEntity.internalServerError().body(null);
-        }
+    @GetMapping("/{assignmentId}")
+    public AssignmentDTO getAssignmentDetail(@PathVariable Long assignmentId) {
+        return assignmentService.getAssignmentDetail(assignmentId);
     }
 
     /**
-     * 健康检查接口
+     * 标记 Assignment 为已绘制
      */
-    @GetMapping("/health")
-    public ResponseEntity<String> healthCheck() {
-        logger.debug("任务分配服务健康检查请求");
-        return ResponseEntity.ok("Assignment Service is running properly");
+    @PostMapping("/mark-drawn/{assignmentId}")
+    public ResponseEntity<Void> markAssignmentAsDrawn(@PathVariable Long assignmentId) {
+        assignmentService.markAssignmentAsDrawn(assignmentId);
+        return ResponseEntity.ok().build();
+    }
+
+    /**
+     * 获取需要清理的 Assignment ID 列表
+     */
+    @GetMapping("/to-cleanup")
+    public List<Long> getAssignmentsToCleanup() {
+        return assignmentService.getCompletedAssignments();
     }
 }

@@ -74,6 +74,9 @@ public class Vehicle {
     @Column(name = "current_load", precision = 10)
     private Double currentLoad;
 
+    @Column(name = "current-volumn", precision = 10)
+    private Double currentVolumn;
+
     @Min(value = 0, message = "长度不能为负数")
     @Column(name = "length", precision = 8)
     private Double length;
@@ -200,6 +203,9 @@ public class Vehicle {
 
     public Double getCurrentLoad() { return currentLoad; }
     public void setCurrentLoad(Double currentLoad) { this.currentLoad = currentLoad; }
+
+    public Double getCurrentVolumn() { return currentVolumn; }
+    public void setCurrentVolumn(Double currentVolumn) { this.currentVolumn = currentVolumn; }
 
     public Double getLength() { return length; }
     public void setLength(Double length) { this.length = length; }

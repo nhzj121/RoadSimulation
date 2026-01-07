@@ -59,4 +59,16 @@ public interface AssignmentRepository extends JpaRepository<Assignment, Long> {
     @Query("SELECT a.assignedVehicle.id, COUNT(a) FROM Assignment a WHERE a.status IN :activeStatuses GROUP BY a.assignedVehicle.id")
     List<Object[]> countActiveAssignmentsPerVehicle(@Param("activeStatuses") List<AssignmentStatus> activeStatuses);
     List<Assignment> findByAssignedVehicleAndStatusIn(Vehicle vehicle, List<AssignmentStatus> statuses);
+
+    // 查找所有活跃的Assignment
+    @Query("SELECT a FROM Assignment a WHERE a.status IN ('ASSIGNED', 'IN_PROGRESS')")
+    List<Assignment> findActiveAssignments();
+
+    // 查找指定车辆的Assignment
+    @Query("SELECT a FROM Assignment a WHERE a.assignedVehicle.id = :vehicleId AND a.status IN ('ASSIGNED', 'IN_PROGRESS')")
+    Optional<Assignment> findActiveAssignmentByVehicle(@Param("vehicleId") Long vehicleId);
+
+    // 批量查找
+    @Query("SELECT a FROM Assignment a WHERE a.id IN :ids")
+    List<Assignment> findByIds(@Param("ids") List<Long> ids);
 }
