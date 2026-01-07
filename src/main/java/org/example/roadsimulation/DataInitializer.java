@@ -712,57 +712,213 @@ public class DataInitializer{
             POI managedEndPOI = poiRepository.findById(endPOI.getId())
                     .orElseThrow(() -> new RuntimeException("终点POI不存在: " + endPOI.getId()));
 
-            for (Assignment assignment : assignments) {
-                Vehicle vehicle = assignment.getAssignedVehicle();
+            // 2. 获取所有空闲车辆（用于匹配）
+            List<Vehicle> allIdleVehicles = vehicleRepository.findByCurrentStatus(Vehicle.VehicleStatus.IDLE);
 
-                // 检查是否有分配的车辆
-                if (vehicle == null) {
-                    System.out.println("警告：Assignment " + assignment.getId() + " 没有分配车辆，跳过");
-                    continue;
+            // 如果没有空闲车辆，记录警告
+            if (allIdleVehicles.isEmpty()) {
+                System.out.println("警告：没有空闲车辆可用，无法分配任务");
+                return;
+            }
+
+            for (Assignment assignment : assignments) {
+                Vehicle matchedVehicle = assignment.getAssignedVehicle();
+
+                // 检查是否有分配的车辆，如果没有则进行匹配
+                if (matchedVehicle == null) {
+                    System.out.println("Assignment " + assignment.getId() + " 没有分配车辆，开始匹配最近的空闲车辆...");
+
+                    // 3. 计算任务总重量（用于车辆容量检查）
+                    double assignmentTotalWeight = calculateAssignmentTotalWeight(assignment);
+
+                    // 4. 匹配最近的空闲车辆（考虑容量）
+                    matchedVehicle = matchNearestIdleVehicleWithCapacity(managedStartPOI, allIdleVehicles, assignmentTotalWeight);
+
+                    if (matchedVehicle == null) {
+                        System.out.println("警告：无法为Assignment " + assignment.getId() + " 找到合适的车辆（容量不足或没有空闲车辆）");
+                        continue;
+                    }
+
+                    System.out.println("为Assignment " + assignment.getId() + " 匹配到车辆: " +
+                            matchedVehicle.getLicensePlate() + "，距离: " +
+                            calculateDistance(matchedVehicle, managedStartPOI) + "公里");
+
+                    // 设置匹配的车辆到Assignment
+                    assignment.setAssignedVehicle(matchedVehicle);
+                } else {
+                    System.out.println("Assignment " + assignment.getId() + " 已有分配的车辆: " + matchedVehicle.getLicensePlate());
                 }
 
-                // 2. 重新加载车辆实体
-                Vehicle managedVehicle = vehicleRepository.findById(vehicle.getId())
-                        .orElseThrow(() -> new RuntimeException("车辆不存在: " + vehicle.getId()));
+                // 5. 从空闲车辆列表中移除已分配的车辆（使用车辆ID的局部变量）
+                final Long vehicleIdToRemove = matchedVehicle.getId(); // 创建局部final变量
+                allIdleVehicles.removeIf(v -> v.getId().equals(vehicleIdToRemove));
 
-                // 3. 双向关联：车辆添加任务
+                // 6. 重新加载车辆实体（确保是托管状态）
+                Vehicle managedVehicle = vehicleRepository.findById(matchedVehicle.getId())
+                        .orElseThrow(() -> new RuntimeException("车辆不存在: "));
+
+                // 7. 双向关联：车辆添加任务
                 managedVehicle.addAssignment(assignment);
 
-                // 4. 更新车辆状态
+                // 8. 更新车辆状态
                 managedVehicle.setCurrentStatus(Vehicle.VehicleStatus.ORDER_DRIVING);
                 managedVehicle.setPreviousStatus(Vehicle.VehicleStatus.IDLE);
                 managedVehicle.setStatusStartTime(LocalDateTime.now());
                 managedVehicle.setStatusDurationSeconds(0L);
 
-                // 5. 设置当前位置
+                // 9. 设置当前位置
                 managedVehicle.setCurrentPOI(managedStartPOI);
                 if (managedStartPOI.getLongitude() != null && managedStartPOI.getLatitude() != null) {
                     managedVehicle.setCurrentLongitude(managedStartPOI.getLongitude());
                     managedVehicle.setCurrentLatitude(managedStartPOI.getLatitude());
                 }
 
-                // 6. 设置任务状态
+                // 10. 设置任务状态
                 assignment.setStatus(Assignment.AssignmentStatus.ASSIGNED);
                 assignment.setUpdatedTime(LocalDateTime.now());
                 assignment.setUpdatedBy("DataInitializer -- 运输任务成功分配");
 
-                // 7. 更新车辆信息
+                // 11. 更新车辆信息
                 managedVehicle.setUpdatedBy("DataInitializer -- 车辆接收运输任务");
                 managedVehicle.setUpdatedTime(LocalDateTime.now());
 
-                // 8. 保存所有更改
+                // 12. 保存所有更改
                 vehicleRepository.save(managedVehicle);
                 assignmentRepository.save(assignment);
 
                 System.out.println("成功分配车辆 " + managedVehicle.getLicensePlate() +
                         " 给任务，从 " + managedStartPOI.getName() + " 到 " + managedEndPOI.getName());
             }
+
+            // 13. 输出匹配统计信息
+            System.out.println("车辆分配完成。已分配车辆: " + assignments.size() + " 辆，剩余空闲车辆: " + allIdleVehicles.size() + " 辆");
+
         } catch (Exception e) {
             System.err.println("建立车辆任务关联失败: " + e.getMessage());
             throw new RuntimeException("车辆任务关联失败", e);
         }
     }
+    /**
+     * 计算Assignment的总重量
+     */
+    private double calculateAssignmentTotalWeight(Assignment assignment) {
+        if (assignment == null || assignment.getShipmentItems() == null) {
+            return 0.0;
+        }
 
+        return assignment.getShipmentItems().stream()
+                .filter(item -> item.getWeight() != null)
+                .mapToDouble(ShipmentItem::getWeight)
+                .sum();
+    }
+
+    /**
+     * 匹配最近的空闲车辆（考虑载重能力）
+     * @param targetPOI 目标POI
+     * @param allVehicles 所有车辆列表
+     * @param requiredCapacity 需要的载重能力（吨）
+     * @return 匹配到的车辆，如果找不到则返回null
+     */
+    private Vehicle matchNearestIdleVehicleWithCapacity(POI targetPOI,
+                                                        List<Vehicle> allVehicles,
+                                                        double requiredCapacity) {
+        if (targetPOI == null || allVehicles == null || allVehicles.isEmpty()) {
+            return null;
+        }
+
+        Vehicle nearestVehicle = null;
+        double minDistance = Double.MAX_VALUE;
+
+        // 遍历所有车辆
+        for (Vehicle vehicle : allVehicles) {
+            // 步骤1：判断车辆是否空闲
+            if (vehicle.getCurrentStatus() != Vehicle.VehicleStatus.IDLE) {
+                continue;
+            }
+
+            // 步骤2：检查载重能力是否足够
+            if (vehicle.getMaxLoadCapacity() == null ||
+                    vehicle.getMaxLoadCapacity() < requiredCapacity) {
+                // 载重能力不足，跳过
+                continue;
+            }
+
+            // 步骤3：计算距离
+            double distance = calculateDistance(vehicle, targetPOI);
+
+            // 如果距离无法计算，跳过
+            if (distance >= Double.MAX_VALUE) {
+                continue;
+            }
+
+            // 步骤4：检查是否比当前记录的最小距离更小
+            if (distance < minDistance) {
+                minDistance = distance;
+                nearestVehicle = vehicle;
+            }
+        }
+
+        return nearestVehicle;
+    }
+
+    /**
+     * 计算车辆到POI的距离
+     * @param vehicle 车辆
+     * @param targetPOI 目标POI
+     * @return 距离（公里），如果无法计算返回Double.MAX_VALUE
+     */
+    private double calculateDistance(Vehicle vehicle, POI targetPOI) {
+        if (vehicle == null || targetPOI == null) {
+            return Double.MAX_VALUE;
+        }
+
+        // 优先使用车辆当前坐标
+        if (vehicle.getCurrentLatitude() != null && vehicle.getCurrentLongitude() != null) {
+            return haversineDistance(
+                    vehicle.getCurrentLatitude(), vehicle.getCurrentLongitude(),
+                    targetPOI.getLatitude(), targetPOI.getLongitude()
+            );
+        }
+
+        // 如果车辆没有当前坐标，但所在POI有坐标
+        if (vehicle.getCurrentPOI() != null) {
+            return haversineDistance(
+                    vehicle.getCurrentPOI().getLatitude(), vehicle.getCurrentPOI().getLongitude(),
+                    targetPOI.getLatitude(), targetPOI.getLongitude()
+            );
+        }
+
+        // 没有位置信息，无法计算距离
+        return Double.MAX_VALUE;
+    }
+
+    /**
+     * 使用Haversine公式计算两点间距离（公里）
+     * @param lat1 纬度1
+     * @param lon1 经度1
+     * @param lat2 纬度2
+     * @param lon2 经度2
+     * @return 距离（公里）
+     */
+    private double haversineDistance(BigDecimal lat1, BigDecimal lon1,
+                                     BigDecimal lat2, BigDecimal lon2) {
+        if (lat1 == null || lon1 == null || lat2 == null || lon2 == null) {
+            return Double.MAX_VALUE;
+        }
+
+        double lat1Rad = Math.toRadians(lat1.doubleValue());
+        double lat2Rad = Math.toRadians(lat2.doubleValue());
+        double deltaLat = Math.toRadians(lat2.doubleValue() - lat1.doubleValue());
+        double deltaLon = Math.toRadians(lon2.doubleValue() - lon1.doubleValue());
+
+        double a = Math.sin(deltaLat / 2) * Math.sin(deltaLat / 2)
+                + Math.cos(lat1Rad) * Math.cos(lat2Rad)
+                * Math.sin(deltaLon / 2) * Math.sin(deltaLon / 2);
+
+        double c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+        return 6371.0 * c; // 地球半径6371公里
+    }
     // POI点与货物关系的建立与删除
     @Transactional
     public void initRelationBetweenPOIAndGoods(POI poiForTest, Goods goodsForTest, Integer generateQuantity) {
