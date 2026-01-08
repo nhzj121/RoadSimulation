@@ -1,6 +1,7 @@
 package org.example.roadsimulation.controller;
 
 import jakarta.validation.Valid;
+import org.example.roadsimulation.DataInitializer;
 import org.example.roadsimulation.entity.Vehicle;
 import org.example.roadsimulation.service.VehicleService;
 import org.slf4j.Logger;
@@ -17,6 +18,7 @@ import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
 import java.net.URI;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -30,6 +32,9 @@ public class VehicleController {
     private static final Logger logger = LoggerFactory.getLogger(VehicleController.class);
 
     private final VehicleService vehicleService;
+
+    @Autowired
+    private DataInitializer dataInitializer;
 
     @Autowired
     public VehicleController(VehicleService vehicleService) {
@@ -222,5 +227,11 @@ public class VehicleController {
         boolean exists = vehicleService.existsByLicensePlate(licensePlate);
         logger.debug("车牌号 {} 存在性检查结果: {}", licensePlate, exists);
         return ResponseEntity.ok(exists);
+    }
+
+    @GetMapping("/current-positions")
+    public ResponseEntity<Map<Long, double[]>> getVehicleCurrentPositions() {
+        Map<Long, double[]> positions = dataInitializer.getVehicleCurrentPositions();
+        return ResponseEntity.ok(positions);
     }
 }

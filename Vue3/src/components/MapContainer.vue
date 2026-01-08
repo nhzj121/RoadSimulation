@@ -87,7 +87,7 @@
                   </div>
                   <!-- 位置和状态 -->
                   <div class="vehicle-location">
-                    {{ v.location || '-' }} | {{ statusMap[v.status]?.text || v.status }}
+                    {{ statusMap[v.status]?.text || v.status }}
                   </div>
                 </div>
                 <template v-if="v.currentAssignment">
@@ -323,8 +323,6 @@ const startSimulationTimer = () => {
 
       // 更新车辆信息
       await updateVehicleInfo();
-
-      // ToDo这里可以添加其他定时更新的数据，如车辆状态、任务状态等
     }
   }, simulationInterval.value);
 };
@@ -540,16 +538,12 @@ const toggleFilter = (key) => {
 // --- 车辆状态 ---
 const statusMap = {
   IDLE: { text: '空闲', color: '#95a5a6' },
-  ORDER_DRIVING: { text: '前往接货', color: '#43f312' },
+  ORDER_DRIVING: { text: '前往装货点', color: '#3498db' },
   LOADING: { text: '装货中', color: '#f39c12' },
   TRANSPORT_DRIVING: { text: '运输中', color: '#2ecc71' },
-  UNLOADING: { text: '卸货中', color: '#f39c12' },
+  UNLOADING: { text: '卸货中', color: '#e74c3c' },
   WAITING: { text: '等待中', color: '#e74c3c' },
   BREAKDOWN: { text: '故障', color: '#e74c3c' },
-  running: { text: '运输中', color: '#2ecc71' },
-  loading: { text: '装卸货', color: '#f39c12' },
-  maintenance: { text: '保养中', color: '#e74c3c' },
-  stopped: { text: '停靠中', color: '#95a5a6' },
 };
 
 const vehicles = reactive([]); // 车辆列表，将从Assignment中获取
@@ -591,18 +585,13 @@ const updateVehicleInfo = async () => {
           const vehicle = {
             id: assignment.vehicleId,
             licensePlate: assignment.licensePlate,
-            status: assignment.vehicleStatus || 'running',
+            status: assignment.vehicleStatus || 'ORDER_DRIVING',
             assignments: [{
               id: assignment.assignmentId,
               routeName: assignment.routeName,
               goodsName: assignment.goodsName,
               quantity: assignment.quantity
             }],
-            // 位置信息
-            location: assignment.startLat && assignment.startLng ?
-                `${assignment.startLng.toFixed(4)}, ${assignment.startLat.toFixed(4)}` : '-',
-            lat: assignment.startLat,
-            lng: assignment.startLng,
             // 任务信息
             currentAssignment: assignment.routeName,
             goodsInfo: assignment.goodsName,
@@ -629,26 +618,6 @@ const updateVehicleInfo = async () => {
         }
       }
     });
-    // 计算总载重统计
-    let totalLoad = 0;
-    let totalCapacity = 0;
-    let totalVolume = 0;
-    let totalVolumeCapacity = 0;
-
-    vehicleMap.forEach(vehicle => {
-      totalLoad += vehicle.currentLoad || 0;
-      totalCapacity += vehicle.maxLoadCapacity || 0;
-      totalVolume += vehicle.currentVolume || 0;
-      totalVolumeCapacity += vehicle.maxVolumeCapacity || 0;
-    });
-
-    // 更新统计信息
-    stats.totalLoad = totalLoad;
-    stats.totalCapacity = totalCapacity;
-    stats.totalVolume = totalVolume;
-    stats.totalVolumeCapacity = totalVolumeCapacity;
-    stats.loadUtilization = totalCapacity > 0 ? (totalLoad / totalCapacity * 100) : 0;
-    stats.volumeUtilization = totalVolumeCapacity > 0 ? (totalVolume / totalVolumeCapacity * 100) : 0;
 
     // 将map中的车辆添加到列表中
     vehicleMap.forEach(vehicle => {
@@ -866,8 +835,6 @@ const clearRouteByPairId = (pairId) => {
   }
 };
 
-// ToDo 接下来继续前端数据基础的依据修改
-
 // 增量获取并绘制POI配对
 const fetchAndDrawNewPOIPairs = async () => {
   try {
@@ -907,7 +874,7 @@ const fetchAndDrawNewPOIPairs = async () => {
       if (route && route.info && route.info.assignmentId) {
         // 确保该Assignment尚未绘制
         if (!drawnAssignmentIds.value.has(route.info.assignmentId)) {
-          await drawSingleRoute(route);
+          await drawTwoStageRoute(route);
 
           // 标记为已绘制
           drawnAssignmentIds.value.add(route.info.assignmentId);
@@ -942,42 +909,18 @@ const fetchAndDrawNewAssignments = async () => {
 
     console.log(`获取到 ${newAssignments.length} 个新增Assignment`);
 
-    // 转换为路线规划的endpoints
-    const endpoints = newAssignments.map(assignment => ({
-      id: assignment.assignmentId,
-      start: [assignment.startLng, assignment.startLat],
-      end: [assignment.endLng, assignment.endLat],
-      info: {
-        assignmentId: assignment.assignmentId,
-        pairId: assignment.pairId,
-        startName: assignment.startPOIName,
-        endName: assignment.endPOIName,
-        goodsName: assignment.goodsName,
-        quantity: assignment.quantity,
-        shipmentRefNo: assignment.shipmentRefNo,
-        vehicleLicensePlate: assignment.licensePlate,
-        vehicleId: assignment.vehicleId,
-        endPOIId: assignment.endPOIId,
-        // 传递Assignment对象用于绘制车辆图标
-        assignment: assignment
-      }
-    }));
-
-    // 批量规划路线
-    const computedRoutes = await computeRoutesOnBackend(endpoints);
-
     // 绘制新路线
-    for (const route of computedRoutes) {
-      if (route && route.info && route.info.assignmentId) {
-        if (!drawnAssignmentIds.value.has(route.info.assignmentId)) {
-          await drawSingleRoute(route);
+    for (const assignment of newAssignments) {
+      if (assignment && assignment.assignmentId) {
+        if (!drawnAssignmentIds.value.has(assignment.assignmentId)) {
+          await drawTwoStageRouteForAssignment(assignment);
 
-          drawnAssignmentIds.value.add(route.info.assignmentId);
+          drawnAssignmentIds.value.add(assignment.assignmentId);
 
           try {
-            await request.post(`/api/assignments/mark-drawn/${route.info.assignmentId}`);
+            await request.post(`/api/assignments/mark-drawn/${assignment.assignmentId}`);
           } catch (error) {
-            console.error(`标记Assignment ${route.info.assignmentId} 为已绘制失败:`, error);
+            console.error(`标记Assignment ${assignment.assignmentId} 为已绘制失败:`, error);
           }
         }
       }
@@ -990,6 +933,219 @@ const fetchAndDrawNewAssignments = async () => {
   }
 };
 
+// 为Assignment绘制两段路线
+const drawTwoStageRouteForAssignment = async (assignment) => {
+  if (!AMapLib || !map) return null;
+
+  try {
+    const elements = [];
+    const animations = [];
+
+    // 绘制车辆在起点的标记（如果车辆有初始位置）
+    let vehicleMarker = null;
+    if (assignment.vehicleStartLng && assignment.vehicleStartLat) {
+      vehicleMarker = await drawVehicleIconAtStart(assignment);
+      if (vehicleMarker) {
+        elements.push(vehicleMarker);
+      }
+    }
+
+    // 规划两段路线
+    // 第一段：车辆初始位置到任务起点
+    const stage1Route = await computeSingleRoute(
+        [assignment.vehicleStartLng, assignment.vehicleStartLat],
+        [assignment.startLng, assignment.startLat],
+        '0'
+    );
+
+    // 第二段：任务起点到任务终点
+    const stage2Route = await computeSingleRoute(
+        [assignment.startLng, assignment.startLat],
+        [assignment.endLng, assignment.endLat],
+        '0'
+    );
+
+    if (!stage1Route || !stage2Route) {
+      console.error(`Assignment ${assignment.assignmentId} 路线规划失败`);
+      return null;
+    }
+
+    // 绘制第一段路线（空驶阶段）
+    const stage1Poly = new AMapLib.Polyline({
+      path: stage1Route.path,
+      strokeColor: '#95a5a6', // 灰色表示空驶
+      strokeOpacity: 0.6,
+      strokeWeight: 3,
+      strokeDasharray: [5, 5], // 虚线
+      lineJoin: 'round',
+    });
+    stage1Poly.setMap(map);
+    elements.push(stage1Poly);
+
+    // 绘制第二段路线（运输阶段）
+    const stage2Poly = new AMapLib.Polyline({
+      path: stage2Route.path,
+      strokeColor: '#3388ff', // 蓝色表示运输
+      strokeOpacity: 0.8,
+      strokeWeight: 4,
+      lineJoin: 'round',
+    });
+    stage2Poly.setMap(map);
+    elements.push(stage2Poly);
+
+    // 起点标记（装货点）
+    const startMarker = new AMapLib.Marker({
+      position: [assignment.startLng, assignment.startLat],
+      title: `装货点: ${assignment.startPOIName || '未知'}`,
+      icon: new AMapLib.Icon({
+        image: factoryIcon,
+        size: new AMapLib.Size(24, 24),
+        imageSize: new AMapLib.Size(24, 24)
+      })
+    });
+    startMarker.setMap(map);
+    elements.push(startMarker);
+
+    // 终点标记（卸货点）
+    const endMarker = new AMapLib.Marker({
+      position: [assignment.endLng, assignment.endLat],
+      title: `卸货点: ${assignment.endPOIName || '未知'}`,
+      icon: new AMapLib.Icon({
+        image: materialMarketIcon,
+        size: new AMapLib.Size(24, 24),
+        imageSize: new AMapLib.Size(24, 24)
+      })
+    });
+    endMarker.setMap(map);
+    elements.push(endMarker);
+
+    // 创建车辆动画标记
+    const vanEl = createSvgVanEl(32, '#ff7f50');
+    const movingMarker = new AMapLib.Marker({
+      position: stage1Route.path[0],
+      content: vanEl,
+      offset: new AMapLib.Pixel(-16, -16),
+      title: `${assignment.goodsName || '货物'}运输`,
+      extData: {
+        type: 'vehicle',
+        vehicleId: assignment.vehicleId,
+        assignmentId: assignment.assignmentId,
+        licensePlate: assignment.licensePlate
+      }
+    });
+    movingMarker.setMap(map);
+    elements.push(movingMarker);
+
+    // 车辆信息窗口
+    movingMarker.on('click', () => {
+      showVehicleInfoWindowFromMarker(assignment, null);
+    });
+
+    // 车辆动画 - 两阶段
+    const startVehicleAnimation = async () => {
+      // 更新车辆状态为ORDER_DRIVING
+      updateVehicleStatusInList(assignment.vehicleId, 'ORDER_DRIVING');
+
+      // 第一阶段动画：前往装货点
+      const cancelStage1 = animateAlongPath(
+          movingMarker,
+          stage1Route.path,
+          900, // 速度
+          async (position) => {
+            console.log(`车辆 ${assignment.licensePlate} 到达装货点`);
+
+            // 更新车辆状态为LOADING
+            updateVehicleStatusInList(assignment.vehicleId, 'LOADING');
+
+            // 装货停留3秒
+            await new Promise(resolve => setTimeout(resolve, 3000));
+
+            // 更新车辆状态为TRANSPORT_DRIVING
+            updateVehicleStatusInList(assignment.vehicleId, 'TRANSPORT_DRIVING');
+
+            // 第二阶段动画：运输到卸货点
+            const cancelStage2 = animateAlongPath(
+                movingMarker,
+                stage2Route.path,
+                900, // 速度
+                async (position) => {
+                  console.log(`车辆 ${assignment.licensePlate} 到达卸货点`);
+
+                  // 更新车辆状态为UNLOADING
+                  updateVehicleStatusInList(assignment.vehicleId, 'UNLOADING');
+
+                  // 卸货停留3秒
+                  await new Promise(resolve => setTimeout(resolve, 3000));
+
+                  // 更新车辆状态为WAITING
+                  updateVehicleStatusInList(assignment.vehicleId, 'WAITING');
+
+                  // 通知后端车辆到达终点
+                  try {
+                    await request.post('/api/simulation/vehicle-arrived', {
+                      vehicleId: assignment.vehicleId,
+                      endPOIId: assignment.endPOIId
+                    });
+                    console.log(`已通知后端车辆到达终点: ${assignment.licensePlate}`);
+                  } catch (error) {
+                    console.error('通知车辆到达终点失败:', error);
+                  }
+                }
+            );
+
+            animations.push({ marker: movingMarker, cancel: cancelStage2 });
+          }
+      );
+
+      animations.push({ marker: movingMarker, cancel: cancelStage1 });
+    };
+
+    // 开始车辆动画
+    startVehicleAnimation();
+
+    // 保存路线数据
+    const routeData = {
+      id: assignment.assignmentId,
+      elements,
+      animations,
+      vehicleMarker: vehicleMarker,
+      movingMarker: movingMarker,
+      cleanup: () => {
+        animations.forEach(anim => {
+          anim.cancel && anim.cancel();
+          try {
+            anim.marker && anim.marker.setMap && anim.marker.setMap(null);
+          } catch (_) {}
+        });
+        elements.forEach(el => {
+          try {
+            el.setMap && el.setMap(null);
+          } catch (_) {}
+        });
+      }
+    };
+
+    activeRoutes.value.set(assignment.assignmentId, routeData);
+
+    console.log(`成功绘制Assignment ${assignment.assignmentId} 的两段路线`);
+    return routeData;
+
+  } catch (e) {
+    console.error('绘制两段路线错误', e);
+    return null;
+  }
+};
+
+// 更新车辆列表中的车辆状态
+const updateVehicleStatusInList = (vehicleId, status) => {
+  const vehicleIndex = vehicles.findIndex(v => v.id === vehicleId);
+  if (vehicleIndex !== -1) {
+    vehicles[vehicleIndex].status = status;
+    console.log(`更新车辆 ${vehicleId} 状态为: ${status}`);
+  }
+};
+
+// 绘制车辆在起点的图标
 const drawVehicleIconAtStart = async (assignment) => {
   if (!AMapLib || !map) return null;
 
@@ -1003,9 +1159,9 @@ const drawVehicleIconAtStart = async (assignment) => {
     }
 
     // 创建车辆图标
-    const vanEl = createSvgVanEl(32, '#ff7f50'); // 橙色车辆图标
+    const vanEl = createSvgVanEl(32, '#ff7f50');
     const vehicleIcon = new AMapLib.Icon({
-      image: createSvgDataUrl(vanEl), // 需要将DOM元素转换为图片URL
+      image: createSvgDataUrl(vanEl),
       size: new AMapLib.Size(32, 32),
       imageSize: new AMapLib.Size(32, 32)
     });
@@ -1057,12 +1213,12 @@ const createSvgDataUrl = (domElement) => {
 
   // 绘制车辆SVG图标
   ctx.fillStyle = '#fff';
-  ctx.fillText('🚚', 8, 22); // 使用文本表情作为简单图标
+  ctx.fillText('🚚', 8, 22);
 
   return canvas.toDataURL();
 };
 
-// 绘制单个路线
+// 绘制单个路线（兼容旧代码）
 const drawSingleRoute = async (route) => {
   if (!AMapLib || !map) return null;
 
@@ -1072,15 +1228,6 @@ const drawSingleRoute = async (route) => {
     const animations = [];
 
     const assignment = route.info?.assignment;
-
-    // 如果有关联的Assignment且有车辆起始位置，先绘制车辆图标
-    let vehicleMarker = null;
-    if (assignment && assignment.vehicleStartLng && assignment.vehicleStartLat) {
-      vehicleMarker = await drawVehicleIconAtStart(assignment);
-      if (vehicleMarker) {
-        elements.push(vehicleMarker);
-      }
-    }
 
     // 绘制折线
     const poly = new AMapLib.Polyline({
@@ -1106,24 +1253,6 @@ const drawSingleRoute = async (route) => {
       });
       startMarker.setMap(map);
       elements.push(startMarker);
-
-      // 起点信息窗口
-      startMarker.on('click', () => {
-        const infoWindow = new AMapLib.InfoWindow({
-          content: `
-      <div style="padding: 10px; min-width: 200px; color: #000;">
-        <h3 style="margin: 0 0 8px 0; color: #000;">起点: ${route.info?.startName || '未知'}</h3>
-        <p style="margin: 4px 0; color: #000;"><strong>Assignment ID:</strong> ${route.info?.assignmentId || 'N/A'}</p>
-        <p style="margin: 4px 0; color: #000;"><strong>货物:</strong> ${route.info?.goodsName || '未知'}</p>
-        <p style="margin: 4px 0; color: #000;"><strong>数量:</strong> ${route.info?.quantity || 0}</p>
-        <p style="margin: 4px 0; color: #000;"><strong>运单号:</strong> ${route.info?.shipmentRefNo || 'N/A'}</p>
-        <p style="margin: 4px 0; color: #000;"><strong>目的地:</strong> ${route.info?.endName || '未知'}</p>
-      </div>
-    `,
-          offset: new AMapLib.Pixel(0, -30)
-        });
-        infoWindow.open(map, route.start);
-      });
     }
 
     // 终点标记
@@ -1153,50 +1282,7 @@ const drawSingleRoute = async (route) => {
       movingMarker.setMap(map);
       elements.push(movingMarker);
 
-      // 车辆信息窗口
-      movingMarker.on('click', () => {
-        const infoWindow = new AMapLib.InfoWindow({
-          content: `
-            <div style="padding: 10px; min-width: 220px; color: #000;">
-              <h3 style="margin: 0 0 8px 0; color: #000;">运输车辆</h3>
-              <p style="margin: 4px 0; color: #000;"><strong>配对ID:</strong> ${route.info?.pairId || 'N/A'}</p>
-              <p style="margin: 4px 0; color: #000;"><strong>货物:</strong> ${route.info?.goodsName || '未知'}</p>
-              <p style="margin: 4px 0; color: #000;"><strong>数量:</strong> ${route.info?.quantity || 0}</p>
-              <p style="margin: 4px 0; color: #000;"><strong>路线:</strong> ${route.info?.startName || '起点'} → ${route.info?.endName || '终点'}</p>
-              <p style="margin: 4px 0; color: #000;"><strong>距离:</strong> ${route.distance ? (route.distance / 1000).toFixed(2) + ' km' : 'N/A'}</p>
-              <p style="margin: 4px 0; color: #000;"><strong>预计时间:</strong> ${route.duration ? Math.round(route.duration / 60) + ' 分钟' : 'N/A'}</p>
-            </div>
-          `,
-          offset: new AMapLib.Pixel(0, -40)
-        });
-        infoWindow.open(map, movingMarker.getPosition());
-      });
-
-      // 到达终点回调函数
-      const handleArrival = async (position) => {
-        console.log(`车辆 ${route.info?.vehicleLicensePlate} 已到达终点`);
-
-        try {
-          // 通知后端车辆到达终点
-          if (route.info?.assignmentId && route.info?.vehicleId && route.info?.endPOIId) {
-            await request.post('/api/simulation/vehicle-arrived', {
-              vehicleId: route.info.vehicleId,
-              endPOIId: route.info.endPOIId
-            });
-
-            console.log(`已通知后端车辆到达终点: ${route.info.vehicleLicensePlate}`);
-
-            // 更新车辆状态
-            await updateVehicleInfo();
-          }
-        } catch (error) {
-          console.error('通知车辆到达终点失败:', error);
-        }
-      };
-
-      //const speedMps = typeof route.speedMps === 'number' ? route.speedMps : 20;
-      const speedMps = 900;
-      const cancelAnimation = animateAlongPath(movingMarker, path, speedMps, handleArrival);
+      const cancelAnimation = animateAlongPath(movingMarker, path, 900);
       animations.push({ marker: movingMarker, cancel: cancelAnimation });
     }
 
@@ -1205,8 +1291,6 @@ const drawSingleRoute = async (route) => {
       id: route.info?.pairId || route.id,
       elements,
       animations,
-      vehicleMarker: vehicleMarker, // 保存车辆标记引用
-      movingMarker: movingMarker, // 保存移动车辆标记引用
       cleanup: () => {
         animations.forEach(anim => {
           anim.cancel && anim.cancel();
@@ -1287,8 +1371,8 @@ const showVehicleInfoWindowFromMarker = (assignment, vehicleDetail) => {
       <p style="margin: 4px 0; color: #000; font-weight: bold;">运输任务详情</p>
       <p style="margin: 2px 0; color: #606266; font-size: 12px;"><strong>Assignment ID:</strong> ${assignment.assignmentId}</p>
       <p style="margin: 2px 0; color: #606266; font-size: 12px;"><strong>路线:</strong> ${assignment.routeName || '未命名路线'}</p>
-      <p style="margin: 2px 0; color: #606266; font-size: 12px;"><strong>起点:</strong> ${assignment.startPOIName || '未知'}</p>
-      <p style="margin: 2px 0; color: #606266; font-size: 12px;"><strong>终点:</strong> ${assignment.endPOIName || '未知'}</p>
+      <p style="margin: 2px 0; color: #606266; font-size: 12px;"><strong>装货点:</strong> ${assignment.startPOIName || '未知'}</p>
+      <p style="margin: 2px 0; color: #606266; font-size: 12px;"><strong>卸货点:</strong> ${assignment.endPOIName || '未知'}</p>
       <p style="margin: 2px 0; color: #606266; font-size: 12px;"><strong>货物:</strong> ${assignment.goodsName || '未知'} (${assignment.quantity || 0}件)</p>
       <p style="margin: 2px 0; color: #606266; font-size: 12px;"><strong>运单号:</strong> ${assignment.shipmentRefNo || 'N/A'}</p>
     </div>
@@ -1310,15 +1394,6 @@ const showVehicleInfoWindowFromMarker = (assignment, vehicleDetail) => {
         </div>
       </div>
     `;
-  //   <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
-  //     <span><strong>载容:</strong> ${vehicle.currentVolume.toFixed(1)} / ${vehicle.maxVolumeCapacity.toFixed(1)} m³</span>
-  //     <span style="color: #409eff; font-weight: bold;">${vehicle.volumePercentage.toFixed(1)}%</span>
-  //   </div>
-  //   <div style="height: 8px; background-color: #ebeef5; border-radius: 4px; overflow: hidden; margin-bottom: 8px;">
-  //     <div style="width: ${vehicle.volumePercentage}%; height: 100%; background-color: #409eff;"></div>
-  //   </div>
-  // </div>
-  //   `;
   }
 
   // 车辆详细信息（如果有）
@@ -1376,30 +1451,11 @@ const fetchCurrentAssignments = async () => {
     const assignments = response.data;
 
     if (assignments && assignments.length > 0) {
-      // 转换为路线规划的endpoints
-      const endpoints = assignments.map(assignment => ({
-        id: assignment.assignmentId,
-        start: [assignment.startLng, assignment.startLat],
-        end: [assignment.endLng, assignment.endLat],
-        info: {
-          assignmentId: assignment.assignmentId,
-          pairId: assignment.pairId,
-          startName: assignment.startPOIName,
-          endName: assignment.endPOIName,
-          goodsName: assignment.goodsName,
-          quantity: assignment.quantity,
-          shipmentRefNo: assignment.shipmentRefNo
-        }
-      }));
-
-      // 批量规划路线
-      const computedRoutes = await computeRoutesOnBackend(endpoints);
-
-      // 绘制路线
-      for (const route of computedRoutes) {
-        if (route && route.info && route.info.assignmentId) {
-          await drawSingleRoute(route);
-          drawnAssignmentIds.value.add(route.info.assignmentId);
+      // 为每个Assignment绘制两段路线
+      for (const assignment of assignments) {
+        if (assignment && assignment.assignmentId) {
+          await drawTwoStageRouteForAssignment(assignment);
+          drawnAssignmentIds.value.add(assignment.assignmentId);
         }
       }
 
@@ -1470,67 +1526,73 @@ const fetchRawRoutes = async () => {
   }
 };
 
-// 调整路线计算接口
+// 计算单段路线
+const computeSingleRoute = async (start, end, strategy = '0') => {
+  try {
+    const params = {
+      startLon: String(start[0]),
+      startLat: String(start[1]),
+      endLon: String(end[0]),
+      endLat: String(end[1]),
+      strategy: strategy
+    };
+
+    const res = await request.get(
+        '/api/routes/gaode/plan-by-coordinates',
+        { params }
+    );
+
+    const response = res.data;
+
+    if (!response.success) {
+      console.error(`路线规划失败:`, response.message);
+      return null;
+    }
+
+    const gaodeData = response.data?.data;
+
+    if (!gaodeData?.paths?.length) {
+      console.error(`没有找到路径方案`);
+      return null;
+    }
+
+    const pathInfo = gaodeData.paths[0];
+
+    // 从steps的polyline构建完整路径
+    let fullPath = [];
+    if (pathInfo.steps) {
+      pathInfo.steps.forEach(step => {
+        if (step.polyline) {
+          const points = step.polyline.split(';');
+          points.forEach(pointStr => {
+            const [lng, lat] = pointStr.split(',').map(Number);
+            fullPath.push([lng, lat]);
+          });
+        }
+      });
+    }
+
+    return {
+      path: fullPath,
+      start: fullPath[0] || start,
+      end: fullPath[fullPath.length - 1] || end,
+      distance: pathInfo.distance,
+      duration: pathInfo.duration,
+      speedMps: pathInfo.distance / pathInfo.duration
+    };
+  } catch (error) {
+    console.error('路线规划出错:', error);
+    return null;
+  }
+};
+
+// 批量路线规划（兼容旧代码）
 const computeRoutesOnBackend = async (endpoints) => {
   try {
     const plans = await Promise.all(
         endpoints.map(async (ep) => {
           try {
-            const params = {
-              startLon: String(ep.start[0]),
-              startLat: String(ep.start[1]),
-              endLon: String(ep.end[0]),
-              endLat: String(ep.end[1]),
-              strategy: '0'
-            };
-
-            const res = await request.get(
-                '/api/routes/gaode/plan-by-coordinates',
-                { params }
-            );
-
-            const response = res.data;
-
-            if (!response.success) {
-              console.error(`路线 ${ep.id} 规划失败:`, response.message);
-              return null;
-            }
-
-            const gaodeData = response.data?.data;
-
-            if (!gaodeData?.paths?.length) {
-              console.error(`路线 ${ep.id}: 没有找到路径方案`);
-              return null;
-            }
-
-            const pathInfo = gaodeData.paths[0];
-
-            // 从steps的polyline构建完整路径
-            let fullPath = [];
-            if (pathInfo.steps) {
-              pathInfo.steps.forEach(step => {
-                if (step.polyline) {
-                  const points = step.polyline.split(';');
-                  points.forEach(pointStr => {
-                    const [lng, lat] = pointStr.split(',').map(Number);
-                    fullPath.push([lng, lat]);
-                  });
-                }
-              });
-            }
-
-            console.log(`路线 ${ep.id} 规划成功，路径点数: ${fullPath.length}`);
-
-            return {
-              id: ep.id,
-              path: fullPath,
-              start: fullPath[0] || ep.start,
-              end: fullPath[fullPath.length - 1] || ep.end,
-              distance: pathInfo.distance,
-              duration: pathInfo.duration,
-              speedMps: pathInfo.distance / pathInfo.duration,
-              info: ep.info // 传递配对信息
-            };
+            return await computeSingleRoute(ep.start, ep.end, '0');
           } catch (error) {
             console.error(`路线 ${ep.id} 规划出错:`, error);
             return null;
@@ -1539,7 +1601,14 @@ const computeRoutesOnBackend = async (endpoints) => {
     );
 
     // 过滤掉失败的规划
-    return plans.filter(plan => plan !== null);
+    const validPlans = plans.filter(plan => plan !== null);
+
+    // 添加endpoint的info到返回结果中
+    return validPlans.map((plan, index) => ({
+      ...plan,
+      id: endpoints[index].id,
+      info: endpoints[index].info
+    }));
   } catch (e) {
     console.error('路线规划整体失败', e);
     return [];
@@ -1576,33 +1645,6 @@ const startVehicleSimulation = async () => {
     // 重置状态
     isSimulationRunning.value = false;
   }
-
-
-  // try {
-  //   // 拉取前端需要展示的所有数据
-  //   await Promise.all([
-  //     fetchVehicles(),
-  //     fetchPOIs(),
-  //     fetchTasks()
-  //   ]);
-  //
-  //   // 按既有流程拉取原始路线并请求后端规划，绘制路线
-  //   const rawRoutes = await fetchRawRoutes();
-  //   const endpoints = rawRoutes.map(r => {
-  //     const pts = Array.isArray(r.points) ? r.points : (r.path || []);
-  //     if (!pts || pts.length === 0) return null;
-  //     const first = Array.isArray(pts[0]) ? pts[0] : [pts[0].lng, pts[0].lat];
-  //     const last = Array.isArray(pts[pts.length - 1]) ? pts[pts.length - 1] : [pts[pts.length - 1].lng, pts[pts.length - 1].lat];
-  //     return { id: r.id, start: first, end: last };
-  //   }).filter(Boolean);
-  //
-  //   if (endpoints.length > 0) {
-  //     const computed = await computeRoutesOnBackend(endpoints);
-  //     drawComputedRoutes(computed);
-  //   }
-  // } catch (e) {
-  //   console.error('车辆仿真初始化错误', e);
-  // }
 };
 
 // --- 统计信息 ---

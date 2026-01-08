@@ -95,4 +95,7 @@ public interface VehicleRepository extends JpaRepository<Vehicle, Long> {
                                            @Param("radiusKm") Double radiusKm);
 
     List<Vehicle> findBySuitableGoods(String suitableGoods);
+
+    // 按适合货物和状态查询
+    List<Vehicle> findBySuitableGoodsAndCurrentStatus(String suitableGoods, Vehicle.VehicleStatus currentStatus);
 }

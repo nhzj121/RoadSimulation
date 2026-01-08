@@ -11,6 +11,7 @@ import org.example.roadsimulation.entity.*;
 import org.example.roadsimulation.repository.*;
 import org.example.roadsimulation.service.GoodsPOIGenerateService;
 import org.example.roadsimulation.service.ShipmentItemService;
+import org.example.roadsimulation.service.VehicleMatchingService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -52,7 +53,6 @@ public class DataInitializer{
     private final EnrollmentRepository enrollmentRepository;
     private final GoodsRepository goodsRepository;
     private final POIRepository poiRepository;
-    private final PlatformTransactionManager transactionManager;
     private final RouteRepository routeRepository;
     private final CustomerRepository customerRepository;
     private final AssignmentRepository assignmentRepository;
@@ -61,6 +61,7 @@ public class DataInitializer{
     private final SimulationDataCleanupService cleanupService;
     private final ShipmentItemService shipmentItemService;
     private final VehicleRepository vehicleRepository;
+    private final VehicleMatchingService vehicleMatchingService;
 
     private final Map<POI, POI> startToEndMapping = new ConcurrentHashMap<>(); // 起点到终点的映射关系
     // 修改成员变量，使用起点-终点对作为键
@@ -126,7 +127,6 @@ public class DataInitializer{
                            EnrollmentRepository enrollmentRepository,
                            GoodsRepository goodsRepository,
                            POIRepository poiRepository,
-                           PlatformTransactionManager transactionManager,
                            RouteRepository routeRepository,
                            CustomerRepository customerRepository,
                            ShipmentRepository shipmentRepository,
@@ -134,12 +134,12 @@ public class DataInitializer{
                            SimulationDataCleanupService cleanupService,
                            AssignmentRepository assignmentRepository,
                            VehicleRepository vehicleRepository,
-                           ShipmentItemService shipmentItemService) {
+                           ShipmentItemService shipmentItemService,
+                           VehicleMatchingService vehicleMatchingService) {
         this.goodsPOIGenerateService = goodsPOIGenerateService;
         this.enrollmentRepository = enrollmentRepository;
         this.goodsRepository = goodsRepository;
         this.poiRepository = poiRepository;
-        this.transactionManager = transactionManager;
         this.routeRepository = routeRepository;
         this.customerRepository = customerRepository;
         this.shipmentRepository = shipmentRepository;
@@ -148,6 +148,7 @@ public class DataInitializer{
         this.assignmentRepository = assignmentRepository;
         this.vehicleRepository = vehicleRepository;
         this.shipmentItemService = shipmentItemService;
+        this.vehicleMatchingService = vehicleMatchingService;
     }
 
     /**
@@ -304,91 +305,106 @@ public class DataInitializer{
         System.out.println("开始新一轮的POI判断周期...");
         // 对所有POI进行判断
 
+        // 1. 收集所有需要生成货物的POI
+        List<POI> poisToGenerateGoods = new ArrayList<>();
         for (POI poi : CementPlantList) {
             // 如果当前POI已经为真，跳过判断
             if (poiIsWithGoods.get(poi)) {
                 continue;
             }
-            long currentTrueCount = poiIsWithGoods.values().stream()
-                    .filter(status -> status)
-                    .count();
+
             // 伪随机判断
-            if(pseudoRandomJudgement(poi)){
+            if (pseudoRandomJudgement(poi)) {
                 // 检查是否超过最大限度
-                if(canSetToTrue()){
-                    setPoiToTrue(poi);
-
-                    // 调整判断的因素数值
-                    trueProbability = trueProbability * 0.95;
-
-                    System.out.println("POI [" + poi.getName() + "] 判断为真");
-
-                    Random random = new Random();
-                    // 这里可以添加其他业务逻辑，比如初始化关系
-                    // ToDo
-                    // 随机获取终点POI
-                    POI endPOI = this.MaterialMarketList.get(random.nextInt(this.MaterialMarketList.size()));
-
-                    Integer generateQuantity = generateRandomQuantity();
-
-                    // ToDo 初始化货物对应车辆，这里默认为水泥
-                    // 1. 查询适合货物的车辆（多个）
-                    List<Vehicle> vehicles = vehicleRepository.findBySuitableGoods("CEMENT");
-                    if(vehicles.isEmpty()){
-                        System.out.println("警告：没有适配水泥的车辆，跳过此次配对");
-                        setPoiToFalse(poi); // 重置状态
-                        continue;
-                    }
-                    // 2. 筛选空闲车辆
-                    List<Vehicle> idleVehicles = vehicles.stream()
-                            .filter(v -> v.getCurrentStatus() == Vehicle.VehicleStatus.IDLE)
-                            .collect(Collectors.toList());
-
-                    if(idleVehicles.isEmpty()){
-                        System.out.println("警告：所有适配车辆都在忙碌中，跳过此次配对");
-                        setPoiToFalse(poi); // 重置状态
-                        continue;
-                    }
-                    Route route = initializeRoute(poi, endPOI); // 初始化路径
-                    // 初始化的运单，运单清单，记录
-                    Map<Vehicle, ShipmentItem> vehicleShipmentItemMap = createCompleteGoodsTransport(poi, endPOI, Cement, generateQuantity, idleVehicles);
-
-                    // 初始化运输任务
-                    List<Assignment> goalAssignments = initalizeAssignment(vehicleShipmentItemMap, route);
-
-                    // ToDo 车辆分配运输任务逻辑，这里先简单实现进行流程信息完整性测试
-                    // 完整建立车辆与任务的双向关联
-                    establishVehicleAssignmentRelationship(goalAssignments, poi, endPOI);
-
-                    // 7. 为每个Assignment记录状态信息
-                    for (Assignment assignment : goalAssignments) {
-                        Vehicle assignedVehicle = assignment.getAssignedVehicle();
-                        if (assignedVehicle != null) {
-                            // 获取关联的Shipment
-                            Shipment shipment = null;
-                            for (ShipmentItem item : assignment.getShipmentItems()) {
-                                if (item.getShipment() != null) {
-                                    shipment = item.getShipment();
-                                    break;
-                                }
-                            }
-
-                            // 创建并保存Assignment状态信息
-                            createAssignmentStatusRecord(assignment, poi, endPOI, shipment);
-                        }
-                    }
-
-                    startToEndMapping.put(poi, endPOI); // 保存对应关系
-
-                    // 记录配对关系
-                    String key = generatePoiPairKey(poi, endPOI);
-                    Shipment shipment = poiPairShipmentMapping.get(key);
-                    if (shipment != null) {
-                        createPairStatus(poi, endPOI, shipment);
-                    }
+                if (canSetToTrue()) {
+                    poisToGenerateGoods.add(poi);
                 }
             }
         }
+
+        if (poisToGenerateGoods.isEmpty()) {
+            System.out.println("本轮没有需要生成货物的POI");
+            return;
+        }
+
+        System.out.println("本轮有 " + poisToGenerateGoods.size() + " 个POI需要生成货物");
+
+        // 2. 批量获取空闲车辆（只查询一次）
+        List<Vehicle> allIdleVehicles = vehicleRepository.findBySuitableGoodsAndCurrentStatus(
+                "CEMENT", Vehicle.VehicleStatus.IDLE);
+
+        if (allIdleVehicles.isEmpty()) {
+            System.out.println("警告：没有适配水泥的空闲车辆，跳过此次周期");
+            return;
+        }
+
+        System.out.println("获取到 " + allIdleVehicles.size() + " 辆空闲水泥运输车辆");
+
+        // 3. 为每个POI批量处理货物生成
+        for (POI poi : poisToGenerateGoods) {
+            try {
+                System.out.println("为POI [" + poi.getName() + "] 生成货物");
+                setPoiToTrue(poi);
+                trueProbability = trueProbability * 0.95;
+
+                Random random = new Random();
+                // 随机获取终点POI
+                POI endPOI = this.MaterialMarketList.get(random.nextInt(this.MaterialMarketList.size()));
+                Integer generateQuantity = generateRandomQuantity();
+
+                // 从总空闲车辆列表中创建一个副本用于本次POI
+                List<Vehicle> availableVehicles = new ArrayList<>(allIdleVehicles);
+
+                // 计算需要的总重量
+                Double requiredWeight = Cement.getWeightPerUnit() * generateQuantity;
+
+                Route route = initializeRoute(poi, endPOI);
+
+                // 批量创建货物运输
+                Map<Vehicle, ShipmentItem> vehicleShipmentItemMap = createCompleteGoodsTransport(
+                        poi, endPOI, Cement, generateQuantity, availableVehicles);
+
+                List<Assignment> goalAssignments = initalizeAssignment(vehicleShipmentItemMap, route);
+
+                // 建立车辆分配关系
+                establishVehicleAssignmentRelationship(goalAssignments, poi, endPOI);
+
+                // 从总列表中移除已分配的车辆
+                for (Vehicle assignedVehicle : vehicleShipmentItemMap.keySet()) {
+                    if (assignedVehicle != null) {
+                        allIdleVehicles.removeIf(v -> v.getId().equals(assignedVehicle.getId()));
+                    }
+                }
+
+                // 记录状态信息
+                for (Assignment assignment : goalAssignments) {
+                    Vehicle assignedVehicle = assignment.getAssignedVehicle();
+                    if (assignedVehicle != null) {
+                        Shipment shipment = null;
+                        for (ShipmentItem item : assignment.getShipmentItems()) {
+                            if (item.getShipment() != null) {
+                                shipment = item.getShipment();
+                                break;
+                            }
+                        }
+                        createAssignmentStatusRecord(assignment, poi, endPOI, shipment);
+                    }
+                }
+
+                startToEndMapping.put(poi, endPOI);
+
+                String key = generatePoiPairKey(poi, endPOI);
+                Shipment shipment = poiPairShipmentMapping.get(key);
+                if (shipment != null) {
+                    createPairStatus(poi, endPOI, shipment);
+                }
+
+            } catch (Exception e) {
+                System.err.println("为POI [" + poi.getName() + "] 生成货物失败: " + e.getMessage());
+                setPoiToFalse(poi); // 重置状态
+            }
+        }
+
         printCurrentStatus();
     }
 
@@ -609,8 +625,8 @@ public class DataInitializer{
             route.setName(startAbbr + "-" + endAbbr);
             route.setRouteCode(startpoi.getId() + "_" + endPOI.getId());
             route.setRouteType("road");
-            route.setDistance(calculateDistance(startpoi, endPOI));
-            route.setEstimatedTime(calculateEstimatedTime(startpoi, endPOI));
+//            route.setDistance(calculateDistance(startpoi, endPOI));
+//            route.setEstimatedTime(calculateEstimatedTime(startpoi, endPOI));
             routeRepository.save(route);
             System.out.println("新建路径：" + route.getRouteCode());
             return route;
@@ -622,11 +638,108 @@ public class DataInitializer{
 
     }
 
-    // 计算两个 POI点 之间的距离
-    // 可以用于进行 随机生成的对应两点 是否可以作为仿真模拟需要路径的 简单判断
-    private Double calculateDistance(POI startPOI, POI endPOI) {
-        // ToDo 测试需要，先随便返回一个值
-        return 0.0;
+    /**
+     * 智能选择车辆 - 基于距离和载重优化
+     */
+    private Vehicle selectOptimalVehicle(List<Vehicle> candidateVehicles, POI startPOI,
+                                         Double requiredWeight, Integer requiredQuantity) {
+        return selectVehicleByDistance(candidateVehicles, startPOI, requiredWeight);
+    }
+
+    /**
+     * 按距离选择车辆（备用策略）
+     */
+    private Vehicle selectVehicleByDistance(List<Vehicle> candidateVehicles, POI startPOI,
+                                            Double requiredWeight) {
+        Vehicle selectedVehicle = null;
+        double minDistance = Double.MAX_VALUE;
+
+        for (Vehicle vehicle : candidateVehicles) {
+            // 计算车辆当前位置到起点的距离
+            double distance = calculateVehicleDistance(vehicle, startPOI);
+
+            // 检查车辆载重是否满足要求
+            if (vehicle.getMaxLoadCapacity() != null &&
+                    vehicle.getMaxLoadCapacity() >= requiredWeight) {
+
+                // 选择距离最近的车辆
+                if (distance < minDistance) {
+                    minDistance = distance;
+                    selectedVehicle = vehicle;
+                }
+            }
+        }
+
+        if (selectedVehicle != null) {
+            System.out.println("选择车辆: " + selectedVehicle.getLicensePlate() +
+                    ", 距离起点: " + minDistance + "km");
+        }
+
+        return selectedVehicle;
+    }
+
+    /**
+     * 计算车辆到POI的距离
+     */
+    private double calculateVehicleDistance(Vehicle vehicle, POI poi) {
+        try {
+            // 如果车辆有当前位置坐标
+            if (vehicle.getCurrentLongitude() != null && vehicle.getCurrentLatitude() != null &&
+                    poi.getLongitude() != null && poi.getLatitude() != null) {
+
+                return calculateHaversineDistance(
+                        vehicle.getCurrentLatitude(), vehicle.getCurrentLongitude(),
+                        poi.getLatitude(), poi.getLongitude()
+                );
+            }
+
+            // 如果车辆有关联的POI
+            if (vehicle.getCurrentPOI() != null) {
+                POI vehiclePOI = vehicle.getCurrentPOI();
+                if (vehiclePOI.getLongitude() != null && vehiclePOI.getLatitude() != null) {
+                    return calculateHaversineDistance(
+                            vehiclePOI.getLatitude(), vehiclePOI.getLongitude(),
+                            poi.getLatitude(), poi.getLongitude()
+                    );
+                }
+            }
+
+            // 无法计算距离，返回默认值
+            return 9999.0;
+
+        } catch (Exception e) {
+            return 9999.0;
+        }
+    }
+
+    /**
+     * 使用Haversine公式计算两点间距离（公里）
+     */
+    private double calculateHaversineDistance(BigDecimal lat1, BigDecimal lon1,
+                                              BigDecimal lat2, BigDecimal lon2) {
+        // 检查参数是否为null
+        if (lat1 == null || lon1 == null || lat2 == null || lon2 == null) {
+            throw new IllegalArgumentException("坐标参数不能为null");
+        }
+
+        // 将BigDecimal转换为double进行计算
+        return calculateHaversineDistance(lat1.doubleValue(), lon1.doubleValue(),
+                lat2.doubleValue(), lon2.doubleValue());
+    }
+
+    private double calculateHaversineDistance(Double lat1, Double lon1, Double lat2, Double lon2) {
+        final int R = 6371; // 地球半径（公里）
+
+        double latDistance = Math.toRadians(lat2 - lat1);
+        double lonDistance = Math.toRadians(lon2 - lon1);
+
+        double a = Math.sin(latDistance / 2) * Math.sin(latDistance / 2)
+                + Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2))
+                * Math.sin(lonDistance / 2) * Math.sin(lonDistance / 2);
+
+        double c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+        return R * c;
     }
 
     // 计算两点该路线的预期运输时间
@@ -704,7 +817,7 @@ public class DataInitializer{
         // 1. 创建Shipment
         Shipment shipment = initalizeShipment(startPOI, endPOI, goods, quantity);
 
-        Map<Vehicle, ShipmentItem> vehicleShipmentItemMap = splitAndCreateShipmentItems(shipment, goods, quantity, vehicles);
+        Map<Vehicle, ShipmentItem> vehicleShipmentItemMap = splitAndCreateShipmentItemsWithSmartMatching(shipment, goods, quantity, vehicles, startPOI);
 
         // 3. 建立POI与Goods的Enrollment关系
         initRelationBetweenPOIAndGoods(startPOI, goods, quantity);
@@ -713,67 +826,96 @@ public class DataInitializer{
     }
 
     // ToDo 对于剩余货物暂时没有车辆可以用于运输的情况需要另外考虑
-    private Map<Vehicle, ShipmentItem> splitAndCreateShipmentItems(
-            Shipment shipment, Goods goods, Integer totalQuantity, List<Vehicle> sortedVehicles) {
+    private Map<Vehicle, ShipmentItem> splitAndCreateShipmentItemsWithSmartMatching(
+            Shipment shipment, Goods goods, Integer totalQuantity, List<Vehicle> candidateVehicles,
+            POI startPOI) {
 
         Map<Vehicle, ShipmentItem> vehicleShipmentItemMap = new LinkedHashMap<>();
         int remainingQuantity = totalQuantity;
 
-        System.out.println("开始拆分货物，总数量: " + totalQuantity + "，可用车辆: " + sortedVehicles.size());
+        System.out.println("开始智能拆分货物，总数量: " + totalQuantity);
+        System.out.println("候选车辆数量: " + candidateVehicles.size());
 
-        // 为每辆车分配货物，直到货物全部分配完或没有可用车辆
-        for (Vehicle vehicle : sortedVehicles) {
-            if (remainingQuantity <= 0) {
+        // 计算货物总重量
+        Double totalWeight = goods.getWeightPerUnit() * totalQuantity;
+        System.out.println("货物总重量: " + totalWeight + "吨");
+
+        // 用于记录已分配的车辆，避免重复分配
+        Set<Long> assignedVehicleIds = new HashSet<>();
+
+        while (remainingQuantity > 0 && !candidateVehicles.isEmpty()) {
+            // 从候选车辆中选择最优车辆
+            Double remainingWeight = goods.getWeightPerUnit() * remainingQuantity;
+            Vehicle selectedVehicle = selectOptimalVehicle(candidateVehicles, startPOI,
+                    remainingWeight, remainingQuantity);
+
+            if (selectedVehicle == null) {
+                System.out.println("没有合适的车辆可用");
                 break;
             }
 
-            // 计算这辆车能运输的最大货物量（基于载重限制）
-            Double maxLoad = vehicle.getMaxLoadCapacity();
-            if (maxLoad == null || goods.getWeightPerUnit() == null) {
-                System.out.println("车辆 " + vehicle.getLicensePlate() + " 缺少载重或货物重量信息，跳过");
+            // 检查车辆是否已被分配
+            if (assignedVehicleIds.contains(selectedVehicle.getId())) {
+                // 从候选列表中移除已分配车辆
+                candidateVehicles.removeIf(v -> v.getId().equals(selectedVehicle.getId()));
                 continue;
             }
 
-            // 计算车辆能承载的货物数量（向下取整）
-            int capacityInUnits = (int) Math.floor(maxLoad / goods.getWeightPerUnit()) - 3;
+            // 计算这辆车能运输的最大货物量
+            Double maxLoad = selectedVehicle.getMaxLoadCapacity();
+            if (maxLoad == null || goods.getWeightPerUnit() == null) {
+                System.out.println("车辆 " + selectedVehicle.getLicensePlate() +
+                        " 缺少载重信息，跳过");
+                candidateVehicles.remove(selectedVehicle);
+                continue;
+            }
+
+            // 计算车辆能承载的货物数量（考虑安全余量）
+            int capacityInUnits = (int) Math.floor(maxLoad / goods.getWeightPerUnit()) - 2;
 
             // 本次分配的数量 = min(车辆容量, 剩余货物量)
             int assignQuantity = Math.min(capacityInUnits, remainingQuantity);
 
             if (assignQuantity > 0) {
                 // 为这辆车创建运单清单
-                ShipmentItem shipmentItem = shipmentItemService.initalizeShipmentItem(shipment, goods, assignQuantity);
-                vehicleShipmentItemMap.put(vehicle, shipmentItem);
+                ShipmentItem shipmentItem = shipmentItemService.initalizeShipmentItem(
+                        shipment, goods, assignQuantity);
+                vehicleShipmentItemMap.put(selectedVehicle, shipmentItem);
+
+                // 更新车辆载重
                 BigDecimal assignedWeight = BigDecimal.valueOf(goods.getWeightPerUnit())
                         .multiply(BigDecimal.valueOf(assignQuantity))
-                        .setScale(2, RoundingMode.HALF_UP); // 保留2位小数，四舍五入
-                vehicle.setCurrentLoad(assignedWeight.doubleValue());
-
-                BigDecimal assignedVolume = BigDecimal.valueOf(goods.getVolumePerUnit())
-                        .multiply(BigDecimal.valueOf(assignQuantity))
                         .setScale(2, RoundingMode.HALF_UP);
-                vehicle.setCurrentLoad(assignedVolume.doubleValue());
+                selectedVehicle.setCurrentLoad(assignedWeight.doubleValue());
+
+                // 标记车辆已分配
+                assignedVehicleIds.add(selectedVehicle.getId());
+
+                // 从候选列表中移除已分配车辆
+                candidateVehicles.remove(selectedVehicle);
 
                 // 更新剩余货物量
                 remainingQuantity -= assignQuantity;
 
-                System.out.printf(
-                        "车辆 %s (载重%.2ft) 分配 %d 件货物，剩余 %d 件%n",
-                        vehicle.getLicensePlate(), maxLoad, assignQuantity, remainingQuantity
-                );
+                System.out.printf("车辆 %s (载重%.2ft) 分配 %d 件货物，剩余 %d 件，距离起点: %.2fkm%n",
+                        selectedVehicle.getLicensePlate(), maxLoad, assignQuantity,
+                        remainingQuantity, calculateVehicleDistance(selectedVehicle, startPOI));
+            } else {
+                System.out.println("车辆 " + selectedVehicle.getLicensePlate() +
+                        " 容量不足，跳过");
+                candidateVehicles.remove(selectedVehicle);
             }
         }
 
-        // ToDo 这里的逻辑可能需要完善 即针对剩余无车辆可以运输的货物的处理方法
-        // 检查是否还有剩余货物
+        // 处理剩余货物
         if (remainingQuantity > 0) {
-            System.out.println("警告: 仍有 " + remainingQuantity + " 件货物未分配，需要更多车辆或更大载重车辆");
-            // 为剩余货物创建一个运单清单（不指定车辆）
-            ShipmentItem remainingItem = shipmentItemService.initalizeShipmentItem(shipment, goods, remainingQuantity);
-            vehicleShipmentItemMap.put(null, remainingItem); // 车辆为null表示未分配
+            System.out.println("警告: 仍有 " + remainingQuantity + " 件货物未分配");
+            ShipmentItem remainingItem = shipmentItemService.initalizeShipmentItem(
+                    shipment, goods, remainingQuantity);
+            vehicleShipmentItemMap.put(null, remainingItem);
         }
 
-        System.out.println("货物拆分完成，共创建 " + vehicleShipmentItemMap.size() + " 个运单清单");
+        System.out.println("货物拆分完成，共使用 " + vehicleShipmentItemMap.size() + " 辆车");
         return vehicleShipmentItemMap;
     }
 
@@ -828,6 +970,20 @@ public class DataInitializer{
                 Vehicle managedVehicle = vehicleRepository.findById(vehicle.getId())
                         .orElseThrow(() -> new RuntimeException("车辆不存在: " + vehicle.getId()));
 
+                // 3. 记录车辆分配任务前的原始位置信息
+                POI originalPOI = managedVehicle.getCurrentPOI();
+                BigDecimal originalLng = null;
+                BigDecimal originalLat = null;
+
+                // 记录车辆当前位置信息到日志
+                if (originalPOI != null) {
+                    originalLng = managedVehicle.getCurrentPOI().getLongitude();
+                    originalLat = managedVehicle.getCurrentPOI().getLatitude();
+                } else if (managedVehicle.getCurrentLongitude() != null && managedVehicle.getCurrentLatitude() != null) {
+                    originalLng = managedVehicle.getCurrentLongitude();
+                    originalLat = managedVehicle.getCurrentLatitude();
+                }
+
                 // 3. 双向关联：车辆添加任务
                 managedVehicle.addAssignment(assignment);
 
@@ -838,11 +994,8 @@ public class DataInitializer{
                 managedVehicle.setStatusDurationSeconds(0L);
 
                 // 5. 设置当前位置
-                managedVehicle.setCurrentPOI(managedStartPOI);
-                if (managedStartPOI.getLongitude() != null && managedStartPOI.getLatitude() != null) {
-                    managedVehicle.setCurrentLongitude(managedStartPOI.getLongitude());
-                    managedVehicle.setCurrentLatitude(managedStartPOI.getLatitude());
-                }
+                managedVehicle.setCurrentLongitude(originalLng);
+                managedVehicle.setCurrentLatitude(originalLat);
 
                 // 6. 设置任务状态
                 assignment.setStatus(Assignment.AssignmentStatus.ASSIGNED);
@@ -861,7 +1014,7 @@ public class DataInitializer{
                         " 给任务，从 " + managedStartPOI.getName() + " 到 " + managedEndPOI.getName());
 
                 // 记录车辆起始位置到AssignmentBriefDTO
-                updateAssignmentBriefWithVehicleStartPosition(assignment.getId(), managedStartPOI);
+                updateAssignmentBriefWithVehicleStartPosition(assignment.getId(), managedVehicle, originalLng, originalLat);
             }
         } catch (Exception e) {
             System.err.println("建立车辆任务关联失败: " + e.getMessage());
@@ -870,11 +1023,18 @@ public class DataInitializer{
     }
 
     // 更新AssignmentBriefDTO的车辆起始位置信息
-    private void updateAssignmentBriefWithVehicleStartPosition(Long assignmentId, POI startPOI) {
+    private void updateAssignmentBriefWithVehicleStartPosition(Long assignmentId, Vehicle vehicle, BigDecimal originalLng, BigDecimal originalLat) {
         AssignmentBriefDTO brief = assignmentBriefMap.get(assignmentId);
-        if (brief != null && startPOI != null) {
-            brief.setVehicleStartLng(startPOI.getLongitude());
-            brief.setVehicleStartLat(startPOI.getLatitude());
+        if (brief != null && vehicle != null) {
+            if (originalLng != null && originalLat != null) {
+                brief.setVehicleStartLng(originalLng.doubleValue());
+                brief.setVehicleStartLat(originalLat.doubleValue());
+            }
+
+            if (vehicle.getCurrentPOI() != null) {
+                POI currentPOI = vehicle.getCurrentPOI();
+            }
+
             assignmentBriefMap.put(assignmentId, brief);
         }
     }
@@ -1131,6 +1291,17 @@ public class DataInitializer{
             // 载重信息
             brief.setCurrentLoad(vehicle.getCurrentLoad());
             brief.setMaxLoadCapacity(vehicle.getMaxLoadCapacity());
+
+            // 关键：获取车辆当前位置信息
+            if (vehicle.getCurrentPOI() != null) {
+                POI vehiclePOI = vehicle.getCurrentPOI();
+                brief.setVehicleStartLng(vehiclePOI.getLongitude().doubleValue());
+                brief.setVehicleStartLat(vehiclePOI.getLatitude().doubleValue());
+            } else if (vehicle.getCurrentLongitude() != null && vehicle.getCurrentLatitude() != null) {
+                // 或者使用车辆的经纬度坐标
+                brief.setVehicleStartLng(vehicle.getCurrentLongitude().doubleValue());
+                brief.setVehicleStartLat(vehicle.getCurrentLatitude().doubleValue());
+            }
 
         }
 
@@ -1645,6 +1816,25 @@ public class DataInitializer{
         });
 
         return completedIds;
+    }
+
+    /**
+     * 获取车辆的当前位置信息
+     */
+    public Map<Long, double[]> getVehicleCurrentPositions() {
+        Map<Long, double[]> positions = new HashMap<>();
+
+        // 从assignmentBriefMap中获取车辆信息
+        for (AssignmentBriefDTO brief : assignmentBriefMap.values()) {
+            if (brief.getVehicleId() != null) {
+                double[] position = new double[2];
+                position[0] = brief.getVehicleStartLng() != null ? brief.getVehicleStartLng().doubleValue() : 0.0;
+                position[1] = brief.getVehicleStartLat() != null ? brief.getVehicleStartLat().doubleValue() : 0.0;
+                positions.put(brief.getVehicleId(), position);
+            }
+        }
+
+        return positions;
     }
 }
 

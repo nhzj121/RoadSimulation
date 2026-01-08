@@ -1,6 +1,8 @@
 package org.example.roadsimulation;
 
+import org.example.roadsimulation.service.VehicleInitializationService;
 import org.example.roadsimulation.service.impl.StateUpdateService;
+import org.example.roadsimulation.service.impl.VehicleInitializationServiceImpl;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -15,6 +17,9 @@ public class SimulationMainLoop {
 
     private final DataInitializer dataInitializer;
     private final StateUpdateService stateUpdateService;
+
+    @Autowired
+    private VehicleInitializationService vehicleInitializationService;
 
     // 循环计数器
     private int loopCount = 0;
@@ -53,6 +58,10 @@ public class SimulationMainLoop {
         System.out.println("=== 主循环第 " + loopCount + " 次 ===");
         System.out.println("模拟时间: " + (simMinutes / 60.0) + " 小时 | simNow=" + simNow);
 
+        if (loopCount == 0) {
+            stateUpdateService.resetWindowsOnce(simNow, MINUTES_PER_LOOP);
+            vehicleInitializationService.initializeAllVehicleStatus();
+        }
         // ======================
         // 1) 货物生成（每 1 小时）
         if (loopCount % 2 == 0) {
@@ -70,11 +79,6 @@ public class SimulationMainLoop {
         if (loopCount % 10 == 0) {
             System.out.println(">>> 打印仿真状态");
             dataInitializer.printSimulationStatus(loopCount);
-        }
-
-        if (loopCount == 0) {
-            stateUpdateService.resetWindowsOnce(simNow, MINUTES_PER_LOOP);
-
         }
 
         // ✅ 4) 车辆状态更新（每循环一次）：统一接入主循环
