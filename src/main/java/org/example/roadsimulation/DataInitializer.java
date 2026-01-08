@@ -3,6 +3,7 @@ package org.example.roadsimulation;
 
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
+import jakarta.persistence.EntityNotFoundException;
 import lombok.Getter;
 import lombok.Setter;
 import org.example.roadsimulation.dto.*;
@@ -11,8 +12,12 @@ import org.example.roadsimulation.entity.*;
 import org.example.roadsimulation.repository.*;
 import org.example.roadsimulation.service.GoodsPOIGenerateService;
 import org.example.roadsimulation.service.ShipmentItemService;
+import org.example.roadsimulation.service.ShipmentProgressService;
 import org.example.roadsimulation.service.VehicleMatchingService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -49,6 +54,9 @@ import java.util.stream.Collectors;
 @Component
 public class DataInitializer{
 
+    private static final Logger logger = LoggerFactory.getLogger(DataInitializer.class);
+
+    private final ShipmentProgressService shipmentProgressService;
     private final GoodsPOIGenerateService goodsPOIGenerateService;
     private final EnrollmentRepository enrollmentRepository;
     private final GoodsRepository goodsRepository;
@@ -135,7 +143,8 @@ public class DataInitializer{
                            AssignmentRepository assignmentRepository,
                            VehicleRepository vehicleRepository,
                            ShipmentItemService shipmentItemService,
-                           VehicleMatchingService vehicleMatchingService) {
+                           VehicleMatchingService vehicleMatchingService,
+                           @Lazy ShipmentProgressService shipmentProgressService) {
         this.goodsPOIGenerateService = goodsPOIGenerateService;
         this.enrollmentRepository = enrollmentRepository;
         this.goodsRepository = goodsRepository;
@@ -149,6 +158,7 @@ public class DataInitializer{
         this.vehicleRepository = vehicleRepository;
         this.shipmentItemService = shipmentItemService;
         this.vehicleMatchingService = vehicleMatchingService;
+        this.shipmentProgressService = shipmentProgressService;
     }
 
     /**
@@ -1202,6 +1212,7 @@ public class DataInitializer{
     @Transactional
     public void vehicleArrivedAtDestination(Long vehicleId, Long endPOIId) {
         try {
+            logger.info("车辆到达目的地，车辆ID: {}, 终点POI ID: {}", vehicleId, endPOIId);
             Vehicle vehicle = vehicleRepository.findById(vehicleId)
                     .orElseThrow(() -> new RuntimeException("车辆不存在: " + vehicleId));
 
@@ -1219,8 +1230,8 @@ public class DataInitializer{
                 // 获取起点POI
                 POI startPOI = activeAssignment.getRoute().getStartPOI();
 
-                // 执行货物删除操作
-                shipOutGoodsWhenVehicleArrives(startPOI, endPOI, vehicle);
+                // 使用新方法处理送货，而不是删除
+                processVehicleDelivery(startPOI, vehicle, endPOI);
 
                 System.out.println("车辆 " + vehicle.getLicensePlate() +
                         " 已确认到达终点 " + endPOI.getName());
@@ -1228,9 +1239,168 @@ public class DataInitializer{
                 System.out.println("车辆 " + vehicle.getLicensePlate() +
                         " 没有活跃的运输任务");
             }
+
+            // 更新相关的运单进度
+            updateShipmentProgressForVehicle(vehicleId);
+
         } catch (Exception e) {
             System.err.println("处理车辆到达终点时出错: " + e.getMessage());
             throw new RuntimeException("处理车辆到达失败", e);
+        }
+    }
+
+    @Transactional
+    public void processVehicleDelivery(POI startPOI, Vehicle vehicle, POI endPOI) {
+        try {
+            POI freshStartPOI = poiRepository.findById(startPOI.getId())
+                    .orElseThrow(() -> new RuntimeException("POI not found: " + startPOI.getId()));
+
+            List<Enrollment> goalEnrollment = new ArrayList<>(freshStartPOI.getEnrollments());
+
+            for (Enrollment enrollment : goalEnrollment) {
+                if (enrollment.getGoods() != null) {
+                    Goods goalGoods = enrollment.getGoods();
+
+                    // 找到相关的Shipment
+                    String key = generatePoiPairKey(freshStartPOI, endPOI);
+                    Shipment shipment = poiPairShipmentMapping.remove(key);
+
+                    if (shipment != null) {
+                        Shipment freshShipment = shipmentRepository.findById(shipment.getId())
+                                .orElseThrow(() -> new RuntimeException("Shipment not found: " + shipment.getId()));
+
+                        // 只处理与当前车辆相关的ShipmentItems
+                        List<ShipmentItem> items = shipmentItemRepository.findByShipmentId(freshShipment.getId());
+                        for (ShipmentItem item : items) {
+                            Assignment assignment = item.getAssignment();
+                            if (assignment != null && assignment.getAssignedVehicle() != null
+                                    && assignment.getAssignedVehicle().getId().equals(vehicle.getId())) {
+
+                                // =========== 修复：更新状态而不是删除 ===========
+
+                                // 1. 更新ShipmentItem状态为DELIVERED
+                                item.setStatus(ShipmentItem.ShipmentItemStatus.DELIVERED);
+                                item.setUpdatedTime(LocalDateTime.now());
+                                shipmentItemRepository.save(item);
+
+                                // 2. 更新Assignment状态为COMPLETED
+                                assignment.setStatus(Assignment.AssignmentStatus.COMPLETED);
+                                assignment.setEndTime(LocalDateTime.now());
+                                assignmentRepository.save(assignment);
+
+                                // 3. 更新Vehicle状态为IDLE
+                                Vehicle assignedVehicle = vehicleRepository.findById(vehicle.getId())
+                                        .orElseThrow(() -> new RuntimeException("Vehicle not found: " + vehicle.getId()));
+
+                                assignedVehicle.setPreviousStatus(assignedVehicle.getCurrentStatus());
+                                assignedVehicle.setCurrentStatus(Vehicle.VehicleStatus.IDLE);
+                                assignedVehicle.setStatusStartTime(LocalDateTime.now());
+                                assignedVehicle.setCurrentPOI(endPOI);
+                                assignedVehicle.setCurrentLongitude(endPOI.getLongitude());
+                                assignedVehicle.setCurrentLatitude(endPOI.getLatitude());
+                                assignedVehicle.setCurrentLoad(0.0);
+                                assignedVehicle.setCurrentVolumn(0.0);
+                                assignedVehicle.setUpdatedTime(LocalDateTime.now());
+                                vehicleRepository.save(assignedVehicle);
+
+                                // 4. 检查并更新Shipment状态
+                                checkAndUpdateShipmentStatus(freshShipment);
+                            }
+                        }
+
+                        // 5. 减少Enrollment中的货物数量
+                        int remainingQuantity = enrollment.getQuantity();
+                        if (remainingQuantity > 0) {
+                            enrollment.setQuantity(remainingQuantity - 1);
+                            if (enrollment.getQuantity() <= 0) {
+                                // 如果货物全部运完，删除Enrollment
+                                freshStartPOI.removeGoodsEnrollment(enrollment);
+                                goalGoods.removePOIEnrollment(enrollment);
+                                enrollmentRepository.delete(enrollment);
+                                System.out.println("已删除" + freshStartPOI.getName() + "中的货物" + goalGoods.getName());
+                            } else {
+                                enrollmentRepository.save(enrollment);
+                            }
+                        }
+
+                        poiRepository.save(freshStartPOI);
+                        goodsRepository.save(goalGoods);
+                    }
+                }
+            }
+
+            // 检查是否还有Enrollment，如果没有，则移除配对关系
+            List<Enrollment> remainingEnrollments = new ArrayList<>(freshStartPOI.getEnrollments());
+            if (remainingEnrollments.isEmpty()) {
+                String pairId = generatePoiPairKey(freshStartPOI, endPOI);
+                markPairAsCompleted(pairId);
+                startToEndMapping.remove(startPOI);
+
+                // 更新POI状态
+                poiIsWithGoods.put(freshStartPOI, false);
+                trueProbability = trueProbability / 0.95;
+            }
+
+        } catch (Exception e) {
+            System.err.println("处理车辆送货失败: " + e.getMessage());
+            throw new RuntimeException("车辆送货处理失败", e);
+        }
+    }
+
+    // 新增：检查和更新Shipment状态
+    private void checkAndUpdateShipmentStatus(Shipment shipment) {
+        // 检查该Shipment的所有Item是否都是DELIVERED
+        boolean allDelivered = true;
+        for (ShipmentItem item : shipment.getItems()) {
+            if (item.getStatus() != ShipmentItem.ShipmentItemStatus.DELIVERED) {
+                allDelivered = false;
+                break;
+            }
+        }
+
+        // 如果所有Item都已完成，更新Shipment状态为DELIVERED
+        if (allDelivered) {
+            shipment.setStatus(Shipment.ShipmentStatus.DELIVERED);
+            shipment.setUpdatedAt(LocalDateTime.now());
+            shipmentRepository.save(shipment);
+
+            logger.info("Shipment {} 所有Item已完成，状态更新为DELIVERED",
+                    shipment.getId());
+        }
+    }
+
+    /**
+     * 更新与车辆相关的运单进度
+     */
+    private void updateShipmentProgressForVehicle(Long vehicleId) {
+        try {
+            // 获取车辆当前的任务（Assignment）
+            // 注意：这里需要根据你的数据结构来获取车辆当前的Assignment
+            // 假设我们已经有了一个方法 getCurrentAssignmentByVehicleId
+            Vehicle vehicle = vehicleRepository.findById(vehicleId)
+                    .orElseThrow(() -> new EntityNotFoundException("Vehicle not found with id: " + vehicleId));
+            Assignment currentAssignment = vehicle.getCurrentAssignment();
+
+            if (currentAssignment != null) {
+                // 获取该Assignment关联的ShipmentItem
+                Set<ShipmentItem> shipmentItems = currentAssignment.getShipmentItems();
+
+                // 对于每个ShipmentItem，找到其所属的Shipment，并更新进度
+                Set<Long> shipmentIds = new HashSet<>();
+                for (ShipmentItem item : shipmentItems) {
+                    if (item.getShipment() != null) {
+                        shipmentIds.add(item.getShipment().getId());
+                    }
+                }
+
+                // 对每个相关的Shipment更新进度
+                for (Long shipmentId : shipmentIds) {
+                    shipmentProgressService.updateShipmentProgress(shipmentId);
+                    logger.info("已更新运单进度，运单ID: {}", shipmentId);
+                }
+            }
+        } catch (Exception e) {
+            logger.error("更新车辆相关运单进度失败，车辆ID: {}", vehicleId, e);
         }
     }
 

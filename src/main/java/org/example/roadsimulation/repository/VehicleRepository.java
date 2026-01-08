@@ -16,6 +16,9 @@ public interface VehicleRepository extends JpaRepository<Vehicle, Long> {
     // 根据车牌号查找
     Vehicle findByLicensePlate(String licensePlate);
 
+    // 根据ID查找
+    Vehicle findById(long id);
+
     // 模糊查询车牌号（忽略大小写）
     List<Vehicle> findByLicensePlateContainingIgnoreCase(String partialLicense);
 

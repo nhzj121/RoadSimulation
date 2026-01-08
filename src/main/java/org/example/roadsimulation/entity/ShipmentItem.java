@@ -48,6 +48,18 @@ public class ShipmentItem {
     @Column(name = "created_time")
     private LocalDateTime createdTime = LocalDateTime.now();
 
+    public enum ShipmentItemStatus {
+        NOT_ASSIGNED, //未分配
+        ASSIGNED, //已分配
+        LOADED, //已装货
+        IN_TRANSIT, //运输中
+        DELIVERED, //已送达
+    }
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status", length = 20, nullable = false)
+    private ShipmentItem.ShipmentItemStatus status = ShipmentItem.ShipmentItemStatus.NOT_ASSIGNED;
+
     // 商品唯一标识代码，用于区分和追踪库存中的不同商品；
     // 区别于SPU（产品编码），SKU用于对同一商品下的不同种类进行区分
     // 在这里我们暂设为商品唯一性标识 ToDo
@@ -114,6 +126,9 @@ public class ShipmentItem {
 
     public String getSku() { return sku; }
     public void setSku(String sku) { this.sku = sku; }
+
+    public ShipmentItem.ShipmentItemStatus getStatus() { return status; }
+    public void setStatus(ShipmentItem.ShipmentItemStatus status) { this.status = status; }
 
     public Integer getQty() { return qty; }
     public void setQty(Integer qty) { this.qty = qty; }

@@ -23,16 +23,25 @@
           </template>
           <div class="control-group">
             <span class="control-label">时间压缩:</span>
-            <ElButtonGroup>
-              <ElButton :type="speedFactor === 1 ? 'primary' : 'default'" @click="setSpeed(1)">1x</ElButton>
-              <ElButton icon="el-icon-minus" @click="decSpeed"></ElButton>
-              <ElButton icon="el-icon-plus" @click="incSpeed"></ElButton>
-            </ElButtonGroup>
+            <div class="speed-slider">
+              <ElSlider
+                  v-model="speedFactor"
+                  :min="0.1"
+                  :max="10"
+                  :step="0.1"
+                  :format-tooltip="formatSpeedTooltip"
+                  @change="onSpeedChange"
+                  size="small"
+              />
+            </div>
           </div>
           <div class="control-group" style="margin-top: 15px;">
             <ElButton type="primary" @click="startSimulation">▶ 开始</ElButton>
-            <ElButton type="primary" @click="stopSimulation">⏯ 暂停</ElButton>
+            <ElButton type="primary" @click="pauseSimulation">⏸ 暂停</ElButton>
             <ElButton @click="resetSimulation">↻ 重置</ElButton>
+          </div>
+          <div class="speed-display" style="margin-top: 10px; font-size: 12px; color: #666;">
+            当前速度: {{ formattedSpeed }}
           </div>
         </ElCard>
 
@@ -88,6 +97,8 @@
                   <!-- 位置和状态 -->
                   <div class="vehicle-location">
                     {{ statusMap[v.status]?.text || v.status }}
+                    <template v-if="v.status === 'ORDER_DRIVING'"> → {{ v.startPOI }}</template>
+                    <template v-if="v.status === 'TRANSPORT_DRIVING'"> → {{ v.endPOI }}</template>
                   </div>
                 </div>
                 <template v-if="v.currentAssignment">
@@ -104,6 +115,25 @@
               暂无运输任务
             </div>
           </div>
+        </ElCard>
+
+        <!-- 运单信息 -->
+        <ElCard shadow="never" class="box-card">
+          <template #header>
+            <div class="card-header">
+              <span>运单信息</span>
+            </div>
+          </template>
+          <ShipmentProgressPanel
+              ref="shipmentProgressPanel"
+              :show-summary="true"
+              :show-search="true"
+              :auto-refresh-interval="15000"
+              @shipment-click="handleShipmentClick"
+              @shipment-selected="handleShipmentSelected"
+              @data-updated="handleShipmentDataUpdated"
+              @error="handleShipmentError"
+          />
         </ElCard>
 
         <!-- 统计信息 -->
@@ -130,7 +160,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, onUnmounted } from "vue";
+import { ref, reactive, computed, onMounted, onUnmounted, markRaw } from "vue";
 import { useRouter } from 'vue-router';
 import { poiManagerApi } from "../api/poiManagerApi";
 import { simulationController} from "@/api/simulationController";
@@ -153,9 +183,15 @@ import {
   ElCard,
   ElButton,
   ElButtonGroup,
-  ElCheckTag, ElMessage,ElMessageBox
+  ElCheckTag,
+  ElMessage,
+  ElMessageBox,
+  ElSlider
 } from "element-plus";
 import { InfoFilled } from '@element-plus/icons-vue'
+
+// 引入新增组件
+import ShipmentProgressPanel from './ShipmentProgressPanel.vue';
 
 let map = null;
 let AMapLib = null; // 保存加载后的 AMap 构造对象
@@ -167,11 +203,66 @@ const gotoMain = () => {
   router.push('./')
 }
 
+// --- 运单进度面板相关 ---
+const shipmentProgressPanel = ref(null);
+
+// 运单点击事件处理
+const handleShipmentClick = (shipment) => {
+  console.log('点击运单:', shipment);
+  // 可以在地图上高亮显示该运单的路线
+  // highlightShipmentOnMap(shipment);
+};
+
+// 运单选中事件处理
+const handleShipmentSelected = (shipment) => {
+  console.log('选中运单:', shipment);
+  // 可以在地图上显示该运单的详细信息
+};
+
+// 运单数据更新事件处理
+const handleShipmentDataUpdated = (shipments) => {
+  console.log('运单数据更新:', shipments.length);
+  // 更新统计信息中的任务数量
+  stats.tasks = shipments.length;
+};
+
+// 运单错误事件处理
+const handleShipmentError = (error) => {
+  console.error('运单组件错误:', error);
+  ElMessage.error('运单数据加载失败');
+};
+
+// 更新运单进度（车辆到达时调用）
+const updateShipmentProgress = async (shipmentId) => {
+  try {
+    // 调用API更新运单进度
+    await request.patch(`/api/shipments/${shipmentId}/update-progress`);
+
+    // 刷新运单面板数据
+    if (shipmentProgressPanel.value) {
+      await shipmentProgressPanel.value.refreshData();
+    }
+
+    console.log(`已更新运单${shipmentId}的进度`);
+  } catch (error) {
+    console.error(`更新运单${shipmentId}进度失败:`, error);
+  }
+};
+
 // --- 仿真控制 ---
 const speedFactor = ref(1);
-const setSpeed = (val) => speedFactor.value = val;
-const decSpeed = () => speedFactor.value = Math.max(0.5, speedFactor.value - 0.5);
-const incSpeed = () => speedFactor.value = Math.min(5, speedFactor.value + 0.5);
+const formattedSpeed = computed(() => `${speedFactor.value.toFixed(1)}x`);
+
+const formatSpeedTooltip = (value) => {
+  return `${value.toFixed(1)}x`;
+};
+
+const onSpeedChange = (value) => {
+  if (animationManager) {
+    animationManager.setGlobalSpeedFactor(value);
+  }
+  console.log(`速度因子调整为: ${value}`);
+};
 
 const simulationTimer = ref(null);
 const simulationInterval = ref(8000); // 8秒更新一次
@@ -185,6 +276,12 @@ const isSimulationRunning = ref(false); // 仿真运行状态
 const drawnPairIds = ref(new Set()); // 已绘制的配对ID (可以删除)
 const drawnAssignmentIds = ref(new Set()); // 已绘制的Assignment ID
 const activeRoutes = ref(new Map()); // 当前活动的路线映射，key为assignmentId
+
+// 路线规划缓存
+const routePlanningCache = new Map();
+
+// Assignment状态跟踪
+const assignmentStates = new Map();
 
 // 图标配置 - 根据POI类型使用不同的图标
 const poiIcons = {
@@ -211,6 +308,536 @@ const getPOIIcon = (poiType) => {
   }
 };
 
+// --- 动画管理器类 ---
+class VehicleAnimation {
+  constructor(assignment, routeData, manager) {
+    this.assignmentId = assignment.assignmentId;
+    this.vehicleId = assignment.vehicleId;
+    this.licensePlate = assignment.licensePlate;
+    this.manager = manager;
+    this.routeData = routeData;
+
+    // 动画状态
+    this.isPaused = false;
+    this.isCompleted = false;
+    this.currentStage = 1; // 1: 前往装货点, 2: 运输到卸货点
+    this.currentProgress = 0; // 当前阶段的进度 0-1
+    this.currentSegment = 0; // 当前路段的索引
+    this.currentPosition = null; // 当前位置 [lng, lat]
+
+    // 时间控制 - 重构为时间伸缩系统
+    this.realStartTime = null;      // 实际开始时间
+    this.realPausedTime = 0;        // 实际暂停时间
+    this.animationTime = 0;         // 动画时间（考虑速度因子）
+    this.speedFactor = 1;           // 当前速度因子
+    this.lastUpdateTime = null;     // 上次更新时间
+
+    // 路线数据
+    this.stage1Path = routeData.stage1Path || [];
+    this.stage2Path = routeData.stage2Path || [];
+    this.stage1Segments = this._calculateSegments(this.stage1Path);
+    this.stage2Segments = this._calculateSegments(this.stage2Path);
+
+    // 基础速度
+    this.baseSpeed = 900; // 米/秒
+
+    // 标记引用
+    this.movingMarker = routeData.movingMarker;
+    this.startMarker = routeData.startMarker;
+    this.vehicleStartMarker = routeData.vehicleMarker;
+
+    // 动画帧ID
+    this.animationFrameId = null;
+
+    // 完成回调
+    this.onCompleteCallbacks = [];
+
+    // 为同一路线上的车辆生成随机偏移
+    this.offset = this._generateRandomOffset();
+
+    console.log(`创建车辆动画: ${this.licensePlate} (${this.assignmentId})`);
+  }
+
+  // 计算路段的长度和累积距离
+  _calculateSegments(path) {
+    if (!path || path.length < 2) return { segments: [], totalLength: 0 };
+
+    const segments = [];
+    let cumulativeLength = 0;
+
+    for (let i = 0; i < path.length - 1; i++) {
+      const start = path[i];
+      const end = path[i + 1];
+      const length = this._haversineDistance(start, end);
+      segments.push({
+        start,
+        end,
+        length,
+        cumulativeLength
+      });
+      cumulativeLength += length;
+    }
+
+    return { segments, totalLength: cumulativeLength };
+  }
+
+  // 球面距离计算
+  _haversineDistance(a, b) {
+    const toRad = d => d * Math.PI / 180;
+    const R = 6371000;
+    const dLat = toRad(b[1] - a[1]);
+    const dLon = toRad(b[0] - a[0]);
+    const lat1 = toRad(a[1]), lat2 = toRad(b[1]);
+    const sinDLat = Math.sin(dLat/2), sinDLon = Math.sin(dLon/2);
+    const c = 2 * Math.asin(Math.sqrt(sinDLat*sinDLat + Math.cos(lat1)*Math.cos(lat2)*sinDLon*sinDLon));
+    return R * c;
+  }
+
+  // 生成随机偏移（避免图标重叠）
+  _generateRandomOffset() {
+    const angle = Math.random() * Math.PI * 2;
+    const radius = 8; // 像素偏移半径
+    return {
+      x: Math.cos(angle) * radius,
+      y: Math.sin(angle) * radius
+    };
+  }
+
+  // 开始动画
+  start() {
+    if (this.isCompleted) return;
+
+    const now = performance.now();
+
+    if (this.realStartTime === null) {
+      // 第一次启动
+      this.realStartTime = now;
+      this.animationTime = 0;
+    } else if (this.isPaused) {
+      // 从暂停恢复
+      const pauseDuration = now - this.realPausedTime;
+      this.realStartTime += pauseDuration;
+    }
+
+    this.isPaused = false;
+    this.lastUpdateTime = now;
+
+    // 设置初始位置
+    if (this.stage1Path && this.stage1Path.length > 0 && !this.currentPosition) {
+      this.currentPosition = [...this.stage1Path[0]];
+      this._updateMarkerPosition();
+    }
+
+    this._animate();
+
+    console.log(`开始车辆动画: ${this.licensePlate}`);
+  }
+
+  // 暂停动画
+  pause() {
+    if (this.isPaused || this.isCompleted) return;
+
+    this.isPaused = true;
+    this.realPausedTime = performance.now();
+
+    if (this.animationFrameId) {
+      cancelAnimationFrame(this.animationFrameId);
+      this.animationFrameId = null;
+    }
+
+    console.log(`暂停车辆动画: ${this.licensePlate}`);
+  }
+
+  // 恢复动画
+  resume() {
+    if (!this.isPaused || this.isCompleted) return;
+
+    this.isPaused = false;
+    this.lastUpdateTime = performance.now();
+
+    this._animate();
+
+    console.log(`恢复车辆动画: ${this.licensePlate}`);
+  }
+
+  // 停止动画（清理资源）
+  stop() {
+    if (this.animationFrameId) {
+      cancelAnimationFrame(this.animationFrameId);
+      this.animationFrameId = null;
+    }
+
+    this.isCompleted = true;
+    this.isPaused = false;
+
+    console.log(`停止车辆动画: ${this.licensePlate}`);
+  }
+
+  // 更新速度因子
+  updateSpeedFactor(speedFactor) {
+    const now = performance.now();
+
+    // 更新当前动画时间
+    if (this.lastUpdateTime && !this.isPaused && !this.isCompleted) {
+      const delta = (now - this.lastUpdateTime) / 1000; // 转换为秒
+      this.animationTime += delta * this.speedFactor;
+    }
+
+    this.speedFactor = speedFactor;
+    this.lastUpdateTime = now;
+
+    console.log(`更新车辆速度因子: ${this.licensePlate} -> ${speedFactor.toFixed(1)}x`);
+  }
+
+  // 获取当前路径（基于当前阶段）
+  _getCurrentPath() {
+    return this.currentStage === 1 ? this.stage1Path : this.stage2Path;
+  }
+
+  // 获取当前路段数据（基于当前阶段）
+  _getCurrentSegments() {
+    return this.currentStage === 1 ? this.stage1Segments : this.stage2Segments;
+  }
+
+  // 根据距离获取位置
+  _getPositionByDistance(distance, path, segments) {
+    if (!path || path.length < 2) return path[0] || [0, 0];
+
+    const { segments: segs, totalLength } = segments;
+
+    // 如果距离小于等于0，返回起点
+    if (distance <= 0) return [...path[0]];
+
+    // 如果距离大于等于总长度，返回终点
+    if (distance >= totalLength) return [...path[path.length - 1]];
+
+    // 找到当前所在的路段
+    for (let i = 0; i < segs.length; i++) {
+      const seg = segs[i];
+      const segmentEnd = seg.cumulativeLength + seg.length;
+
+      if (distance >= seg.cumulativeLength && distance <= segmentEnd) {
+        const segmentProgress = (distance - seg.cumulativeLength) / seg.length;
+
+        // 线性插值计算位置
+        const lng = seg.start[0] + (seg.end[0] - seg.start[0]) * segmentProgress;
+        const lat = seg.start[1] + (seg.end[1] - seg.start[1]) * segmentProgress;
+
+        return [lng, lat];
+      }
+    }
+
+    // 默认返回终点
+    return [...path[path.length - 1]];
+  }
+
+  // 更新标记位置
+  _updateMarkerPosition() {
+    if (!this.movingMarker || !this.currentPosition) return;
+
+    try {
+      // 应用偏移（避免图标重叠）
+      const positionWithOffset = [
+        this.currentPosition[0],
+        this.currentPosition[1]
+      ];
+
+      this.movingMarker.setPosition(positionWithOffset);
+    } catch (error) {
+      console.warn(`更新车辆标记位置失败: ${this.licensePlate}`, error);
+    }
+  }
+
+  // 动画主循环
+  _animate() {
+    if (this.isPaused || this.isCompleted) {
+      this.animationFrameId = null;
+      return;
+    }
+
+    const now = performance.now();
+
+    // 初始化时间
+    if (this.lastUpdateTime === null) {
+      this.lastUpdateTime = now;
+    }
+
+    // 计算时间增量并应用速度因子
+    const deltaTime = (now - this.lastUpdateTime) / 1000; // 转换为秒
+    this.animationTime += deltaTime * this.speedFactor;
+    this.lastUpdateTime = now;
+
+    // 获取当前阶段的数据
+    const currentSegments = this._getCurrentSegments();
+    const currentPath = this._getCurrentPath();
+
+    if (!currentPath || currentPath.length < 2 || currentSegments.segments.length === 0) {
+      console.error(`无效的路径数据: ${this.licensePlate}`);
+      this.stop();
+      return;
+    }
+
+    // 计算当前距离
+    const distance = this.animationTime * this.baseSpeed;
+    const totalLength = currentSegments.totalLength;
+
+    // 检查是否完成当前阶段
+    if (distance >= totalLength) {
+      // 完成当前阶段
+      this._completeCurrentStage();
+    } else {
+      // 计算当前位置
+      this.currentPosition = this._getPositionByDistance(distance, currentPath, currentSegments);
+      this.currentProgress = distance / totalLength;
+
+      // 更新标记位置
+      this._updateMarkerPosition();
+
+      // 继续动画
+      this.animationFrameId = requestAnimationFrame(() => this._animate());
+    }
+  }
+
+  // 完成当前阶段
+  async _completeCurrentStage() {
+    // 设置位置到阶段终点
+    const currentPath = this._getCurrentPath();
+    if (currentPath && currentPath.length > 0) {
+      this.currentPosition = [...currentPath[currentPath.length - 1]];
+      this._updateMarkerPosition();
+    }
+
+    // 更新车辆状态
+    if (this.currentStage === 1) {
+      // 第一阶段完成：到达装货点
+      this.manager.updateVehicleStatus(this.vehicleId, 'LOADING');
+
+      // 装货停留2秒（动画时间）
+      await this._waitWithSpeedFactor(2000);
+
+      // 切换到第二阶段
+      this.currentStage = 2;
+      this.manager.updateVehicleStatus(this.vehicleId, 'TRANSPORT_DRIVING');
+
+      // 重置时间，开始第二阶段
+      this.animationTime = 0;
+      this.lastUpdateTime = performance.now();
+      this.currentProgress = 0;
+
+      this._animate();
+
+    } else if (this.currentStage === 2) {
+      // 第二阶段完成：到达卸货点
+      this.manager.updateVehicleStatus(this.vehicleId, 'UNLOADING');
+
+      // 卸货停留2秒（动画时间）
+      await this._waitWithSpeedFactor(2000);
+
+      // 完成任务
+      this.manager.updateVehicleStatus(this.vehicleId, 'WAITING');
+      this.isCompleted = true;
+
+      // 调用车辆到达处理函数
+      await handleVehicleArrived(this.assignmentId, this.vehicleId, this.routeData.assignment.endPOIId, this.licensePlate);
+
+      // 延迟清理（1-2秒后）
+      setTimeout(() => {
+        this.cleanup();
+        this.manager.removeAnimation(this.assignmentId);
+      }, 1000 + Math.random() * 1000); // 随机1-2秒延迟
+
+      // 触发完成回调
+      this.onCompleteCallbacks.forEach(callback => callback(this));
+    }
+  }
+
+  // 考虑速度因子的等待
+  async _waitWithSpeedFactor(ms) {
+    const adjustedMs = ms / this.speedFactor;
+    return new Promise(resolve => setTimeout(resolve, adjustedMs));
+  }
+
+  // 清理资源
+  cleanup() {
+    // 清理车辆移动标记
+    if (this.movingMarker && map) {
+      try {
+        map.remove(this.movingMarker);
+      } catch (error) {
+        // 忽略清理错误
+      }
+    }
+
+    // 清理起点标记（如果存在且独立）
+    if (this.vehicleStartMarker && map) {
+      try {
+        map.remove(this.vehicleStartMarker);
+      } catch (error) {
+        // 忽略清理错误
+      }
+    }
+
+    console.log(`清理车辆资源: ${this.licensePlate}`);
+  }
+
+  // 添加完成回调
+  onComplete(callback) {
+    this.onCompleteCallbacks.push(callback);
+  }
+}
+
+class VehicleAnimationManager {
+  constructor() {
+    this.animations = new Map(); // assignmentId -> VehicleAnimation
+    this.globalSpeedFactor = 1;
+    this.isPaused = false;
+    this.vehicleColors = [
+      '#ff7f50', '#3498db', '#2ecc71', '#e74c3c', '#9b59b6',
+      '#1abc9c', '#d35400', '#c0392b', '#16a085', '#8e44ad'
+    ];
+  }
+
+  // 添加动画
+  addAnimation(assignment, routeData) {
+    if (this.animations.has(assignment.assignmentId)) {
+      console.warn(`动画已存在: ${assignment.assignmentId}`);
+      return this.animations.get(assignment.assignmentId);
+    }
+
+    // 为车辆分配颜色（基于车辆ID）
+    const colorIndex = assignment.vehicleId % this.vehicleColors.length;
+    routeData.color = this.vehicleColors[colorIndex];
+
+    const animation = new VehicleAnimation(assignment, routeData, this);
+    this.animations.set(assignment.assignmentId, animation);
+
+    // 设置初始速度因子
+    animation.updateSpeedFactor(this.globalSpeedFactor);
+
+    // 如果全局未暂停，则启动动画
+    if (!this.isPaused) {
+      animation.start();
+    }
+
+    return animation;
+  }
+
+  // 开始所有动画
+  startAll() {
+    this.isPaused = false;
+    this.animations.forEach(animation => {
+      if (!animation.isCompleted) {
+        animation.start();
+      }
+    });
+    console.log(`开始所有动画，共 ${this.animations.size} 个`);
+  }
+
+  // 暂停所有动画
+  pauseAll() {
+    this.isPaused = true;
+    this.animations.forEach(animation => {
+      if (!animation.isCompleted && !animation.isPaused) {
+        animation.pause();
+      }
+    });
+    console.log(`暂停所有动画，共 ${this.animations.size} 个`);
+  }
+
+  // 恢复所有动画
+  resumeAll() {
+    this.isPaused = false;
+    this.animations.forEach(animation => {
+      if (!animation.isCompleted && animation.isPaused) {
+        animation.resume();
+      }
+    });
+    console.log(`恢复所有动画，共 ${this.animations.size} 个`);
+  }
+
+  // 停止所有动画
+  stopAll() {
+    this.animations.forEach(animation => {
+      animation.stop();
+      animation.cleanup();
+    });
+    this.animations.clear();
+    console.log('停止所有动画并清理资源');
+  }
+
+  // 设置全局速度因子
+  setGlobalSpeedFactor(factor) {
+    this.globalSpeedFactor = Math.max(0.1, Math.min(10, factor));
+    this.animations.forEach(animation => {
+      animation.updateSpeedFactor(this.globalSpeedFactor);
+    });
+    console.log(`设置全局速度因子: ${this.globalSpeedFactor}`);
+  }
+
+  // 移除动画
+  removeAnimation(assignmentId) {
+    const animation = this.animations.get(assignmentId);
+    if (animation) {
+      animation.stop();
+      animation.cleanup();
+      this.animations.delete(assignmentId);
+      console.log(`移除动画: ${assignmentId}`);
+    }
+  }
+
+  // 更新车辆状态（用于同步到车辆列表）
+  updateVehicleStatus(vehicleId, status) {
+    // 在实际应用中，这里应该更新车辆列表中的状态
+    console.log(`更新车辆状态: ${vehicleId} -> ${status}`);
+  }
+
+  // 获取活动动画数量
+  getActiveCount() {
+    return this.animations.size;
+  }
+
+  // 检查是否有动画
+  hasAnimations() {
+    return this.animations.size > 0;
+  }
+}
+
+// 初始化动画管理器
+const animationManager = new VehicleAnimationManager();
+
+// --- 车辆到达处理函数 ---
+const handleVehicleArrived = async (assignmentId, vehicleId, endPOIId, licensePlate) => {
+  try {
+    console.log(`处理车辆到达: ${licensePlate} (Assignment: ${assignmentId})`);
+
+    // 1. 调用车辆到达接口
+    await request.post('/api/simulation/vehicle-arrived', {
+      assignmentId: assignmentId,
+      vehicleId: vehicleId,
+      endPOIId: endPOIId
+    });
+
+    console.log(`车辆 ${licensePlate} 到达处理完成`);
+
+    // 2. 等待后端处理完成
+    await new Promise(resolve => setTimeout(resolve, 2000));
+
+    // 3. 刷新前端数据
+    await updateVehicleInfo();
+
+    if (shipmentProgressPanel.value) {
+      await shipmentProgressPanel.value.refreshData();
+    }
+
+    // 4. 清理前端动画和路线
+    clearRouteByAssignmentId(assignmentId);
+
+  } catch (error) {
+    console.error('车辆到达处理失败:', error);
+    ElMessage.error(`车辆 ${licensePlate} 状态更新失败: ${error.message}`);
+  }
+};
+
 // --- 核心仿真方法 ---
 
 /**
@@ -220,17 +847,36 @@ const startSimulation = async () => {
   try {
     console.log("开始仿真");
 
+    // 启动后端仿真
     await simulationController.startSimulation();
     isSimulationRunning.value = true;
+
+    // 启动动画管理器
+    if (animationManager.hasAnimations()) {
+      // 有现有动画，恢复它们
+      animationManager.resumeAll();
+      console.log("恢复现有动画");
+    } else {
+      // 没有动画，重新加载Assignment
+      console.log("重新加载Assignment");
+
+      // 启动动画管理器
+      animationManager.startAll();
+
+      // 初始加载当前活跃的Assignment
+      await fetchCurrentAssignments();
+    }
 
     // 启动定时更新
     startSimulationTimer();
 
-    // 初始加载当前活跃的Assignment
-    await fetchCurrentAssignments();
-
     // 初始化车辆信息
     await updateVehicleInfo();
+
+    // 初始化运单数据
+    if (shipmentProgressPanel.value) {
+      await shipmentProgressPanel.value.refreshData();
+    }
 
     ElMessage.success('仿真已启动');
 
@@ -244,15 +890,21 @@ const startSimulation = async () => {
 /**
  * 暂停仿真
  */
-const stopSimulation = async () => {
+const pauseSimulation = async () => {
   try {
     console.log("已暂停仿真");
+
+    // 暂停动画管理器
+    animationManager.pauseAll();
+
+    // 暂停后端仿真
     await simulationController.stopSimulation();
     isSimulationRunning.value = false;
+
+    ElMessage.success('仿真已暂停');
   } catch (error) {
     console.error("暂停仿真失败：", error);
     ElMessage.error('暂停仿真失败：' + error.message);
-    isSimulationRunning.value = true;
   }
 }
 
@@ -274,11 +926,20 @@ const resetSimulation = async () => {
 
     if (confirmResult === 'confirm') {
       console.log("重置仿真");
+
+      // 停止后端仿真
       await simulationController.resetSimulation();
       isSimulationRunning.value = false;
 
       // 停止定时器
       stopSimulationTimer();
+
+      // 停止并清理所有动画
+      animationManager.stopAll();
+
+      // 清除缓存
+      routePlanningCache.clear();
+      assignmentStates.clear();
 
       // 清理所有绘制的路线
       activeRoutes.value.forEach(routeData => {
@@ -295,6 +956,18 @@ const resetSimulation = async () => {
 
       // 重置数据
       currentPOIs.value = [];
+      vehicles.splice(0, vehicles.length);
+
+      // 重置统计信息
+      stats.running = 0;
+      stats.poiCount = 0;
+      stats.tasks = 0;
+      stats.anomalyRate = 0;
+
+      // 重置运单面板
+      if (shipmentProgressPanel.value) {
+        shipmentProgressPanel.value.refreshData();
+      }
 
       ElMessage.success('仿真已重置');
     }
@@ -338,7 +1011,7 @@ const stopSimulationTimer = () => {
 };
 
 /**
- * 更新POI数据 - 从 startSimulation 中提取的核心方法
+ * 更新POI数据
  */
 const updatePOIData = async () => {
   try {
@@ -367,41 +1040,7 @@ const updatePOIData = async () => {
 
   } catch (error) {
     console.error("更新POI数据失败：", error);
-    // 不抛出错误，避免影响其他定时任务
-  }
-};
-
-const fetchPOIPairs = async () => {
-  try {
-    const response = await request.get('/api/simulation/pairs/current');
-    const pairs = response.data;
-    console.log('获取到POI配对:', pairs);
-
-    if (pairs && pairs.length > 0) {
-      // 将配对转换为路线规划的endpoints
-      const endpoints = pairs.map(pair => ({
-        id: `${pair.startPOIId}_${pair.endPOIId}`,
-        start: [pair.startLng, pair.startLat],
-        end: [pair.endLng, pair.endLat],
-        info: {
-          startName: pair.startPOIName,
-          endName: pair.endPOIName,
-          goodsName: pair.goodsName,
-          quantity: pair.quantity
-        }
-      }));
-
-      // 调用路线规划
-      const computedRoutes = await computeRoutesOnBackend(endpoints);
-      drawComputedRoutes(computedRoutes);
-
-      // 更新统计信息
-      stats.tasks = pairs.length;
-    } else {
-      console.log('当前没有活跃的POI配对');
-    }
-  } catch (error) {
-    console.error('获取POI配对失败:', error);
+    ElMessage.error('更新POI数据失败');
   }
 };
 
@@ -475,11 +1114,6 @@ const addPOIMarkersToMap = async (pois) => {
 // 处理POI点击事件
 const handlePOIClick = (poi) => {
   console.log('点击POI:', poi);
-
-  // 显示POI详细信息
-  const poiTypeText = getPOITypeText(poi.poiType);
-
-  // 显示信息窗口
   showInfoWindow(poi);
 };
 
@@ -630,6 +1264,7 @@ const updateVehicleInfo = async () => {
 
   } catch (error) {
     console.error('获取车辆信息失败:', error);
+    ElMessage.error('获取车辆信息失败');
   }
 };
 
@@ -640,11 +1275,10 @@ const getVehicleDetail = async (vehicleId) => {
     return response.data;
   } catch (error) {
     console.error(`获取车辆${vehicleId}详细信息失败:`, error);
+    ElMessage.error(`获取车辆信息失败: ${vehicleId}`);
     return null;
   }
 };
-
-// --- 新增：车辆动画和路线规划功能 ---
 
 // 统计信息
 const stats = reactive({
@@ -685,9 +1319,8 @@ const clearDrawnRoutes = () => {
   vehicleAnimations.length = 0; // 清空vehicleAnimations数组
 };
 
-// 新增：创建 van 内联 SVG 元素（背景圆 + svg）
-// 创建一个用于在前端地图界面上展示的自定义车辆图标
-const createSvgVanEl = (size = 32, bg = '#ff7f50') => {
+// 创建车辆图标（支持颜色区分）
+const createVehicleIcon = (size = 32, color = '#ff7f50') => {
   const el = document.createElement('div');
   el.style.width = `${size}px`;
   el.style.height = `${size}px`;
@@ -695,90 +1328,13 @@ const createSvgVanEl = (size = 32, bg = '#ff7f50') => {
   el.style.display = 'flex';
   el.style.alignItems = 'center';
   el.style.justifyContent = 'center';
-  el.style.background = bg;
+  el.style.background = color;
   el.style.color = '#fff';
   el.style.boxShadow = '0 1px 4px rgba(0,0,0,0.3)';
   el.innerHTML = `<svg width="${Math.round(size*0.6)}" height="${Math.round(size*0.6)}" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
-    <path d="M3 13v-6h11v6H3zm13 0h3l2 3v3h-3a2 2 0 0 1-2-2v-4zM6 18a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zm10 0a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z"/>
+    <path d="M3 13v-6h11v6H3zm13 0h3l2 3v3h-3a2 2 0 0 1-2-2v-4zM6 18a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zm10 0a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z"/>>
   </svg>`;
   return el;
-};
-
-// 计算两点球面距离（米）
-// a 和 b 是六位小数的经纬度坐标； 两者使用 [经度,纬度] 的形式
-const haversineDistance = (a, b) => {
-  const toRad = d => d * Math.PI / 180;
-  const R = 6371000;
-  const dLat = toRad(b[1] - a[1]);
-  const dLon = toRad(b[0] - a[0]);
-  const lat1 = toRad(a[1]), lat2 = toRad(b[1]);
-  const sinDLat = Math.sin(dLat/2), sinDLon = Math.sin(dLon/2);
-  const c = 2 * Math.asin(Math.sqrt(sinDLat*sinDLat + Math.cos(lat1)*Math.cos(lat2)*sinDLon*sinDLon));
-  return R * c;
-};
-
-// marker 匀速沿 path 移动（path: [[lng,lat],...], speed 米/秒），返回 cancel 函数
-// 方法基于车辆在 path 相邻两项之间 沿直线 匀速运动
-const animateAlongPath = (marker, path, speed = 500, onArrivalCallback = null) => {
-  if (!path || path.length < 2) return () => {};
-  const segLengths = [];
-  let total = 0;
-  for (let i = 0; i < path.length - 1; i++) {
-    const L = haversineDistance(path[i], path[i+1]);
-    segLengths.push(L);
-    total += L;
-  }
-  let start = null;
-  let rafId = null;
-  let canceled = false;
-
-  const seek = (d) => {
-    if (d <= 0) return path[0];
-    if (d >= total) return path[path.length-1];
-    let acc = 0;
-    for (let i = 0; i < segLengths.length; i++) {
-      const L = segLengths[i];
-      if (acc + L >= d) {
-        const t = (d - acc) / L;
-        const a = path[i], b = path[i+1];
-        return [ a[0] + (b[0]-a[0])*t, a[1] + (b[1]-a[1])*t ];
-      }
-      acc += L;
-    }
-    return path[path.length-1];
-  };
-
-  const step = (ts) => {
-    if (canceled) return;
-    if (start === null) start = ts;
-
-    const elapsed = (ts - start)/1000;
-    const dist = Math.min(elapsed * speed, total);
-    const pos = seek(dist);
-
-    try {
-      marker.setPosition(pos);
-
-      // 检查是否到达终点
-      if (dist + speed >= total && onArrivalCallback) {
-        // 添加一个小延迟，确保动画完全完成
-        setTimeout(() => {
-          onArrivalCallback(pos);
-        }, 100);
-        return;
-      }
-    } catch (e) {}
-
-    if (dist >= total) return;
-    rafId = requestAnimationFrame(step);
-  };
-
-  rafId = requestAnimationFrame(step);
-
-  return () => {
-    canceled = true;
-    if (rafId) cancelAnimationFrame(rafId);
-  };
 };
 
 // 清除特定Assignment的路线
@@ -786,12 +1342,9 @@ const clearRouteByAssignmentId = (assignmentId) => {
   const routeData = activeRoutes.value.get(assignmentId);
   if (routeData) {
     // 清理动画
-    routeData.animations.forEach(anim => {
-      anim.cancel && anim.cancel();
-      try {
-        anim.marker && anim.marker.setMap && anim.marker.setMap(null);
-      } catch (_) {}
-    });
+    if (animationManager) {
+      animationManager.removeAnimation(assignmentId);
+    }
 
     // 清理地图元素
     routeData.elements.forEach(el => {
@@ -808,95 +1361,34 @@ const clearRouteByAssignmentId = (assignmentId) => {
   }
 };
 
-// 清除特定配对的路线
-const clearRouteByPairId = (pairId) => {
-  const routeData = activeRoutes.value.get(pairId);
-  if (routeData) {
-    // 清理动画
-    routeData.animations.forEach(anim => {
-      anim.cancel && anim.cancel();
-      try {
-        anim.marker && anim.marker.setMap && anim.marker.setMap(null);
-      } catch (_) {}
-    });
-
-    // 清理地图元素
-    routeData.elements.forEach(el => {
-      try {
-        el.setMap && el.setMap(null);
-      } catch (_) {}
-    });
-
-    // 从映射中移除
-    activeRoutes.value.delete(pairId);
-    drawnPairIds.value.delete(pairId);
-
-    console.log(`已清理配对 ${pairId} 的路线`);
-  }
-};
-
-// 增量获取并绘制POI配对
-const fetchAndDrawNewPOIPairs = async () => {
+// 获取当前活跃的Assignment（用于初始加载）
+const fetchCurrentAssignments = async () => {
   try {
-    // 1. 获取新增的Assignment（用于前端绘制）
-    const response = await request.get('/api/assignments/new');
-    const newAssignments = response.data;
+    const response = await request.get('/api/assignments/active');
+    const assignments = response.data;
 
-    if (!newAssignments || newAssignments.length === 0) {
-      console.log('没有新增的Assignment');
-      return;
-    }
-
-    console.log(`获取到 ${newAssignments.length} 个新增Assignment`);
-
-    // 2. 转换为路线规划的endpoints
-    const endpoints = newAssignments.map(assignment => ({
-      id: assignment.assignmentId,
-      start: [assignment.startLng, assignment.startLat],
-      end: [assignment.endLng, assignment.endLat],
-      info: {
-        assignmentId: assignment.assignmentId,
-        pairId: assignment.pairId, // 保留pairId用于兼容
-        startName: assignment.startPOIName,
-        endName: assignment.endPOIName,
-        goodsName: assignment.goodsName,
-        quantity: assignment.quantity,
-        shipmentRefNo: assignment.shipmentRefNo,
-        vehicleLicensePlate: assignment.licensePlate
-      }
-    }));
-
-    // 3. 批量规划路线
-    const computedRoutes = await computeRoutesOnBackend(endpoints);
-
-    // 4. 绘制新路线
-    for (const route of computedRoutes) {
-      if (route && route.info && route.info.assignmentId) {
-        // 确保该Assignment尚未绘制
-        if (!drawnAssignmentIds.value.has(route.info.assignmentId)) {
-          await drawTwoStageRoute(route);
-
-          // 标记为已绘制
-          drawnAssignmentIds.value.add(route.info.assignmentId);
-
-          // 通知后端该Assignment已绘制
-          try {
-            await request.post(`/api/assignments/mark-drawn/${route.info.assignmentId}`);
-          } catch (error) {
-            console.error(`标记Assignment ${route.info.assignmentId} 为已绘制失败:`, error);
+    if (assignments && assignments.length > 0) {
+      // 为每个Assignment绘制两段路线
+      for (const assignment of assignments) {
+        if (assignment && assignment.assignmentId) {
+          // 检查是否已有动画
+          if (!animationManager.animations.has(assignment.assignmentId)) {
+            await drawTwoStageRouteForAssignment(assignment);
+            drawnAssignmentIds.value.add(assignment.assignmentId);
           }
         }
       }
+
+      // 更新统计信息
+      stats.tasks = drawnAssignmentIds.value.size;
     }
-
-    // 5. 更新统计信息
-    stats.tasks = drawnAssignmentIds.value.size;
-
   } catch (error) {
-    console.error('获取并绘制新增Assignment失败:', error);
+    console.error('获取当前Assignment失败:', error);
+    ElMessage.error('获取当前任务失败');
   }
 };
 
+// 增量获取并绘制新Assignment
 const fetchAndDrawNewAssignments = async () => {
   try {
     const response = await request.get('/api/assignments/new');
@@ -921,6 +1413,7 @@ const fetchAndDrawNewAssignments = async () => {
             await request.post(`/api/assignments/mark-drawn/${assignment.assignmentId}`);
           } catch (error) {
             console.error(`标记Assignment ${assignment.assignmentId} 为已绘制失败:`, error);
+            ElMessage.error(`标记任务 ${assignment.assignmentId} 失败`);
           }
         }
       }
@@ -930,45 +1423,49 @@ const fetchAndDrawNewAssignments = async () => {
 
   } catch (error) {
     console.error('获取并绘制新增Assignment失败:', error);
+    ElMessage.error('获取新增任务失败');
   }
 };
 
-// 为Assignment绘制两段路线
+// 为Assignment绘制两段路线（修复版）
 const drawTwoStageRouteForAssignment = async (assignment) => {
   if (!AMapLib || !map) return null;
 
   try {
-    const elements = [];
-    const animations = [];
+    // 检查是否已有该Assignment的路线数据
+    if (activeRoutes.value.has(assignment.assignmentId)) {
+      console.log(`Assignment ${assignment.assignmentId} 已有路线数据，跳过绘制`);
+      return activeRoutes.value.get(assignment.assignmentId);
+    }
 
-    // 绘制车辆在起点的标记（如果车辆有初始位置）
-    let vehicleMarker = null;
-    if (assignment.vehicleStartLng && assignment.vehicleStartLat) {
-      vehicleMarker = await drawVehicleIconAtStart(assignment);
-      if (vehicleMarker) {
-        elements.push(vehicleMarker);
-      }
+    // 检查坐标有效性
+    if (!isValidCoordinate(assignment.vehicleStartLng, assignment.vehicleStartLat) ||
+        !isValidCoordinate(assignment.startLng, assignment.startLat) ||
+        !isValidCoordinate(assignment.endLng, assignment.endLat)) {
+      console.warn(`Assignment ${assignment.assignmentId} 坐标无效，跳过`);
+      return null;
     }
 
     // 规划两段路线
-    // 第一段：车辆初始位置到任务起点
-    const stage1Route = await computeSingleRoute(
+    const stage1Route = await computeSingleRouteWithCache(
         [assignment.vehicleStartLng, assignment.vehicleStartLat],
         [assignment.startLng, assignment.startLat],
-        '0'
+        assignment.assignmentId + '_stage1'
     );
 
-    // 第二段：任务起点到任务终点
-    const stage2Route = await computeSingleRoute(
+    const stage2Route = await computeSingleRouteWithCache(
         [assignment.startLng, assignment.startLat],
         [assignment.endLng, assignment.endLat],
-        '0'
+        assignment.assignmentId + '_stage2'
     );
 
     if (!stage1Route || !stage2Route) {
       console.error(`Assignment ${assignment.assignmentId} 路线规划失败`);
+      ElMessage.error(`任务 ${assignment.assignmentId} 路线规划失败`);
       return null;
     }
+
+    const elements = [];
 
     // 绘制第一段路线（空驶阶段）
     const stage1Poly = new AMapLib.Polyline({
@@ -1019,13 +1516,38 @@ const drawTwoStageRouteForAssignment = async (assignment) => {
     endMarker.setMap(map);
     elements.push(endMarker);
 
-    // 创建车辆动画标记
-    const vanEl = createSvgVanEl(32, '#ff7f50');
+    // 车辆在起点的标记
+    let vehicleMarker = null;
+    if (assignment.vehicleStartLng && assignment.vehicleStartLat) {
+      const vanEl = createVehicleIcon(32, '#ff7f50');
+      vehicleMarker = new AMapLib.Marker({
+        position: [assignment.vehicleStartLng, assignment.vehicleStartLat],
+        content: vanEl,
+        offset: new AMapLib.Pixel(-16, -16),
+        title: `${assignment.licensePlate} - 待出发`,
+        extData: {
+          type: 'vehicle',
+          vehicleId: assignment.vehicleId,
+          assignmentId: assignment.assignmentId,
+          licensePlate: assignment.licensePlate
+        }
+      });
+      vehicleMarker.setMap(map);
+      elements.push(vehicleMarker);
+
+      // 添加点击事件
+      vehicleMarker.on('click', () => {
+        handleVehicleMarkerClick(assignment);
+      });
+    }
+
+    // 创建车辆移动标记（颜色将在动画管理器中分配）
+    const vanEl = createVehicleIcon(32, '#ff7f50'); // 默认颜色，动画管理器会覆盖
     const movingMarker = new AMapLib.Marker({
       position: stage1Route.path[0],
       content: vanEl,
       offset: new AMapLib.Pixel(-16, -16),
-      title: `${assignment.goodsName || '货物'}运输`,
+      title: `${assignment.goodsName || '货物'}运输 - ${assignment.licensePlate}`,
       extData: {
         type: 'vehicle',
         vehicleId: assignment.vehicleId,
@@ -1041,77 +1563,18 @@ const drawTwoStageRouteForAssignment = async (assignment) => {
       showVehicleInfoWindowFromMarker(assignment, null);
     });
 
-    // 车辆动画 - 两阶段
-    const startVehicleAnimation = async () => {
-      // 更新车辆状态为ORDER_DRIVING
-      updateVehicleStatusInList(assignment.vehicleId, 'ORDER_DRIVING');
-
-      // 第一阶段动画：前往装货点
-      const cancelStage1 = animateAlongPath(
-          movingMarker,
-          stage1Route.path,
-          900, // 速度
-          async (position) => {
-            console.log(`车辆 ${assignment.licensePlate} 到达装货点`);
-
-            // 更新车辆状态为LOADING
-            updateVehicleStatusInList(assignment.vehicleId, 'LOADING');
-
-            // 装货停留3秒
-            await new Promise(resolve => setTimeout(resolve, 3000));
-
-            // 更新车辆状态为TRANSPORT_DRIVING
-            updateVehicleStatusInList(assignment.vehicleId, 'TRANSPORT_DRIVING');
-
-            // 第二阶段动画：运输到卸货点
-            const cancelStage2 = animateAlongPath(
-                movingMarker,
-                stage2Route.path,
-                900, // 速度
-                async (position) => {
-                  console.log(`车辆 ${assignment.licensePlate} 到达卸货点`);
-
-                  // 更新车辆状态为UNLOADING
-                  updateVehicleStatusInList(assignment.vehicleId, 'UNLOADING');
-
-                  // 卸货停留3秒
-                  await new Promise(resolve => setTimeout(resolve, 3000));
-
-                  // 更新车辆状态为WAITING
-                  updateVehicleStatusInList(assignment.vehicleId, 'WAITING');
-
-                  // 通知后端车辆到达终点
-                  try {
-                    await request.post('/api/simulation/vehicle-arrived', {
-                      vehicleId: assignment.vehicleId,
-                      endPOIId: assignment.endPOIId
-                    });
-                    console.log(`已通知后端车辆到达终点: ${assignment.licensePlate}`);
-                  } catch (error) {
-                    console.error('通知车辆到达终点失败:', error);
-                  }
-                }
-            );
-
-            animations.push({ marker: movingMarker, cancel: cancelStage2 });
-          }
-      );
-
-      animations.push({ marker: movingMarker, cancel: cancelStage1 });
-    };
-
-    // 开始车辆动画
-    startVehicleAnimation();
-
-    // 保存路线数据
+    // 构建路线数据对象
     const routeData = {
-      id: assignment.assignmentId,
+      assignment,
+      stage1Path: stage1Route.path,
+      stage2Path: stage2Route.path,
+      movingMarker,
+      startMarker,
+      vehicleMarker,
       elements,
-      animations,
-      vehicleMarker: vehicleMarker,
-      movingMarker: movingMarker,
+      animations: [],
       cleanup: () => {
-        animations.forEach(anim => {
+        routeData.animations.forEach(anim => {
           anim.cancel && anim.cancel();
           try {
             anim.marker && anim.marker.setMap && anim.marker.setMap(null);
@@ -1125,196 +1588,49 @@ const drawTwoStageRouteForAssignment = async (assignment) => {
       }
     };
 
+    // 添加到活动路线映射
     activeRoutes.value.set(assignment.assignmentId, routeData);
+
+    // 添加到动画管理器
+    if (animationManager) {
+      animationManager.addAnimation(assignment, routeData);
+    }
 
     console.log(`成功绘制Assignment ${assignment.assignmentId} 的两段路线`);
     return routeData;
 
   } catch (e) {
     console.error('绘制两段路线错误', e);
+    ElMessage.error(`绘制任务路线失败: ${assignment.assignmentId}`);
     return null;
   }
 };
 
-// 更新车辆列表中的车辆状态
-const updateVehicleStatusInList = (vehicleId, status) => {
-  const vehicleIndex = vehicles.findIndex(v => v.id === vehicleId);
-  if (vehicleIndex !== -1) {
-    vehicles[vehicleIndex].status = status;
-    console.log(`更新车辆 ${vehicleId} 状态为: ${status}`);
-  }
+// 坐标有效性检查
+const isValidCoordinate = (lng, lat) => {
+  return lng !== null && lat !== null &&
+      !isNaN(lng) && !isNaN(lat) &&
+      lng >= -180 && lng <= 180 &&
+      lat >= -90 && lat <= 90;
 };
 
-// 绘制车辆在起点的图标
-const drawVehicleIconAtStart = async (assignment) => {
-  if (!AMapLib || !map) return null;
-
-  try {
-    const { vehicleStartLng, vehicleStartLat, licensePlate, vehicleId } = assignment;
-
-    // 如果没有起始位置，跳过
-    if (!vehicleStartLng || !vehicleStartLat) {
-      console.warn(`Assignment ${assignment.assignmentId} 没有车辆起始位置信息`);
-      return null;
-    }
-
-    // 创建车辆图标
-    const vanEl = createSvgVanEl(32, '#ff7f50');
-    const vehicleIcon = new AMapLib.Icon({
-      image: createSvgDataUrl(vanEl),
-      size: new AMapLib.Size(32, 32),
-      imageSize: new AMapLib.Size(32, 32)
-    });
-
-    // 创建车辆标记
-    const vehicleMarker = new AMapLib.Marker({
-      position: [vehicleStartLng, vehicleStartLat],
-      icon: vehicleIcon,
-      offset: new AMapLib.Pixel(-16, -16),
-      title: `${licensePlate} - 待出发`,
-      extData: {
-        type: 'vehicle',
-        vehicleId: vehicleId,
-        assignmentId: assignment.assignmentId,
-        licensePlate: licensePlate
-      }
-    });
-
-    // 添加到地图
-    vehicleMarker.setMap(map);
-
-    // 添加点击事件
-    vehicleMarker.on('click', () => {
-      handleVehicleMarkerClick(assignment);
-    });
-
-    console.log(`在起点(${vehicleStartLng}, ${vehicleStartLat})创建车辆图标: ${licensePlate}`);
-    return vehicleMarker;
-
-  } catch (error) {
-    console.error('绘制车辆图标失败:', error);
-    return null;
+// 带缓存的路线规划
+const computeSingleRouteWithCache = async (start, end, cacheKey) => {
+  // 检查缓存
+  if (routePlanningCache.has(cacheKey)) {
+    console.log(`使用缓存的路线: ${cacheKey}`);
+    return routePlanningCache.get(cacheKey);
   }
-};
 
-// 将DOM元素转换为图片URL的辅助方法
-const createSvgDataUrl = (domElement) => {
-  // 创建一个canvas来绘制DOM元素
-  const canvas = document.createElement('canvas');
-  canvas.width = 32;
-  canvas.height = 32;
-  const ctx = canvas.getContext('2d');
+  // 规划新路线
+  const route = await computeSingleRoute(start, end, '0');
 
-  // 设置背景
-  ctx.fillStyle = '#ff7f50';
-  ctx.beginPath();
-  ctx.arc(16, 16, 16, 0, Math.PI * 2);
-  ctx.fill();
-
-  // 绘制车辆SVG图标
-  ctx.fillStyle = '#fff';
-  ctx.fillText('🚚', 8, 22);
-
-  return canvas.toDataURL();
-};
-
-// 绘制单个路线（兼容旧代码）
-const drawSingleRoute = async (route) => {
-  if (!AMapLib || !map) return null;
-
-  try {
-    const path = Array.isArray(route.path) ? route.path : (route.path || []);
-    const elements = [];
-    const animations = [];
-
-    const assignment = route.info?.assignment;
-
-    // 绘制折线
-    const poly = new AMapLib.Polyline({
-      path: path,
-      strokeColor: '#3388ff',
-      strokeOpacity: 0.8,
-      strokeWeight: 4,
-      lineJoin: 'round',
-    });
-    poly.setMap(map);
-    elements.push(poly);
-
-    // 起点标记
-    if (route.start) {
-      const startMarker = new AMapLib.Marker({
-        position: route.start,
-        title: `起点: ${route.info?.startName || '未知'}`,
-        icon: new AMapLib.Icon({
-          image: factoryIcon,
-          size: new AMapLib.Size(24, 24),
-          imageSize: new AMapLib.Size(24, 24)
-        })
-      });
-      startMarker.setMap(map);
-      elements.push(startMarker);
-    }
-
-    // 终点标记
-    if (route.end) {
-      const endMarker = new AMapLib.Marker({
-        position: route.end,
-        title: `终点: ${route.info?.endName || '未知'}`,
-        icon: new AMapLib.Icon({
-          image: materialMarketIcon,
-          size: new AMapLib.Size(24, 24),
-          imageSize: new AMapLib.Size(24, 24)
-        })
-      });
-      endMarker.setMap(map);
-      elements.push(endMarker);
-    }
-
-    // 车辆动画
-    if (path && path.length > 0) {
-      const vanEl = createSvgVanEl(32, '#ff7f50');
-      const movingMarker = new AMapLib.Marker({
-        position: path[0],
-        content: vanEl,
-        offset: new AMapLib.Pixel(-16, -16),
-        title: `${route.info?.goodsName || '货物'}运输`,
-      });
-      movingMarker.setMap(map);
-      elements.push(movingMarker);
-
-      const cancelAnimation = animateAlongPath(movingMarker, path, 900);
-      animations.push({ marker: movingMarker, cancel: cancelAnimation });
-    }
-
-    // 保存路线数据
-    const routeData = {
-      id: route.info?.pairId || route.id,
-      elements,
-      animations,
-      cleanup: () => {
-        animations.forEach(anim => {
-          anim.cancel && anim.cancel();
-          try {
-            anim.marker && anim.marker.setMap && anim.marker.setMap(null);
-          } catch (_) {}
-        });
-        elements.forEach(el => {
-          try {
-            el.setMap && el.setMap(null);
-          } catch (_) {}
-        });
-      }
-    };
-
-    activeRoutes.value.set(route.info?.pairId || route.id, routeData);
-
-    console.log(`成功绘制配对 ${route.info?.pairId} 的路线`);
-    return routeData;
-
-  } catch (e) {
-    console.error('绘制单个路线错误', e);
-    return null;
+  if (route) {
+    // 缓存结果
+    routePlanningCache.set(cacheKey, route);
   }
+
+  return route;
 };
 
 // 处理车辆标记点击事件
@@ -1444,47 +1760,6 @@ const checkAndCleanupCompletedAssignments = async () => {
   }
 };
 
-// 获取当前活跃的Assignment（用于初始加载）
-const fetchCurrentAssignments = async () => {
-  try {
-    const response = await request.get('/api/assignments/active');
-    const assignments = response.data;
-
-    if (assignments && assignments.length > 0) {
-      // 为每个Assignment绘制两段路线
-      for (const assignment of assignments) {
-        if (assignment && assignment.assignmentId) {
-          await drawTwoStageRouteForAssignment(assignment);
-          drawnAssignmentIds.value.add(assignment.assignmentId);
-        }
-      }
-
-      // 更新统计信息
-      stats.tasks = drawnAssignmentIds.value.size;
-    }
-  } catch (error) {
-    console.error('获取当前Assignment失败:', error);
-  }
-};
-
-// 定期检查并清理已完成的配对
-const checkAndCleanupCompletedPairs = async () => {
-  try {
-    // 获取需要清理的配对ID列表
-    const response = await request.get('/api/simulation/pairs/to-cleanup');
-    const pairIdsToCleanup = response.data;
-
-    if (pairIdsToCleanup && pairIdsToCleanup.length > 0) {
-      pairIdsToCleanup.forEach(pairId => {
-        clearRouteByPairId(pairId);
-      });
-      console.log(`清理了 ${pairIdsToCleanup.length} 个已完成的配对`);
-    }
-  } catch (error) {
-    console.error('检查并清理已完成配对失败:', error);
-  }
-};
-
 // 数据获取函数
 const fetchVehicles = async () => {
   try {
@@ -1516,16 +1791,6 @@ const fetchTasks = async () => {
   }
 };
 
-const fetchRawRoutes = async () => {
-  try {
-    const response = await request.get('/api/routes');
-    return response.data;
-  } catch (error) {
-    console.error('获取路线数据失败:', error);
-    return [];
-  }
-};
-
 // 计算单段路线
 const computeSingleRoute = async (start, end, strategy = '0') => {
   try {
@@ -1546,6 +1811,7 @@ const computeSingleRoute = async (start, end, strategy = '0') => {
 
     if (!response.success) {
       console.error(`路线规划失败:`, response.message);
+      ElMessage.error('路线规划失败');
       return null;
     }
 
@@ -1582,36 +1848,8 @@ const computeSingleRoute = async (start, end, strategy = '0') => {
     };
   } catch (error) {
     console.error('路线规划出错:', error);
+    ElMessage.error('路线规划出错');
     return null;
-  }
-};
-
-// 批量路线规划（兼容旧代码）
-const computeRoutesOnBackend = async (endpoints) => {
-  try {
-    const plans = await Promise.all(
-        endpoints.map(async (ep) => {
-          try {
-            return await computeSingleRoute(ep.start, ep.end, '0');
-          } catch (error) {
-            console.error(`路线 ${ep.id} 规划出错:`, error);
-            return null;
-          }
-        })
-    );
-
-    // 过滤掉失败的规划
-    const validPlans = plans.filter(plan => plan !== null);
-
-    // 添加endpoint的info到返回结果中
-    return validPlans.map((plan, index) => ({
-      ...plan,
-      id: endpoints[index].id,
-      info: endpoints[index].info
-    }));
-  } catch (e) {
-    console.error('路线规划整体失败', e);
-    return [];
   }
 };
 
@@ -1668,15 +1906,37 @@ onMounted(() => {
           zoom: 11,
           center: [104.066158, 30.657150],
         });
+
+        // 初始化速度因子
+        if (animationManager) {
+          animationManager.setGlobalSpeedFactor(speedFactor.value);
+        }
+
+        // 初始加载POI数据
+        updatePOIData();
+
+        // 初始加载运单数据
+        if (shipmentProgressPanel.value) {
+          shipmentProgressPanel.value.refreshData();
+        }
       })
       .catch((e) => {
         console.log(e);
+        ElMessage.error('地图加载失败');
       });
 });
 
 onUnmounted(() => {
   stopSimulationTimer();
+
+  // 清理动画管理器
+  if (animationManager) {
+    animationManager.stopAll();
+  }
+
+  // 清理地图
   map?.destroy();
+
   // 清理所有绘制的路线
   activeRoutes.value.forEach(routeData => {
     if (routeData.cleanup) {
@@ -1718,6 +1978,11 @@ onUnmounted(() => {
   color: #303133;
   font-size: 20px;
   font-weight: 600;
+  cursor: pointer;
+}
+
+.navbar-title:hover {
+  color: #409eff;
 }
 
 .navbar-menu {
@@ -1753,6 +2018,7 @@ onUnmounted(() => {
 .control-label {
   font-size: 14px;
   color: #606266;
+  white-space: nowrap;
 }
 
 .filter-tags {
@@ -1771,6 +2037,16 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 10px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+  padding: 8px;
+  border-radius: 4px;
+}
+
+.vehicle-item:hover {
+  background-color: #f5f7fa;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
 .status-dot {
@@ -1782,16 +2058,65 @@ onUnmounted(() => {
 
 .vehicle-info {
   flex-grow: 1;
+  min-width: 0;
 }
 
 .vehicle-id {
   font-weight: 500;
   font-size: 14px;
+  color: #303133;
+}
+
+.vehicle-stats {
+  margin-top: 4px;
+}
+
+.load-info,
+.volume-info {
+  display: flex;
+  align-items: center;
+  margin-bottom: 4px;
+  font-size: 11px;
+}
+
+.label {
+  min-width: 32px;
+  color: #606266;
+  font-weight: 500;
+}
+
+.value {
+  min-width: 60px;
+  color: #303133;
+  margin-right: 6px;
+}
+
+.progress-bar {
+  flex: 1;
+  height: 6px;
+  background-color: #ebeef5;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  border-radius: 3px;
+}
+
+.load-progress {
+  background-color: #67c23a; /* 绿色，表示载重 */
+}
+
+.volume-progress {
+  background-color: #409eff; /* 蓝色，表示载容 */
 }
 
 .vehicle-location {
-  font-size: 12px;
+  font-size: 11px;
   color: #909399;
+  margin-top: 4px;
+  line-height: 1.2;
 }
 
 .stats-info div {
@@ -1876,74 +2201,29 @@ onUnmounted(() => {
   border-top-color: #fff !important;
 }
 
-/* 车辆统计信息样式 */
-.vehicle-stats {
-  margin-top: 4px;
-}
-
-.load-info,
-.volume-info {
+/* 运单信息面板样式 */
+:deep(.shipment-progress-panel) {
+  height: 400px;
   display: flex;
-  align-items: center;
-  margin-bottom: 4px;
-  font-size: 11px;
+  flex-direction: column;
 }
 
-.label {
-  min-width: 32px;
-  color: #606266;
-  font-weight: 500;
+:deep(.panel-header) {
+  padding: 8px 0;
 }
 
-.value {
-  min-width: 60px;
-  color: #303133;
-  margin-right: 6px;
+:deep(.panel-title) {
+  font-size: 14px;
+  margin: 0;
 }
 
-.progress-bar {
+:deep(.virtual-scroll-wrapper) {
   flex: 1;
-  height: 6px;
-  background-color: #ebeef5;
-  border-radius: 3px;
-  overflow: hidden;
+  overflow-y: auto;
 }
 
-.progress-fill {
-  height: 100%;
-  border-radius: 3px;
-}
-
-.load-progress {
-  background-color: #67c23a; /* 绿色，表示载重 */
-}
-
-.volume-progress {
-  background-color: #409eff; /* 蓝色，表示载容 */
-}
-
-.vehicle-location {
-  font-size: 11px;
-  color: #909399;
-  margin-top: 4px;
-  line-height: 1.2;
-}
-
-/* 车辆列表项悬停效果 */
-.vehicle-item:hover {
-  background-color: #f5f7fa;
-  transform: translateY(-1px);
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-}
-
-/* 信息按钮 */
-.info-btn {
-  opacity: 0.7;
-  transition: opacity 0.2s;
-}
-
-.info-btn:hover {
-  opacity: 1;
+:deep(.shipment-card) {
+  margin-bottom: 8px;
 }
 
 /* 无车辆时的提示 */
@@ -1955,6 +2235,25 @@ onUnmounted(() => {
   background-color: #fafafa;
   border-radius: 4px;
   margin-top: 10px;
+}
+
+/* 仿真控制样式 */
+.speed-display {
+  text-align: center;
+  font-size: 12px;
+  color: #666;
+  padding: 4px 0;
+  background-color: #f8f9fa;
+  border-radius: 4px;
+}
+
+.speed-slider {
+  flex: 1;
+  margin-left: 10px;
+}
+
+:deep(.el-slider) {
+  margin-top: 4px;
 }
 
 /* 响应式调整 */

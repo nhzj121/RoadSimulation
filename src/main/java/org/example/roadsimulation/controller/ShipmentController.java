@@ -1,7 +1,12 @@
 package org.example.roadsimulation.controller;
 
+import org.example.roadsimulation.dto.ActiveShipmentSummaryDTO;
+import org.example.roadsimulation.dto.ShipmentProgressDTO;
 import org.example.roadsimulation.entity.Shipment;
+import org.example.roadsimulation.service.ShipmentProgressService;
 import org.example.roadsimulation.service.ShipmentService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -14,18 +19,23 @@ import org.springframework.web.bind.annotation.*;
 import jakarta.validation.Valid;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/shipments")
 public class ShipmentController {
+    private static final Logger logger = LoggerFactory.getLogger(ShipmentController.class);
 
     private final ShipmentService shipmentService;
+    private final ShipmentProgressService shipmentProgressService;
 
-    // 1. 依赖注入：通过构造函数注入Service，这是推荐的做法
+    // 1. 依赖注入：通过构造函数注入Service
     @Autowired
-    public ShipmentController(ShipmentService shipmentService) {
+    public ShipmentController(org.example.roadsimulation.service.ShipmentService shipmentService,
+                              ShipmentProgressService shipmentProgressService) {
         this.shipmentService = shipmentService;
+        this.shipmentProgressService = shipmentProgressService;
     }
 
     // 2. 创建运单 - POST /api/shipments
@@ -186,4 +196,100 @@ public class ShipmentController {
         boolean exists = shipmentService.existsByRefNo(refNo);
         return ResponseEntity.ok(exists); // 200 OK
     }
+
+    // ============================
+    // 新增：运单进度相关接口
+    // ============================
+
+    /**
+     * 获取活跃运单列表（包含进度概览）
+     * GET /api/shipments/active
+     */
+    @GetMapping("/active")
+    public ResponseEntity<List<ActiveShipmentSummaryDTO>> getActiveShipments() {
+        logger.info("请求获取活跃运单列表");
+
+        try {
+            List<ActiveShipmentSummaryDTO> activeShipments = shipmentProgressService.getActiveShipments();
+            return ResponseEntity.ok(activeShipments);
+        } catch (Exception e) {
+            logger.error("获取活跃运单列表失败", e);
+            return ResponseEntity.internalServerError().body(null);
+        }
+    }
+
+    /**
+     * 获取运单的完整进度信息
+     * GET /api/shipments/{id}/progress
+     */
+    @GetMapping("/{id}/progress")
+    public ResponseEntity<ShipmentProgressDTO> getShipmentProgress(@PathVariable Long id) {
+        logger.info("请求获取运单进度信息，运单ID: {}", id);
+
+        try {
+            ShipmentProgressDTO progress = shipmentProgressService.getShipmentProgress(id);
+            return ResponseEntity.ok(progress);
+        } catch (RuntimeException e) {
+            logger.error("获取运单进度信息失败，运单ID: {}", id, e);
+            return ResponseEntity.notFound().build();
+        } catch (Exception e) {
+            logger.error("获取运单进度信息失败，运单ID: {}", id, e);
+            return ResponseEntity.internalServerError().body(null);
+        }
+    }
+
+    /**
+     * 批量获取运单进度信息
+     * POST /api/shipments/batch-progress
+     */
+    @PostMapping("/batch-progress")
+    public ResponseEntity<List<ShipmentProgressDTO>> getBatchShipmentProgress(@RequestBody List<Long> shipmentIds) {
+        logger.info("请求批量获取运单进度信息，运单数量: {}", shipmentIds.size());
+
+        try {
+            List<ShipmentProgressDTO> progressList = shipmentProgressService.getBatchShipmentProgress(shipmentIds);
+            return ResponseEntity.ok(progressList);
+        } catch (Exception e) {
+            logger.error("批量获取运单进度信息失败", e);
+            return ResponseEntity.internalServerError().body(null);
+        }
+    }
+
+    /**
+     * 更新运单进度（通常由车辆到达事件触发）
+     * PATCH /api/shipments/{id}/update-progress
+     */
+    @PatchMapping("/{id}/update-progress")
+    public ResponseEntity<Void> updateShipmentProgress(@PathVariable Long id) {
+        logger.info("请求更新运单进度，运单ID: {}", id);
+
+        try {
+            shipmentProgressService.updateShipmentProgress(id);
+            return ResponseEntity.ok().build();
+        } catch (RuntimeException e) {
+            logger.error("更新运单进度失败，运单ID: {}", id, e);
+            return ResponseEntity.notFound().build();
+        } catch (Exception e) {
+            logger.error("更新运单进度失败，运单ID: {}", id, e);
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
+    /**
+     * 获取所有运单的进度摘要（用于仪表板）
+     * GET /api/shipments/progress-summary
+     */
+    @GetMapping("/progress-summary")
+    public ResponseEntity<Map<String, Object>> getOverallProgressSummary() {
+        logger.info("请求获取所有运单进度摘要");
+
+        try {
+            Map<String, Object> summary = shipmentProgressService.getOverallProgressSummary();
+            return ResponseEntity.ok(summary);
+        } catch (Exception e) {
+            logger.error("获取运单进度摘要失败", e);
+            return ResponseEntity.internalServerError().body(null);
+        }
+    }
+
 }
