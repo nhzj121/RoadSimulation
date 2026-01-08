@@ -7,6 +7,7 @@ import org.example.roadsimulation.entity.POI;
 import org.example.roadsimulation.repository.POIRepository;
 import org.example.roadsimulation.service.POIService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -33,7 +34,7 @@ public class POIServiceImpl implements POIService {
     private final DataInitializer dataInitializer;
 
     @Autowired
-    public POIServiceImpl(POIRepository poiRepository,  DataInitializer dataInitializer) {
+    public POIServiceImpl(POIRepository poiRepository,  @Lazy DataInitializer dataInitializer) {
         this.poiRepository = poiRepository;
         this.dataInitializer = dataInitializer;
     }

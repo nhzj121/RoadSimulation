@@ -883,6 +883,15 @@ public class AssignmentServiceImpl implements AssignmentService {
         return dto;
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public List<AssignmentBriefDTO> getAssignmentBriefsByIds(List<Long> assignmentIds) {
+        List<Assignment> assignments = assignmentRepository.findAllById(assignmentIds);
+        return assignments.stream()
+                .map(this::convertToAssignmentBriefDTO)
+                .collect(Collectors.toList());
+    }
+
     /**
      * 生成POI配对键（辅助方法）
      */

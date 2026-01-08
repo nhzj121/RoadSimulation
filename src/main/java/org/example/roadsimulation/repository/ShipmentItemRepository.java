@@ -31,6 +31,21 @@ public interface ShipmentItemRepository extends JpaRepository<ShipmentItem, Long
     // 3. 查询某个分配任务的所有明细项
     List<ShipmentItem> findByAssignmentId(Long assignmentId);
 
+    /**
+     * 根据状态查找运单项
+     */
+    List<ShipmentItem> findByStatus(String status);
+
+    /**
+     * 统计运单的运单项数量
+     */
+    Long countByShipmentId(Long shipmentId);
+
+    /**
+     * 统计已完成的运单项数量
+     */
+    Long countByShipmentIdAndStatus(Long shipmentId, String status);
+
     // 4. 综合查询：根据运单、货物、分配任务进行筛选
     @Query("SELECT si FROM ShipmentItem si WHERE " +
             "(:shipmentId IS NULL OR si.shipment.id = :shipmentId) AND " +

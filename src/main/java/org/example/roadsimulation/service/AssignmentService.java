@@ -46,4 +46,6 @@ public interface AssignmentService {
     void markAssignmentAsDrawn(Long assignmentId);
     List<Long> getCompletedAssignments();
 
+    List<AssignmentBriefDTO> getAssignmentBriefsByIds(List<Long> assignmentIds);
+
 }
