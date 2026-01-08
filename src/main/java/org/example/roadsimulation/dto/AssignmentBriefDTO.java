@@ -30,9 +30,13 @@ public class AssignmentBriefDTO {
     private String vehicleStatus;
     // 车辆起始位置（用于在地图上绘制车辆图标）
     @Setter @Getter
-    private BigDecimal vehicleStartLng;
+    private Double vehicleStartLng;
     @Setter @Getter
-    private BigDecimal vehicleStartLat;
+    private Double vehicleStartLat;
+    @Setter @Getter
+    private Double vehicleCurrentLon;
+    @Setter @Getter
+    private Double vehicleCurrentLat;
 
     // 路线信息
     @Setter @Getter

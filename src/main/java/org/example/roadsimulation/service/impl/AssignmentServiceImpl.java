@@ -823,13 +823,13 @@ public class AssignmentServiceImpl implements AssignmentService {
 
             // 新增：车辆起始位置
             if (vehicle.getCurrentPOI() != null) {
-                dto.setVehicleStartLng(vehicle.getCurrentPOI().getLongitude());
-                dto.setVehicleStartLat(vehicle.getCurrentPOI().getLatitude());
+                dto.setVehicleStartLng(vehicle.getCurrentPOI().getLongitude().doubleValue());
+                dto.setVehicleStartLat(vehicle.getCurrentPOI().getLatitude().doubleValue());
             } else if (assignment.getRoute() != null && assignment.getRoute().getStartPOI() != null) {
                 // 如果车辆没有当前位置，使用路线起点
                 POI startPOI = assignment.getRoute().getStartPOI();
-                dto.setVehicleStartLng(startPOI.getLongitude());
-                dto.setVehicleStartLat(startPOI.getLatitude());
+                dto.setVehicleStartLng(startPOI.getLongitude().doubleValue());
+                dto.setVehicleStartLat(startPOI.getLatitude().doubleValue());
             }
         }
 
