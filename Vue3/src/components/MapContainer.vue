@@ -75,30 +75,28 @@
                   <!-- 载重信息 -->
                   <div class="load-info">
                     <span class="label">载重:</span>
-                    <span class="value">{{ v.currentLoad.toFixed(1) }}/{{ v.maxLoadCapacity.toFixed(1) }}t</span>
+                    <span class="value">{{ v.currentLoad?.toFixed(1) || '0.0' }}/{{ v.maxLoadCapacity?.toFixed(1) || '0.0' }}t</span>
                     <div class="progress-bar">
                       <div
                           class="progress-fill load-progress"
-                          :style="{ width: `${v.loadPercentage}%` }"
+                          :style="{ width: `${v.loadPercentage || 0}%` }"
                       ></div>
                     </div>
                   </div>
                   <!-- 载容信息 -->
                   <div class="volume-info">
                     <span class="label">载容:</span>
-                    <span class="value">{{ v.currentVolume.toFixed(1) }}/{{ v.maxVolumeCapacity.toFixed(1) }}m³</span>
+                    <span class="value">{{ v.currentVolume?.toFixed(1) || '0.0' }}/{{ v.maxVolumeCapacity?.toFixed(1) || '0.0' }}m³</span>
                     <div class="progress-bar">
                       <div
                           class="progress-fill volume-progress"
-                          :style="{ width: `${v.volumePercentage}%` }"
+                          :style="{ width: `${v.volumePercentage || 0}%` }"
                       ></div>
                     </div>
                   </div>
                   <!-- 位置和状态 -->
-                  <div class="vehicle-location">
-                    {{ statusMap[v.status]?.text || v.status }}
-                    <template v-if="v.status === 'ORDER_DRIVING'"> → {{ v.startPOI }}</template>
-                    <template v-if="v.status === 'TRANSPORT_DRIVING'"> → {{ v.endPOI }}</template>
+                  <div class="vehicle-location" :class="`status-${v.status?.toLowerCase()}`">
+                    {{ v.actionDescription || statusMap[v.status]?.text || v.status || '未知' }}
                   </div>
                 </div>
                 <template v-if="v.currentAssignment">
@@ -308,29 +306,269 @@ const getPOIIcon = (poiType) => {
   }
 };
 
-// --- 动画管理器类 ---
+// ==================== 车辆状态管理器类 ====================
+class VehicleStatusManager {
+  constructor(vehiclesRef, mapRef) {
+    this.vehicles = vehiclesRef; // 车辆列表引用
+    this.map = mapRef; // 地图引用
+    this.vehicleMarkers = new Map(); // 车辆ID -> 标记映射
+    this.assignmentData = new Map(); // 车辆ID -> Assignment数据
+    this.statusCallbacks = []; // 状态变化回调
+  }
+
+  /**
+   * 注册车辆标记到管理器
+   */
+  registerVehicleMarker(vehicleId, marker, assignmentData = null) {
+    this.vehicleMarkers.set(vehicleId, marker);
+    if (assignmentData) {
+      this.assignmentData.set(vehicleId, assignmentData);
+    }
+
+    // 设置初始状态
+    const vehicle = this.vehicles.find(v => v.id === vehicleId);
+    if (vehicle && vehicle.status) {
+      this.updateVehicleIcon(vehicleId, vehicle.status);
+    }
+  }
+
+  /**
+   * 更新车辆状态（核心方法）
+   */
+  updateVehicleStatus(vehicleId, status, additionalData = {}) {
+    console.log(`[VehicleStatusManager] 更新车辆状态: ${vehicleId} -> ${status}`, additionalData);
+
+    // 1. 更新车辆列表中的状态
+    const vehicleIndex = this.vehicles.findIndex(v => v.id === vehicleId);
+    if (vehicleIndex !== -1) {
+      const vehicle = this.vehicles[vehicleIndex];
+      const oldStatus = vehicle.status;
+
+      // 保存旧状态用于回调
+      vehicle.previousStatus = oldStatus;
+      vehicle.status = status;
+
+      // 2. 更新载重信息
+      this.updateVehicleLoadInfo(vehicle, status, additionalData);
+
+      // 3. 更新位置信息（如果有提供）
+      if (additionalData.position) {
+        vehicle.currentLongitude = additionalData.position[0];
+        vehicle.currentLatitude = additionalData.position[1];
+      }
+
+      // 4. 更新车辆图标
+      this.updateVehicleIcon(vehicleId, status);
+
+      // 5. 触发状态变化回调
+      this.triggerStatusChange(vehicleId, oldStatus, status, vehicle);
+
+      console.log(`[VehicleStatusManager] 车辆 ${vehicle.licensePlate} 状态已更新: ${oldStatus} -> ${status}`);
+      return true;
+    } else {
+      console.warn(`[VehicleStatusManager] 车辆ID ${vehicleId} 未找到`);
+      return false;
+    }
+  }
+
+  /**
+   * 更新车辆载重信息
+   */
+  updateVehicleLoadInfo(vehicle, status, data) {
+    const assignment = data.assignment || this.assignmentData.get(vehicle.id);
+
+    switch (status) {
+      case 'ORDER_DRIVING':
+        // 前往装货点：空车
+        vehicle.currentLoad = 0;
+        vehicle.currentVolume = 0;
+        vehicle.loadPercentage = 0;
+        vehicle.volumePercentage = 0;
+        vehicle.actionDescription = `前往装货点: ${assignment?.startPOIName || '未知'}`;
+        break;
+
+      case 'LOADING':
+        // 装货中：载重逐渐增加
+        vehicle.actionDescription = `正在装货...`;
+        // 在实际应用中，这里可以模拟装货过程
+        break;
+
+      case 'TRANSPORT_DRIVING':
+        // 运输中：满载
+        if (assignment) {
+          vehicle.currentLoad = assignment.currentLoad || 0;
+          vehicle.currentVolume = assignment.currentVolume || 0;
+
+          if (vehicle.maxLoadCapacity > 0) {
+            vehicle.loadPercentage = Math.min(100,
+                (vehicle.currentLoad / vehicle.maxLoadCapacity) * 100);
+          }
+
+          if (vehicle.maxVolumeCapacity > 0) {
+            vehicle.volumePercentage = Math.min(100,
+                (vehicle.currentVolume / vehicle.maxVolumeCapacity) * 100);
+          }
+        }
+        vehicle.actionDescription = `运输至: ${assignment?.endPOIName || '未知'}`;
+        break;
+
+      case 'UNLOADING':
+        // 卸货中：载重逐渐减少
+        vehicle.actionDescription = `正在卸货...`;
+        break;
+
+      case 'WAITING':
+      case 'IDLE':
+        // 等待/空闲：空车
+        vehicle.currentLoad = 0;
+        vehicle.currentVolume = 0;
+        vehicle.loadPercentage = 0;
+        vehicle.volumePercentage = 0;
+        vehicle.actionDescription = '等待任务';
+        break;
+
+      case 'BREAKDOWN':
+        // 故障：保持当前载重
+        vehicle.actionDescription = '车辆故障';
+        break;
+    }
+  }
+
+  /**
+   * 更新车辆图标
+   */
+  updateVehicleIcon(vehicleId, status) {
+    const marker = this.vehicleMarkers.get(vehicleId);
+    if (!marker) {
+      console.warn(`[VehicleStatusManager] 车辆ID ${vehicleId} 的标记未找到`);
+      return;
+    }
+
+    // 获取车辆信息以确定颜色
+    const vehicle = this.vehicles.find(v => v.id === vehicleId);
+    let color = null;
+
+    // 使用状态映射中的颜色，如果没有则使用车辆默认颜色
+    const statusColors = {
+      'IDLE': '#95a5a6',
+      'ORDER_DRIVING': '#3498db',
+      'LOADING': '#f39c12',
+      'TRANSPORT_DRIVING': '#2ecc71',
+      'UNLOADING': '#e74c3c',
+      'WAITING': '#e74c3c',
+      'BREAKDOWN': '#e74c3c'
+    };
+
+    color = statusColors[status] || (vehicle?.color || '#ff7f50');
+
+    // 创建新图标
+    const newIcon = createVehicleIcon(32, status, color);
+
+    // 更新标记
+    marker.setContent(newIcon);
+
+    // 更新标记标题
+    const newTitle = `${vehicle?.licensePlate || '车辆'} - ${this.getStatusText(status)}`;
+    marker.setTitle(newTitle);
+
+    console.log(`[VehicleStatusManager] 车辆ID ${vehicleId} 图标已更新: ${status}`);
+  }
+
+  /**
+   * 获取状态文本描述
+   */
+  getStatusText(status) {
+    const statusMap = {
+      'IDLE': '空闲',
+      'ORDER_DRIVING': '前往装货点',
+      'LOADING': '装货中',
+      'TRANSPORT_DRIVING': '运输中',
+      'UNLOADING': '卸货中',
+      'WAITING': '等待中',
+      'BREAKDOWN': '故障'
+    };
+    return statusMap[status] || status;
+  }
+
+  /**
+   * 添加状态变化回调
+   */
+  onStatusChange(callback) {
+    this.statusCallbacks.push(callback);
+  }
+
+  /**
+   * 触发状态变化回调
+   */
+  triggerStatusChange(vehicleId, oldStatus, newStatus, vehicle) {
+    this.statusCallbacks.forEach(callback => {
+      try {
+        callback(vehicleId, oldStatus, newStatus, vehicle);
+      } catch (error) {
+        console.error('状态变化回调执行失败:', error);
+      }
+    });
+  }
+
+  /**
+   * 获取车辆当前状态
+   */
+  getVehicleStatus(vehicleId) {
+    const vehicle = this.vehicles.find(v => v.id === vehicleId);
+    return vehicle?.status || 'UNKNOWN';
+  }
+
+  /**
+   * 获取车辆详细信息（包含位置和载重）
+   */
+  getVehicleInfo(vehicleId) {
+    const vehicle = this.vehicles.find(v => v.id === vehicleId);
+    if (!vehicle) return null;
+
+    const assignment = this.assignmentData.get(vehicleId);
+    return {
+      ...vehicle,
+      assignment,
+      statusText: this.getStatusText(vehicle.status),
+      position: vehicle.currentLongitude && vehicle.currentLatitude ?
+          [vehicle.currentLongitude, vehicle.currentLatitude] : null
+    };
+  }
+
+  /**
+   * 清理资源
+   */
+  cleanup() {
+    this.vehicleMarkers.clear();
+    this.assignmentData.clear();
+    this.statusCallbacks = [];
+  }
+}
+
+// ==================== 车辆动画类 ====================
 class VehicleAnimation {
-  constructor(assignment, routeData, manager) {
+  constructor(assignment, routeData, statusManager) {
     this.assignmentId = assignment.assignmentId;
     this.vehicleId = assignment.vehicleId;
     this.licensePlate = assignment.licensePlate;
-    this.manager = manager;
+    this.statusManager = statusManager; // 添加状态管理器引用
+    this.manager = routeData.manager;
     this.routeData = routeData;
 
     // 动画状态
     this.isPaused = false;
     this.isCompleted = false;
     this.currentStage = 1; // 1: 前往装货点, 2: 运输到卸货点
-    this.currentProgress = 0; // 当前阶段的进度 0-1
-    this.currentSegment = 0; // 当前路段的索引
-    this.currentPosition = null; // 当前位置 [lng, lat]
+    this.currentProgress = 0;
+    this.currentSegment = 0;
+    this.currentPosition = null;
 
-    // 时间控制 - 重构为时间伸缩系统
-    this.realStartTime = null;      // 实际开始时间
-    this.realPausedTime = 0;        // 实际暂停时间
-    this.animationTime = 0;         // 动画时间（考虑速度因子）
-    this.speedFactor = 1;           // 当前速度因子
-    this.lastUpdateTime = null;     // 上次更新时间
+    // 时间控制
+    this.realStartTime = null;
+    this.realPausedTime = 0;
+    this.animationTime = 0;
+    this.speedFactor = 1;
+    this.lastUpdateTime = null;
 
     // 路线数据
     this.stage1Path = routeData.stage1Path || [];
@@ -352,10 +590,18 @@ class VehicleAnimation {
     // 完成回调
     this.onCompleteCallbacks = [];
 
-    // 为同一路线上的车辆生成随机偏移
+    // 偏移
     this.offset = this._generateRandomOffset();
 
-    console.log(`创建车辆动画: ${this.licensePlate} (${this.assignmentId})`);
+    console.log(`[VehicleAnimation] 创建车辆动画: ${this.licensePlate} (${this.assignmentId})`);
+
+    // 初始化车辆状态为 ORDER_DRIVING
+    if (this.statusManager) {
+      this.statusManager.updateVehicleStatus(this.vehicleId, 'ORDER_DRIVING', {
+        assignment: assignment,
+        position: this.stage1Path[0]
+      });
+    }
   }
 
   // 计算路段的长度和累积距离
@@ -410,11 +656,9 @@ class VehicleAnimation {
     const now = performance.now();
 
     if (this.realStartTime === null) {
-      // 第一次启动
       this.realStartTime = now;
       this.animationTime = 0;
     } else if (this.isPaused) {
-      // 从暂停恢复
       const pauseDuration = now - this.realPausedTime;
       this.realStartTime += pauseDuration;
     }
@@ -426,11 +670,18 @@ class VehicleAnimation {
     if (this.stage1Path && this.stage1Path.length > 0 && !this.currentPosition) {
       this.currentPosition = [...this.stage1Path[0]];
       this._updateMarkerPosition();
+
+      // 更新状态管理器中的位置
+      if (this.statusManager) {
+        this.statusManager.updateVehicleStatus(this.vehicleId, 'ORDER_DRIVING', {
+          assignment: this.routeData.assignment,
+          position: this.currentPosition
+        });
+      }
     }
 
     this._animate();
-
-    console.log(`开始车辆动画: ${this.licensePlate}`);
+    console.log(`[VehicleAnimation] 开始车辆动画: ${this.licensePlate}`);
   }
 
   // 暂停动画
@@ -445,7 +696,7 @@ class VehicleAnimation {
       this.animationFrameId = null;
     }
 
-    console.log(`暂停车辆动画: ${this.licensePlate}`);
+    console.log(`[VehicleAnimation] 暂停车辆动画: ${this.licensePlate}`);
   }
 
   // 恢复动画
@@ -456,11 +707,10 @@ class VehicleAnimation {
     this.lastUpdateTime = performance.now();
 
     this._animate();
-
-    console.log(`恢复车辆动画: ${this.licensePlate}`);
+    console.log(`[VehicleAnimation] 恢复车辆动画: ${this.licensePlate}`);
   }
 
-  // 停止动画（清理资源）
+  // 停止动画
   stop() {
     if (this.animationFrameId) {
       cancelAnimationFrame(this.animationFrameId);
@@ -470,31 +720,30 @@ class VehicleAnimation {
     this.isCompleted = true;
     this.isPaused = false;
 
-    console.log(`停止车辆动画: ${this.licensePlate}`);
+    console.log(`[VehicleAnimation] 停止车辆动画: ${this.licensePlate}`);
   }
 
   // 更新速度因子
   updateSpeedFactor(speedFactor) {
     const now = performance.now();
 
-    // 更新当前动画时间
     if (this.lastUpdateTime && !this.isPaused && !this.isCompleted) {
-      const delta = (now - this.lastUpdateTime) / 1000; // 转换为秒
+      const delta = (now - this.lastUpdateTime) / 1000;
       this.animationTime += delta * this.speedFactor;
     }
 
     this.speedFactor = speedFactor;
     this.lastUpdateTime = now;
 
-    console.log(`更新车辆速度因子: ${this.licensePlate} -> ${speedFactor.toFixed(1)}x`);
+    console.log(`[VehicleAnimation] 更新车辆速度因子: ${this.licensePlate} -> ${speedFactor.toFixed(1)}x`);
   }
 
-  // 获取当前路径（基于当前阶段）
+  // 获取当前路径
   _getCurrentPath() {
     return this.currentStage === 1 ? this.stage1Path : this.stage2Path;
   }
 
-  // 获取当前路段数据（基于当前阶段）
+  // 获取当前路段数据
   _getCurrentSegments() {
     return this.currentStage === 1 ? this.stage1Segments : this.stage2Segments;
   }
@@ -536,15 +785,23 @@ class VehicleAnimation {
     if (!this.movingMarker || !this.currentPosition) return;
 
     try {
-      // 应用偏移（避免图标重叠）
       const positionWithOffset = [
         this.currentPosition[0],
         this.currentPosition[1]
       ];
 
       this.movingMarker.setPosition(positionWithOffset);
+
+      // 更新状态管理器中的位置
+      if (this.statusManager) {
+        this.statusManager.updateVehicleStatus(this.vehicleId,
+            this.currentStage === 1 ? 'ORDER_DRIVING' : 'TRANSPORT_DRIVING', {
+              assignment: this.routeData.assignment,
+              position: this.currentPosition
+            });
+      }
     } catch (error) {
-      console.warn(`更新车辆标记位置失败: ${this.licensePlate}`, error);
+      console.warn(`[VehicleAnimation] 更新车辆标记位置失败: ${this.licensePlate}`, error);
     }
   }
 
@@ -557,97 +814,116 @@ class VehicleAnimation {
 
     const now = performance.now();
 
-    // 初始化时间
     if (this.lastUpdateTime === null) {
       this.lastUpdateTime = now;
     }
 
-    // 计算时间增量并应用速度因子
-    const deltaTime = (now - this.lastUpdateTime) / 1000; // 转换为秒
+    const deltaTime = (now - this.lastUpdateTime) / 1000;
     this.animationTime += deltaTime * this.speedFactor;
     this.lastUpdateTime = now;
 
-    // 获取当前阶段的数据
     const currentSegments = this._getCurrentSegments();
     const currentPath = this._getCurrentPath();
 
     if (!currentPath || currentPath.length < 2 || currentSegments.segments.length === 0) {
-      console.error(`无效的路径数据: ${this.licensePlate}`);
+      console.error(`[VehicleAnimation] 无效的路径数据: ${this.licensePlate}`);
       this.stop();
       return;
     }
 
-    // 计算当前距离
     const distance = this.animationTime * this.baseSpeed;
     const totalLength = currentSegments.totalLength;
 
-    // 检查是否完成当前阶段
     if (distance >= totalLength) {
-      // 完成当前阶段
       this._completeCurrentStage();
     } else {
-      // 计算当前位置
       this.currentPosition = this._getPositionByDistance(distance, currentPath, currentSegments);
       this.currentProgress = distance / totalLength;
 
-      // 更新标记位置
       this._updateMarkerPosition();
-
-      // 继续动画
       this.animationFrameId = requestAnimationFrame(() => this._animate());
     }
   }
 
-  // 完成当前阶段
+  // 完成当前阶段（修改版）
   async _completeCurrentStage() {
-    // 设置位置到阶段终点
     const currentPath = this._getCurrentPath();
     if (currentPath && currentPath.length > 0) {
       this.currentPosition = [...currentPath[currentPath.length - 1]];
       this._updateMarkerPosition();
     }
 
-    // 更新车辆状态
     if (this.currentStage === 1) {
       // 第一阶段完成：到达装货点
-      this.manager.updateVehicleStatus(this.vehicleId, 'LOADING');
+      if (this.statusManager) {
+        this.statusManager.updateVehicleStatus(this.vehicleId, 'LOADING', {
+          assignment: this.routeData.assignment,
+          position: this.currentPosition
+        });
+      }
 
       // 装货停留2秒（动画时间）
+      console.log(`[VehicleAnimation] ${this.licensePlate} 开始装货...`);
       await this._waitWithSpeedFactor(2000);
 
       // 切换到第二阶段
       this.currentStage = 2;
-      this.manager.updateVehicleStatus(this.vehicleId, 'TRANSPORT_DRIVING');
+      if (this.statusManager) {
+        this.statusManager.updateVehicleStatus(this.vehicleId, 'TRANSPORT_DRIVING', {
+          assignment: this.routeData.assignment,
+          position: this.currentPosition,
+          isLoaded: true
+        });
+      }
 
       // 重置时间，开始第二阶段
       this.animationTime = 0;
       this.lastUpdateTime = performance.now();
       this.currentProgress = 0;
 
+      console.log(`[VehicleAnimation] ${this.licensePlate} 装货完成，开始运输...`);
       this._animate();
 
     } else if (this.currentStage === 2) {
       // 第二阶段完成：到达卸货点
-      this.manager.updateVehicleStatus(this.vehicleId, 'UNLOADING');
+      if (this.statusManager) {
+        this.statusManager.updateVehicleStatus(this.vehicleId, 'UNLOADING', {
+          assignment: this.routeData.assignment,
+          position: this.currentPosition,
+          isLoaded: true
+        });
+      }
 
       // 卸货停留2秒（动画时间）
+      console.log(`[VehicleAnimation] ${this.licensePlate} 开始卸货...`);
       await this._waitWithSpeedFactor(2000);
 
       // 完成任务
-      this.manager.updateVehicleStatus(this.vehicleId, 'WAITING');
+      if (this.statusManager) {
+        this.statusManager.updateVehicleStatus(this.vehicleId, 'WAITING', {
+          assignment: this.routeData.assignment,
+          position: this.currentPosition,
+          isLoaded: false
+        });
+      }
+
+      // 标记为完成
       this.isCompleted = true;
 
       // 调用车辆到达处理函数
-      await handleVehicleArrived(this.assignmentId, this.vehicleId, this.routeData.assignment.endPOIId, this.licensePlate);
+      await handleVehicleArrived(this.assignmentId, this.vehicleId,
+          this.routeData.assignment.endPOIId, this.licensePlate);
 
       // 延迟清理（1-2秒后）
       setTimeout(() => {
         this.cleanup();
         this.manager.removeAnimation(this.assignmentId);
-      }, 1000 + Math.random() * 1000); // 随机1-2秒延迟
+      }, 1000 + Math.random() * 1000);
 
       // 触发完成回调
       this.onCompleteCallbacks.forEach(callback => callback(this));
+
+      console.log(`[VehicleAnimation] ${this.licensePlate} 卸货完成，任务结束`);
     }
   }
 
@@ -668,7 +944,7 @@ class VehicleAnimation {
       }
     }
 
-    // 清理起点标记（如果存在且独立）
+    // 清理起点标记
     if (this.vehicleStartMarker && map) {
       try {
         map.remove(this.vehicleStartMarker);
@@ -677,7 +953,7 @@ class VehicleAnimation {
       }
     }
 
-    console.log(`清理车辆资源: ${this.licensePlate}`);
+    console.log(`[VehicleAnimation] 清理车辆资源: ${this.licensePlate}`);
   }
 
   // 添加完成回调
@@ -686,21 +962,23 @@ class VehicleAnimation {
   }
 }
 
+// ==================== 车辆动画管理器类 ====================
 class VehicleAnimationManager {
-  constructor() {
-    this.animations = new Map(); // assignmentId -> VehicleAnimation
+  constructor(statusManager = null) {
+    this.animations = new Map();
     this.globalSpeedFactor = 1;
     this.isPaused = false;
     this.vehicleColors = [
       '#ff7f50', '#3498db', '#2ecc71', '#e74c3c', '#9b59b6',
       '#1abc9c', '#d35400', '#c0392b', '#16a085', '#8e44ad'
     ];
+    this.statusManager = statusManager; // 添加状态管理器引用
   }
 
   // 添加动画
   addAnimation(assignment, routeData) {
     if (this.animations.has(assignment.assignmentId)) {
-      console.warn(`动画已存在: ${assignment.assignmentId}`);
+      console.warn(`[VehicleAnimationManager] 动画已存在: ${assignment.assignmentId}`);
       return this.animations.get(assignment.assignmentId);
     }
 
@@ -708,7 +986,8 @@ class VehicleAnimationManager {
     const colorIndex = assignment.vehicleId % this.vehicleColors.length;
     routeData.color = this.vehicleColors[colorIndex];
 
-    const animation = new VehicleAnimation(assignment, routeData, this);
+    // 创建动画实例，传入状态管理器
+    const animation = new VehicleAnimation(assignment, routeData, this.statusManager);
     this.animations.set(assignment.assignmentId, animation);
 
     // 设置初始速度因子
@@ -730,7 +1009,7 @@ class VehicleAnimationManager {
         animation.start();
       }
     });
-    console.log(`开始所有动画，共 ${this.animations.size} 个`);
+    console.log(`[VehicleAnimationManager] 开始所有动画，共 ${this.animations.size} 个`);
   }
 
   // 暂停所有动画
@@ -741,7 +1020,7 @@ class VehicleAnimationManager {
         animation.pause();
       }
     });
-    console.log(`暂停所有动画，共 ${this.animations.size} 个`);
+    console.log(`[VehicleAnimationManager] 暂停所有动画，共 ${this.animations.size} 个`);
   }
 
   // 恢复所有动画
@@ -752,7 +1031,7 @@ class VehicleAnimationManager {
         animation.resume();
       }
     });
-    console.log(`恢复所有动画，共 ${this.animations.size} 个`);
+    console.log(`[VehicleAnimationManager] 恢复所有动画，共 ${this.animations.size} 个`);
   }
 
   // 停止所有动画
@@ -762,7 +1041,7 @@ class VehicleAnimationManager {
       animation.cleanup();
     });
     this.animations.clear();
-    console.log('停止所有动画并清理资源');
+    console.log('[VehicleAnimationManager] 停止所有动画并清理资源');
   }
 
   // 设置全局速度因子
@@ -771,7 +1050,7 @@ class VehicleAnimationManager {
     this.animations.forEach(animation => {
       animation.updateSpeedFactor(this.globalSpeedFactor);
     });
-    console.log(`设置全局速度因子: ${this.globalSpeedFactor}`);
+    console.log(`[VehicleAnimationManager] 设置全局速度因子: ${this.globalSpeedFactor}`);
   }
 
   // 移除动画
@@ -781,14 +1060,17 @@ class VehicleAnimationManager {
       animation.stop();
       animation.cleanup();
       this.animations.delete(assignmentId);
-      console.log(`移除动画: ${assignmentId}`);
+      console.log(`[VehicleAnimationManager] 移除动画: ${assignmentId}`);
     }
   }
 
-  // 更新车辆状态（用于同步到车辆列表）
+  // 更新车辆状态（委托给状态管理器）
   updateVehicleStatus(vehicleId, status) {
-    // 在实际应用中，这里应该更新车辆列表中的状态
-    console.log(`更新车辆状态: ${vehicleId} -> ${status}`);
+    if (this.statusManager) {
+      this.statusManager.updateVehicleStatus(vehicleId, status);
+    } else {
+      console.log(`[VehicleAnimationManager] 更新车辆状态: ${vehicleId} -> ${status}`);
+    }
   }
 
   // 获取活动动画数量
@@ -803,7 +1085,10 @@ class VehicleAnimationManager {
 }
 
 // 初始化动画管理器
-const animationManager = new VehicleAnimationManager();
+let animationManager = null;
+
+// 状态管理器引用
+const vehicleStatusManager = ref(null);
 
 // --- 车辆到达处理函数 ---
 const handleVehicleArrived = async (assignmentId, vehicleId, endPOIId, licensePlate) => {
@@ -1319,8 +1604,8 @@ const clearDrawnRoutes = () => {
   vehicleAnimations.length = 0; // 清空vehicleAnimations数组
 };
 
-// 创建车辆图标（支持颜色区分）
-const createVehicleIcon = (size = 32, color = '#ff7f50') => {
+// 创建车辆图标（支持颜色和状态区分）
+const createVehicleIcon = (size = 32, status = 'IDLE', color = null) => {
   const el = document.createElement('div');
   el.style.width = `${size}px`;
   el.style.height = `${size}px`;
@@ -1328,12 +1613,86 @@ const createVehicleIcon = (size = 32, color = '#ff7f50') => {
   el.style.display = 'flex';
   el.style.alignItems = 'center';
   el.style.justifyContent = 'center';
-  el.style.background = color;
+  el.style.boxShadow = '0 2px 8px rgba(0,0,0,0.3)';
+  el.style.border = '2px solid white';
+
+  // 状态颜色映射
+  const statusColors = {
+    'IDLE': '#95a5a6',
+    'ORDER_DRIVING': '#3498db',
+    'LOADING': '#f39c12',
+    'TRANSPORT_DRIVING': '#2ecc71',
+    'UNLOADING': '#e74c3c',
+    'WAITING': '#e74c3c',
+    'BREAKDOWN': '#e74c3c'
+  };
+
+  // 设置背景颜色
+  const bgColor = color || statusColors[status] || '#ff7f50';
+  el.style.background = bgColor;
   el.style.color = '#fff';
-  el.style.boxShadow = '0 1px 4px rgba(0,0,0,0.3)';
-  el.innerHTML = `<svg width="${Math.round(size*0.6)}" height="${Math.round(size*0.6)}" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
-    <path d="M3 13v-6h11v6H3zm13 0h3l2 3v3h-3a2 2 0 0 1-2-2v-4zM6 18a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zm10 0a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z"/>>
-  </svg>`;
+
+  // 根据状态生成不同的SVG图标
+  let svgContent = '';
+  const iconSize = Math.round(size * 0.6);
+
+  switch (status) {
+    case 'ORDER_DRIVING':
+      // 空车图标（灰色或蓝色）
+      svgContent = `
+        <svg width="${iconSize}" height="${iconSize}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="1" y="6" width="15" height="6" rx="1"></rect>
+          <path d="M16 6h4l2 3v3h-6"></path>
+          <circle cx="5.5" cy="16.5" r="1.5"></circle>
+          <circle cx="18.5" cy="16.5" r="1.5"></circle>
+        </svg>`;
+      break;
+
+    case 'TRANSPORT_DRIVING':
+      // 载货车图标（显示货物）
+      svgContent = `
+        <svg width="${iconSize}" height="${iconSize}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="1" y="6" width="15" height="6" rx="1"></rect>
+          <path d="M16 6h4l2 3v3h-6"></path>
+          <circle cx="5.5" cy="16.5" r="1.5"></circle>
+          <circle cx="18.5" cy="16.5" r="1.5"></circle>
+          <rect x="4" y="4" width="8" height="2" rx="0.5" fill="#ffeb3b"></rect>
+        </svg>`;
+      break;
+
+    case 'LOADING':
+      // 装载中图标（带加载动画效果）
+      svgContent = `
+        <svg width="${iconSize}" height="${iconSize}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="1" y="6" width="15" height="6" rx="1"></rect>
+          <path d="M16 6h4l2 3v3h-6"></path>
+          <circle cx="5.5" cy="16.5" r="1.5"></circle>
+          <circle cx="18.5" cy="16.5" r="1.5"></circle>
+          <path d="M8 10v-4" stroke-dasharray="2,2"></path>
+        </svg>`;
+      break;
+
+    case 'UNLOADING':
+      // 卸货中图标
+      svgContent = `
+        <svg width="${iconSize}" height="${iconSize}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="1" y="6" width="15" height="6" rx="1"></rect>
+          <path d="M16 6h4l2 3v3h-6"></path>
+          <circle cx="5.5" cy="16.5" r="1.5"></circle>
+          <circle cx="18.5" cy="16.5" r="1.5"></circle>
+          <path d="M12 10v4" stroke-dasharray="2,2"></path>
+        </svg>`;
+      break;
+
+    default:
+      // 默认车辆图标
+      svgContent = `
+        <svg width="${iconSize}" height="${iconSize}" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+          <path d="M3 13v-6h11v6H3zm13 0h3l2 3v3h-3a2 2 0 0 1-2-2v-4zM6 18a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zm10 0a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z"/>
+        </svg>`;
+  }
+
+  el.innerHTML = svgContent;
   return el;
 };
 
@@ -1516,24 +1875,35 @@ const drawTwoStageRouteForAssignment = async (assignment) => {
     endMarker.setMap(map);
     elements.push(endMarker);
 
-    // 车辆在起点的标记
+    // 车辆在起点的标记（静态标记）
     let vehicleMarker = null;
     if (assignment.vehicleStartLng && assignment.vehicleStartLat) {
-      const vanEl = createVehicleIcon(32, '#ff7f50');
+      // 使用初始状态 ORDER_DRIVING 创建图标
+      const vanEl = createVehicleIcon(32, 'ORDER_DRIVING', '#ff7f50');
       vehicleMarker = new AMapLib.Marker({
         position: [assignment.vehicleStartLng, assignment.vehicleStartLat],
         content: vanEl,
         offset: new AMapLib.Pixel(-16, -16),
-        title: `${assignment.licensePlate} - 待出发`,
+        title: `${assignment.licensePlate} - 前往装货点`,
         extData: {
           type: 'vehicle',
           vehicleId: assignment.vehicleId,
           assignmentId: assignment.assignmentId,
-          licensePlate: assignment.licensePlate
+          licensePlate: assignment.licensePlate,
+          status: 'ORDER_DRIVING'
         }
       });
       vehicleMarker.setMap(map);
       elements.push(vehicleMarker);
+
+      // 注册到状态管理器
+      if (vehicleStatusManager.value) {
+        vehicleStatusManager.value.registerVehicleMarker(
+            assignment.vehicleId,
+            vehicleMarker,
+            assignment
+        );
+      }
 
       // 添加点击事件
       vehicleMarker.on('click', () => {
@@ -1541,22 +1911,32 @@ const drawTwoStageRouteForAssignment = async (assignment) => {
       });
     }
 
-    // 创建车辆移动标记（颜色将在动画管理器中分配）
-    const vanEl = createVehicleIcon(32, '#ff7f50'); // 默认颜色，动画管理器会覆盖
+    // 创建车辆移动标记
+    const movingEl = createVehicleIcon(32, 'ORDER_DRIVING', '#ff7f50');
     const movingMarker = new AMapLib.Marker({
       position: stage1Route.path[0],
-      content: vanEl,
+      content: movingEl,
       offset: new AMapLib.Pixel(-16, -16),
       title: `${assignment.goodsName || '货物'}运输 - ${assignment.licensePlate}`,
       extData: {
         type: 'vehicle',
         vehicleId: assignment.vehicleId,
         assignmentId: assignment.assignmentId,
-        licensePlate: assignment.licensePlate
+        licensePlate: assignment.licensePlate,
+        status: 'ORDER_DRIVING'
       }
     });
     movingMarker.setMap(map);
     elements.push(movingMarker);
+
+    // 注册移动标记到状态管理器
+    if (vehicleStatusManager.value) {
+      vehicleStatusManager.value.registerVehicleMarker(
+          assignment.vehicleId,
+          movingMarker,
+          assignment
+      );
+    }
 
     // 车辆信息窗口
     movingMarker.on('click', () => {
@@ -1573,6 +1953,7 @@ const drawTwoStageRouteForAssignment = async (assignment) => {
       vehicleMarker,
       elements,
       animations: [],
+      manager: animationManager, // 传递动画管理器引用
       cleanup: () => {
         routeData.animations.forEach(anim => {
           anim.cancel && anim.cancel();
@@ -1585,6 +1966,12 @@ const drawTwoStageRouteForAssignment = async (assignment) => {
             el.setMap && el.setMap(null);
           } catch (_) {}
         });
+
+        // 从状态管理器中移除标记
+        if (vehicleStatusManager.value) {
+          vehicleStatusManager.value.vehicleMarkers.delete(assignment.vehicleId);
+          vehicleStatusManager.value.assignmentData.delete(assignment.vehicleId);
+        }
       }
     };
 
@@ -1654,11 +2041,28 @@ const handleVehicleMarkerClick = async (assignment) => {
 const showVehicleInfoWindowFromMarker = (assignment, vehicleDetail) => {
   if (!map) return;
 
+  // 获取车辆当前状态（从状态管理器）
+  const currentStatus = vehicleStatusManager.value?.getVehicleStatus(assignment.vehicleId)
+      || assignment.vehicleStatus
+      || 'ORDER_DRIVING';
+
+  const statusText = statusMap[currentStatus]?.text || currentStatus;
+  const statusColor = statusMap[currentStatus]?.color || '#ccc';
+
+  // 获取车辆详细信息（从状态管理器）
+  const vehicleInfo = vehicleStatusManager.value?.getVehicleInfo(assignment.vehicleId)
+      || assignment;
+
   // 构建信息窗口内容
   let content = `
     <div style="padding: 12px; min-width: 320px; color: #000;">
       <div style="display: flex; align-items: center; margin-bottom: 10px;">
-        <div style="width: 32px; height: 32px; background-color: #ff7f50; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin-right: 10px; color: #fff; font-size: 18px;">🚚</div>
+        <div style="width: 32px; height: 32px; border-radius: 50%; background-color: ${statusColor}; display: flex; align-items: center; justify-content: center; margin-right: 10px; color: #fff; font-size: 18px;">
+          ${currentStatus === 'TRANSPORT_DRIVING' ? '🚚' :
+      currentStatus === 'ORDER_DRIVING' ? '🚗' :
+          currentStatus === 'LOADING' ? '⏳' :
+              currentStatus === 'UNLOADING' ? '📦' : '🚙'}
+        </div>
         <div>
           <h3 style="margin: 0; color: #000; font-size: 16px;">${assignment.licensePlate || '未知车辆'}</h3>
           <p style="margin: 2px 0 0 0; color: #606266; font-size: 12px;">车辆ID: ${assignment.vehicleId}</p>
@@ -1667,16 +2071,13 @@ const showVehicleInfoWindowFromMarker = (assignment, vehicleDetail) => {
   `;
 
   // 状态信息
-  const status = assignment.vehicleStatus || 'ORDER_DRIVING';
-  const statusText = statusMap[status]?.text || status;
-  const statusColor = statusMap[status]?.color || '#ccc';
-
   content += `
     <div style="margin-bottom: 12px;">
-      <div style="display: flex; align-items: center;">
+      <div style="display: flex; align-items: center; margin-bottom: 4px;">
         <div style="width: 8px; height: 8px; border-radius: 50%; background-color: ${statusColor}; margin-right: 6px;"></div>
         <strong>状态:</strong> ${statusText}
       </div>
+      ${vehicleInfo.actionDescription ? `<p style="margin: 4px 0; color: #000;"><strong>当前动作:</strong> ${vehicleInfo.actionDescription}</p>` : ''}
       <p style="margin: 4px 0; color: #000;"><strong>任务状态:</strong> ${assignment.status || 'ASSIGNED'}</p>
     </div>
   `;
@@ -1694,25 +2095,49 @@ const showVehicleInfoWindowFromMarker = (assignment, vehicleDetail) => {
     </div>
   `;
 
-  // 载重信息（如果有）
-  if (assignment.currentLoad !== undefined && assignment.maxLoadCapacity !== undefined) {
-    const loadPercentage = assignment.maxLoadCapacity > 0 ?
-        Math.min(100, (assignment.currentLoad / assignment.maxLoadCapacity) * 100) : 0;
+  // 载重信息
+  if (vehicleInfo.currentLoad !== undefined && vehicleInfo.maxLoadCapacity !== undefined) {
+    const loadPercentage = vehicleInfo.maxLoadCapacity > 0 ?
+        Math.min(100, (vehicleInfo.currentLoad / vehicleInfo.maxLoadCapacity) * 100) : 0;
+
+    const loadColor = loadPercentage >= 70 ? '#67c23a' :
+        loadPercentage >= 30 ? '#e6a23c' : '#f56c6c';
 
     content += `
       <div style="margin-bottom: 10px;">
         <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
-          <span><strong>载重:</strong> ${assignment.currentLoad.toFixed(1)} / ${assignment.maxLoadCapacity.toFixed(1)} 吨</span>
-          <span style="color: #67c23a; font-weight: bold;">${loadPercentage.toFixed(1)}%</span>
+          <span><strong>载重:</strong> ${vehicleInfo.currentLoad.toFixed(1)} / ${vehicleInfo.maxLoadCapacity.toFixed(1)} 吨</span>
+          <span style="color: ${loadColor}; font-weight: bold;">${loadPercentage.toFixed(1)}%</span>
         </div>
         <div style="height: 6px; background-color: #ebeef5; border-radius: 3px; overflow: hidden;">
-          <div style="width: ${loadPercentage}%; height: 100%; background-color: #67c23a;"></div>
+          <div style="width: ${loadPercentage}%; height: 100%; background-color: ${loadColor};"></div>
         </div>
       </div>
     `;
   }
 
-  // 车辆详细信息（如果有）
+  // 载容信息
+  if (vehicleInfo.currentVolume !== undefined && vehicleInfo.maxVolumeCapacity !== undefined) {
+    const volumePercentage = vehicleInfo.maxVolumeCapacity > 0 ?
+        Math.min(100, (vehicleInfo.currentVolume / vehicleInfo.maxVolumeCapacity) * 100) : 0;
+
+    const volumeColor = volumePercentage >= 70 ? '#409eff' :
+        volumePercentage >= 30 ? '#e6a23c' : '#f56c6c';
+
+    content += `
+      <div style="margin-bottom: 10px;">
+        <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+          <span><strong>载容:</strong> ${vehicleInfo.currentVolume.toFixed(1)} / ${vehicleInfo.maxVolumeCapacity.toFixed(1)} m³</span>
+          <span style="color: ${volumeColor}; font-weight: bold;">${volumePercentage.toFixed(1)}%</span>
+        </div>
+        <div style="height: 6px; background-color: #ebeef5; border-radius: 3px; overflow: hidden;">
+          <div style="width: ${volumePercentage}%; height: 100%; background-color: ${volumeColor};"></div>
+        </div>
+      </div>
+    `;
+  }
+
+  // 车辆详细信息
   if (vehicleDetail) {
     content += `
       <div style="margin-top: 12px; padding-top: 8px; border-top: 1px solid #eee;">
@@ -1890,6 +2315,32 @@ const runningVehicleCount = computed(() => {
   return vehicles.filter(v => v.status === 'running').length;
 });
 
+// 初始化状态管理器
+const initVehicleStatusManager = () => {
+  vehicleStatusManager.value = new VehicleStatusManager(vehicles, map);
+
+  // 添加状态变化监听器
+  vehicleStatusManager.value.onStatusChange((vehicleId, oldStatus, newStatus, vehicle) => {
+    console.log(`[状态变化] 车辆 ${vehicle.licensePlate}: ${oldStatus} → ${newStatus}`);
+
+    // 当车辆状态变为 WAITING 时，刷新运单面板
+    if (newStatus === 'WAITING' || newStatus === 'IDLE') {
+      console.log(`车辆 ${vehicle.licensePlate} 已完成任务，刷新运单面板`);
+      setTimeout(() => {
+        shipmentProgressPanel.value?.refreshData();
+      }, 1000);
+    }
+
+    // 更新统计信息中的运行车辆数量
+    stats.running = vehicles.filter(v =>
+        v.status === 'ORDER_DRIVING' ||
+        v.status === 'LOADING' ||
+        v.status === 'TRANSPORT_DRIVING' ||
+        v.status === 'UNLOADING'
+    ).length;
+  });
+};
+
 onMounted(() => {
   window._AMapSecurityConfig = {
     securityJsCode: "9df38c185c95fa1dbf78a1082b64f668",
@@ -1906,6 +2357,12 @@ onMounted(() => {
           zoom: 11,
           center: [104.066158, 30.657150],
         });
+
+        // 初始化状态管理器
+        initVehicleStatusManager();
+
+        // 初始化动画管理器，传入状态管理器
+        animationManager = new VehicleAnimationManager(vehicleStatusManager.value);
 
         // 初始化速度因子
         if (animationManager) {
@@ -1934,6 +2391,11 @@ onUnmounted(() => {
     animationManager.stopAll();
   }
 
+  // 清理状态管理器
+  if (vehicleStatusManager.value) {
+    vehicleStatusManager.value.cleanup();
+  }
+
   // 清理地图
   map?.destroy();
 
@@ -1945,6 +2407,8 @@ onUnmounted(() => {
   });
   activeRoutes.value.clear();
   drawnPairIds.value.clear();
+
+  console.log('[MapContainer] 所有资源已清理');
 });
 </script>
 
@@ -2045,8 +2509,13 @@ onUnmounted(() => {
 
 .vehicle-item:hover {
   background-color: #f5f7fa;
-  transform: translateY(-1px);
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.vehicle-item.selected {
+  background-color: #ecf5ff;
+  border-left: 3px solid #409eff;
 }
 
 .status-dot {
@@ -2097,11 +2566,13 @@ onUnmounted(() => {
   background-color: #ebeef5;
   border-radius: 3px;
   overflow: hidden;
+  position: relative;
 }
 
 .progress-fill {
   height: 100%;
   border-radius: 3px;
+  transition: width 0.3s ease;
 }
 
 .load-progress {
@@ -2117,6 +2588,34 @@ onUnmounted(() => {
   color: #909399;
   margin-top: 4px;
   line-height: 1.2;
+  display: flex;
+  align-items: center;
+}
+
+.vehicle-location::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-right: 4px;
+  background-color: currentColor;
+}
+
+.vehicle-location.status-order-driving {
+  color: #3498db;
+}
+
+.vehicle-location.status-transport-driving {
+  color: #2ecc71;
+}
+
+.vehicle-location.status-loading {
+  color: #f39c12;
+}
+
+.vehicle-location.status-unloading {
+  color: #e74c3c;
 }
 
 .stats-info div {
@@ -2134,40 +2633,11 @@ onUnmounted(() => {
   padding: 8px;
   border-radius: 4px;
   margin-bottom: 8px;
-  transition: background-color 0.2s;
+  transition: all 0.3s ease;
 }
 
 .vehicle-item:hover {
   background-color: #f5f5f5;
-}
-
-.status-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.vehicle-info {
-  flex-grow: 1;
-  min-width: 0; /* 防止内容溢出 */
-}
-
-.vehicle-id {
-  font-weight: 500;
-  font-size: 14px;
-  color: #303133;
-}
-
-.vehicle-location {
-  font-size: 12px;
-  color: #909399;
-  line-height: 1.4;
-}
-
-.vehicle-location small {
-  color: #67c23a;
-  font-size: 11px;
 }
 
 .no-vehicle {
@@ -2226,17 +2696,6 @@ onUnmounted(() => {
   margin-bottom: 8px;
 }
 
-/* 无车辆时的提示 */
-.no-vehicle {
-  text-align: center;
-  padding: 20px;
-  color: #c0c4cc;
-  font-size: 13px;
-  background-color: #fafafa;
-  border-radius: 4px;
-  margin-top: 10px;
-}
-
 /* 仿真控制样式 */
 .speed-display {
   text-align: center;
@@ -2256,6 +2715,73 @@ onUnmounted(() => {
   margin-top: 4px;
 }
 
+/* 车辆状态指示器 */
+.vehicle-status-indicator {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 10px;
+  color: white;
+  font-weight: 500;
+}
+
+.status-order-driving {
+  background-color: #3498db;
+}
+
+.status-loading {
+  background-color: #f39c12;
+}
+
+.status-transport-driving {
+  background-color: #2ecc71;
+}
+
+.status-unloading {
+  background-color: #e74c3c;
+}
+
+.status-waiting {
+  background-color: #95a5a6;
+}
+
+.status-idle {
+  background-color: #7f8c8d;
+}
+
+/* 载重进度条动画 */
+@keyframes loadingAnimation {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+.load-progress.animated::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(90deg,
+  transparent 0%,
+  rgba(255, 255, 255, 0.4) 50%,
+  transparent 100%);
+  animation: loadingAnimation 1.5s infinite;
+}
+
+/* 车辆图标动画 */
+@keyframes pulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+  100% { transform: scale(1); }
+}
+
+.vehicle-icon-pulse {
+  animation: pulse 2s infinite;
+}
+
 /* 响应式调整 */
 @media (max-width: 1400px) {
   .load-info,
@@ -2272,6 +2798,18 @@ onUnmounted(() => {
   .progress-bar {
     width: 100%;
     margin-top: 2px;
+  }
+}
+
+@media (max-width: 768px) {
+  .vehicle-stats {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .load-info,
+  .volume-info {
+    width: 100%;
   }
 }
 
