@@ -21,6 +21,50 @@
     "width": "2.2米",
     "speed": "95km/h"
   },
+  "京A·8DFG0": {
+    "cargo_volume": "15.5立方米",
+    "id": "京A·8DFG0",
+    "name": "中国重汽HOWO 悍将M 创富版 地库王 140马力 4.15米单排栏板轻卡(ZZ1047C3314F145)",
+    "vehicle_type": "载货车",
+    "current_load": "1.8吨",
+    "length": "5.99米",
+    "height": "2.09米",
+    "width": "2.1米",
+    "speed": "95km/h"
+  },
+  "沪B·245U4": {
+    "cargo_volume": "17.2立方米",
+    "id": "沪B·245U4",
+    "name": "中国重汽HOWO 悍将 151马力 4.15米单排栏板轻卡(ZZ1047G3215F144B)",
+    "vehicle_type": "载货车",
+    "current_load": "1.965吨",
+    "length": "5.99米",
+    "height": "2.4米",
+    "width": "2.2米",
+    "speed": "95km/h"
+  },
+  "京A·6DFG0": {
+    "cargo_volume": "15.5立方米",
+    "id": "京A·6DFG0",
+    "name": "中国重汽HOWO 悍将M 创富版 地库王 140马力 4.15米单排栏板轻卡(ZZ1047C3314F145)",
+    "vehicle_type": "载货车",
+    "current_load": "1.8吨",
+    "length": "5.99米",
+    "height": "2.09米",
+    "width": "2.1米",
+    "speed": "95km/h"
+  },
+  "沪B·145U4": {
+    "cargo_volume": "17.2立方米",
+    "id": "沪B·145U4",
+    "name": "中国重汽HOWO 悍将 151马力 4.15米单排栏板轻卡(ZZ1047G3215F144B)",
+    "vehicle_type": "载货车",
+    "current_load": "1.965吨",
+    "length": "5.99米",
+    "height": "2.4米",
+    "width": "2.2米",
+    "speed": "95km/h"
+  },
   "粤C·VW123": {
     "cargo_volume": "22.8立方米",
     "id": "粤C·VW123",
@@ -351,5 +395,126 @@
     "height": "4米",
     "width": "2.55米",
     "speed": "89km/h"
+  },
+  "苏E·AG102": {
+    "cargo_volume": "14.5立方米",
+    "id": "苏D·AG102",
+    "name": "金杯T3 2025款经典型 1.5L汽油 102马力 4X2 后单轮 3.1米单排栏板微卡",
+    "vehicle_type": "载货车",
+    "current_load": "1.495吨",
+    "length": "5.01米",
+    "height": "2米",
+    "width": "1.72米",
+    "speed": "100km/h"
+  },
+  "苏D·FAB67": {
+    "cargo_volume": "14.5立方米",
+    "id": "苏D·FAB67",
+    "name": "金杯T3 2025款经典型 1.5L汽油 102马力 4X2 后单轮 3.1米单排栏板微卡",
+    "vehicle_type": "载货车",
+    "current_load": "1.495吨",
+    "length": "5.01米",
+    "height": "2米",
+    "width": "1.72米",
+    "speed": "100km/h"
+  },
+  "苏D·HCC77": {
+    "cargo_volume": "14.5立方米",
+    "id": "苏D·HCC77",
+    "name": "金杯T3 2025款经典型 1.5L汽油 102马力 4X2 后单轮 3.1米单排栏板微卡",
+    "vehicle_type": "载货车",
+    "current_load": "1.495吨",
+    "length": "5.01米",
+    "height": "2米",
+    "width": "1.72米",
+    "speed": "100km/h"
+  },
+  "浙E·01HJ1": {
+    "cargo_volume": "16.5立方米",
+    "id": "浙E·01HJ1",
+    "name": "一汽解放 J6P 8X4 6.5米换电式纯电动自卸车(CA3310P66L7T4BEVA2)350.07kWh",
+    "vehicle_type": "载货车",
+    "current_load": "7.87吨",
+    "length": "10.35米",
+    "height": "3.6米",
+    "width": "2.55米",
+    "speed": "89km/h"
+  },
+  "鲁F·SXA66": {
+    "cargo_volume": "19.5立方米",
+    "id": "鲁F·SXA66",
+    "name": "重汽HOWO统帅 2.5L柴油 180马力 中国重汽12档 4.15米单排仓栅式轻卡",
+    "vehicle_type": "仓栅载货车",
+    "current_load": "5.495吨",
+    "length": "5.99米",
+    "height": "3.25米",
+    "width": "2.2米",
+    "speed": "95km/h"
+  },
+  "陕E·6454P": {
+    "cargo_volume": "38立方米",
+    "id": "陕E·6454P",
+    "name": "中国重汽HOWO G5X中卡 270马力 5.4米排半栏板载货车(国六)(ZZ1187K421DF1)",
+    "vehicle_type": "载货车",
+    "current_load": "10.705吨",
+    "length": "7.645米",
+    "height": "3.57米",
+    "width": "2.55米",
+    "speed": "95km/h"
+  },
+  "陕E·HLC77": {
+    "cargo_volume": "38立方米",
+    "id": "陕E·HLC77",
+    "name": "中国重汽HOWO G5X中卡 270马力 5.4米排半栏板载货车(国六)(ZZ1187K421DF1)",
+    "vehicle_type": "载货车",
+    "current_load": "10.705吨",
+    "length": "7.645米",
+    "height": "3.57米",
+    "width": "2.55米",
+    "speed": "95km/h"
+  },
+  "苏D·HLC77": {
+    "cargo_volume": "14.5立方米",
+    "id": "苏D·HLC77",
+    "name": "金杯T3 2025款经典型 1.5L汽油 102马力 4X2 后单轮 3.1米单排栏板微卡",
+    "vehicle_type": "载货车",
+    "current_load": "1.495吨",
+    "length": "5.01米",
+    "height": "2米",
+    "width": "1.72米",
+    "speed": "100km/h"
+  },
+  "浙E·01HK1": {
+    "cargo_volume": "16.5立方米",
+    "id": "浙E·01HK1",
+    "name": "一汽解放 J6P 8X4 6.5米换电式纯电动自卸车(CA3310P66L7T4BEVA2)350.07kWh",
+    "vehicle_type": "载货车",
+    "current_load": "7.87吨",
+    "length": "10.35米",
+    "height": "3.6米",
+    "width": "2.55米",
+    "speed": "89km/h"
+  },
+  "鲁F·SXA77": {
+    "cargo_volume": "19.5立方米",
+    "id": "鲁F·SXA77",
+    "name": "重汽HOWO统帅 2.5L柴油 180马力 中国重汽12档 4.15米单排仓栅式轻卡",
+    "vehicle_type": "仓栅载货车",
+    "current_load": "5.495吨",
+    "length": "5.99米",
+    "height": "3.25米",
+    "width": "2.2米",
+    "speed": "95km/h"
+  },
+  "陕E·8454P": {
+    "cargo_volume": "38立方米",
+    "id": "陕E·8454P",
+    "name": "中国重汽HOWO G5X中卡 270马力 5.4米排半栏板载货车(国六)(ZZ1187K421DF1)",
+    "vehicle_type": "载货车",
+    "current_load": "10.705吨",
+    "length": "7.645米",
+    "height": "3.57米",
+    "width": "2.55米",
+    "speed": "95km/h"
   }
 }

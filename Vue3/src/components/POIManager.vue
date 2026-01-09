@@ -8,7 +8,6 @@
           <h2 class="navbar-title" @click="goBack">物流运输仿真系统</h2>
           <div class="navbar-menu">
             <ElButton text>POI管理</ElButton>
-            <ElButton text>帮助文档</ElButton>
           </div>
         </div>
       </el-header>

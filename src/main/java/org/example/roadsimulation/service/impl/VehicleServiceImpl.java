@@ -172,4 +172,9 @@ public class VehicleServiceImpl implements VehicleService {
                 })
                 .orElseThrow(() -> new RuntimeException("车辆不存在，ID: " + vehicleId));
     }
+
+    @Override
+    public List<Vehicle> getVehiclesWithActiveAssignments() {
+        return vehicleRepository.findByAssignmentsIsNotNull();
+    }
 }

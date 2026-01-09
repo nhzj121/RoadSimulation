@@ -7,148 +7,127 @@
         </div>
         <div class="navbar-menu">
           <ElButton text @click="goToPOIManager">POI点管理</ElButton>
-          <ElButton text>帮助文档</ElButton>
-          <ElButton text>用户中心</ElButton>
         </div>
       </div>
     </ElHeader>
     <ElContainer>
       <ElAside width="320px" class="side-panel">
-        <!-- 仿真控制 -->
-        <ElCard shadow="never" class="box-card">
-          <template #header>
-            <div class="card-header">
-              <span>仿真控制</span>
-            </div>
-          </template>
-          <div class="control-group">
-            <span class="control-label">时间压缩:</span>
-            <div class="speed-slider">
-              <ElSlider
-                  v-model="speedFactor"
-                  :min="0.1"
-                  :max="10"
-                  :step="0.1"
-                  :format-tooltip="formatSpeedTooltip"
-                  @change="onSpeedChange"
-                  size="small"
-              />
-            </div>
-          </div>
-          <div class="control-group" style="margin-top: 15px;">
-            <ElButton type="primary" @click="startSimulation">▶ 开始</ElButton>
-            <ElButton type="primary" @click="pauseSimulation">⏸ 暂停</ElButton>
-            <ElButton @click="resetSimulation">↻ 重置</ElButton>
-          </div>
-          <div class="speed-display" style="margin-top: 10px; font-size: 12px; color: #666;">
-            当前速度: {{ formattedSpeed }}
-          </div>
-        </ElCard>
-
-        <!-- 显示筛选 -->
-        <ElCard shadow="never" class="box-card">
-          <template #header>
-            <div class="card-header">
-              <span>▼ 显示筛选</span>
-            </div>
-          </template>
-          <div class="filter-tags">
-            <ElCheckTag v-for="item in filters" :key="item.key" :checked="item.checked" @change="toggleFilter(item.key)">
-              {{ item.label }}
-            </ElCheckTag>
-          </div>
-        </ElCard>
-
-        <!-- 车辆状态 -->
-        <ElCard shadow="never" class="box-card">
-          <template #header>
-            <div class="card-header">
-              <span>车辆状态</span>
-            </div>
-          </template>
-          <div class="vehicle-list">
-            <div v-for="v in vehicles" :key="v.id" class="vehicle-item" @click="handleVehicleClick(v)" style="cursor: pointer;">
-              <span class="status-dot" :style="{ backgroundColor: statusMap[v.status]?.color || '#ccc' }"></span>
-              <div class="vehicle-info">
-                <div class="vehicle-id">{{ v.licensePlate }}</div>
-                <div class="vehicle-stats">
-                  <!-- 载重信息 -->
-                  <div class="load-info">
-                    <span class="label">载重:</span>
-                    <span class="value">{{ v.currentLoad?.toFixed(1) || '0.0' }}/{{ v.maxLoadCapacity?.toFixed(1) || '0.0' }}t</span>
-                    <div class="progress-bar">
-                      <div
-                          class="progress-fill load-progress"
-                          :style="{ width: `${v.loadPercentage || 0}%` }"
-                      ></div>
-                    </div>
-                  </div>
-                  <!-- 载容信息 -->
-                  <div class="volume-info">
-                    <span class="label">载容:</span>
-                    <span class="value">{{ v.currentVolume?.toFixed(1) || '0.0' }}/{{ v.maxVolumeCapacity?.toFixed(1) || '0.0' }}m³</span>
-                    <div class="progress-bar">
-                      <div
-                          class="progress-fill volume-progress"
-                          :style="{ width: `${v.volumePercentage || 0}%` }"
-                      ></div>
-                    </div>
-                  </div>
-                  <!-- 位置和状态 -->
-                  <div class="vehicle-location" :class="`status-${v.status?.toLowerCase()}`">
-                    {{ v.actionDescription || statusMap[v.status]?.text || v.status || '未知' }}
-                  </div>
+        <div class="side-panel-scroll" ref="sidePanelScroll">
+          <!-- 仿真控制 -->
+          <div class="panel-section">
+            <ElCard shadow="never" class="box-card simulation-control">
+              <template #header>
+                <div class="card-header">
+                  <span>仿真控制</span>
                 </div>
-                <template v-if="v.currentAssignment">
-                  <br><small>任务: {{ v.currentAssignment }}</small>
-                </template>
+              </template>
+              <div class="control-group">
+                <span class="control-label">时间压缩:</span>
+                <div class="speed-slider">
+                  <ElSlider
+                      v-model="speedFactor"
+                      :min="0.1"
+                      :max="10"
+                      :step="0.1"
+                      :format-tooltip="formatSpeedTooltip"
+                      @change="onSpeedChange"
+                      size="small"
+                  />
+                </div>
               </div>
-              <ElButton
-                  text
-                  :icon="InfoFilled"
-                  @click.stop="handleVehicleClick(v)"
-              />
-            </div>
-            <div v-if="vehicles.length === 0" class="no-vehicle">
-              暂无运输任务
-            </div>
+              <div class="control-group" style="margin-top: 15px;">
+                <ElButton type="primary" @click="startSimulation">▶ 开始</ElButton>
+                <ElButton type="primary" @click="pauseSimulation">⏸ 暂停</ElButton>
+                <ElButton @click="resetSimulation">↻ 重置</ElButton>
+              </div>
+              <div class="speed-display" style="margin-top: 10px; font-size: 12px; color: #666;">
+                当前速度: {{ formattedSpeed }}
+              </div>
+            </ElCard>
           </div>
-        </ElCard>
 
-        <!-- 运单信息 -->
-        <ElCard shadow="never" class="box-card">
-          <template #header>
-            <div class="card-header">
-              <span>运单信息</span>
-            </div>
-          </template>
-          <ShipmentProgressPanel
-              ref="shipmentProgressPanel"
-              :show-summary="true"
-              :show-search="true"
-              :auto-refresh-interval="15000"
-              @shipment-click="handleShipmentClick"
-              @shipment-selected="handleShipmentSelected"
-              @data-updated="handleShipmentDataUpdated"
-              @error="handleShipmentError"
-          />
-        </ElCard>
-
-        <!-- 统计信息 -->
-        <ElCard shadow="never" class="box-card">
-          <template #header>
-            <div class="card-header">
-              <span>统计信息</span>
-            </div>
-          </template>
-          <div class="stats-info">
-            <div><strong>运行车辆</strong><span>{{ stats.running }}</span></div>
-            <div><strong>POI点数</strong><span>{{ stats.poiCount }}</span></div>
-            <div><strong>运输任务</strong><span>{{ stats.tasks }}</span></div>
-            <div><strong>异常率</strong><span>{{ stats.anomalyRate }}%</span></div>
+          <!-- 车辆状态 -->
+          <div class="panel-section">
+            <ElCard shadow="never" class="box-card vehicle-status">
+              <template #header>
+                <div class="card-header">
+                  <span>车辆状态</span>
+                </div>
+              </template>
+              <div class="vehicle-list">
+                <!-- 为每个车辆项添加唯一的ID，用于滚动定位 -->
+                <div
+                    v-for="v in vehicles"
+                    :key="v.id"
+                    :id="`vehicle-item-${v.id}`"
+                    class="vehicle-item"
+                    :class="{ 'vehicle-item-highlighted': highlightedVehicleId === v.id }"
+                    @click="handleVehicleClick(v)"
+                    style="cursor: pointer;"
+                >
+                  <span class="status-dot" :style="{ backgroundColor: statusMap[v.status]?.color || '#ccc' }"></span>
+                  <div class="vehicle-info">
+                    <div class="vehicle-id">{{ v.licensePlate }}</div>
+                    <div class="vehicle-stats">
+                      <!-- 载重信息 -->
+                      <div class="load-info">
+                        <span class="label">载重:</span>
+                        <span class="value">{{ v.currentLoad?.toFixed(1) || '0.0' }}/{{ v.maxLoadCapacity?.toFixed(1) || '0.0' }}t</span>
+                        <div class="progress-bar">
+                          <div
+                              class="progress-fill load-progress"
+                              :style="{ width: `${v.loadPercentage || 0}%` }"
+                          ></div>
+                        </div>
+                      </div>
+                      <!-- 载容信息 -->
+                      <div class="volume-info">
+                        <span class="label">载容:</span>
+                        <span class="value">{{ v.currentVolume?.toFixed(1) || '0.0' }}/{{ v.maxVolumeCapacity?.toFixed(1) || '0.0' }}m³</span>
+                        <div class="progress-bar">
+                          <div
+                              class="progress-fill volume-progress"
+                              :style="{ width: `${v.volumePercentage || 0}%` }"
+                          ></div>
+                        </div>
+                      </div>
+                      <!-- 位置和状态 -->
+                      <div class="vehicle-location" :class="`status-${v.status?.toLowerCase()}`">
+                        {{ v.actionDescription || statusMap[v.status]?.text || v.status || '未知' }}
+                      </div>
+                    </div>
+                    <template v-if="v.currentAssignment">
+                      <br><small>任务: {{ v.currentAssignment }}</small>
+                    </template>
+                  </div>
+                  <ElButton
+                      text
+                      :icon="InfoFilled"
+                      @click.stop="handleVehicleClick(v)"
+                  />
+                </div>
+                <div v-if="vehicles.length === 0" class="no-vehicle">
+                  暂无运输任务
+                </div>
+              </div>
+            </ElCard>
           </div>
-        </ElCard>
 
+          <!-- 统计信息 -->
+          <div class="panel-section">
+            <ElCard shadow="never" class="box-card statistics-info">
+              <template #header>
+                <div class="card-header">
+                  <span>统计信息</span>
+                </div>
+              </template>
+              <div class="stats-info">
+                <div><strong>运行车辆</strong><span>{{ stats.running }}</span></div>
+                <div><strong>运输任务</strong><span>{{ stats.tasks }}</span></div>
+              </div>
+            </ElCard>
+          </div>
+        </div>
       </ElAside>
       <ElMain>
         <div id="container"></div>
@@ -158,7 +137,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, onUnmounted, markRaw } from "vue";
+import { ref, reactive, computed, onMounted, onUnmounted, markRaw , nextTick} from "vue";
 import { useRouter } from 'vue-router';
 import { poiManagerApi } from "../api/poiManagerApi";
 import { simulationController} from "@/api/simulationController";
@@ -188,9 +167,6 @@ import {
 } from "element-plus";
 import { InfoFilled } from '@element-plus/icons-vue'
 
-// 引入新增组件
-import ShipmentProgressPanel from './ShipmentProgressPanel.vue';
-
 let map = null;
 let AMapLib = null; // 保存加载后的 AMap 构造对象
 const router = useRouter()
@@ -201,50 +177,78 @@ const gotoMain = () => {
   router.push('./')
 }
 
-// --- 运单进度面板相关 ---
-const shipmentProgressPanel = ref(null);
+// --- 侧边栏滚动相关 ---
+const sidePanelScroll = ref(null); // 侧边栏滚动容器引用
+const highlightedVehicleId = ref(null); // 当前高亮的车辆ID
+let highlightTimer = null; // 高亮定时器
 
-// 运单点击事件处理
-const handleShipmentClick = (shipment) => {
-  console.log('点击运单:', shipment);
-  // 可以在地图上高亮显示该运单的路线
-  // highlightShipmentOnMap(shipment);
-};
+const handleVehicleClick = (vehicle) => {
+  console.log('点击车辆:', vehicle);
 
-// 运单选中事件处理
-const handleShipmentSelected = (shipment) => {
-  console.log('选中运单:', shipment);
-  // 可以在地图上显示该运单的详细信息
-};
-
-// 运单数据更新事件处理
-const handleShipmentDataUpdated = (shipments) => {
-  console.log('运单数据更新:', shipments.length);
-  // 更新统计信息中的任务数量
-  stats.tasks = shipments.length;
-};
-
-// 运单错误事件处理
-const handleShipmentError = (error) => {
-  console.error('运单组件错误:', error);
-  ElMessage.error('运单数据加载失败');
-};
-
-// 更新运单进度（车辆到达时调用）
-const updateShipmentProgress = async (shipmentId) => {
-  try {
-    // 调用API更新运单进度
-    await request.patch(`/api/shipments/${shipmentId}/update-progress`);
-
-    // 刷新运单面板数据
-    if (shipmentProgressPanel.value) {
-      await shipmentProgressPanel.value.refreshData();
-    }
-
-    console.log(`已更新运单${shipmentId}的进度`);
-  } catch (error) {
-    console.error(`更新运单${shipmentId}进度失败:`, error);
+  // 滚动到该车辆
+  if (vehicle.id) {
+    scrollToVehicle(vehicle.id);
   }
+
+  // 可以在地图上高亮显示该车辆
+  // highlightVehicleOnMap(vehicle);
+};
+
+// 滚动到指定车辆
+const scrollToVehicle = (vehicleId) => {
+  // 清除之前的高亮
+  clearHighlight();
+
+  // 设置当前高亮车辆ID
+  highlightedVehicleId.value = vehicleId;
+
+  // 等待DOM更新
+  nextTick(() => {
+    // 查找车辆元素
+    const vehicleElement = document.getElementById(`vehicle-item-${vehicleId}`);
+
+    if (vehicleElement && sidePanelScroll.value) {
+      // 计算滚动位置
+      const scrollContainer = sidePanelScroll.value;
+      const containerRect = scrollContainer.getBoundingClientRect();
+      const elementRect = vehicleElement.getBoundingClientRect();
+
+      // 计算元素在容器内的相对位置
+      const relativeTop = elementRect.top - containerRect.top;
+      const containerHeight = containerRect.height;
+      const elementHeight = elementRect.height;
+
+      // 如果元素不在可视区域内，滚动到合适位置
+      if (relativeTop < 0 || relativeTop + elementHeight > containerHeight) {
+        // 计算目标滚动位置，使元素位于容器中间
+        const targetScrollTop = scrollContainer.scrollTop + relativeTop - (containerHeight / 2) + (elementHeight / 2);
+
+        // 平滑滚动到目标位置
+        scrollContainer.scrollTo({
+          top: Math.max(0, targetScrollTop),
+          behavior: 'smooth'
+        });
+      }
+
+      console.log(`已滚动到车辆 ${vehicleId}`);
+
+      // 设置定时器，0.5秒后清除高亮
+      highlightTimer = setTimeout(() => {
+        highlightedVehicleId.value = null;
+      }, 500);
+    } else {
+      console.warn(`未找到车辆 ${vehicleId} 的元素或滚动容器未初始化`);
+    }
+  });
+};
+
+// 清除高亮
+const clearHighlight = () => {
+  if (highlightTimer) {
+    clearTimeout(highlightTimer);
+    highlightTimer = null;
+  }
+  highlightedVehicleId.value = null;
 };
 
 // --- 仿真控制 ---
@@ -897,11 +901,16 @@ class VehicleAnimation {
       // 卸货停留2秒（动画时间）
       console.log(`[VehicleAnimation] ${this.licensePlate} 开始卸货...`);
       await this._waitWithSpeedFactor(2000);
-
+      // ToDo
       // 完成任务
       if (this.statusManager) {
         this.statusManager.updateVehicleStatus(this.vehicleId, 'WAITING', {
-          assignment: this.routeData.assignment,
+          assignment: {
+            ...this.routeData.assignment,
+            currentLoad: 0,  // 明确设置载重为0
+            currentVolume: 0, // 明确设置载容为0
+            isUnloading: true  // 标记为卸货完成状态
+          },
           position: this.currentPosition,
           isLoaded: false
         });
@@ -1104,19 +1113,38 @@ const handleVehicleArrived = async (assignmentId, vehicleId, endPOIId, licensePl
 
     console.log(`车辆 ${licensePlate} 到达处理完成`);
 
-    // 2. 等待后端处理完成
-    await new Promise(resolve => setTimeout(resolve, 2000));
-
-    // 3. 刷新前端数据
-    await updateVehicleInfo();
-
-    if (shipmentProgressPanel.value) {
-      await shipmentProgressPanel.value.refreshData();
+    // 2. 立即更新车辆状态为 WAITING，载重归零
+    if (vehicleStatusManager.value) {
+      vehicleStatusManager.value.updateVehicleStatus(vehicleId, 'IDLE', {
+        assignment: {
+          currentLoad: 0,
+          currentVolume: 0
+        },
+        position: null,
+        isLoaded: false
+      });
+    } else {
+      // 如果状态管理器未初始化，直接更新车辆列表
+      const vehicleIndex = vehicles.findIndex(v => v.id === vehicleId);
+      if (vehicleIndex !== -1) {
+        const vehicle = vehicles[vehicleIndex];
+        vehicle.status = 'IDLE';
+        vehicle.currentLoad = 0;
+        vehicle.currentVolume = 0;
+        vehicle.loadPercentage = 0;
+        vehicle.volumePercentage = 0;
+        vehicle.actionDescription = '等待任务';
+        console.log(`车辆 ${licensePlate} 载重已归零`);
+      }
     }
-
     // 4. 清理前端动画和路线
     clearRouteByAssignmentId(assignmentId);
 
+    // 2. 等待后端处理完成
+    setTimeout(async () => {
+      await updateVehicleInfo();
+      console.log(`车辆 ${licensePlate} 状态已刷新`);
+    }, 500);
   } catch (error) {
     console.error('车辆到达处理失败:', error);
     ElMessage.error(`车辆 ${licensePlate} 状态更新失败: ${error.message}`);
@@ -1157,11 +1185,6 @@ const startSimulation = async () => {
 
     // 初始化车辆信息
     await updateVehicleInfo();
-
-    // 初始化运单数据
-    if (shipmentProgressPanel.value) {
-      await shipmentProgressPanel.value.refreshData();
-    }
 
     ElMessage.success('仿真已启动');
 
@@ -1248,11 +1271,6 @@ const resetSimulation = async () => {
       stats.poiCount = 0;
       stats.tasks = 0;
       stats.anomalyRate = 0;
-
-      // 重置运单面板
-      if (shipmentProgressPanel.value) {
-        shipmentProgressPanel.value.refreshData();
-      }
 
       ElMessage.success('仿真已重置');
     }
@@ -1477,6 +1495,9 @@ const updateVehicleInfo = async () => {
     // 清空当前车辆列表
     vehicles.splice(0, vehicles.length);
 
+    const positionsResponse = await request.get('/api/vehicles/current-positions');
+    const vehiclePositions = positionsResponse.data;
+
     // 从Assignment中提取车辆信息
     const vehicleMap = new Map(); // 用于去重，key为vehicleId
 
@@ -1489,6 +1510,7 @@ const updateVehicleInfo = async () => {
           if (assignment.vehicleStatus) {
             existingVehicle.status = assignment.vehicleStatus;
           }
+          // ToDo
           // 添加当前assignment到车辆的任务列表中
           if (!existingVehicle.assignments) {
             existingVehicle.assignments = [];
@@ -1505,6 +1527,7 @@ const updateVehicleInfo = async () => {
             id: assignment.vehicleId,
             licensePlate: assignment.licensePlate,
             status: assignment.vehicleStatus || 'ORDER_DRIVING',
+            // ToDO
             assignments: [{
               id: assignment.assignmentId,
               routeName: assignment.routeName,
@@ -1527,6 +1550,12 @@ const updateVehicleInfo = async () => {
             goodsWeightPerUnit: assignment.goodsWeightPerUnit || 0,
             goodsVolumePerUnit: assignment.goodsVolumePerUnit || 0
           };
+          // 尝试从车辆位置接口获取最新位置
+          if (vehiclePositions && vehiclePositions[vehicle.id]) {
+            const position = vehiclePositions[vehicle.id];
+            vehicle.currentLongitude = position[0];
+            vehicle.currentLatitude = position[1];
+          }
 
           // 计算载重和载容的百分比（用于进度条显示）
           vehicle.loadPercentage = vehicle.maxLoadCapacity > 0 ?
@@ -1544,7 +1573,14 @@ const updateVehicleInfo = async () => {
     });
 
     // 更新统计信息
-    stats.running = vehicles.length;
+    stats.running = vehicles.filter(v =>
+        v.status === 'ORDER_DRIVING' ||
+        v.status === 'LOADING' ||
+        v.status === 'TRANSPORT_DRIVING' ||
+        v.status === 'UNLOADING'
+    ).length;
+
+    stats.tasks = vehicles.length;
     console.log(`更新了 ${vehicles.length} 辆车辆信息`);
 
   } catch (error) {
@@ -1893,6 +1929,12 @@ const drawTwoStageRouteForAssignment = async (assignment) => {
           status: 'ORDER_DRIVING'
         }
       });
+      vehicleMarker.on('click', () => {
+        // 直接调用滚动函数
+        scrollToVehicle(assignment.vehicleId);
+        handleVehicleMarkerClick(assignment);
+      });
+
       vehicleMarker.setMap(map);
       elements.push(vehicleMarker);
 
@@ -1905,10 +1947,6 @@ const drawTwoStageRouteForAssignment = async (assignment) => {
         );
       }
 
-      // 添加点击事件
-      vehicleMarker.on('click', () => {
-        handleVehicleMarkerClick(assignment);
-      });
     }
 
     // 创建车辆移动标记
@@ -2023,6 +2061,12 @@ const computeSingleRouteWithCache = async (start, end, cacheKey) => {
 // 处理车辆标记点击事件
 const handleVehicleMarkerClick = async (assignment) => {
   console.log('点击车辆标记:', assignment);
+  console.log('尝试滚动到车辆ID:', assignment.vehicleId);
+
+  // 滚动到侧边栏对应车辆
+  if (assignment.vehicleId) {
+    scrollToVehicle(assignment.vehicleId);
+  }
 
   try {
     // 获取车辆详细信息
@@ -2091,7 +2135,6 @@ const showVehicleInfoWindowFromMarker = (assignment, vehicleDetail) => {
       <p style="margin: 2px 0; color: #606266; font-size: 12px;"><strong>装货点:</strong> ${assignment.startPOIName || '未知'}</p>
       <p style="margin: 2px 0; color: #606266; font-size: 12px;"><strong>卸货点:</strong> ${assignment.endPOIName || '未知'}</p>
       <p style="margin: 2px 0; color: #606266; font-size: 12px;"><strong>货物:</strong> ${assignment.goodsName || '未知'} (${assignment.quantity || 0}件)</p>
-      <p style="margin: 2px 0; color: #606266; font-size: 12px;"><strong>运单号:</strong> ${assignment.shipmentRefNo || 'N/A'}</p>
     </div>
   `;
 
@@ -2323,14 +2366,6 @@ const initVehicleStatusManager = () => {
   vehicleStatusManager.value.onStatusChange((vehicleId, oldStatus, newStatus, vehicle) => {
     console.log(`[状态变化] 车辆 ${vehicle.licensePlate}: ${oldStatus} → ${newStatus}`);
 
-    // 当车辆状态变为 WAITING 时，刷新运单面板
-    if (newStatus === 'WAITING' || newStatus === 'IDLE') {
-      console.log(`车辆 ${vehicle.licensePlate} 已完成任务，刷新运单面板`);
-      setTimeout(() => {
-        shipmentProgressPanel.value?.refreshData();
-      }, 1000);
-    }
-
     // 更新统计信息中的运行车辆数量
     stats.running = vehicles.filter(v =>
         v.status === 'ORDER_DRIVING' ||
@@ -2371,11 +2406,6 @@ onMounted(() => {
 
         // 初始加载POI数据
         updatePOIData();
-
-        // 初始加载运单数据
-        if (shipmentProgressPanel.value) {
-          shipmentProgressPanel.value.refreshData();
-        }
       })
       .catch((e) => {
         console.log(e);
@@ -2416,6 +2446,7 @@ onUnmounted(() => {
 .page-container {
   height: 100vh;
   width: 100vw;
+  overflow: hidden; /* 防止整个页面滚动 */
 }
 
 .header-navbar {
@@ -2426,6 +2457,7 @@ onUnmounted(() => {
   padding: 0 20px;
   height: 60px;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  flex-shrink: 0; /* 防止header被压缩 */
 }
 
 .navbar-content {
@@ -2454,63 +2486,177 @@ onUnmounted(() => {
   gap: 10px;
 }
 
+/* 侧边栏样式 - 整体滚动 */
 .side-panel {
   background-color: #f7f8fa;
-  padding: 10px;
+  padding: 0;
   border-right: 1px solid #e6e6e6;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  overflow-y: auto;
+  height: calc(100vh - 60px); /* 减去header高度 */
 }
 
+/* 侧边栏滚动容器 - 修复遮挡 */
+.side-panel-scroll {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 12px 10px; /* 增加上下内边距 */
+  overflow-y: auto;
+  overflow-x: hidden; /* 防止水平滚动 */
+  height: 100%;
+  gap: 12px;
+  /* 自定义滚动条样式 */
+  scrollbar-width: thin;
+  scrollbar-color: #c1c1c1 #f5f5f5;
+  box-sizing: border-box; /* 确保padding包含在内 */
+}
+
+/* Webkit浏览器滚动条样式 */
+.side-panel-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.side-panel-scroll::-webkit-scrollbar-track {
+  background: #f5f5f5;
+  border-radius: 3px;
+}
+
+.side-panel-scroll::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 3px;
+}
+
+.side-panel-scroll::-webkit-scrollbar-thumb:hover {
+  background: #a8a8a8;
+}
+
+/* 面板部分容器 */
+.panel-section {
+  flex-shrink: 0; /* 防止被压缩 */
+}
+
+.panel-section:last-child {
+  margin-bottom: 10px; /* 最后一个部分增加底部间距 */
+}
+
+/* 卡片基础样式 */
 .box-card {
   border: none;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  box-sizing: border-box; /* 确保padding包含在内 */
 }
 
-.card-header {
-  font-weight: bold;
-  font-size: 16px;
+.box-card:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
 }
 
+/* 仿真控制卡片 - 修复右侧遮挡 */
+.simulation-control {
+  min-height: 140px;
+}
+
+.simulation-control :deep(.el-card__body) {
+  padding: 15px 12px; /* 调整内边距，确保内容不超出 */
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+}
+
+/* 仿真控制内部布局优化 */
 .control-group {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
+  margin-bottom: 12px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .control-label {
-  font-size: 14px;
+  font-size: 13px;
   color: #606266;
   white-space: nowrap;
+  flex-shrink: 0; /* 防止标签被压缩 */
+  width: 60px; /* 固定标签宽度 */
 }
 
-.filter-tags {
+.speed-slider {
+  flex: 1;
+  margin-left: 0;
+  min-width: 0; /* 允许滑块压缩 */
+}
+
+/* 仿真按钮组调整 */
+.simulation-control .control-group:last-child {
   display: flex;
-  flex-wrap: wrap;
+  justify-content: space-between; /* 均匀分布按钮 */
   gap: 8px;
+  margin-top: 10px;
 }
 
+.simulation-control .control-group:last-child .el-button {
+  flex: 1; /* 按钮等宽分布 */
+  min-width: 0; /* 允许按钮压缩 */
+  padding: 8px 4px; /* 调整按钮内边距 */
+  font-size: 13px;
+}
+
+.speed-display {
+  text-align: center;
+  font-size: 12px;
+  color: #666;
+  padding: 6px 0;
+  background-color: #f8f9fa;
+  border-radius: 4px;
+  margin-top: 8px;
+  flex-shrink: 0;
+}
+
+/* 车辆状态卡片 */
+.vehicle-status {
+  min-height: 180px;
+  max-height: 380px; /* 稍微降低最大高度 */
+}
+
+.vehicle-status :deep(.el-card__body) {
+  padding: 12px;
+  overflow-y: auto;
+  flex: 1;
+  max-height: 320px; /* 限制内部滚动区域高度 */
+  box-sizing: border-box;
+}
+
+/* 车辆列表 */
 .vehicle-list {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
 }
 
 .vehicle-item {
   display: flex;
   align-items: center;
-  gap: 10px;
-  cursor: pointer;
-  transition: background-color 0.2s;
+  gap: 8px; /* 减小间距 */
   padding: 8px;
-  border-radius: 4px;
+  border-radius: 6px;
+  background-color: #fff;
+  border: 1px solid #f0f0f0;
+  transition: all 0.3s ease;
+  cursor: pointer;
+  box-sizing: border-box;
+  width: 100%; /* 确保宽度100% */
 }
 
 .vehicle-item:hover {
   background-color: #f5f7fa;
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
 }
 
 .vehicle-item.selected {
@@ -2527,13 +2673,18 @@ onUnmounted(() => {
 
 .vehicle-info {
   flex-grow: 1;
-  min-width: 0;
+  min-width: 0; /* 允许内容压缩 */
+  overflow: hidden; /* 防止内容溢出 */
 }
 
 .vehicle-id {
-  font-weight: 500;
-  font-size: 14px;
+  font-weight: 600;
+  font-size: 13px;
   color: #303133;
+  margin-bottom: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .vehicle-stats {
@@ -2546,18 +2697,21 @@ onUnmounted(() => {
   align-items: center;
   margin-bottom: 4px;
   font-size: 11px;
+  width: 100%;
 }
 
 .label {
-  min-width: 32px;
+  min-width: 28px; /* 稍微减小标签宽度 */
   color: #606266;
   font-weight: 500;
+  flex-shrink: 0;
 }
 
 .value {
-  min-width: 60px;
+  min-width: 65px; /* 稍微减小数值宽度 */
   color: #303133;
   margin-right: 6px;
+  flex-shrink: 0;
 }
 
 .progress-bar {
@@ -2567,6 +2721,7 @@ onUnmounted(() => {
   border-radius: 3px;
   overflow: hidden;
   position: relative;
+  min-width: 50px; /* 确保进度条最小宽度 */
 }
 
 .progress-fill {
@@ -2576,11 +2731,11 @@ onUnmounted(() => {
 }
 
 .load-progress {
-  background-color: #67c23a; /* 绿色，表示载重 */
+  background-color: #67c23a;
 }
 
 .volume-progress {
-  background-color: #409eff; /* 蓝色，表示载容 */
+  background-color: #409eff;
 }
 
 .vehicle-location {
@@ -2590,6 +2745,9 @@ onUnmounted(() => {
   line-height: 1.2;
   display: flex;
   align-items: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .vehicle-location::before {
@@ -2600,6 +2758,7 @@ onUnmounted(() => {
   border-radius: 50%;
   margin-right: 4px;
   background-color: currentColor;
+  flex-shrink: 0;
 }
 
 .vehicle-location.status-order-driving {
@@ -2618,172 +2777,163 @@ onUnmounted(() => {
   color: #e74c3c;
 }
 
-.stats-info div {
-  font-size: 14px;
-  line-height: 1.8;
-}
-
-/*
-  车辆相关样式
- */
-.vehicle-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px;
-  border-radius: 4px;
-  margin-bottom: 8px;
-  transition: all 0.3s ease;
-}
-
-.vehicle-item:hover {
-  background-color: #f5f5f5;
-}
-
 .no-vehicle {
   text-align: center;
   padding: 20px;
   color: #909399;
   font-size: 14px;
+  font-style: italic;
 }
 
-/* 车辆标记样式 */
-:deep(.amap-marker-content) {
-  transition: transform 0.2s;
+/* 统计信息卡片 - 修复下部遮挡 */
+.statistics-info {
+  min-height: 120px;
+  margin-bottom: 10px; /* 增加底部边距 */
 }
 
-:deep(.amap-marker-content):hover {
-  transform: scale(1.1);
-}
-
-/* 车辆信息窗口样式 */
-.vehicle-marker-info {
-  max-width: 300px;
-}
-
-/* 确保信息窗口内容可读 */
-:deep(.amap-info-content) {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  line-height: 1.4;
-}
-
-:deep(.amap-info-sharp) {
-  border-top-color: #fff !important;
-}
-
-/* 运单信息面板样式 */
-:deep(.shipment-progress-panel) {
-  height: 400px;
+.statistics-info :deep(.el-card__body) {
+  padding: 10px 12px; /* 调整内边距 */
   display: flex;
   flex-direction: column;
+  justify-content: center;
+  box-sizing: border-box;
 }
 
-:deep(.panel-header) {
-  padding: 8px 0;
+.stats-info {
+  display: flex;
+  flex-direction: column;
+  gap: 6px; /* 减小间距 */
 }
 
-:deep(.panel-title) {
-  font-size: 14px;
-  margin: 0;
-}
-
-:deep(.virtual-scroll-wrapper) {
-  flex: 1;
-  overflow-y: auto;
-}
-
-:deep(.shipment-card) {
-  margin-bottom: 8px;
-}
-
-/* 仿真控制样式 */
-.speed-display {
-  text-align: center;
-  font-size: 12px;
-  color: #666;
-  padding: 4px 0;
-  background-color: #f8f9fa;
-  border-radius: 4px;
-}
-
-.speed-slider {
-  flex: 1;
-  margin-left: 10px;
-}
-
-:deep(.el-slider) {
-  margin-top: 4px;
-}
-
-/* 车辆状态指示器 */
-.vehicle-status-indicator {
-  display: inline-flex;
+.stats-info div {
+  display: flex;
+  justify-content: space-between;
   align-items: center;
-  margin-left: 8px;
+  padding: 6px 8px; /* 减小内边距 */
   font-size: 12px;
-  padding: 2px 6px;
-  border-radius: 10px;
-  color: white;
+  border-bottom: 1px solid #f5f5f5;
+  transition: background-color 0.2s;
+  box-sizing: border-box;
+}
+
+.stats-info div:hover {
+  background-color: #f8f9fa;
+}
+
+.stats-info div:last-child {
+  border-bottom: none;
+}
+
+.stats-info strong {
+  color: #606266;
   font-weight: 500;
 }
 
-.status-order-driving {
-  background-color: #3498db;
+.stats-info span {
+  color: #303133;
+  font-weight: 600;
 }
 
-.status-loading {
-  background-color: #f39c12;
+/* 车辆项高亮效果 */
+.vehicle-item-highlighted {
+  background-color: rgba(64, 158, 255, 0.1) !important;
+  border: 2px solid #409eff !important;
+  box-shadow: 0 0 15px rgba(64, 158, 255, 0.3) !important;
+  transform: scale(1.02);
+  transition: all 0.3s ease;
+  position: relative;
+  z-index: 10;
 }
 
-.status-transport-driving {
-  background-color: #2ecc71;
-}
-
-.status-unloading {
-  background-color: #e74c3c;
-}
-
-.status-waiting {
-  background-color: #95a5a6;
-}
-
-.status-idle {
-  background-color: #7f8c8d;
-}
-
-/* 载重进度条动画 */
-@keyframes loadingAnimation {
-  0% { transform: translateX(-100%); }
-  100% { transform: translateX(100%); }
-}
-
-.load-progress.animated::after {
+.vehicle-item-highlighted::before {
   content: '';
   position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: linear-gradient(90deg,
-  transparent 0%,
-  rgba(255, 255, 255, 0.4) 50%,
-  transparent 100%);
-  animation: loadingAnimation 1.5s infinite;
+  top: -2px;
+  left: -2px;
+  right: -2px;
+  bottom: -2px;
+  border-radius: 8px;
+  background: linear-gradient(45deg, #409eff, #67c23a, #e6a23c, #f56c6c);
+  background-size: 400% 400%;
+  z-index: -1;
+  animation: gradient-border 0.5s ease infinite;
 }
 
-/* 车辆图标动画 */
+@keyframes gradient-border {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+/* 车辆项内部高亮指示器 */
+.vehicle-item-highlighted .status-dot {
+  animation: pulse 1.5s infinite;
+  box-shadow: 0 0 10px currentColor;
+}
+
 @keyframes pulse {
-  0% { transform: scale(1); }
-  50% { transform: scale(1.05); }
-  100% { transform: scale(1); }
+  0% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.2);
+    opacity: 0.8;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
 }
 
-.vehicle-icon-pulse {
-  animation: pulse 2s infinite;
+/* 车辆ID高亮 */
+.vehicle-item-highlighted .vehicle-id {
+  color: #409eff;
+  font-weight: bold;
+}
+
+/* 卡片头部统一调整 */
+.card-header {
+  font-weight: 600;
+  font-size: 14px;
+  color: #303133;
+  display: flex;
+  align-items: center;
+}
+
+/* 覆盖Element Plus默认样式 */
+:deep(.el-card__header) {
+  padding: 10px 12px; /* 减小内边距 */
+  border-bottom: 1px solid #f0f0f0;
+  background-color: #fafafa;
+}
+
+:deep(.el-card__body) {
+  padding: 12px;
+}
+
+/* 地图容器 */
+#container {
+  width: 100%;
+  height: 100%;
+}
+
+.el-main {
+  padding: 0;
 }
 
 /* 响应式调整 */
 @media (max-width: 1400px) {
+  .side-panel {
+    width: 340px !important; /* 稍微增加侧边栏宽度 */
+  }
+
   .load-info,
   .volume-info {
     flex-direction: column;
@@ -2793,15 +2943,20 @@ onUnmounted(() => {
   .label,
   .value {
     margin-bottom: 2px;
+    width: 100%;
   }
 
   .progress-bar {
     width: 100%;
-    margin-top: 2px;
+    margin-top: 4px;
   }
 }
 
 @media (max-width: 768px) {
+  .side-panel {
+    width: 300px !important;
+  }
+
   .vehicle-stats {
     flex-direction: column;
     align-items: flex-start;
@@ -2813,21 +2968,41 @@ onUnmounted(() => {
   }
 }
 
-#container {
+/* 滚动优化 */
+.vehicle-status :deep(.el-card__body)::-webkit-scrollbar {
+  width: 4px;
+}
+
+.vehicle-status :deep(.el-card__body)::-webkit-scrollbar-track {
+  background: #f1f1f1;
+}
+
+.vehicle-status :deep(.el-card__body)::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 2px;
+}
+
+/* 平滑滚动 */
+.side-panel-scroll {
+  scroll-behavior: smooth;
+}
+
+/* 修复滑块宽度问题 */
+:deep(.el-slider) {
   width: 100%;
-  height: 100%;
 }
 
-.el-main {
-  padding: 0;
+:deep(.el-slider__runway) {
+  margin: 0;
 }
 
-/* 覆盖Element Plus默认样式 */
-:deep(.el-card__header) {
-  padding: 10px 15px;
-  border-bottom: none;
+/* 确保按钮组适应容器 */
+.simulation-control :deep(.el-button-group) {
+  display: flex;
+  width: 100%;
 }
-:deep(.el-card__body) {
-  padding: 15px;
+
+.simulation-control :deep(.el-button-group .el-button) {
+  flex: 1;
 }
 </style>
