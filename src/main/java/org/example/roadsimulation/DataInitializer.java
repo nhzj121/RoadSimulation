@@ -790,13 +790,18 @@ public class DataInitializer{
     @Transactional(rollbackFor = Exception.class)
     public ShipmentItem initalizeShipmentItem(Shipment shipment, Goods goods, Integer quantity) {
         try {
+            BigDecimal weightPerUnitBD = new BigDecimal(goods.getWeightPerUnit().toString());
+            BigDecimal quantityBD = new BigDecimal(quantity);
+            BigDecimal totalWeightBD = weightPerUnitBD.multiply(quantityBD).setScale(2, RoundingMode.HALF_UP);
+            BigDecimal volumePerUnitBD = new BigDecimal(goods.getWeightPerUnit().toString());
+            BigDecimal totalVolumeBD = volumePerUnitBD.multiply(quantityBD).setScale(2, RoundingMode.HALF_UP);
             ShipmentItem shipmentItem = new ShipmentItem(
                     shipment,
                     goods.getName(),
                     quantity,
                     goods.getSku(),
-                    goods.getWeightPerUnit() * quantity,
-                    goods.getVolumePerUnit() * quantity
+                    totalWeightBD.doubleValue(),
+                    totalVolumeBD.doubleValue()
             );
 
             // 关键：关联Goods实体
@@ -847,6 +852,7 @@ public class DataInitializer{
         System.out.println("候选车辆数量: " + candidateVehicles.size());
 
         // 计算货物总重量
+
         Double totalWeight = goods.getWeightPerUnit() * totalQuantity;
         System.out.println("货物总重量: " + totalWeight + "吨");
 

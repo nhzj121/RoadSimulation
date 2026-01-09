@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
 import java.net.URI;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -233,5 +234,30 @@ public class VehicleController {
     public ResponseEntity<Map<Long, double[]>> getVehicleCurrentPositions() {
         Map<Long, double[]> positions = dataInitializer.getVehicleCurrentPositions();
         return ResponseEntity.ok(positions);
+    }
+
+    @GetMapping("/positions")
+    public ResponseEntity<Map<String, double[]>> getVehiclePositions() {
+        try {
+            Map<String, double[]> positions = new HashMap<>();
+
+            // 获取所有有任务的车辆
+            List<Vehicle> vehiclesWithAssignments = vehicleService.getVehiclesWithActiveAssignments();
+
+            for (Vehicle vehicle : vehiclesWithAssignments) {
+                if (vehicle.getCurrentLongitude() != null && vehicle.getCurrentLatitude() != null) {
+                    double[] position = new double[] {
+                            vehicle.getCurrentLongitude().doubleValue(),
+                            vehicle.getCurrentLatitude().doubleValue()
+                    };
+                    positions.put(vehicle.getId().toString(), position);
+                }
+            }
+
+            return ResponseEntity.ok(positions);
+        } catch (Exception e) {
+            logger.error("获取车辆位置失败", e);
+            return ResponseEntity.internalServerError().build();
+        }
     }
 }

@@ -32,6 +32,8 @@ public interface VehicleService {
 
     List<Vehicle> getVehiclesByStatus(Vehicle.VehicleStatus status);
 
+    List<Vehicle> getVehiclesWithActiveAssignments();
+
     void deleteVehicle(Long id);
 
     boolean existsByLicensePlate(String licensePlate);

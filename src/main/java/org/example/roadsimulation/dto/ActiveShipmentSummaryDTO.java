@@ -75,21 +75,14 @@ public class ActiveShipmentSummaryDTO {
     public String getStatusDisplayText() {
         if (status == null) return "未知";
 
-        switch (status) {
-            case "CREATED":
-                return "已创建";
-            case "PLANNED":
-                return "已规划";
-            case "PICKED_UP":
-                return "已提货";
-            case "IN_TRANSIT":
-                return "运输中";
-            case "DELIVERED":
-                return "已送达";
-            case "CANCELLED":
-                return "已取消";
-            default:
-                return status;
-        }
+        return switch (status) {
+            case "CREATED" -> "已创建";
+            case "PLANNED" -> "已规划";
+            case "PICKED_UP" -> "已提货";
+            case "IN_TRANSIT" -> "运输中";
+            case "DELIVERED" -> "已送达";
+            case "CANCELLED" -> "已取消";
+            default -> status;
+        };
     }
 }

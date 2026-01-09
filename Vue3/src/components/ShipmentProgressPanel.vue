@@ -86,32 +86,6 @@
       </div>
     </div>
 
-    <!-- 搜索框 -->
-    <div
-        v-if="showSearch"
-        class="panel-search"
-    >
-      <ElInput
-          v-model="searchQuery"
-          placeholder="搜索运单号、货物、地点..."
-          size="small"
-          clearable
-          @clear="handleSearchClear"
-      >
-        <template #prefix>
-          <ElIcon><Search /></ElIcon>
-        </template>
-        <template #append>
-          <ElButton
-              size="small"
-              @click="executeSearch"
-          >
-            搜索
-          </ElButton>
-        </template>
-      </ElInput>
-    </div>
-
     <!-- 运单列表 -->
     <div
         v-if="!isExpanded"
@@ -185,10 +159,6 @@
       <div class="footer-info">
         <span class="info-text">
           共 {{ filteredShipments.length }} 个运单
-          <span
-              v-if="searchQuery"
-              class="info-search"
-          >(搜索: "{{ searchQuery }}")</span>
         </span>
         <span class="info-time">
           更新于: {{ lastUpdateTime }}
@@ -202,14 +172,13 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import {
   ElButton,
-  ElInput,
   ElIcon,
   ElDropdown,
   ElDropdownMenu,
   ElDropdownItem,
   ElMessage
 } from 'element-plus';
-import { Search, Loading, Fold, Expand, Refresh, Filter } from '@element-plus/icons-vue';
+import { Loading, Fold, Expand, Refresh, Filter } from '@element-plus/icons-vue';
 import VirtualScroll from './VirtualScroll.vue';
 import ShipmentCard from './ShipmentCard.vue';
 import ShipmentDetailPanel from './ShipmentDetailPanel.vue';
@@ -228,11 +197,6 @@ const props = defineProps({
     type: Boolean,
     default: true
   },
-  // 是否显示搜索框
-  showSearch: {
-    type: Boolean,
-    default: true
-  },
   // 自动刷新间隔（毫秒），0表示不自动刷新
   autoRefreshInterval: {
     type: Number,
@@ -242,6 +206,11 @@ const props = defineProps({
   initiallyExpanded: {
     type: Boolean,
     default: false
+  },
+  // 是否显示筛选器
+  showFilter: {
+    type: Boolean,
+    default: true
   }
 });
 
@@ -260,7 +229,6 @@ const highlightedShipmentId = ref(null);
 const isLoading = ref(false);
 const loadingDetail = ref(false);
 const isExpanded = ref(props.initiallyExpanded);
-const searchQuery = ref('');
 const activeStatusFilter = ref('ALL');
 const summaryStats = ref(null);
 const lastUpdateTime = ref('--:--:--');
@@ -286,19 +254,6 @@ const filteredShipments = computed(() => {
     filtered = filtered.filter(shipment =>
         shipment.status === activeStatusFilter.value
     );
-  }
-
-  // 搜索过滤
-  if (searchQuery.value.trim()) {
-    const query = searchQuery.value.toLowerCase().trim();
-    filtered = filtered.filter(shipment => {
-      return (
-          (shipment.refNo && shipment.refNo.toLowerCase().includes(query)) ||
-          (shipment.cargoType && shipment.cargoType.toLowerCase().includes(query)) ||
-          (shipment.originPOIName && shipment.originPOIName.toLowerCase().includes(query)) ||
-          (shipment.destPOIName && shipment.destPOIName.toLowerCase().includes(query))
-      );
-    });
   }
 
   return filtered;
@@ -404,16 +359,6 @@ const handleShipmentExpand = (shipment, expanded) => {
 // 处理筛选命令
 const handleFilterCommand = (command) => {
   activeStatusFilter.value = command;
-};
-
-// 处理搜索
-const executeSearch = () => {
-  // 搜索逻辑已经通过computed自动处理
-};
-
-// 处理搜索清空
-const handleSearchClear = () => {
-  searchQuery.value = '';
 };
 
 // 关闭详情面板
@@ -530,195 +475,3 @@ defineExpose({
   getSelectedShipment: () => selectedShipment.value
 });
 </script>
-
-<style scoped>
-.shipment-progress-panel {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  background: #fff;
-  border-radius: 8px;
-  overflow: hidden;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
-}
-
-.panel-header {
-  padding: 12px 16px;
-  border-bottom: 1px solid #e4e7ed;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  background: linear-gradient(135deg, #f8f9fa 0%, #fff 100%);
-  flex-shrink: 0;
-}
-
-.panel-title {
-  font-size: 16px;
-  font-weight: 600;
-  color: #303133;
-  margin: 0;
-}
-
-.panel-actions {
-  display: flex;
-  gap: 4px;
-}
-
-.panel-summary {
-  padding: 16px;
-  border-bottom: 1px solid #f0f0f0;
-  flex-shrink: 0;
-}
-
-.summary-stats {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(80px, 1fr));
-  gap: 12px;
-}
-
-.summary-stat {
-  background: #f8f9fa;
-  border: 1px solid #e4e7ed;
-  border-radius: 6px;
-  padding: 12px;
-  text-align: center;
-  transition: all 0.3s ease;
-}
-
-.summary-stat:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-}
-
-.stat-value {
-  font-size: 20px;
-  font-weight: 700;
-  color: #409eff;
-  margin-bottom: 4px;
-}
-
-.stat-label {
-  font-size: 12px;
-  color: #909399;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.panel-search {
-  padding: 16px;
-  border-bottom: 1px solid #f0f0f0;
-  flex-shrink: 0;
-}
-
-.shipment-list {
-  flex: 1;
-  overflow: hidden;
-  position: relative;
-}
-
-.empty-state {
-  padding: 60px 20px;
-  text-align: center;
-  color: #909399;
-}
-
-.empty-state__icon {
-  font-size: 48px;
-  margin-bottom: 16px;
-  opacity: 0.5;
-}
-
-.empty-state__text {
-  font-size: 14px;
-  margin-bottom: 16px;
-}
-
-.loading-state {
-  padding: 60px 20px;
-  text-align: center;
-  color: #909399;
-}
-
-.loading-icon {
-  animation: rotate 1s linear infinite;
-  margin-bottom: 16px;
-  color: #409eff;
-}
-
-.loading-text {
-  font-size: 14px;
-}
-
-@keyframes rotate {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-.virtual-scroll-wrapper {
-  height: 100%;
-  padding: 0 16px;
-}
-
-.selected-shipment-detail {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: #fff;
-  z-index: 10;
-  overflow-y: auto;
-}
-
-.panel-footer {
-  padding: 12px 16px;
-  border-top: 1px solid #e4e7ed;
-  background: #f8f9fa;
-  flex-shrink: 0;
-}
-
-.footer-info {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-size: 12px;
-  color: #909399;
-}
-
-.info-text {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.info-search {
-  color: #409eff;
-  font-weight: 500;
-}
-
-.info-time {
-  font-family: monospace;
-}
-
-.filter-option {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 0;
-}
-
-.filter-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-}
-
-.filter-option--active {
-  color: #409eff;
-  font-weight: 500;
-}
-</style>
