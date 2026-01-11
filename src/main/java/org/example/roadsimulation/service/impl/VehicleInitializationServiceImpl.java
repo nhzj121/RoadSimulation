@@ -43,21 +43,23 @@ public class VehicleInitializationServiceImpl implements VehicleInitializationSe
         List<Vehicle> allVehicles = vehicleRepository.findAll();
         logger.info("需要初始化的车辆总数: {}", allVehicles.size());
 
-        // 2. 获取默认POI（如果没有设置，则使用第一个仓库）
-        POI defaultPOI = getDefaultPOI();
-        if (defaultPOI == null) {
-            logger.error("无法找到默认POI，初始化失败");
-            throw new IllegalStateException("没有可用的默认POI，无法初始化车辆状态");
+        // 2. 获取所有可用POI（仓库或配送中心）
+        List<POI> availablePOIs = getAvailablePOIsForInitialization();
+        if (availablePOIs.isEmpty()) {
+            logger.error("无法找到可用POI，初始化失败");
+            throw new IllegalStateException("没有可用的POI，无法初始化车辆状态");
         }
 
-        logger.info("使用默认POI进行初始化: {} (ID: {})", defaultPOI.getName(), defaultPOI.getId());
+        logger.info("使用 {} 个可用POI进行初始化", availablePOIs.size());
 
         // 3. 初始化每辆车
         int successCount = 0;
         int skipCount = 0;
         int errorCount = 0;
+        Random random = new Random();
 
-        for (Vehicle vehicle : allVehicles) {
+        for (int i = 0; i < allVehicles.size(); i++) {
+            Vehicle vehicle = allVehicles.get(i);
             try {
                 // 检查是否可以初始化
                 if (!canInitializeVehicle(vehicle.getId())) {
@@ -67,12 +69,17 @@ public class VehicleInitializationServiceImpl implements VehicleInitializationSe
                     continue;
                 }
 
+                // 分配策略：轮询或随机分配POI
+                POI assignedPOI = allocatePOIForVehicle(vehicle, availablePOIs, i, random);
+
                 // 执行初始化
-                initializeSingleVehicle(vehicle, defaultPOI);
+                initializeSingleVehicle(vehicle, assignedPOI);
                 successCount++;
 
-                logger.debug("车辆 {} (车牌: {}) 初始化成功",
-                        vehicle.getId(), vehicle.getLicensePlate());
+                logger.debug("车辆 {} (车牌: {}) 初始化到 {} (ID: {})",
+                        vehicle.getId(), vehicle.getLicensePlate(),
+                        assignedPOI.getName(), assignedPOI.getId());
+
 
             } catch (Exception e) {
                 logger.error("车辆 {} (车牌: {}) 初始化失败: {}",
@@ -86,6 +93,50 @@ public class VehicleInitializationServiceImpl implements VehicleInitializationSe
 
         logger.info("车辆初始化完成: 成功 {} 辆, 跳过 {} 辆, 失败 {} 辆",
                 successCount, skipCount, errorCount);
+    }
+
+    /**
+     * 获取可用于初始化的POI列表
+     */
+    private List<POI> getAvailablePOIsForInitialization() {
+        List<POI> availablePOIs = new ArrayList<>();
+
+        // 1. 优先使用已设置的默认POI
+        if (defaultPoiId != null) {
+            poiRepository.findById(defaultPoiId).ifPresent(availablePOIs::add);
+        }
+
+        // 2. 添加所有仓库
+        List<POI> warehouses = poiRepository.findByPoiType(POI.POIType.WAREHOUSE);
+        for (POI warehouse : warehouses) {
+            if (!availablePOIs.contains(warehouse)) {
+                availablePOIs.add(warehouse);
+            }
+        }
+
+        // 3. 如果没有仓库，添加配送中心
+        if (availablePOIs.isEmpty()) {
+            List<POI> distributionCenters = poiRepository.findByPoiType(POI.POIType.DISTRIBUTION_CENTER);
+            availablePOIs.addAll(distributionCenters);
+        }
+
+        return availablePOIs;
+    }
+
+    /**
+     * 为车辆分配POI的策略
+     */
+    private POI allocatePOIForVehicle(Vehicle vehicle, List<POI> availablePOIs, int vehicleIndex, Random random) {
+        // 策略1: 轮询分配 (确保均匀分布)
+        int poiIndex = vehicleIndex % availablePOIs.size();
+
+        // 策略2: 随机分配 (增加随机性)
+        // int poiIndex = random.nextInt(availablePOIs.size());
+
+        // 策略3: 基于车辆属性分配 (如根据车辆类型分配到不同类型的POI)
+        // poiIndex = allocateByVehicleType(vehicle, availablePOIs, vehicleIndex);
+
+        return availablePOIs.get(poiIndex);
     }
 
     ///

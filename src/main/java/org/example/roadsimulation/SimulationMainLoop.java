@@ -41,50 +41,40 @@ public class SimulationMainLoop {
     }
 
     /**
-     * 主循环方法 - 每 7 秒执行一次循环（现实时间）
-     * 每次循环推进 MINUTES_PER_LOOP（仿真时间）
+     * 主循环方法 - 每 3 秒执行一次循环（现实时间）
+     * 通过记录循环次数来确定仿真时间，同时也是基于循环次数来确定是否转入分支执行相关仿真循环操作
      */
-    @Scheduled(fixedRate = 4000)
+    @Scheduled(fixedRate = 3000)
     public void executeMainLoop() {
         // 前端/API 控制是否运行
         if (!isRunning) {
             return;
         }
 
-        // ✅ 计算仿真当前时间（统一时间框架核心）
-        int simMinutes = loopCount * MINUTES_PER_LOOP;
-        LocalDateTime simNow = SIM_START.plusMinutes(simMinutes);
+        // 计算仿真当前时间（统一时间框架核心）
+        int simMinutes = loopCount * MINUTES_PER_LOOP;// 计算总仿真分钟数
+        LocalDateTime simNow = SIM_START.plusMinutes(simMinutes); // 计算当前仿真时间
 
         System.out.println("=== 主循环第 " + loopCount + " 次 ===");
         System.out.println("模拟时间: " + (simMinutes / 60.0) + " 小时 | simNow=" + simNow);
 
         if (loopCount == 0) {
-            stateUpdateService.resetWindowsOnce(simNow, MINUTES_PER_LOOP);
+            // 初始化车辆状态
             vehicleInitializationService.initializeAllVehicleStatus();
         }
-        // ======================
-        // 1) 货物生成（每 1 小时）
+        //  货物生成（每 1 小时）
         if (loopCount % 2 == 0) {
             System.out.println(">>> 执行货物生成逻辑");
+            // 基于循环次数进行货物生成
             dataInitializer.generateGoods(loopCount);
         }
 
-//        // 2) 货物运出（每 2 小时）
-//        if (loopCount % 4 == 0) {
-//            System.out.println(">>> 执行货物运出逻辑");
-//            dataInitializer.shipOutGoods(loopCount);
-//        }
-
-        // 3) 打印仿真状态（每 5 小时）
+        // 打印仿真状态（每 5 小时）
         if (loopCount % 10 == 0) {
             System.out.println(">>> 打印仿真状态");
             dataInitializer.printSimulationStatus(loopCount);
         }
 
-        // ✅ 4) 车辆状态更新（每循环一次）：统一接入主循环
-        // stateUpdateService.tick(simNow, MINUTES_PER_LOOP, loopCount);
-
-        // ======================
         loopCount++;
     }
     public LocalDateTime getCurrentSimTime() {

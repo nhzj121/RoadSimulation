@@ -2,6 +2,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import MapContainer from '@/components/MapContainer.vue'
 import POIManager from '@/components/POIManager.vue'
+import PressureTest from "@/components/PressureTest.vue";
 
 const routes = [
     {
@@ -13,6 +14,11 @@ const routes = [
         path: '/poi-manager',
         name: 'POIManager',
         component: POIManager
+    },
+    {
+        path: '/pressure-test',
+        name: 'PressureTest',
+        component: PressureTest
     }
 ]
 

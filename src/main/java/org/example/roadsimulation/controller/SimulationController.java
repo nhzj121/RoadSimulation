@@ -86,9 +86,14 @@ public class SimulationController {
                     .orElseThrow(() -> new RuntimeException("Assignment not found: " + request.getAssignmentId()));
 
             // 2. 获取车辆
-            Vehicle vehicle = assignment.getAssignedVehicle();
+            Vehicle vehicle = vehicleRepository.findById(request.vehicleId)
+                    .orElseThrow(() -> new RuntimeException("Vehicle not found: " + request.vehicleId));
+
             if (vehicle == null) {
-                throw new RuntimeException("No vehicle assigned to assignment: " + request.getAssignmentId());
+                vehicle = assignment.getAssignedVehicle();
+                if(vehicle == null){
+                    throw new RuntimeException("No vehicle assigned to assignment: " + request.getAssignmentId());
+                }
             }
 
             // 3. 获取卸货点POI
@@ -111,7 +116,7 @@ public class SimulationController {
 
             // 6. 载货量清零
             vehicle.setCurrentLoad(0.0);
-            vehicle.setCargoVolume(0.0);
+            vehicle.setCurrentVolumn(0.0);
 
             // 7. 保存车辆
             vehicleRepository.save(vehicle);

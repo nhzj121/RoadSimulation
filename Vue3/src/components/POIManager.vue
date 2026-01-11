@@ -5,7 +5,7 @@
       <!-- 导航栏 -->
       <el-header class="header-navbar">
         <div class="navbar-content left-aligned">
-          <h2 class="navbar-title" @click="goBack">物流运输仿真系统</h2>
+          <h2 class="navbar-title" @click="goBack">运输车辆调度优化与仿真系统</h2>
           <div class="navbar-menu">
             <ElButton text>POI管理</ElButton>
           </div>
@@ -159,7 +159,7 @@
 
 <script setup lang="ts">
 import {ref, onMounted, onUnmounted, computed, nextTick} from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import {ElButton, ElMessage, ElMessageBox} from 'element-plus'
 import {poiManagerApi, POIFromDB} from "../api/poiManagerApi";
 import AMapLoader from "@amap/amap-jsapi-loader";
 import factoryIcon from '../../public/icons/factory.png';
@@ -178,6 +178,9 @@ import { useRouter } from 'vue-router'
 const router = useRouter()
 const goBack = () => {
   router.push('/')
+}
+const goToPressureTest = () => {
+  router.push('./pressure-test')
 }
 
 // 地图相关变量
@@ -233,7 +236,7 @@ const poiCategories = ref<POICategory[]>([
     name: 'factory',
     label: '工厂',
     types: ['170300'],
-    keywords: ['水泥'],//'木材厂','家具厂'
+    keywords: [],//'木材厂','家具厂','水泥'
     visible: true
   },
   {
@@ -247,7 +250,7 @@ const poiCategories = ref<POICategory[]>([
     name: 'gasStation',
     label: '加油站',
     types: ['010100'],
-    keywords: [],//'加油站', '中国石化'
+    keywords: ['中国石化'],//'加油站',
     visible: true
   },
   {
@@ -275,7 +278,7 @@ const poiCategories = ref<POICategory[]>([
     name: 'materialMarket',
     label: '建材市场',
     types: ['060603'],
-    keywords: ['建材市场'],//'建材市场'
+    keywords: [],//'建材市场','建材市场'
     visible: true
   },
   {

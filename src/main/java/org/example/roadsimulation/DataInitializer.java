@@ -127,8 +127,8 @@ public class DataInitializer{
     private final Map<POI, Integer> poiTrueCount = new ConcurrentHashMap<>();
 
     // 限制条件
-    private final int maxTrueCount = 45; // 最大为真的数量
-    private double trueProbability = 0.009; // 判断为真的概率
+    private final int maxTrueCount = 300; // 最大为真的数量
+    private double trueProbability = 0.1; // 判断为真的概率
 
     @Autowired
     public DataInitializer(GoodsPOIGenerateService goodsPOIGenerateService,
@@ -355,7 +355,7 @@ public class DataInitializer{
             try {
                 System.out.println("为POI [" + poi.getName() + "] 生成货物");
                 setPoiToTrue(poi);
-                trueProbability = trueProbability * 0.95;
+                trueProbability = trueProbability * 0.98;
 
                 Random random = new Random();
                 // 随机获取终点POI
@@ -615,7 +615,7 @@ public class DataInitializer{
      */
     private Integer generateRandomQuantity() {
         Random random = new Random();
-        return random.nextInt(250) + 50; // 100-600之间的随机数
+        return random.nextInt(500) + 100; // 100-600之间的随机数
     }
 
     // 起点与终点之间通过 route 实现的关系建立
@@ -902,7 +902,11 @@ public class DataInitializer{
                 BigDecimal assignedWeight = BigDecimal.valueOf(goods.getWeightPerUnit())
                         .multiply(BigDecimal.valueOf(assignQuantity))
                         .setScale(2, RoundingMode.HALF_UP);
+                BigDecimal assignedVolume = BigDecimal.valueOf(goods.getVolumePerUnit())
+                        .multiply(BigDecimal.valueOf(assignQuantity))
+                        .setScale(2, RoundingMode.HALF_UP);
                 selectedVehicle.setCurrentLoad(assignedWeight.doubleValue());
+                selectedVehicle.setCurrentVolumn(assignedVolume.doubleValue());
 
                 // 标记车辆已分配
                 assignedVehicleIds.add(selectedVehicle.getId());
@@ -1209,7 +1213,7 @@ public class DataInitializer{
 
                 // 更新POI状态
                 poiIsWithGoods.put(freshStartPOI, false);
-                trueProbability = trueProbability / 0.95;
+                trueProbability = trueProbability / 0.98;
             }
         }
     }
@@ -1344,7 +1348,7 @@ public class DataInitializer{
 
                 // 更新POI状态
                 poiIsWithGoods.put(freshStartPOI, false);
-                trueProbability = trueProbability / 0.95;
+                trueProbability = trueProbability / 0.98;
             }
 
         } catch (Exception e) {
