@@ -77,6 +77,7 @@ public class SimulationMainLoop {
 
         loopCount++;
     }
+
     public LocalDateTime getCurrentSimTime() {
         long simMinutes = (long) loopCount * MINUTES_PER_LOOP;
         return SIM_START.plusMinutes(simMinutes);

@@ -57,7 +57,6 @@ public class DataInitializer{
     private static final Logger logger = LoggerFactory.getLogger(DataInitializer.class);
 
     private final ShipmentProgressService shipmentProgressService;
-    private final GoodsPOIGenerateService goodsPOIGenerateService;
     private final EnrollmentRepository enrollmentRepository;
     private final GoodsRepository goodsRepository;
     private final POIRepository poiRepository;
@@ -131,8 +130,7 @@ public class DataInitializer{
     private double trueProbability = 0.1; // 判断为真的概率
 
     @Autowired
-    public DataInitializer(GoodsPOIGenerateService goodsPOIGenerateService,
-                           EnrollmentRepository enrollmentRepository,
+    public DataInitializer(EnrollmentRepository enrollmentRepository,
                            GoodsRepository goodsRepository,
                            POIRepository poiRepository,
                            RouteRepository routeRepository,
@@ -145,7 +143,6 @@ public class DataInitializer{
                            ShipmentItemService shipmentItemService,
                            VehicleMatchingService vehicleMatchingService,
                            @Lazy ShipmentProgressService shipmentProgressService) {
-        this.goodsPOIGenerateService = goodsPOIGenerateService;
         this.enrollmentRepository = enrollmentRepository;
         this.goodsRepository = goodsRepository;
         this.poiRepository = poiRepository;
@@ -217,9 +214,9 @@ public class DataInitializer{
 
     @PostConstruct
     public void initialize(){
-        // 初始化 POI 列表
-        this.CementPlantList = getFilteredPOIByNameAndType("水泥", POI.POIType.FACTORY);
-        this.MaterialMarketList = getFilterdPOIByType(POI.POIType.MATERIAL_MARKET);
+        // 初始化 POI 列表 ToDo 注意这里原来的Factory 和 MaterialMarket已经删掉了
+        this.CementPlantList = getFilteredPOIByNameAndType("水泥", POI.POIType.BOARD_FACTORY);
+        this.MaterialMarketList = getFilterdPOIByType(POI.POIType.BOARD_FACTORY);
         // this.goalFactoryList = getFilteredPOIByNameAndType("水泥", POI.POIType.FACTORY);
         this.Cement = getGoodsForTest("CEMENT");
         System.out.println("DataInitializer 初始化完成，共加载 " + CementPlantList.size() + " 个起点POI 和 " + MaterialMarketList.size() + "个终点POI");
@@ -275,6 +272,11 @@ public class DataInitializer{
     }
 
     /**
+     * 根据加工链获取相应的POI点以及对应的运输货物
+     */
+    // Todo
+
+    /**
      * 根据 sku 进行货物的获取
      */
     public Goods getGoodsForTest(String sku) {
@@ -303,7 +305,11 @@ public class DataInitializer{
 
     /**
      *  周期性的随机判断 - 每5秒执行一次
-     *  用于随机选择 起点POI
+     *
+     *  根据事先确定的加工链来确定整个运输过程中的结点和对应运输货物，
+     *  目前来说应该还是在上游结点进行随机生成，然后沿着加工链上的结点进行运输
+     *      -->（还是说从下层开始，比如从最终产品开始进行随机需求量的生成，逆向递推进行需求生成）
+     *
      */
     //@Scheduled(fixedRate = 10000)
     @Transactional
@@ -368,6 +374,8 @@ public class DataInitializer{
                 // 计算需要的总重量
                 Double requiredWeight = Cement.getWeightPerUnit() * generateQuantity;
 
+                // Todo 路程初始化时要将运输路程总里程 ， 道路复杂程度等部分进行一个确定，纳入后续代价函数计算中
+                // 后端实际上并没有建立有效的两点之间路径的实际存储，这一部分内容现在是在前端进行的实现
                 Route route = initializeRoute(poi, endPOI);
 
                 // 批量创建货物运输
@@ -444,57 +452,6 @@ public class DataInitializer{
             throw new RuntimeException("货物删除失败", e);
         }
     }
-
-//    /**
-//     * 周期性的重置判断 - 每12秒执行一次
-//     */
-//    //@Scheduled(fixedRate = 15000) // 12秒一个周期
-//    @Transactional
-//    public void periodicReset() {
-//        if (CementPlantList.isEmpty() || MaterialMarketList.isEmpty()) {
-//            return;
-//        }
-//
-//        System.out.println("开始重置POI判断状态...");
-//
-//        // 随机选择一个为真的POI重置为假
-//        List<POI> truePois = getCurrentTruePois();
-//        if (!truePois.isEmpty()) {
-//            Random random = new Random();
-//            POI selectedPoi = truePois.get(random.nextInt(truePois.size()));
-//
-//            // 关键：从数据库中重新加载POI，而不是使用map中的旧引用
-//            POI freshSelectedPoi = poiRepository.findById(selectedPoi.getId())
-//                    .orElseThrow(() -> new RuntimeException("POI not found: " + selectedPoi.getId()));
-//
-//            // 使用重新加载的POI
-//            deleteRelationBetweenPOIAndGoods(selectedPoi);
-//
-//            // 更新映射关系
-//            POI correspondingEndPOI = null;
-//            for (Map.Entry<POI, POI> entry : startToEndMapping.entrySet()) {
-//                if (entry.getKey().getId().equals(freshSelectedPoi.getId())) {
-//                    correspondingEndPOI = entry.getValue();
-//                    break;
-//                }
-//            }
-//
-//            if (correspondingEndPOI != null) {
-//                startToEndMapping.keySet().removeIf(key -> key.getId().equals(freshSelectedPoi.getId()));
-//                System.out.println("同时移除对应的终点POI: " + correspondingEndPOI.getName());
-//            }
-//
-//            trueProbability = trueProbability / 0.95;
-//
-//            // 更新状态，使用freshSelectedPoi
-//            setPoiToFalse(selectedPoi);
-//            System.out.println("POI [" + freshSelectedPoi.getName() + "] 已被重置为假");
-//        } else{
-//            System.out.println("无可重置的POI数据");
-//        }
-//
-//        printCurrentStatus();
-//    }
 
     /**
      * 伪随机判断逻辑

@@ -168,10 +168,16 @@ import gasStationIcon from '../../public/icons/gas-station.png';
 import maintenanceIcon from '../../public/icons/maintenance-center.png';
 import restAreaIcon from '../../public/icons/rest-area.png';
 import transportIcon from '../../public/icons/distribution-center.png';
-import materialMarketIcon from '../../public/icons/materialMarket.png';
-import vegetableBaseIcon from '../../public/icons/vegetable-base.png';
-import vegetableMarketIcon from '../../public/icons/vegetable-market.png';
 import testIcon from '../../public/icons/test.png';
+import timberYardIcon from '../../public/icons/timber-yard.png';
+import sawmillIcon from '../../public/icons/sawmill.png';
+import boardFactoryIcon from '../../public/icons/board-factory.png';
+import ironMineIcon from '../../public/icons/iron-mine.png';
+import steelMillIcon from '../../public/icons/steel-mill.png';
+import steelProcessingPlantIcon from '../../public/icons/steel-processing-plant.png';
+import furnitureFactoryIcon from '../../public/icons/furniture-factory.png';
+import tireManufacturingPlant from '../../public/icons/tire-manufacturing-plant.png';
+import autoAssemblyPlant from '../../public/icons/auto-assembly-plant.png';
 import { useRouter } from 'vue-router'
 
 // VueRouter配置
@@ -224,9 +230,16 @@ const poiData = ref<Record<string, POI[]>>({
   maintenance: [],
   restArea: [],
   transport: [],
-  materialMarket: [],
-  vegetableBase: [],
-  vegetableMarket: [],
+  timberYard: [],
+  sawmill: [],
+  boardFactory: [],
+  ironMine: [],
+  steelMill: [],
+  steelProcessingPlant: [],
+  furnitureFactory: [],
+  rubberProcessingPlant: [],
+  tireManufacturingPlant: [],
+  autoAssemblyPlant: [],
   test: [],
 })
 
@@ -275,24 +288,73 @@ const poiCategories = ref<POICategory[]>([
     visible: true
   },
   {
-    name: 'materialMarket',
-    label: '建材市场',
-    types: ['060603'],
-    keywords: [],//'建材市场','建材市场'
+    name: 'timberYard',
+    label: '原木厂',
+    types: [],
+    keywords: ['林场'],
     visible: true
   },
   {
-    name: 'vegetableBase',
-    label: '蔬菜基地',
-    types: ['170400'],
-    keywords: [],//'蔬菜基地', '蔬菜'
+    name: 'sawmill',
+    label: '锯木厂',
+    types: ['170300'],
+    keywords: ['木材加工'],
     visible: true
   },
   {
-    name: 'vegetableMarket',
-    label: '蔬菜市场',
-    types: ['060705'],
-    keywords: [],//'蔬菜市场'
+    name: 'boardFactory',
+    label: '板材厂',
+    types: [],
+    keywords: ['板材'],
+    visible: true
+  },
+  {
+    name: 'ironMine',
+    label: '铁矿厂',
+    types: ['170209'], // 160100 偏向矿产
+    keywords: ['铁矿','钢'],
+    visible: true
+  },
+  {
+    name: 'steelMill',
+    label: '冶钢厂',
+    types: ['170205'],
+    keywords: ['钢厂'],
+    visible: true
+  },
+  {
+    name: 'steelProcessingPlant',
+    label: '钢材加工厂',
+    types: ['170300'],
+    keywords: ['钢材加工'],
+    visible: true
+  },
+  {
+    name: 'furnitureFactory',
+    label: '家具制造厂',
+    types: ['170300'],
+    keywords: ['家具厂'],
+    visible: true
+  },
+  {
+    name: 'rubberProcessingPlant',
+    label: '橡胶加工厂',
+    types: ['170300'],
+    keywords: ['橡胶'],
+    visible: true
+  },
+  {
+    name: 'tireManufacturingPlant',
+    label: '轮胎制造厂',
+    types: ['170300'],
+    keywords: ['轮胎制造', '轮胎厂'],
+    visible: true
+  },
+  {
+    name: 'autoAssemblyPlant',
+    label: '汽车总装厂',
+    types: ['170300'],
+    keywords: ['汽车制造'],
     visible: true
   },
   {
@@ -315,9 +377,13 @@ const isSearching = ref(false)
 
 // 成都平原搜索区域
 const chengduPlainPolygon = [
-  [103.566708, 31.019274], [103.7000, 31.1000],
-  [104.8000, 31.1000], [104.8000, 30.3000],
-  [103.848084, 30.076928], [103.463537, 30.174276]
+  [105.142653,31.953638],
+  [105.754144,31.049152],
+  [105.310195,29.575159],
+  [102.521285,26.021473],
+  [101.792754,26.001013],
+  [100.74549,26.531822],
+  [102.726817,31.722436]
 ];
 // 103.566708,31.019274|103.700000,31.100000|104.800000,31.100000|104.800000,30.300000|103.848084,30.076928|103.463537,30.174276|103.566708,31.019274
 
@@ -359,30 +425,22 @@ const poiIcons = {
     anchor: 'bottom-center',
     color: '#073B4C'
   },
-  '建材市场':{
-    url: materialMarketIcon,
-    size:[22, 22],
-    anchor: 'bottom-center',
-    color: '#0c0b09'
-  },
-  '蔬菜基地': {
-    url: vegetableBaseIcon,
-    size: [22, 22],
-    anchor: 'bottom-center',
-    color: '#4CAF50' // 绿色
-  },
-  '蔬菜市场': {
-    url: vegetableMarketIcon,
-    size: [22, 22],
-    anchor: 'bottom-center',
-    color: '#8BC34A' // 浅绿色
-  },
   '测试': {
     url: testIcon,
     size: [22,22],
     anchor: 'bottom-center',
     color: '#ff0000'
-  }
+  },
+  '原木厂': { url: timberYardIcon, size: [22, 22], anchor: 'bottom-center', color: '#8B4513' },      // 棕色
+  '锯木厂': { url: sawmillIcon, size: [22, 22], anchor: 'bottom-center', color: '#A0522D' },      // 赭色
+  '板材厂': { url: boardFactoryIcon, size: [22, 22], anchor: 'bottom-center', color: '#DEB887' },      // 浅木色
+  '铁矿厂': { url: ironMineIcon, size: [22, 22], anchor: 'bottom-center', color: '#708090' },      // 铁灰色
+  '冶钢厂': { url: steelMillIcon, size: [22, 22], anchor: 'bottom-center', color: '#B22222' },      // 火红色
+  '钢材加工厂': { url: steelProcessingPlantIcon, size: [22, 22], anchor: 'bottom-center', color: '#4682B4' },  // 钢蓝色
+  '家具制造厂': { url: furnitureFactoryIcon, size: [22, 22], anchor: 'bottom-center', color: '#D2691E' },   // 橙棕色
+  '橡胶加工厂': { url: factoryIcon, size: [22, 22], anchor: 'bottom-center', color: '#556B2F' },        // 暗橄榄绿
+  '轮胎制造厂': { url: tireManufacturingPlant, size: [22, 22], anchor: 'bottom-center', color: '#2F4F4F' },        // 深石板灰 (偏黑，类似轮胎)
+  '汽车总装厂': { url: autoAssemblyPlant, size: [22, 22], anchor: 'bottom-center', color: '#4169E1' }         // 皇家蓝 (科技工业感)
 };
 
 // 数据加载状态
@@ -403,10 +461,17 @@ const typeMapping = {
   'maintenance': 'MAINTENANCE_CENTER',
   'restArea': 'REST_AREA',
   'transport': 'DISTRIBUTION_CENTER',
-  'materialMarket': 'MATERIAL_MARKET',
-  'vegetableBase': 'VEGETABLE_BASE',
-  'vegetableMarket': 'VEGETABLE_MARKET',
   'test': 'TEST',
+  'timberYard': 'TIMBER_YARD',
+  'sawmill': 'SAWMILL',
+  'boardFactory': 'BOARD_FACTORY',
+  'ironMine': 'IRON_MINE',
+  'steelMill': 'STEEL_MILL',
+  'steelProcessingPlant': 'STEEL_PROCESSING_PLANT',
+  'furnitureFactory': 'FURNITURE_FACTORY',
+  'rubberProcessingPlant': 'RUBBER_PROCESSING_PLANT',
+  'tireManufacturingPlant': 'TIRE_MANUFACTURING_PLANT',
+  'autoAssemblyPlant': 'AUTO_ASSEMBLY_PLANT',
 } as const;
 
 const reverseTypeMapping = {
@@ -416,10 +481,17 @@ const reverseTypeMapping = {
   'MAINTENANCE_CENTER': 'maintenance',
   'REST_AREA': 'restArea',
   'DISTRIBUTION_CENTER': 'transport',
-  'MATERIAL_MARKET': 'materialMarket',
-  'VEGETABLE_BASE': 'vegetableBase',
-  'VEGETABLE_MARKET': 'vegetableMarket',
-  'TEST': 'test'
+  'TEST': 'test',
+  'TIMBER_YARD': 'timberYard',
+  'SAWMILL': 'sawmill',
+  'BOARD_FACTORY': 'boardFactory',
+  'IRON_MINE': 'ironMine',
+  'STEEL_MILL': 'steelMill',
+  'STEEL_PROCESSING_PLANT': 'steelProcessingPlant',
+  'FURNITURE_FACTORY': 'furnitureFactory',
+  'RUBBER_PROCESSING_PLANT': 'rubberProcessingPlant',
+  'TIRE_MANUFACTURING_PLANT': 'tireManufacturingPlant',
+  'AUTO_ASSEMBLY_PLANT': 'autoAssemblyPlant'
 } as const;
 
 // 地图初始化
@@ -432,7 +504,7 @@ const initMap = async () => {
     const AMapInstance = await AMapLoader.load({
       key: "e0ea478e44e417b4c2fc9a54126debaa",
       version: "2.0",
-      plugins: ["AMap.PlaceSearch", "AMap.Geocoder", "AMap.Scale", "AMap.ToolBar"],
+      plugins: ["AMap.PlaceSearch", "AMap.Geocoder", "AMap.Scale", "AMap.ToolBar", "AMap.Polygon"],
     });
 
     AMap.value = AMapInstance;
@@ -454,6 +526,55 @@ const initMap = async () => {
     ElMessage.error('地图初始化失败');
   }
 };
+
+// const pathArr = [
+//     [105.142653,31.953638],
+//     [105.754144,31.049152],
+//     [105.310195,29.575159],
+//     [102.521285,26.021473],
+//     [101.792754,26.001013],
+//     [100.74549,26.531822],
+//     [102.726817,31.722436]
+//     // 105.142653,31.953638|105.754144,31.049152|105.310195,29.575159|102.521285,26.021473|101.792754,26.001013|100.74549,26.531822102.726817,31.722436|105.142653,31.953638
+// ];
+//
+// const drawPolygon = () => {
+//   if (!map.value || !AMap.value) return;
+//
+//   // 1.3 创建 Polygon 对象
+//   const polygon = new AMap.value.Polygon({
+//     path: pathArr, // 使用你现有的成都平原边界数组
+//     fillColor: "#ccebc5",      // 多边形填充颜色
+//     fillOpacity: 0.5,          // 多边形填充透明度
+//     strokeColor: "#2b8cbe",    // 线条颜色
+//     strokeWeight: 2            // 线条宽度
+//   });
+//
+//   // 1.4 给 Polygon 添加事件
+//   // 鼠标移入更改样式
+//   polygon.on("mouseover", () => {
+//     polygon.setOptions({
+//       fillOpacity: 0.7, // 多边形填充透明度
+//       fillColor: "#7bccc4",
+//     });
+//   });
+//
+//   // 鼠标移出恢复样式
+//   polygon.on("mouseout", () => {
+//     polygon.setOptions({
+//       fillOpacity: 0.5,
+//       fillColor: "#ccebc5",
+//     });
+//   });
+//
+//   // 1.5 添加 Polygon 实例至地图
+//   map.value.add(polygon);
+//
+//   // 可选：自动调整地图视野以完全展示这个多边形
+//   // map.value.setFitView([polygon]);
+// };
+
+
 
 // 从后端加载数据
 const loadDataFromBackend = async (): Promise<void> => {

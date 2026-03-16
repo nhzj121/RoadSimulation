@@ -2444,8 +2444,6 @@ onMounted(() => {
           animationManager.setGlobalSpeedFactor(speedFactor.value);
         }
 
-        // 初始加载POI数据
-        updatePOIData();
       })
       .catch((e) => {
         console.log(e);
