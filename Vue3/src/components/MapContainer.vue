@@ -26,9 +26,9 @@
                 <div class="speed-slider">
                   <ElSlider
                       v-model="speedFactor"
-                      :min="0.1"
-                      :max="10"
-                      :step="0.1"
+                      :min="1"
+                      :max="50"
+                      :step="1"
                       :format-tooltip="formatSpeedTooltip"
                       @change="onSpeedChange"
                       size="small"
@@ -581,7 +581,7 @@ class VehicleAnimation {
     this.stage2Segments = this._calculateSegments(this.stage2Path);
 
     // 基础速度
-    this.baseSpeed = 900; // 米/秒
+    this.baseSpeed = 20; // 米/秒
 
     // 标记引用
     this.movingMarker = routeData.movingMarker;
@@ -1055,7 +1055,7 @@ class VehicleAnimationManager {
 
   // 设置全局速度因子
   setGlobalSpeedFactor(factor) {
-    this.globalSpeedFactor = Math.max(0.1, Math.min(10, factor));
+    this.globalSpeedFactor = Math.max(1, Math.min(50, factor));
     this.animations.forEach(animation => {
       animation.updateSpeedFactor(this.globalSpeedFactor);
     });
@@ -1271,6 +1271,11 @@ const resetSimulation = async () => {
       stats.poiCount = 0;
       stats.tasks = 0;
       stats.anomalyRate = 0;
+
+      speedFactor.value = 1;
+      if (animationManager) {
+        animationManager.setGlobalSpeedFactor(1);
+      }
 
       ElMessage.success('仿真已重置');
     }
