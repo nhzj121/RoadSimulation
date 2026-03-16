@@ -57,19 +57,16 @@ public class DataInitializer{
     private static final Logger logger = LoggerFactory.getLogger(DataInitializer.class);
 
     private final ShipmentProgressService shipmentProgressService;
-    private final GoodsPOIGenerateService goodsPOIGenerateService;
     private final EnrollmentRepository enrollmentRepository;
     private final GoodsRepository goodsRepository;
     private final POIRepository poiRepository;
     private final RouteRepository routeRepository;
-    private final CustomerRepository customerRepository;
     private final AssignmentRepository assignmentRepository;
     private final ShipmentRepository shipmentRepository;
     private final ShipmentItemRepository shipmentItemRepository;
     private final SimulationDataCleanupService cleanupService;
     private final ShipmentItemService shipmentItemService;
     private final VehicleRepository vehicleRepository;
-    private final VehicleMatchingService vehicleMatchingService;
 
     private final Map<POI, POI> startToEndMapping = new ConcurrentHashMap<>(); // 起点到终点的映射关系
     // 修改成员变量，使用起点-终点对作为键
@@ -131,33 +128,27 @@ public class DataInitializer{
     private double trueProbability = 0.009; // 判断为真的概率
 
     @Autowired
-    public DataInitializer(GoodsPOIGenerateService goodsPOIGenerateService,
-                           EnrollmentRepository enrollmentRepository,
+    public DataInitializer(EnrollmentRepository enrollmentRepository,
                            GoodsRepository goodsRepository,
                            POIRepository poiRepository,
                            RouteRepository routeRepository,
-                           CustomerRepository customerRepository,
                            ShipmentRepository shipmentRepository,
                            ShipmentItemRepository shipmentItemRepository,
                            SimulationDataCleanupService cleanupService,
                            AssignmentRepository assignmentRepository,
                            VehicleRepository vehicleRepository,
                            ShipmentItemService shipmentItemService,
-                           VehicleMatchingService vehicleMatchingService,
                            @Lazy ShipmentProgressService shipmentProgressService) {
-        this.goodsPOIGenerateService = goodsPOIGenerateService;
         this.enrollmentRepository = enrollmentRepository;
         this.goodsRepository = goodsRepository;
         this.poiRepository = poiRepository;
         this.routeRepository = routeRepository;
-        this.customerRepository = customerRepository;
         this.shipmentRepository = shipmentRepository;
         this.shipmentItemRepository = shipmentItemRepository;
         this.cleanupService = cleanupService;
         this.assignmentRepository = assignmentRepository;
         this.vehicleRepository = vehicleRepository;
         this.shipmentItemService = shipmentItemService;
-        this.vehicleMatchingService = vehicleMatchingService;
         this.shipmentProgressService = shipmentProgressService;
     }
 
@@ -175,21 +166,6 @@ public class DataInitializer{
 
         periodicJudgement();
     }
-
-//    /**
-//     * 运出货物 - 由主循环调用
-//     */
-//    @Transactional
-//    public void shipOutGoods(int loopCount) {
-//        List<POI> truePois = getCurrentTruePois();
-//
-//        if (truePois.isEmpty()) {
-//            System.out.println("当前没有可运出的货物");
-//            return;
-//        }
-//
-//        periodicReset();
-//    }
 
     /**
      * 打印仿真状态 - 由主循环调用
@@ -218,8 +194,8 @@ public class DataInitializer{
     @PostConstruct
     public void initialize(){
         // 初始化 POI 列表
-        this.CementPlantList = getFilteredPOIByNameAndType("水泥", POI.POIType.FACTORY);
-        this.MaterialMarketList = getFilterdPOIByType(POI.POIType.MATERIAL_MARKET);
+        this.CementPlantList = poiRepository.findByPoiType(POI.POIType.GAS_STATION);
+        this.MaterialMarketList = getFilterdPOIByType(POI.POIType.REST_AREA);
         // this.goalFactoryList = getFilteredPOIByNameAndType("水泥", POI.POIType.FACTORY);
         this.Cement = getGoodsForTest("CEMENT");
         System.out.println("DataInitializer 初始化完成，共加载 " + CementPlantList.size() + " 个起点POI 和 " + MaterialMarketList.size() + "个终点POI");
@@ -267,6 +243,7 @@ public class DataInitializer{
                 .filter(poi -> poi.getPoiType().equals(goalPOIType))
                 .collect(Collectors.toList());
     }
+
     /**
      * 根据 种类 进行POI数据的筛选
      */
