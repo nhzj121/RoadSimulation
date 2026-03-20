@@ -45,7 +45,20 @@
               </div>
             </ElCard>
           </div>
+          <!-- 运单生成 -->
+         <div class="shipment-control">
+           <label>生成运单数量:</label>
+           <input type="number" v-model.number="shipmentCount" min="1" />
+           <button @click="generateShipments">生成运单</button>
+         </div>
 
+         <div class="task-sidebar">
+           <ul>
+           <li v-for="shipment in shipments" :key="shipment.id">
+           {{ shipment.refNo }} - {{ shipment.status }}
+           </li>
+           </ul>
+         </div>
           <!-- 车辆状态 -->
           <div class="panel-section">
             <ElCard shadow="never" class="box-card vehicle-status">
@@ -169,6 +182,8 @@ import { InfoFilled } from '@element-plus/icons-vue'
 
 let map = null;
 let AMapLib = null; // 保存加载后的 AMap 构造对象
+const shipmentCount = ref(1);
+const shipments = ref([]);
 const router = useRouter()
 const goToPOIManager = () => {
   router.push('/poi-manager')
@@ -249,6 +264,18 @@ const clearHighlight = () => {
     highlightTimer = null;
   }
   highlightedVehicleId.value = null;
+};
+
+// 生成运单（批量）
+const generateShipments = async () => {
+  if (shipmentCount.value <= 0) return;
+  try {
+    const res = await request.post('/api/shipments/batch-generate', { count: shipmentCount.value });
+    shipments.value = res.data;
+  } catch (error) {
+    console.error("生成运单失败", error);
+    alert("生成运单失败，请检查控制台日志");
+  }
 };
 
 // --- 仿真控制 ---
@@ -2550,6 +2577,17 @@ onUnmounted(() => {
   overflow: hidden;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
   box-sizing: border-box; /* 确保padding包含在内 */
+}
+
+/*运单*/
+.shipment-control {
+  margin-bottom: 16px;
+}
+
+.task-sidebar {
+  border: 1px solid #ccc;
+  padding: 8px;
+  width: 200px;
 }
 
 .box-card:hover {
