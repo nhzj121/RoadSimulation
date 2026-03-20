@@ -170,4 +170,23 @@ public class ShipmentServiceImpl implements ShipmentService {
         // 添加其他规则...ToDo
     }
 
+    // 批量生成运单（示例实现，需根据实际业务完善）
+    @Override
+    public List<Shipment> batchGenerateShipments(int count) {
+        List<Shipment> result = new java.util.ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            Shipment shipment = new Shipment();
+            // TODO: 按照原有生成逻辑设置shipment属性
+            // 示例：生成唯一参考号
+            shipment.setRefNo("AUTO-" + System.currentTimeMillis() + "-" + i);
+            shipment.setStatus(Shipment.ShipmentStatus.CREATED);
+            shipment.setCreatedAt(java.time.LocalDateTime.now());
+            // 其他属性可根据需要设置默认值或随机值
+            // ...
+            result.add(createShipment(shipment));
+        }
+        return result;
+    }
+
 }
+
