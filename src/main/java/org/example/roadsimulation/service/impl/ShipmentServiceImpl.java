@@ -185,12 +185,6 @@ public class ShipmentServiceImpl implements ShipmentService {
         // 添加其他规则...ToDo
     }
 
-    @Override
-    @Transactional
-    public void generateShipments(){
-        batchGenerateShipments(1);
-    }
-
     // ToDo 出于演示需要，这里的生成逻辑先是本地的，后续需要改成 加工链
     // 1. 定义加工链规则（实际项目中可以从数据库配置表里读，这里为了直观用内部类模拟）
     private record TransportRule(POI.POIType startType, POI.POIType endType, String goodsSku) {}
