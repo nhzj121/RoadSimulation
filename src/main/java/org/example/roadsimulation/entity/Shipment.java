@@ -44,11 +44,11 @@ public class Shipment {
 
     @Min(value = 0, message = "总重量不能为负数")
     @Column(name = "total_weight")
-    private Double totalWeight; // kg
+    private Double totalWeight = 0.0; // kg
 
     @Min(value = 0, message = "总体积不能为负数")
     @Column(name = "total_volume")
-    private Double totalVolume; // m3
+    private Double totalVolume = 0.0; // m3
 
     public enum ShipmentStatus {
         CREATED,      // 已创建
@@ -115,12 +115,18 @@ public class Shipment {
         if (item != null) {
             items.add(item);
             item.setShipment(this);
+            this.totalWeight = (this.totalWeight == null ? 0 : this.totalWeight) + (item.getWeight() == null ? 0 : item.getWeight());
+            this.totalVolume = (this.totalVolume == null ? 0 : this.totalVolume) + (item.getVolume() == null ? 0 : item.getVolume());
         }
     }
     public void removeItem(ShipmentItem item) {
         if (item != null) {
-            items.remove(item);
             item.setShipment(null);
+            // 自动扣减总重量和总体积 (确保不扣出负数)
+            double itemWeight = item.getWeight() != null ? item.getWeight() : 0.0;
+            double itemVolume = item.getVolume() != null ? item.getVolume() : 0.0;
+            this.totalWeight = Math.max(0.0, this.totalWeight - itemWeight);
+            this.totalVolume = Math.max(0.0, this.totalVolume - itemVolume);
         }
     }
 

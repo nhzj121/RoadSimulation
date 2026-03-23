@@ -1,1 +1,6 @@
 /Vue3/package.json
+target/
+Vue3/node_modules/
+/package-lock.json
+/Vue3/package-lock.json
+/.idea/

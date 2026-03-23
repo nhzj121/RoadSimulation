@@ -1,6 +1,10 @@
 package org.example.roadsimulation.service.impl;
 
-import org.example.roadsimulation.entity.Shipment;
+import org.example.roadsimulation.DataInitializer;
+import org.example.roadsimulation.entity.*;
+import org.example.roadsimulation.repository.EnrollmentRepository;
+import org.example.roadsimulation.repository.GoodsRepository;
+import org.example.roadsimulation.repository.POIRepository;
 import org.example.roadsimulation.repository.ShipmentRepository;
 import org.example.roadsimulation.service.ShipmentService;
 import org.jetbrains.annotations.NotNull;
@@ -11,17 +15,28 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
-import java.util.List;
-import java.util.Optional;
+import java.util.*;
 
 @Service
 @Transactional
 public class ShipmentServiceImpl implements ShipmentService {
     private final ShipmentRepository shipmentRepository;
+    private final POIRepository poiRepository;
+    private final EnrollmentRepository enrollmentRepository;
+    private final GoodsRepository goodsRepository;
+    private final DataInitializer dataInitializer;
 
     @Autowired
-    public ShipmentServiceImpl(ShipmentRepository shipmentRepository) {
+    public ShipmentServiceImpl(ShipmentRepository shipmentRepository,
+                               POIRepository poiRepository,
+                               EnrollmentRepository enrollmentRepository,
+                               GoodsRepository goodsRepository,
+                               DataInitializer dataInitializer) {
         this.shipmentRepository = shipmentRepository;
+        this.poiRepository = poiRepository;
+        this.enrollmentRepository = enrollmentRepository;
+        this.goodsRepository = goodsRepository;
+        this.dataInitializer = dataInitializer;
     }
 
     @Override
@@ -170,23 +185,97 @@ public class ShipmentServiceImpl implements ShipmentService {
         // 添加其他规则...ToDo
     }
 
-    // 批量生成运单（示例实现，需根据实际业务完善）
+    // ToDo 出于演示需要，这里的生成逻辑先是本地的，后续需要改成 加工链
+    // 1. 定义加工链规则（实际项目中可以从数据库配置表里读，这里为了直观用内部类模拟）
+    private record TransportRule(POI.POIType startType, POI.POIType endType, String goodsSku) {}
+
+    // 初始化支持的完整加工链
+    private final List<TransportRule> VALID_RULES = List.of(
+            new TransportRule(POI.POIType.TIMBER_YARD, POI.POIType.SAWMILL, "00001"), // 原木 -> 锯木厂
+            new TransportRule(POI.POIType.IRON_MINE, POI.POIType.STEEL_MILL, "00002"),   // 玻璃厂 -> 仓库
+            new TransportRule(POI.POIType.RUBBER_PROCESSING_PLANT, POI.POIType.TIRE_MANUFACTURING_PLANT, "00003") // 菜基地 -> 菜市场
+            // 以后新增规则，只需加在这里或数据库里
+    );
+
     @Override
-    public List<Shipment> batchGenerateShipments(int count) {
-        List<Shipment> result = new java.util.ArrayList<>();
+    @Transactional(rollbackFor = Exception.class)
+    public void batchGenerateShipments(int count) {
+        if (count <= 0) return;
+
+        Random random = new Random();
+        List<Shipment> shipmentsToSave = new ArrayList<>(count);
+        Map<Long, Enrollment> enrollmentMap = new HashMap<>();
+
+        // 核心优化：使用 Map 做方法级别的本地缓存，避免同一种类型的 POI 被重复查库
+        Map<POI.POIType, List<POI>> poiCache = new EnumMap<>(POI.POIType.class);
+        Map<String, Goods> goodsCache = new HashMap<>();
+
         for (int i = 0; i < count; i++) {
-            Shipment shipment = new Shipment();
-            // TODO: 按照原有生成逻辑设置shipment属性
-            // 示例：生成唯一参考号
-            shipment.setRefNo("AUTO-" + System.currentTimeMillis() + "-" + i);
+            // 1. 随机命中一条加工链规则
+            TransportRule rule = VALID_RULES.get(random.nextInt(VALID_RULES.size()));
+
+            // 2. 从缓存获取起点和终点列表，如果没有再查库 (Lazy Loading 思维)
+            List<POI> startPOIs = poiCache.computeIfAbsent(rule.startType(), poiRepository::findByPoiType);
+            List<POI> endPOIs = poiCache.computeIfAbsent(rule.endType(), poiRepository::findByPoiType);
+
+            // 3. 从缓存获取货物
+            Goods goods = goodsCache.computeIfAbsent(rule.goodsSku(), sku ->
+                    goodsRepository.findBySku(sku)
+                            .orElseThrow(() -> new RuntimeException("缺失关键货物 SKU: " + sku))
+            );
+
+            // 校验：如果当前规则对应的起点或终点在数据库里还没建，跳过本次生成
+            if (startPOIs.isEmpty() || endPOIs.isEmpty()) {
+                continue;
+            }
+
+            // 4. 在内存中极速随机挑选具体的起点和终点
+            POI startPOI = startPOIs.get(random.nextInt(startPOIs.size()));
+            POI endPOI = endPOIs.get(random.nextInt(endPOIs.size()));
+
+            Integer quantity = generateRandomQuantity(random);
+            Double totalWeight = quantity * goods.getWeightPerUnit();
+            Double totalVolume = quantity * goods.getVolumePerUnit();
+
+            // 5. 聚合库存 (复合键防止冲突)
+            // 这里需要注意：不同的规则如果在同一个起点产生了相同的货物，依然能正确累加
+            String enrollKey = startPOI.getId() + "_" + goods.getId();
+            Enrollment enrollment = enrollmentMap.computeIfAbsent(startPOI.getId(), k ->
+                    enrollmentRepository.findByPoiAndGoods(startPOI, goods)
+                            .orElse(new Enrollment(startPOI, goods, 0))
+            );
+            enrollment.setQuantity(enrollment.getQuantity() + quantity);
+
+            startPOI.addGoodsEnrollment(enrollment);
+            goods.addPOIEnrollment(enrollment);
+
+            // 6. 生成运单
+            String refNo = generateUniqueRefNo(goods.getSku());
+            Shipment shipment = new Shipment(refNo, startPOI, endPOI, totalWeight, totalVolume);
             shipment.setStatus(Shipment.ShipmentStatus.CREATED);
-            shipment.setCreatedAt(java.time.LocalDateTime.now());
-            // 其他属性可根据需要设置默认值或随机值
-            // ...
-            result.add(createShipment(shipment));
+
+            shipmentsToSave.add(shipment);
         }
-        return result;
+
+        // 7. 统一落库
+        if (!enrollmentMap.isEmpty()) {
+            enrollmentRepository.saveAll(enrollmentMap.values());
+        }
+        if (!shipmentsToSave.isEmpty()) {
+            shipmentRepository.saveAll(shipmentsToSave);
+        }
+    }
+
+    private Integer generateRandomQuantity(Random random) {
+        // 保持原有的逻辑：生成 50 - 299 之间的随机数
+        return random.nextInt(250) + 50;
+    }
+
+    private String generateUniqueRefNo(String sku) {
+        // 内部消化单号生成逻辑，格式：SKU_时间戳_6位随机数
+        String timestamp = new java.text.SimpleDateFormat("yyyyMMddHHmmss").format(new java.util.Date());
+        String randomStr = String.format("%06d", new java.util.Random().nextInt(1000000));
+        return sku + "_" + timestamp + "_" + randomStr;
     }
 
 }
-
