@@ -1,5 +1,6 @@
 package org.example.roadsimulation;
 
+import org.example.roadsimulation.service.ProcessingChainService;
 import org.example.roadsimulation.service.VehicleInitializationService;
 import org.example.roadsimulation.service.impl.StateUpdateService;
 import org.example.roadsimulation.service.impl.VehicleInitializationServiceImpl;
@@ -20,6 +21,9 @@ public class SimulationMainLoop {
 
     @Autowired
     private VehicleInitializationService vehicleInitializationService;
+
+    @Autowired
+    private ProcessingChainService processingChainService;
 
     // 循环计数器
     private int loopCount = 0;
@@ -83,6 +87,11 @@ public class SimulationMainLoop {
 
         // ✅ 4) 车辆状态更新（每循环一次）：统一接入主循环
         // stateUpdateService.tick(simNow, MINUTES_PER_LOOP, loopCount);
+
+        // ✅ 5) 加工链进度更新（每循环一次）
+        if (processingChainService != null) {
+            processingChainService.updateProcessingProgress(simNow, MINUTES_PER_LOOP);
+        }
 
         // ======================
         loopCount++;
