@@ -6,6 +6,7 @@ import jakarta.annotation.PreDestroy;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.Getter;
 import lombok.Setter;
+import lombok.extern.slf4j.Slf4j;
 import org.example.roadsimulation.dto.*;
 import org.example.roadsimulation.dto.AssignmentStatusDTO;
 import org.example.roadsimulation.entity.*;
@@ -18,6 +19,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -50,7 +52,7 @@ import java.util.stream.Collectors;
  *     200袋 10t级别：中国重汽HOWO G5X 中卡
  *
  */
-
+@Slf4j
 @Component
 public class DataInitializer{
 
@@ -196,7 +198,6 @@ public class DataInitializer{
         // 初始化 POI 列表
         this.CementPlantList = poiRepository.findByPoiType(POI.POIType.GAS_STATION);
         this.MaterialMarketList = getFilterdPOIByType(POI.POIType.REST_AREA);
-        // this.goalFactoryList = getFilteredPOIByNameAndType("水泥", POI.POIType.FACTORY);
         this.Cement = getGoodsForTest("CEMENT");
         System.out.println("DataInitializer 初始化完成，共加载 " + CementPlantList.size() + " 个起点POI 和 " + MaterialMarketList.size() + "个终点POI");
 
@@ -214,34 +215,6 @@ public class DataInitializer{
             poiIsWithGoods.put(poi, false);
             poiTrueCount.put(poi, 0);
         }
-        /* ----------------- */
-        ///  对相关POI进行初始化操作
-//        for(POI poi: goalPOITypeList){
-//            poiIsWithGoods.put(poi, true);
-//            poiTrueCount.put(poi, 0);
-//        }
-    }
-
-    /// 测试 关键词检索 获取 模拟所需POI
-//    @PostConstruct
-//    public void initFactory(String KeyWord){
-//        List<POI> factory = poiService.searchByName(KeyWord);
-//        AtomicInteger index = new AtomicInteger(1);
-//        this.goalFactoryList = factory.stream()
-//                .filter(poi -> poi.getPoiType().equals(POI.POIType.FACTORY))
-//                .collect(Collectors.toList());
-//
-//        System.out.println("找到 " + goalFactoryList.size() + " 个石材工厂：");
-//        goalFactoryList.forEach(poi -> System.out.println("工厂: " + (index.getAndIncrement()) + poi.getName()));
-//    }
-
-    /**
-     * 根据 关键字姓名模糊化搜素 与 种类限制 进行POI数据的筛选
-     */
-    public List<POI> getFilteredPOIByNameAndType(String keyword, POI.POIType goalPOIType) {
-        return poiRepository.findByNameContainingIgnoreCase(keyword).stream()
-                .filter(poi -> poi.getPoiType().equals(goalPOIType))
-                .collect(Collectors.toList());
     }
 
     /**
@@ -261,7 +234,7 @@ public class DataInitializer{
             goalGoods = existingGoods.get();
             System.out.println("从数据库加载货物: " + goalGoods.getName());
         } else{
-            // 如果不存在，创建并保存
+            // ToDo 如果不存在，不执行，报错 -- 需要修改异常类处理逻辑
             goalGoods = new Goods("玻璃", "00001");
             goodsRepository.save(goalGoods);
             System.out.println("创建新货物: " + goalGoods.getName());
@@ -282,7 +255,6 @@ public class DataInitializer{
      *  周期性的随机判断 - 每5秒执行一次
      *  用于随机选择 起点POI
      */
-    //@Scheduled(fixedRate = 10000)
     @Transactional
     public void periodicJudgement(){
         if (CementPlantList.isEmpty() ||  MaterialMarketList.isEmpty()) {
@@ -422,57 +394,6 @@ public class DataInitializer{
         }
     }
 
-//    /**
-//     * 周期性的重置判断 - 每12秒执行一次
-//     */
-//    //@Scheduled(fixedRate = 15000) // 12秒一个周期
-//    @Transactional
-//    public void periodicReset() {
-//        if (CementPlantList.isEmpty() || MaterialMarketList.isEmpty()) {
-//            return;
-//        }
-//
-//        System.out.println("开始重置POI判断状态...");
-//
-//        // 随机选择一个为真的POI重置为假
-//        List<POI> truePois = getCurrentTruePois();
-//        if (!truePois.isEmpty()) {
-//            Random random = new Random();
-//            POI selectedPoi = truePois.get(random.nextInt(truePois.size()));
-//
-//            // 关键：从数据库中重新加载POI，而不是使用map中的旧引用
-//            POI freshSelectedPoi = poiRepository.findById(selectedPoi.getId())
-//                    .orElseThrow(() -> new RuntimeException("POI not found: " + selectedPoi.getId()));
-//
-//            // 使用重新加载的POI
-//            deleteRelationBetweenPOIAndGoods(selectedPoi);
-//
-//            // 更新映射关系
-//            POI correspondingEndPOI = null;
-//            for (Map.Entry<POI, POI> entry : startToEndMapping.entrySet()) {
-//                if (entry.getKey().getId().equals(freshSelectedPoi.getId())) {
-//                    correspondingEndPOI = entry.getValue();
-//                    break;
-//                }
-//            }
-//
-//            if (correspondingEndPOI != null) {
-//                startToEndMapping.keySet().removeIf(key -> key.getId().equals(freshSelectedPoi.getId()));
-//                System.out.println("同时移除对应的终点POI: " + correspondingEndPOI.getName());
-//            }
-//
-//            trueProbability = trueProbability / 0.95;
-//
-//            // 更新状态，使用freshSelectedPoi
-//            setPoiToFalse(selectedPoi);
-//            System.out.println("POI [" + freshSelectedPoi.getName() + "] 已被重置为假");
-//        } else{
-//            System.out.println("无可重置的POI数据");
-//        }
-//
-//        printCurrentStatus();
-//    }
-
     /**
      * 伪随机判断逻辑
      */
@@ -590,7 +511,7 @@ public class DataInitializer{
     /**
      * 生成随机货物数量
      */
-    private Integer generateRandomQuantity() {
+    public Integer generateRandomQuantity() {
         Random random = new Random();
         return random.nextInt(250) + 50; // 100-600之间的随机数
     }
@@ -622,7 +543,6 @@ public class DataInitializer{
             System.out.println("使用现有路径：" + route.getRouteCode());
             return route;
         }
-
     }
 
     /**
@@ -797,7 +717,7 @@ public class DataInitializer{
         }
     }
 
-    private String generateUniqueRefNo(String sku) {
+    public String generateUniqueRefNo(String sku) {
         // 生成唯一refNo，例如: CEMENT_20240101_123456
         String timestamp = new SimpleDateFormat("yyyyMMddHHmmss").format(new Date());
         String random = String.format("%06d", new Random().nextInt(1000000));

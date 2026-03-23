@@ -6,6 +6,7 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 
 import java.time.LocalDateTime;
+import java.util.Objects;
 
 /**
  * 运单明细（与 Shipment 多对一；与 Goods 多对一）
@@ -105,17 +106,7 @@ public class ShipmentItem {
 
     public Shipment getShipment() { return shipment; }
     public void setShipment(Shipment shipment) {
-        if (this.shipment == shipment) {
-            return;
-        }
-        Shipment oldShipment = this.shipment;
         this.shipment = shipment;
-        if (oldShipment != null) {
-            oldShipment.removeItem(this);
-        }
-        if (shipment != null) {
-            shipment.addItem(this);
-        }
     }
 
     public Goods getGoods() { return goods; }
@@ -173,7 +164,23 @@ public class ShipmentItem {
         }
     }
 
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof ShipmentItem)) return false;
+        ShipmentItem that = (ShipmentItem) o;
+        // 如果双方都已经分配了数据库ID，比较ID
+        if (this.id != null && that.id != null) {
+            return Objects.equals(this.id, that.id);
+        }
+        // 如果没有ID（未持久化），则 fallback 到默认的内存地址比较
+        return false;
+    }
 
+    @Override
+    public int hashCode() {
+        return getClass().hashCode();
+    }
 
     @Override
     public String toString() {

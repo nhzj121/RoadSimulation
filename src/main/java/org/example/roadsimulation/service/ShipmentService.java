@@ -49,4 +49,7 @@ public interface ShipmentService {
 
     // 检查运单系统参考号是否存在
     boolean existsByRefNo(String refNo);
+
+    void generateShipments();
+    void batchGenerateShipments(int count);
 }
