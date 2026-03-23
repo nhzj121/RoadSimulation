@@ -1,1 +1,4 @@
 /Vue3/package.json
+target/
+.idea/
+Vue3/node_modules/
