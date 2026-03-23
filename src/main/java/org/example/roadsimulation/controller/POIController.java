@@ -238,17 +238,15 @@ public class POIController {
     @PostMapping("/batch-save")
     public ResponseEntity<?> batchSavePOIs(@RequestBody List<POIDTO> poiDTOs) {
         try {
-            // 处理枚举转换
-            for (POIDTO dto : poiDTOs) {
-                if (dto.getPoiType() == null && dto.getPoiType() != null) {
-                    // 尝试从字符串转换
-                    try {
-                        POI.POIType type = POI.POIType.valueOf(dto.getPoiType().toString());
-                        dto.setPoiType(type);
-                    } catch (IllegalArgumentException e) {
-                        System.err.println("无法转换POI类型: " + dto.getPoiType());
-                    }
-                }
+            System.out.println("收到POI数量: " + (poiDTOs == null ? 0 : poiDTOs.size()));
+            if (poiDTOs != null && !poiDTOs.isEmpty()) {
+                POIDTO first = poiDTOs.get(0);
+                System.out.println("第一个POI:");
+                System.out.println("id=" + first.getId());
+                System.out.println("name=" + first.getName());
+                System.out.println("poiType=" + first.getPoiType());
+                System.out.println("longitude=" + first.getLongitude());
+                System.out.println("latitude=" + first.getLatitude());
             }
 
             List<POI> savedPOIs = poiService.batchSavePOIs(poiDTOs);
@@ -257,9 +255,11 @@ public class POIController {
                     savedPOIs
             ));
         } catch (Exception e) {
+            e.printStackTrace();
             return ResponseEntity.badRequest().body(createErrorResponse(e.getMessage()));
         }
     }
+
 
     /**
      * 统计各类型 POI 数量（扩展功能）
