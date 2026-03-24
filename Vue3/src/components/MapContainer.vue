@@ -2593,6 +2593,20 @@ onUnmounted(() => {
   border: 1px solid #ccc;
   padding: 8px;
   width: 200px;
+  background-color: #fff; /* 确保背景是白色的 */
+  color: #303133;         /* 强制设置文字为深灰色，解决隐形问题 */
+  border-radius: 4px;     /* 稍微加个圆角好看点（可选）*/
+}
+
+.task-sidebar ul {
+  padding-left: 20px; /* 调整列表缩进 */
+  margin: 0;
+}
+
+.task-sidebar li {
+  margin-bottom: 6px;
+  font-size: 13px;    /* 调整一下字号更协调 */
+  word-break: break-all; /* 防止运单号太长撑破容器 */
 }
 
 .box-card:hover {

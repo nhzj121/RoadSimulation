@@ -3,6 +3,10 @@ package org.example.roadsimulation.entity;
 import jakarta.persistence.*;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.Size;
+import lombok.Data;
+import lombok.Getter;
+import lombok.Setter;
+
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -20,6 +24,8 @@ import java.util.Set;
                 @UniqueConstraint(name = "uk_goods_sku", columnNames = "sku")
         }
 )
+@Getter
+@Setter
 public class Goods {
 
     @Id
@@ -63,6 +69,9 @@ public class Goods {
     @Column(name = "shelf_life_days")
     private Integer shelfLifeDays; // 保质期（天）
 
+    @Column(name = "vehicle_fit")
+    private String vehicleFit;
+
     @OneToMany(mappedBy = "goods", cascade = {CascadeType.PERSIST, CascadeType.MERGE}, fetch = FetchType.LAZY)
     private Set<ShipmentItem> shipmentItems = new HashSet<>();
 
@@ -82,48 +91,7 @@ public class Goods {
         this.name = name;
         this.sku = sku;
     }
-
-    // Getter & Setter
-    public Long getId() { return id; }
-    public void setId(Long id) { this.id = id; }
-
-    public String getName() { return name; }
-    public void setName(String name) { this.name = name; }
-
-    public String getSku() { return sku; }
-    public void setSku(String sku) { this.sku = sku; }
-
-    public String getCategory() { return category; }
-    public void setCategory(String category) { this.category = category; }
-
-    public String getDescription() { return description; }
-    public void setDescription(String description) { this.description = description; }
-
-    public Double getWeightPerUnit() { return weightPerUnit; }
-    public void setWeightPerUnit(Double weightPerUnit) { this.weightPerUnit = weightPerUnit; }
-
-    public Double getVolumePerUnit() { return volumePerUnit; }
-    public void setVolumePerUnit(Double volumePerUnit) { this.volumePerUnit = volumePerUnit; }
-
-    public Boolean getRequireTemp() { return requireTemp; }
-    public void setRequireTemp(Boolean requireTemp) { this.requireTemp = requireTemp; }
-
-    public String getHazmatLevel() { return hazmatLevel; }
-    public void setHazmatLevel(String hazmatLevel) { this.hazmatLevel = hazmatLevel; }
-
-    public Integer getShelfLifeDays() { return shelfLifeDays; }
-    public void setShelfLifeDays(Integer shelfLifeDays) { this.shelfLifeDays = shelfLifeDays; }
-
-    // 四元组字段的getter和setter
-    public LocalDateTime getCreatedAt() { return createdAt; }
-    public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
-    public String getUpdatedBy() {return updatedBy;}
-    public void setUpdatedBy(String updatedBy) {this.updatedBy = updatedBy;}
-    public LocalDateTime getUpdatedAt() { return updatedAt; }
-    public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
-    public List<Enrollment> getEnrollments() { return enrollments; }
-    public void setEnrollments(List<Enrollment> enrollments) { this.enrollments = enrollments; }
-
+    
     public Set<ShipmentItem> getShipmentItems() {
         return shipmentItems;
     }
@@ -134,34 +102,31 @@ public class Goods {
 
     // ================ Goods和POI，双向进行维护 =================
     public void addPOIEnrollment(Enrollment enrollment) {
-        if(!this.enrollments.contains(enrollment) && enrollment != null){
+        if(enrollment != null && !this.enrollments.contains(enrollment)){
             this.enrollments.add(enrollment);
             enrollment.setGoods(this);
-        } else if(this.enrollments.contains(enrollment) && enrollment != null){
+        } else if(enrollment != null && this.enrollments.contains(enrollment)){
             enrollment.setGoods(this);
         }
     }
     public void removePOIEnrollment(Enrollment enrollment) {
-        if(this.enrollments.contains(enrollment) && enrollment != null){
+        if(enrollment != null && this.enrollments.contains(enrollment)){
             this.enrollments.remove(enrollment);
             enrollment.setGoods(null);
         }
     }
 
-
-    // Goods和ShipmentItem：维护双向关系
-    public void addShipmentItem(ShipmentItem item) {
-        if (item != null) {
-            shipmentItems.add(item);
-            item.setGoods(this);
-        }
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof Goods)) return false;
+        Goods goods = (Goods) o;
+        return sku != null && sku.equals(goods.getSku());
     }
 
-    public void removeShipmentItem(ShipmentItem item) {
-        if (item != null) {
-            shipmentItems.remove(item);
-            item.setGoods(null);
-        }
+    @Override
+    public int hashCode() {
+        return getClass().hashCode();
     }
 
     @PreUpdate

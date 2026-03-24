@@ -198,7 +198,7 @@ public class DataInitializer{
         // 初始化 POI 列表
         this.CementPlantList = poiRepository.findByPoiType(POI.POIType.GAS_STATION);
         this.MaterialMarketList = getFilterdPOIByType(POI.POIType.REST_AREA);
-        this.Cement = getGoodsForTest("CEMENT");
+        this.Cement = getGoodsForTest("LOG");
         System.out.println("DataInitializer 初始化完成，共加载 " + CementPlantList.size() + " 个起点POI 和 " + MaterialMarketList.size() + "个终点POI");
 
         initalizePOIStatus();
@@ -360,6 +360,7 @@ public class DataInitializer{
 
             } catch (Exception e) {
                 System.err.println("为POI [" + poi.getName() + "] 生成货物失败: " + e.getMessage());
+                e.printStackTrace();
                 setPoiToFalse(poi); // 重置状态
             }
         }
@@ -958,14 +959,6 @@ public class DataInitializer{
         try{
             Enrollment enrollmentForTest = new Enrollment(poiForTest, goodsForTest, generateQuantity);
             enrollmentRepository.save(enrollmentForTest);
-            // 添加双向关联
-            if (!poiForTest.getEnrollments().contains(enrollmentForTest)) {
-                poiForTest.addGoodsEnrollment(enrollmentForTest);
-            }
-
-            if (!goodsForTest.getEnrollments().contains(enrollmentForTest)) {
-                goodsForTest.addPOIEnrollment(enrollmentForTest);
-            }
 
             System.out.println("为POI [" + poiForTest.getName() + "] 初始化关系，数量: " + generateQuantity);
         } catch (Exception e) {

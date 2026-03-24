@@ -97,7 +97,6 @@ public class ShipmentItem {
         this.sku = sku;
         this.weight = weight;
         this.volume = volume;
-        setShipment(shipment);
     }
 
     // Getter & Setter
@@ -110,7 +109,6 @@ public class ShipmentItem {
     }
 
     public Goods getGoods() { return goods; }
-    public void setGoods(Goods goods) { this.goods = goods; }
 
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
@@ -138,6 +136,10 @@ public class ShipmentItem {
     public LocalDateTime getUpdatedTime() {return updatedTime;}
     public void setUpdatedTime(LocalDateTime updatedTime) {this.updatedTime = updatedTime;}
 
+    /// 和Goods之间的双向关联
+    public void setGoods(Goods goods) {
+        this.goods = goods;
+    }
 
     /// ShipmentItem与Assignment之间的方法
     public Assignment getAssignment() { return assignment; }

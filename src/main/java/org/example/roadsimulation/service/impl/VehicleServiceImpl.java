@@ -1,7 +1,9 @@
 package org.example.roadsimulation.service.impl;
 
+import org.example.roadsimulation.entity.Goods;
 import org.example.roadsimulation.entity.Vehicle;
 import org.example.roadsimulation.entity.POI;
+import org.example.roadsimulation.repository.GoodsRepository;
 import org.example.roadsimulation.repository.VehicleRepository;
 import org.example.roadsimulation.service.VehicleService;
 import org.example.roadsimulation.service.POIService;
@@ -31,11 +33,15 @@ public class VehicleServiceImpl implements VehicleService {
 
     private final VehicleRepository vehicleRepository;
     private final POIService poiService;
+    private final GoodsRepository goodsRepository;
 
     @Autowired
-    public VehicleServiceImpl(VehicleRepository vehicleRepository, POIService poiService) {
+    public VehicleServiceImpl(VehicleRepository vehicleRepository,
+                              POIService poiService,
+                              GoodsRepository goodsRepository) {
         this.vehicleRepository = vehicleRepository;
         this.poiService = poiService;
+        this.goodsRepository = goodsRepository;
     }
 
     @Override
@@ -176,5 +182,18 @@ public class VehicleServiceImpl implements VehicleService {
     @Override
     public List<Vehicle> getVehiclesWithActiveAssignments() {
         return vehicleRepository.findByAssignmentsIsNotNull();
+    }
+
+    // 获取适配车辆
+    @Override
+    public List<Vehicle> getVehicleSuitable(String sku){
+        Goods goods = goodsRepository.findBySku(sku).isPresent() ?
+                goodsRepository.findBySku(sku).get() : null;
+        if (goods == null) {
+            throw new RuntimeException("没有sku对应的货物");
+        }
+
+        String vehicleType = goods.getVehicleFit();
+        return vehicleRepository.findByVehicleType(vehicleType);
     }
 }

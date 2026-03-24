@@ -906,4 +906,19 @@ public class AssignmentServiceImpl implements AssignmentService {
     public List<Long> getCompletedAssignments() {
         return dataInitializer.getCompletedAssignments();
     }
+
+    /**
+     * 生成运输任务
+     */
+    public List<ShipmentItem> generateShipmentItems(){
+        List<Shipment> shipmentList = shipmentRepository.findByStatus(Shipment.ShipmentStatus.CREATED);
+
+        // ToDo 车辆分配怎么实现 ？
+        //  具体运单划分怎么实现 ？
+        // ToDo 这里初步优化一下为先分配大车，再分配小车
+
+        ;
+
+        return null;
+    }
 }

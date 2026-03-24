@@ -191,26 +191,37 @@ public class ShipmentServiceImpl implements ShipmentService {
 
     // 初始化支持的完整加工链
     private final List<TransportRule> VALID_RULES = List.of(
-            new TransportRule(POI.POIType.TIMBER_YARD, POI.POIType.SAWMILL, "00001"), // 原木 -> 锯木厂
-            new TransportRule(POI.POIType.IRON_MINE, POI.POIType.STEEL_MILL, "00002"),   // 玻璃厂 -> 仓库
-            new TransportRule(POI.POIType.RUBBER_PROCESSING_PLANT, POI.POIType.TIRE_MANUFACTURING_PLANT, "00003") // 菜基地 -> 菜市场
+            new TransportRule(POI.POIType.TIMBER_YARD, POI.POIType.SAWMILL, "LOG"), // 原木 -> 锯木厂
+            new TransportRule(POI.POIType.IRON_MINE, POI.POIType.STEEL_MILL, "IRON_ORE"),   // 玻璃厂 -> 仓库
+            new TransportRule(POI.POIType.RUBBER_PROCESSING_PLANT, POI.POIType.TIRE_MANUFACTURING_PLANT, "RUBBER_SEMI") // 菜基地 -> 菜市场
             // 以后新增规则，只需加在这里或数据库里
     );
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public void batchGenerateShipments(int count) {
-        if (count <= 0) return;
+    public List<Shipment> batchGenerateShipments(int count) {
+        // 【修复1】编译错误：必须返回一个 List
+        if (count <= 0) return Collections.emptyList();
 
         Random random = new Random();
         List<Shipment> shipmentsToSave = new ArrayList<>(count);
-        Map<Long, Enrollment> enrollmentMap = new HashMap<>();
+
+        // 注意这里：我们将 Key 改为 String，以便组合 POI ID 和 Goods ID，防止同一个 POI 的不同商品被覆盖
+        Map<String, Enrollment> enrollmentMap = new HashMap<>();
 
         // 核心优化：使用 Map 做方法级别的本地缓存，避免同一种类型的 POI 被重复查库
         Map<POI.POIType, List<POI>> poiCache = new EnumMap<>(POI.POIType.class);
         Map<String, Goods> goodsCache = new HashMap<>();
 
-        for (int i = 0; i < count; i++) {
+        int generated = 0;
+        // 【优化】设置最大尝试次数，防止因数据库缺少某些基础数据导致死循环
+        int maxRetries = count * 3;
+        int attempts = 0;
+
+        // 【修复2】逻辑漏洞：改用 while 循环，确保实际生成的数量达到预期
+        while (generated < count && attempts < maxRetries) {
+            attempts++;
+
             // 1. 随机命中一条加工链规则
             TransportRule rule = VALID_RULES.get(random.nextInt(VALID_RULES.size()));
 
@@ -224,7 +235,7 @@ public class ShipmentServiceImpl implements ShipmentService {
                             .orElseThrow(() -> new RuntimeException("缺失关键货物 SKU: " + sku))
             );
 
-            // 校验：如果当前规则对应的起点或终点在数据库里还没建，跳过本次生成
+            // 校验：如果当前规则对应的起点或终点在数据库里还没建，跳过本次生成，进行下一次尝试
             if (startPOIs.isEmpty() || endPOIs.isEmpty()) {
                 continue;
             }
@@ -238,9 +249,9 @@ public class ShipmentServiceImpl implements ShipmentService {
             Double totalVolume = quantity * goods.getVolumePerUnit();
 
             // 5. 聚合库存 (复合键防止冲突)
-            // 这里需要注意：不同的规则如果在同一个起点产生了相同的货物，依然能正确累加
+            // 【修复3】逻辑漏洞：必须用 POI_ID + Goods_ID 作为联合主键，否则同一个 POI 的不同商品会被覆盖
             String enrollKey = startPOI.getId() + "_" + goods.getId();
-            Enrollment enrollment = enrollmentMap.computeIfAbsent(startPOI.getId(), k ->
+            Enrollment enrollment = enrollmentMap.computeIfAbsent(enrollKey, k ->
                     enrollmentRepository.findByPoiAndGoods(startPOI, goods)
                             .orElse(new Enrollment(startPOI, goods, 0))
             );
@@ -249,12 +260,13 @@ public class ShipmentServiceImpl implements ShipmentService {
             startPOI.addGoodsEnrollment(enrollment);
             goods.addPOIEnrollment(enrollment);
 
-            // 6. 生成运单
-            String refNo = generateUniqueRefNo(goods.getSku());
+            // 6. 生成运单 (传入当前的 generated 序号，防止单号碰撞)
+            String refNo = generateUniqueRefNo(goods.getSku(), generated);
             Shipment shipment = new Shipment(refNo, startPOI, endPOI, totalWeight, totalVolume);
             shipment.setStatus(Shipment.ShipmentStatus.CREATED);
 
             shipmentsToSave.add(shipment);
+            generated++; // 成功生成一个，计数器加1
         }
 
         // 7. 统一落库
@@ -264,18 +276,22 @@ public class ShipmentServiceImpl implements ShipmentService {
         if (!shipmentsToSave.isEmpty()) {
             shipmentRepository.saveAll(shipmentsToSave);
         }
+
+        // 【修复4】编译错误：将生成的运单列表返回给调用方
+        return shipmentsToSave;
+    }
+
+    // 【优化】修改生成规则，引入当前批次内的索引 index，彻底杜绝单次批量生成内部的单号碰撞
+    private String generateUniqueRefNo(String sku, int index) {
+        String timestamp = new java.text.SimpleDateFormat("yyyyMMddHHmmss").format(new java.util.Date());
+        // 格式：SKU_时间戳_4位循环序号_3位随机数 (保证既不会在同一批次冲突，也能应对一定的跨请求并发)
+        String randomStr = String.format("%03d", new java.util.Random().nextInt(1000));
+        return sku + "_" + timestamp + "_" + String.format("%04d", index) + randomStr;
     }
 
     private Integer generateRandomQuantity(Random random) {
         // 保持原有的逻辑：生成 50 - 299 之间的随机数
-        return random.nextInt(250) + 50;
-    }
-
-    private String generateUniqueRefNo(String sku) {
-        // 内部消化单号生成逻辑，格式：SKU_时间戳_6位随机数
-        String timestamp = new java.text.SimpleDateFormat("yyyyMMddHHmmss").format(new java.util.Date());
-        String randomStr = String.format("%06d", new java.util.Random().nextInt(1000000));
-        return sku + "_" + timestamp + "_" + randomStr;
+        return random.nextInt(10) + 5;
     }
 
 }
