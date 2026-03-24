@@ -191,26 +191,32 @@ public class ShipmentServiceImpl implements ShipmentService {
 
     // 初始化支持的完整加工链
     private final List<TransportRule> VALID_RULES = List.of(
-            new TransportRule(POI.POIType.TIMBER_YARD, POI.POIType.SAWMILL, "00001"), // 原木 -> 锯木厂
-            new TransportRule(POI.POIType.IRON_MINE, POI.POIType.STEEL_MILL, "00002"),   // 玻璃厂 -> 仓库
-            new TransportRule(POI.POIType.RUBBER_PROCESSING_PLANT, POI.POIType.TIRE_MANUFACTURING_PLANT, "00003") // 菜基地 -> 菜市场
+            new TransportRule(POI.POIType.TIMBER_YARD, POI.POIType.SAWMILL, "LOG"), // 原木 -> 锯木厂
+            new TransportRule(POI.POIType.IRON_MINE, POI.POIType.STEEL_MILL, "IRON_ORE"),   // 玻璃厂 -> 仓库
+            new TransportRule(POI.POIType.RUBBER_PROCESSING_PLANT, POI.POIType.TIRE_MANUFACTURING_PLANT, "RUBBER_SEMI") // 菜基地 -> 菜市场
             // 以后新增规则，只需加在这里或数据库里
     );
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public void batchGenerateShipments(int count) {
-        if (count <= 0) return;
+    public List<Shipment> batchGenerateShipments(int count) {
+        if (count <= 0) return Collections.emptyList();
 
         Random random = new Random();
         List<Shipment> shipmentsToSave = new ArrayList<>(count);
-        Map<Long, Enrollment> enrollmentMap = new HashMap<>();
+        Map<String, Enrollment> enrollmentMap = new HashMap<>();
 
         // 核心优化：使用 Map 做方法级别的本地缓存，避免同一种类型的 POI 被重复查库
         Map<POI.POIType, List<POI>> poiCache = new EnumMap<>(POI.POIType.class);
         Map<String, Goods> goodsCache = new HashMap<>();
+        int generated = 0;
+        // 【优化】设置最大尝试次数，防止因数据库缺少某些基础数据导致死循环
+        int maxRetries = count * 3;
+        int attempts = 0;
 
-        for (int i = 0; i < count; i++) {
+        // 【修复2】逻辑漏洞：改用 while 循环，确保实际生成的数量达到预期
+        while (generated < count && attempts < maxRetries) {
+            attempts++;
             // 1. 随机命中一条加工链规则
             TransportRule rule = VALID_RULES.get(random.nextInt(VALID_RULES.size()));
 
@@ -240,7 +246,7 @@ public class ShipmentServiceImpl implements ShipmentService {
             // 5. 聚合库存 (复合键防止冲突)
             // 这里需要注意：不同的规则如果在同一个起点产生了相同的货物，依然能正确累加
             String enrollKey = startPOI.getId() + "_" + goods.getId();
-            Enrollment enrollment = enrollmentMap.computeIfAbsent(startPOI.getId(), k ->
+            Enrollment enrollment = enrollmentMap.computeIfAbsent(enrollKey, k ->
                     enrollmentRepository.findByPoiAndGoods(startPOI, goods)
                             .orElse(new Enrollment(startPOI, goods, 0))
             );
@@ -250,11 +256,12 @@ public class ShipmentServiceImpl implements ShipmentService {
             goods.addPOIEnrollment(enrollment);
 
             // 6. 生成运单
-            String refNo = generateUniqueRefNo(goods.getSku());
+            String refNo = generateUniqueRefNo(goods.getSku(), generated);
             Shipment shipment = new Shipment(refNo, startPOI, endPOI, totalWeight, totalVolume);
             shipment.setStatus(Shipment.ShipmentStatus.CREATED);
 
             shipmentsToSave.add(shipment);
+            generated++; // 成功生成一个，计数器加1
         }
 
         // 7. 统一落库
@@ -264,18 +271,20 @@ public class ShipmentServiceImpl implements ShipmentService {
         if (!shipmentsToSave.isEmpty()) {
             shipmentRepository.saveAll(shipmentsToSave);
         }
+
+        return shipmentsToSave;
+    }
+
+    private String generateUniqueRefNo(String sku, int index) {
+        // 内部消化单号生成逻辑，格式：SKU_时间戳_6位随机数
+        String timestamp = new java.text.SimpleDateFormat("yyyyMMddHHmmss").format(new java.util.Date());
+        String randomStr = String.format("%03d", new java.util.Random().nextInt(1000));
+        return sku + "_" + timestamp + "_" + String.format("%04d", index) + randomStr;
     }
 
     private Integer generateRandomQuantity(Random random) {
         // 保持原有的逻辑：生成 50 - 299 之间的随机数
-        return random.nextInt(250) + 50;
-    }
-
-    private String generateUniqueRefNo(String sku) {
-        // 内部消化单号生成逻辑，格式：SKU_时间戳_6位随机数
-        String timestamp = new java.text.SimpleDateFormat("yyyyMMddHHmmss").format(new java.util.Date());
-        String randomStr = String.format("%06d", new java.util.Random().nextInt(1000000));
-        return sku + "_" + timestamp + "_" + randomStr;
+        return random.nextInt(10) + 5;
     }
 
 }

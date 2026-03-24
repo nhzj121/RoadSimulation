@@ -69,6 +69,9 @@ public class Goods {
     @OneToMany(mappedBy = "goods", cascade = {CascadeType.PERSIST, CascadeType.MERGE}, fetch = FetchType.LAZY)
     private List<Enrollment> enrollments = new ArrayList<>();
 
+    @Column(name = "vehicle_fit")
+    private String vehicleFit;
+
     // 进行修改的对象和时间
     @Column(name = "updated_by", length = 50)
     private String updatedBy;
@@ -114,6 +117,9 @@ public class Goods {
     public Integer getShelfLifeDays() { return shelfLifeDays; }
     public void setShelfLifeDays(Integer shelfLifeDays) { this.shelfLifeDays = shelfLifeDays; }
 
+    public String getVehicleFit() { return vehicleFit; }
+    public void setVehicleFit(String vehicleFit) { this.vehicleFit = vehicleFit; }
+
     // 四元组字段的getter和setter
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
@@ -148,20 +154,17 @@ public class Goods {
         }
     }
 
-
-    // Goods和ShipmentItem：维护双向关系
-    public void addShipmentItem(ShipmentItem item) {
-        if (item != null) {
-            shipmentItems.add(item);
-            item.setGoods(this);
-        }
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof Goods)) return false;
+        Goods goods = (Goods) o;
+        return sku != null && sku.equals(goods.getSku());
     }
 
-    public void removeShipmentItem(ShipmentItem item) {
-        if (item != null) {
-            shipmentItems.remove(item);
-            item.setGoods(null);
-        }
+    @Override
+    public int hashCode() {
+        return getClass().hashCode();
     }
 
     @PreUpdate

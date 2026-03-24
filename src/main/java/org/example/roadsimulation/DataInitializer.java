@@ -958,14 +958,6 @@ public class DataInitializer{
         try{
             Enrollment enrollmentForTest = new Enrollment(poiForTest, goodsForTest, generateQuantity);
             enrollmentRepository.save(enrollmentForTest);
-            // 添加双向关联
-            if (!poiForTest.getEnrollments().contains(enrollmentForTest)) {
-                poiForTest.addGoodsEnrollment(enrollmentForTest);
-            }
-
-            if (!goodsForTest.getEnrollments().contains(enrollmentForTest)) {
-                goodsForTest.addPOIEnrollment(enrollmentForTest);
-            }
 
             System.out.println("为POI [" + poiForTest.getName() + "] 初始化关系，数量: " + generateQuantity);
         } catch (Exception e) {

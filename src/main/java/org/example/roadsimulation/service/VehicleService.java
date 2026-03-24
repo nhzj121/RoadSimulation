@@ -38,6 +38,8 @@ public interface VehicleService {
 
     boolean existsByLicensePlate(String licensePlate);
 
+    List<Vehicle> getVehicleSuitable(String sku);
+
     // ================ 新增的方法 ================
 
     /**
