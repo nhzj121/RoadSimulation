@@ -26,9 +26,9 @@
                 <div class="speed-slider">
                   <ElSlider
                       v-model="speedFactor"
-                      :min="0.1"
-                      :max="10"
-                      :step="0.1"
+                      :min="1"
+                      :max="50"
+                      :step="1"
                       :format-tooltip="formatSpeedTooltip"
                       @change="onSpeedChange"
                       size="small"
@@ -45,7 +45,20 @@
               </div>
             </ElCard>
           </div>
+          <!-- 运单生成 -->
+         <div class="shipment-control">
+           <label>生成运单数量:</label>
+           <input type="number" v-model.number="shipmentCount" min="1" />
+           <button @click="generateShipments">生成运单</button>
+         </div>
 
+         <div class="task-sidebar">
+           <ul>
+           <li v-for="shipment in shipments" :key="shipment.id">
+           {{ shipment.refNo }} - {{ shipment.status }}
+           </li>
+           </ul>
+         </div>
           <!-- 车辆状态 -->
           <div class="panel-section">
             <ElCard shadow="never" class="box-card vehicle-status">
@@ -169,6 +182,8 @@ import { InfoFilled } from '@element-plus/icons-vue'
 
 let map = null;
 let AMapLib = null; // 保存加载后的 AMap 构造对象
+const shipmentCount = ref(1);
+const shipments = ref([]);
 const router = useRouter()
 const goToPOIManager = () => {
   router.push('/poi-manager')
@@ -249,6 +264,18 @@ const clearHighlight = () => {
     highlightTimer = null;
   }
   highlightedVehicleId.value = null;
+};
+
+// 生成运单（批量）
+const generateShipments = async () => {
+  if (shipmentCount.value <= 0) return;
+  try {
+    const res = await request.post('/api/shipments/batch-generate', { count: shipmentCount.value });
+    shipments.value = res.data;
+  } catch (error) {
+    console.error("生成运单失败", error);
+    alert("生成运单失败，请检查控制台日志");
+  }
 };
 
 // --- 仿真控制 ---
@@ -581,7 +608,7 @@ class VehicleAnimation {
     this.stage2Segments = this._calculateSegments(this.stage2Path);
 
     // 基础速度
-    this.baseSpeed = 900; // 米/秒
+    this.baseSpeed = 20; // 米/秒
 
     // 标记引用
     this.movingMarker = routeData.movingMarker;
@@ -1055,7 +1082,7 @@ class VehicleAnimationManager {
 
   // 设置全局速度因子
   setGlobalSpeedFactor(factor) {
-    this.globalSpeedFactor = Math.max(0.1, Math.min(10, factor));
+    this.globalSpeedFactor = Math.max(1, Math.min(50, factor));
     this.animations.forEach(animation => {
       animation.updateSpeedFactor(this.globalSpeedFactor);
     });
@@ -1271,6 +1298,11 @@ const resetSimulation = async () => {
       stats.poiCount = 0;
       stats.tasks = 0;
       stats.anomalyRate = 0;
+
+      speedFactor.value = 1;
+      if (animationManager) {
+        animationManager.setGlobalSpeedFactor(1);
+      }
 
       ElMessage.success('仿真已重置');
     }
@@ -2550,6 +2582,17 @@ onUnmounted(() => {
   overflow: hidden;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
   box-sizing: border-box; /* 确保padding包含在内 */
+}
+
+/*运单*/
+.shipment-control {
+  margin-bottom: 16px;
+}
+
+.task-sidebar {
+  border: 1px solid #ccc;
+  padding: 8px;
+  width: 200px;
 }
 
 .box-card:hover {

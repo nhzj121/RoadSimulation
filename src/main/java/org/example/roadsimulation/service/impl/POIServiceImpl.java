@@ -15,6 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.Random;
 import java.util.stream.Collectors;
 
 /**
@@ -231,16 +232,22 @@ public class POIServiceImpl implements POIService {
     @Override
     public POI.POIType convertPOIType(String frontendType) {
         return switch (frontendType) {
-            case "工厂" -> POI.POIType.FACTORY;
             case "仓库" -> POI.POIType.WAREHOUSE;
             case "加油站" -> POI.POIType.GAS_STATION;
             case "维修中心" -> POI.POIType.MAINTENANCE_CENTER;
             case "休息区" -> POI.POIType.REST_AREA;
             case "运输中心" -> POI.POIType.DISTRIBUTION_CENTER;
-            case "建材市场" -> POI.POIType.MATERIAL_MARKET;
-            case "蔬菜基地" -> POI.POIType.VEGETABLE_BASE;
-            case "蔬菜市场" -> POI.POIType.VEGETABLE_MARKET;
             case "测试" -> POI.POIType.TEST;
+            case "原木厂" -> POI.POIType.TIMBER_YARD;
+            case "锯木厂" -> POI.POIType.SAWMILL;
+            case "板材厂" -> POI.POIType.BOARD_FACTORY;
+            case "铁矿厂" -> POI.POIType.IRON_MINE;
+            case "冶钢厂" -> POI.POIType.STEEL_MILL;
+            case "钢材加工厂" -> POI.POIType.STEEL_PROCESSING_PLANT;
+            case "家具制造厂" -> POI.POIType.FURNITURE_FACTORY;
+            case "橡胶加工厂" -> POI.POIType.RUBBER_PROCESSING_PLANT;
+            case "轮胎制造厂" -> POI.POIType.TIRE_MANUFACTURING_PLANT;
+            case "汽车总装厂" -> POI.POIType.AUTO_ASSEMBLY_PLANT;
             default -> throw new IllegalArgumentException("未知的POI类型: " + frontendType);
         };
     }

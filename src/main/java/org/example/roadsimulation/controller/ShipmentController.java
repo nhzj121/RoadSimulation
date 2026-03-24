@@ -23,6 +23,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+import java.util.HashMap;
+
 @RestController
 @RequestMapping("/api/shipments")
 public class ShipmentController {
@@ -215,9 +217,28 @@ public class ShipmentController {
     // ============================
 
     /**
+     * 批量生成运单
+     * POST /api/shipments/batch-generate
+     * 请求体: { "count": 5 }
+     * 返回: List<Shipment>
+     */
+    @PostMapping("/batch-generate")
+    public ResponseEntity<List<Shipment>> batchGenerateShipments(@RequestBody Map<String, Integer> params) {
+        int count = params.getOrDefault("count", 1);
+        try {
+            List<Shipment> shipments = shipmentService.batchGenerateShipments(count);
+            return ResponseEntity.ok(shipments);
+        } catch (Exception e) {
+            logger.error("批量生成运单失败", e);
+            return ResponseEntity.internalServerError().body(null);
+        }
+    }
+
+    /**
      * 获取活跃运单列表（包含进度概览）
      * GET /api/shipments/active
      */
+
     @GetMapping("/active")
     public ResponseEntity<List<ActiveShipmentSummaryDTO>> getActiveShipments() {
         logger.info("请求获取活跃运单列表");
@@ -267,6 +288,7 @@ public class ShipmentController {
             return ResponseEntity.internalServerError().body(null);
         }
     }
+
 
     /**
      * 更新运单进度（通常由车辆到达事件触发）
