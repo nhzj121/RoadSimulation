@@ -1,6 +1,8 @@
 package org.example.roadsimulation.controller;
 
 import jakarta.validation.Valid;
+import org.example.roadsimulation.dto.ApiResponse;
+import org.example.roadsimulation.dto.VehicleArrivalEventDTO;
 import org.example.roadsimulation.dto.VehicleDTO;
 import org.example.roadsimulation.entity.Vehicle;
 import org.example.roadsimulation.service.VehicleService;
@@ -22,7 +24,6 @@ import java.util.Optional;
 @RestController
 @RequestMapping("/api/vehicles")
 public class VehicleController {
-
     private static final Logger logger = LoggerFactory.getLogger(VehicleController.class);
 
     private final VehicleService vehicleService;
@@ -243,5 +244,45 @@ public class VehicleController {
         boolean exists = vehicleService.existsByLicensePlate(licensePlate);
         logger.debug("车牌号 {} 存在性检查结果: {}", licensePlate, exists);
         return ResponseEntity.ok(exists);
+    }
+
+    /**
+     * 处理车辆到达POI点事件
+     *
+     * @param arrivalEvent 到达事件数据
+     * @return 处理结果
+     */
+    @PostMapping("/arrival")
+    public ResponseEntity<ApiResponse<Vehicle>> handleVehicleArrival(@RequestBody VehicleArrivalEventDTO arrivalEvent) {
+        logger.info("收到车辆到达事件上报 - 车辆ID: {}, POI ID: {}, 时间: {}",
+                arrivalEvent.getVehicleId(),
+                arrivalEvent.getPoiId(),
+                arrivalEvent.getArrivalTime());
+
+        try {
+            // 1. 验证车辆和POI是否存在
+            Vehicle vehicle = vehicleService.getVehicleById(arrivalEvent.getVehicleId())
+                    .orElseThrow(() -> new IllegalArgumentException("车辆不存在，ID: " + arrivalEvent.getVehicleId()));
+
+            // 2. 调用服务层处理到达事件
+            Vehicle updatedVehicle = vehicleService.setVehicleLocation(arrivalEvent.getVehicleId(), arrivalEvent.getPoiId());
+
+            // 3. 记录到达事件到日志或数据库
+            logger.info("车辆[{}]成功到达POI[{}]，位置已更新",
+                    arrivalEvent.getVehicleId(),
+                    arrivalEvent.getPoiId());
+
+            // 4. 返回成功响应
+            return ResponseEntity.ok(ApiResponse.success("车辆到达事件已处理", updatedVehicle));
+
+        } catch (IllegalArgumentException e) {
+            logger.error("车辆到达事件参数错误: {}", e.getMessage());
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error(e.getMessage()));
+        } catch (Exception e) {
+            logger.error("处理车辆到达事件失败: ", e);
+            return ResponseEntity.internalServerError()
+                    .body(ApiResponse.error("处理车辆到达事件时发生内部错误"));
+        }
     }
 }

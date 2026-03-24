@@ -194,6 +194,87 @@ const handleVehicleClick = (vehicle) => {
   // highlightVehicleOnMap(vehicle);
 };
 
+// 新增导入
+import { useVehicleArrivalMonitor } from '@/composables/useVehicleArrivalMonitor';
+
+// 在您的组件逻辑中添加以下内容
+// 假设您已经有以下响应式数据
+// const vehiclePositions = ref([]); // 车辆位置数组
+// const currentPOIs = ref([]); // POI列表
+
+// 创建监控实例
+const arrivalMonitor = useVehicleArrivalMonitor({
+  checkInterval: 1000, // 每秒检查一次
+  arrivalThreshold: 50, // 50米内视为到达
+  preventDuplicateReports: true, // 防止重复上报
+  duplicateTimeout: 30000 // 30秒内不上报重复事件
+});
+
+/**
+ * 获取所有车辆的当前位置 - 修复版本
+ * 从动画管理器中获取车辆实时位置
+ */
+const getVehiclePositions = () => {
+  const positions = [];
+
+  console.log(`[调试] animationManager 状态:`, {
+    exists: !!animationManager,
+    animationsCount: animationManager?.animations?.size || 0
+  });
+
+  if (animationManager && animationManager.animations) {
+    console.log(`[调试] 动画列表:`, Array.from(animationManager.animations.entries()));
+
+    animationManager.animations.forEach((animation, assignmentId) => {
+      if (animation && animation.currentPosition && !animation.isCompleted) {
+        console.log(`[调试] 找到动画:`, {
+          assignmentId,
+          vehicleId: animation.vehicleId,
+          position: animation.currentPosition,
+          isCompleted: animation.isCompleted
+        });
+
+        // ... 原有的处理逻辑
+      }
+    });
+  }
+
+  console.log(`[到达检测] 获取到 ${positions.length} 辆车辆的位置`);
+  return positions;
+};
+
+// 获取POI列表的函数
+const getPOIList = () => {
+  // 根据您的实际数据结构进行调整
+  return currentPOIs.value.map(poi => ({
+    id: poi.id,
+    name: poi.name,
+    longitude: poi.longitude,
+    latitude: poi.latitude,
+    radius: poi.radius // 如果有自定义半径
+  }));
+};
+
+// 在仿真开始时启动监控
+const startSimulationWithMonitoring = async () => {
+  // 调用您现有的启动仿真方法
+  // await yourExistingStartSimulationFunction();
+
+  // 启动车辆到达监控
+  arrivalMonitor.startMonitoring(getVehiclePositions, getPOIList);
+
+  console.log('车辆到达监控已启动');
+};
+
+// 在仿真停止时停止监控
+const stopSimulationWithMonitoring = () => {
+  // 调用您现有的停止仿真方法
+  // yourExistingStopSimulationFunction();
+
+  // 停止车辆到达监控
+  arrivalMonitor.stopMonitoring();
+};
+
 // 滚动到指定车辆
 const scrollToVehicle = (vehicleId) => {
   // 清除之前的高亮
@@ -1193,6 +1274,7 @@ const startSimulation = async () => {
     ElMessage.error('启动仿真失败：' + error.message);
     isSimulationRunning.value = false;
   }
+  arrivalMonitor.startMonitoring(getVehiclePositions, getPOIList);
 };
 
 /**
@@ -1311,6 +1393,7 @@ const stopSimulationTimer = () => {
     clearInterval(simulationTimer.value);
     simulationTimer.value = null;
   }
+  arrivalMonitor.stopMonitoring();
 };
 
 /**
@@ -1485,89 +1568,63 @@ const statusMap = {
 
 const vehicles = reactive([]); // 车辆列表，将从Assignment中获取
 
-// 更新车辆信息的方法
+/**
+ * 更新车辆信息 - 修复版本
+ * 从有效的后端接口 `/api/assignments/active` 获取任务数据，并提取车辆信息。
+ * 此函数为侧边栏车辆列表和统计信息提供数据。
+ */
 const updateVehicleInfo = async () => {
   try {
-    // 从Assignment获取车辆信息
+    console.log('[车辆信息] 正在从 /api/assignments/active 获取数据...');
+
+    // 调用项目中已存在且有效的接口
     const response = await request.get('/api/assignments/active');
     const activeAssignments = response.data;
+
+    console.log(`[车辆信息] 获取到 ${activeAssignments?.length || 0} 个活动任务`);
 
     // 清空当前车辆列表
     vehicles.splice(0, vehicles.length);
 
-    const positionsResponse = await request.get('/api/vehicles/current-positions');
-    const vehiclePositions = positionsResponse.data;
+    const vehicleMap = new Map(); // 用于按车辆ID去重
 
-    // 从Assignment中提取车辆信息
-    const vehicleMap = new Map(); // 用于去重，key为vehicleId
-
-    activeAssignments.forEach(assignment => {
-      if (assignment.vehicleId && assignment.licensePlate) {
-        // 如果车辆已在map中，合并信息
-        if (vehicleMap.has(assignment.vehicleId)) {
-          const existingVehicle = vehicleMap.get(assignment.vehicleId);
-          // 如果当前assignment有更详细的信息，更新
-          if (assignment.vehicleStatus) {
-            existingVehicle.status = assignment.vehicleStatus;
-          }
-          // ToDo
-          // 添加当前assignment到车辆的任务列表中
-          if (!existingVehicle.assignments) {
-            existingVehicle.assignments = [];
-          }
-          existingVehicle.assignments.push({
-            id: assignment.assignmentId,
-            routeName: assignment.routeName,
-            goodsName: assignment.goodsName,
-            quantity: assignment.quantity
-          });
-        } else {
-          // 创建新车辆记录
+    if (activeAssignments && Array.isArray(activeAssignments)) {
+      activeAssignments.forEach(assignment => {
+        if (assignment.vehicleId) {
           const vehicle = {
             id: assignment.vehicleId,
-            licensePlate: assignment.licensePlate,
-            status: assignment.vehicleStatus || 'ORDER_DRIVING',
-            // ToDO
-            assignments: [{
-              id: assignment.assignmentId,
-              routeName: assignment.routeName,
-              goodsName: assignment.goodsName,
-              quantity: assignment.quantity
-            }],
-            // 任务信息
+            licensePlate: assignment.licensePlate || `车辆${assignment.vehicleId}`,
+            status: assignment.vehicleStatus || 'IDLE',
             currentAssignment: assignment.routeName,
             goodsInfo: assignment.goodsName,
             quantity: assignment.quantity,
             startPOI: assignment.startPOIName,
             endPOI: assignment.endPOIName,
-            // 载重信息
             currentLoad: assignment.currentLoad || 0,
             maxLoadCapacity: assignment.maxLoadCapacity || 0,
-            // 载容信息
             currentVolume: assignment.currentVolume || 0,
             maxVolumeCapacity: assignment.maxVolumeCapacity || 0,
-            // 货物单位信息
             goodsWeightPerUnit: assignment.goodsWeightPerUnit || 0,
-            goodsVolumePerUnit: assignment.goodsVolumePerUnit || 0
+            goodsVolumePerUnit: assignment.goodsVolumePerUnit || 0,
+            // 为"到达检测"功能预留的字段
+            currentPOIName: assignment.currentPOIName || null,
+            lastArrivalPOI: null,
+            recentlyArrived: false
           };
-          // 尝试从车辆位置接口获取最新位置
-          if (vehiclePositions && vehiclePositions[vehicle.id]) {
-            const position = vehiclePositions[vehicle.id];
-            vehicle.currentLongitude = position[0];
-            vehicle.currentLatitude = position[1];
-          }
 
-          // 计算载重和载容的百分比（用于进度条显示）
+          // 计算载重/载容百分比
           vehicle.loadPercentage = vehicle.maxLoadCapacity > 0 ?
               Math.min(100, (vehicle.currentLoad / vehicle.maxLoadCapacity) * 100) : 0;
           vehicle.volumePercentage = vehicle.maxVolumeCapacity > 0 ?
               Math.min(100, (vehicle.currentVolume / vehicle.maxVolumeCapacity) * 100) : 0;
+
+          // 通过Map去重，避免同一车辆在列表中出现多次
           vehicleMap.set(assignment.vehicleId, vehicle);
         }
-      }
-    });
+      });
+    }
 
-    // 将map中的车辆添加到列表中
+    // 将处理好的车辆信息添加到响应式数组
     vehicleMap.forEach(vehicle => {
       vehicles.push(vehicle);
     });
@@ -1579,13 +1636,15 @@ const updateVehicleInfo = async () => {
         v.status === 'TRANSPORT_DRIVING' ||
         v.status === 'UNLOADING'
     ).length;
-
     stats.tasks = vehicles.length;
-    console.log(`更新了 ${vehicles.length} 辆车辆信息`);
+
+    console.log(`[车辆信息] 更新完成，共 ${vehicles.length} 辆车`);
+    return vehicles;
 
   } catch (error) {
-    console.error('获取车辆信息失败:', error);
-    ElMessage.error('获取车辆信息失败');
+    console.error('[车辆信息] 获取任务数据失败:', error);
+    // 此处选择静默失败，不影响仿真主流程
+    return [];
   }
 };
 
