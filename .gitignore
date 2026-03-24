@@ -1,8 +1,7 @@
 /Vue3/package.json
+
+
+node_modules/
+**/node_modules/
 target/
-Vue3/node_modules/
-/package-lock.json
-/Vue3/package-lock.json
-/.idea/
-*.iml
-out/
+

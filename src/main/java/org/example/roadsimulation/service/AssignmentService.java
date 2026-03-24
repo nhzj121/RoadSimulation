@@ -9,9 +9,7 @@ import org.example.roadsimulation.entity.Assignment.AssignmentStatus;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
-import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Map;
 
 public interface AssignmentService {
 
@@ -42,10 +40,9 @@ public interface AssignmentService {
     // 前后端数据传输
     List<AssignmentBriefDTO> getActiveAssignments();
     List<AssignmentBriefDTO> getNewAssignments();
-    AssignmentDTO getAssignmentDetail(Long assignmentId); // ToDo 这里需要从数据库获取完整的 Assignment 信息并转换
+    AssignmentDTO getAssignmentDetail(Long assignmentId);
     void markAssignmentAsDrawn(Long assignmentId);
     List<Long> getCompletedAssignments();
 
     List<AssignmentBriefDTO> getAssignmentBriefsByIds(List<Long> assignmentIds);
-
 }

@@ -66,7 +66,7 @@ public class Goods {
     @OneToMany(mappedBy = "goods", cascade = {CascadeType.PERSIST, CascadeType.MERGE}, fetch = FetchType.LAZY)
     private Set<ShipmentItem> shipmentItems = new HashSet<>();
 
-    @OneToMany(mappedBy = "goods", cascade = {CascadeType.PERSIST, CascadeType.MERGE}, fetch = FetchType.LAZY)
+    @OneToMany(mappedBy = "goods", cascade = {CascadeType.PERSIST, CascadeType.MERGE}, fetch = FetchType.EAGER)
     private List<Enrollment> enrollments = new ArrayList<>();
 
     // 进行修改的对象和时间

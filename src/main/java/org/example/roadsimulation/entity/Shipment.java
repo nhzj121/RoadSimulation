@@ -22,13 +22,14 @@ import java.util.Set;
                 @Index(name = "idx_shipment_status", columnList = "status"),
                 @Index(name = "idx_shipment_origin_poi", columnList = "origin_poi_id"),
                 @Index(name = "idx_shipment_dest_poi", columnList = "dest_poi_id"),
-                @Index(name = "idx_shipment_customer", columnList = "customer_id") // 新增索引
+                @Index(name = "idx_shipment_customer", columnList = "customer_id")
         },
         uniqueConstraints = {
                 @UniqueConstraint(name = "uk_shipment_ref_no", columnNames = "ref_no")
         }
 )
 public class Shipment {
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -44,11 +45,23 @@ public class Shipment {
 
     @Min(value = 0, message = "总重量不能为负数")
     @Column(name = "total_weight")
-    private Double totalWeight = 0.0; // kg
+    private Double totalWeight; // kg
 
     @Min(value = 0, message = "总体积不能为负数")
     @Column(name = "total_volume")
-    private Double totalVolume = 0.0; // m3
+    private Double totalVolume; // m3
+
+    /**
+     * 新增：总行驶时间（秒）
+     */
+    @Column(name = "total_driving_time")
+    private Long totalDrivingTime;
+
+    /**
+     * 新增：总行驶距离（米）
+     */
+    @Column(name = "total_driving_distance")
+    private Double totalDrivingDistance;
 
     public enum ShipmentStatus {
         CREATED,      // 已创建
@@ -64,12 +77,11 @@ public class Shipment {
     private ShipmentStatus status = ShipmentStatus.CREATED;
 
     // 与客户的多对一关系
-    // @NotNull(message = "客户不能为空")
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "customer_id")
     private Customer customer;
 
-    // 起运地 / 目的地（与你项目里的 POI 实体关联）
+    // 起运地 / 目的地
     @NotNull(message = "起运地不能为空")
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "origin_poi_id")
@@ -115,67 +127,152 @@ public class Shipment {
         if (item != null) {
             items.add(item);
             item.setShipment(this);
-            this.totalWeight = (this.totalWeight == null ? 0 : this.totalWeight) + (item.getWeight() == null ? 0 : item.getWeight());
-            this.totalVolume = (this.totalVolume == null ? 0 : this.totalVolume) + (item.getVolume() == null ? 0 : item.getVolume());
         }
     }
+
     public void removeItem(ShipmentItem item) {
         if (item != null) {
+            items.remove(item);
             item.setShipment(null);
-            // 自动扣减总重量和总体积 (确保不扣出负数)
-            double itemWeight = item.getWeight() != null ? item.getWeight() : 0.0;
-            double itemVolume = item.getVolume() != null ? item.getVolume() : 0.0;
-            this.totalWeight = Math.max(0.0, this.totalWeight - itemWeight);
-            this.totalVolume = Math.max(0.0, this.totalVolume - itemVolume);
         }
     }
 
     // Getter & Setter
-    public Long getId() { return id; }
-    public void setId(Long id) { this.id = id; }
+    public Long getId() {
+        return id;
+    }
 
-    public String getRefNo() { return refNo; }
-    public void setRefNo(String refNo) { this.refNo = refNo; }
+    public void setId(Long id) {
+        this.id = id;
+    }
 
-    public String getCargoType() { return cargoType; }
-    public void setCargoType(String cargoType) { this.cargoType = cargoType; }
+    public String getRefNo() {
+        return refNo;
+    }
 
-    public Double getTotalWeight() { return totalWeight; }
-    public void setTotalWeight(Double totalWeight) { this.totalWeight = totalWeight; }
+    public void setRefNo(String refNo) {
+        this.refNo = refNo;
+    }
 
-    public Double getTotalVolume() { return totalVolume; }
-    public void setTotalVolume(Double totalVolume) { this.totalVolume = totalVolume; }
+    public String getCargoType() {
+        return cargoType;
+    }
 
-    public ShipmentStatus getStatus() { return status; }
-    public void setStatus(ShipmentStatus status) { this.status = status; }
+    public void setCargoType(String cargoType) {
+        this.cargoType = cargoType;
+    }
 
-    public Customer getCustomer() { return customer; }
-    public void setCustomer(Customer customer) { this.customer = customer; }
+    public Double getTotalWeight() {
+        return totalWeight;
+    }
 
-    public POI getOriginPOI() { return originPOI; }
-    public void setOriginPOI(POI originPOI) { this.originPOI = originPOI; }
+    public void setTotalWeight(Double totalWeight) {
+        this.totalWeight = totalWeight;
+    }
 
-    public POI getDestPOI() { return destPOI; }
-    public void setDestPOI(POI destPOI) { this.destPOI = destPOI; }
+    public Double getTotalVolume() {
+        return totalVolume;
+    }
 
-    public LocalDateTime getPickupAppoint() { return pickupAppoint; }
-    public void setPickupAppoint(LocalDateTime pickupAppoint) { this.pickupAppoint = pickupAppoint; }
+    public void setTotalVolume(Double totalVolume) {
+        this.totalVolume = totalVolume;
+    }
 
-    public LocalDateTime getDeliveryAppoint() { return deliveryAppoint; }
-    public void setDeliveryAppoint(LocalDateTime deliveryAppoint) { this.deliveryAppoint = deliveryAppoint; }
+    public Long getTotalDrivingTime() {
+        return totalDrivingTime;
+    }
 
-    public LocalDateTime getCreatedAt() { return createdAt; }
-    public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
+    public void setTotalDrivingTime(Long totalDrivingTime) {
+        this.totalDrivingTime = totalDrivingTime;
+    }
 
-    public LocalDateTime getUpdatedAt() { return updatedAt; }
-    public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
+    public Double getTotalDrivingDistance() {
+        return totalDrivingDistance;
+    }
 
-    public Set<ShipmentItem> getItems() { return items; }
-    public void setItems(Set<ShipmentItem> items) { this.items = items; }
+    public void setTotalDrivingDistance(Double totalDrivingDistance) {
+        this.totalDrivingDistance = totalDrivingDistance;
+    }
 
-    // 四元组字段的getter和setter
-    public String getUpdatedBy() {return updatedBy;}
-    public void setUpdatedBy(String updatedBy) {this.updatedBy = updatedBy;}
+    public ShipmentStatus getStatus() {
+        return status;
+    }
+
+    public void setStatus(ShipmentStatus status) {
+        this.status = status;
+    }
+
+    public Customer getCustomer() {
+        return customer;
+    }
+
+    public void setCustomer(Customer customer) {
+        this.customer = customer;
+    }
+
+    public POI getOriginPOI() {
+        return originPOI;
+    }
+
+    public void setOriginPOI(POI originPOI) {
+        this.originPOI = originPOI;
+    }
+
+    public POI getDestPOI() {
+        return destPOI;
+    }
+
+    public void setDestPOI(POI destPOI) {
+        this.destPOI = destPOI;
+    }
+
+    public LocalDateTime getPickupAppoint() {
+        return pickupAppoint;
+    }
+
+    public void setPickupAppoint(LocalDateTime pickupAppoint) {
+        this.pickupAppoint = pickupAppoint;
+    }
+
+    public LocalDateTime getDeliveryAppoint() {
+        return deliveryAppoint;
+    }
+
+    public void setDeliveryAppoint(LocalDateTime deliveryAppoint) {
+        this.deliveryAppoint = deliveryAppoint;
+    }
+
+    public LocalDateTime getCreatedAt() {
+        return createdAt;
+    }
+
+    public void setCreatedAt(LocalDateTime createdAt) {
+        this.createdAt = createdAt;
+    }
+
+    public LocalDateTime getUpdatedAt() {
+        return updatedAt;
+    }
+
+    public void setUpdatedAt(LocalDateTime updatedAt) {
+        this.updatedAt = updatedAt;
+    }
+
+    public Set<ShipmentItem> getItems() {
+        return items;
+    }
+
+    public void setItems(Set<ShipmentItem> items) {
+        this.items = items;
+    }
+
+    public String getUpdatedBy() {
+        return updatedBy;
+    }
+
+    public void setUpdatedBy(String updatedBy) {
+        this.updatedBy = updatedBy;
+    }
 
     @PreUpdate
     public void touchUpdateTime() {
@@ -191,6 +288,8 @@ public class Shipment {
                 ", customer=" + (customer != null ? customer.getId() : "null") +
                 ", originPOI=" + (originPOI != null ? originPOI.getId() : "null") +
                 ", destPOI=" + (destPOI != null ? destPOI.getId() : "null") +
+                ", totalDrivingTime=" + totalDrivingTime +
+                ", totalDrivingDistance=" + totalDrivingDistance +
                 '}';
     }
 }

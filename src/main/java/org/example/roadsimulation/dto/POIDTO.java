@@ -1,32 +1,29 @@
-// POIDTO.java
 package org.example.roadsimulation.dto;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import org.example.roadsimulation.entity.POI;
 
 import java.math.BigDecimal;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class POIDTO {
     private Long id;
     private String name;
+
+    @JsonProperty("poi_type")
     private POI.POIType poiType;
+
     private BigDecimal longitude;
     private BigDecimal latitude;
     private String address;
     private String tel;
 
-    // 构造器
     public POIDTO() {}
 
-    public POIDTO(Long id, String name, POI.POIType poiType, BigDecimal longitude,
-                  BigDecimal latitude) {
-        this.id = id;
-        this.name = name;
-        this.poiType = poiType;
-        this.longitude = longitude;
-        this.latitude = latitude;
-    }
-
-    // Getter和Setter
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
 
@@ -48,3 +45,4 @@ public class POIDTO {
     public String getTel() { return tel; }
     public void setTel(String tel) { this.tel = tel; }
 }
+

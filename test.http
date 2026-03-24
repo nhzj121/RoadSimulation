@@ -1,0 +1,11 @@
+### 启动仿真
+POST http://localhost:8080/api/simulation/start
+Content-Type: application/json
+
+{}
+
+### 获取仿真状态
+GET http://localhost:8080/api/simulation/status
+
+### 拉取车辆列表
+GET http://localhost:8080/api/vehicles
