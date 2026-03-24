@@ -41,7 +41,7 @@ public class SimulationMainLoop {
     }
 
     /**
-     * 主循环方法 - 每 4 秒执行一次循环（现实时间）
+     * 主循环方法 - 每 7 秒执行一次循环（现实时间）
      * 每次循环推进 MINUTES_PER_LOOP（仿真时间）
      */
     @Scheduled(fixedRate = 4000)
