@@ -107,6 +107,11 @@ public class Vehicle {
     @Column(name = "suitable-goods")
     private String suitableGoods;
 
+    @Getter
+    @Setter
+    @Column(name = "loop-count")
+    private int loopCount = 0;
+
     // 与司机多对多
     @ManyToMany(mappedBy = "vehicles")
     private Set<Driver> drivers = new HashSet<>();

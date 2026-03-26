@@ -7,6 +7,9 @@
         </div>
         <div class="navbar-menu">
           <ElButton text @click="goToPOIManager">POI点管理</ElButton>
+          <ElButton type="primary" text @click="toggleCostPanel">
+            {{ isCostPanelVisible ? '隐藏成本监控' : '成本监控' }}
+          </ElButton>
         </div>
       </div>
     </ElHeader>
@@ -145,6 +148,57 @@
       <ElMain>
         <div id="container"></div>
       </ElMain>
+      <transition name="el-zoom-in-left">
+        <ElAside v-show="isCostPanelVisible" width="300px" class="right-side-panel">
+          <div class="side-panel-scroll">
+            <div class="panel-section">
+              <ElCard shadow="never" class="box-card cost-card">
+                <template #header>
+                  <div class="card-header" style="justify-content: space-between;">
+                    <span>实时成本分析</span>
+                    <ElButton link type="info" @click="toggleCostPanel">✖</ElButton>
+                  </div>
+                </template>
+
+                <div class="cost-list">
+                  <div class="cost-item">
+                    <div class="cost-info">
+                      <span class="cost-title">直接成本 (A)</span>
+                      <span class="cost-desc">等待时间与空驶里程</span>
+                    </div>
+                    <div class="cost-value">{{ simulationCosts.costA.toFixed(2) }}</div>
+                  </div>
+
+                  <div class="cost-item">
+                    <div class="cost-info">
+                      <span class="cost-title">效率成本 (B)</span>
+                      <span class="cost-desc">空驶率与等待率</span>
+                    </div>
+                    <div class="cost-value">{{ simulationCosts.costB.toFixed(2) }}</div>
+                  </div>
+
+                  <div class="cost-item">
+                    <div class="cost-info">
+                      <span class="cost-title">运能损耗 (C)</span>
+                      <span class="cost-desc">理论与实际运能差</span>
+                    </div>
+                    <div class="cost-value">{{ simulationCosts.costC.toFixed(2) }}</div>
+                  </div>
+
+                  <div class="cost-item">
+                    <div class="cost-info">
+                      <span class="cost-title">经济收益 (D)</span>
+                      <span class="cost-desc">油耗与固定损耗</span>
+                    </div>
+                    <div class="cost-value">{{ simulationCosts.costD.toFixed(2) }}</div>
+                  </div>
+                </div>
+
+              </ElCard>
+            </div>
+          </div>
+        </ElAside>
+      </transition>
     </ElContainer>
   </ElContainer>
 </template>
@@ -255,6 +309,34 @@ const scrollToVehicle = (vehicleId) => {
       console.warn(`未找到车辆 ${vehicleId} 的元素或滚动容器未初始化`);
     }
   });
+};
+
+// --- 成本监控面板相关状态 ---
+const isCostPanelVisible = ref(false); // 默认关闭，点击后再打开
+const toggleCostPanel = () => {
+  isCostPanelVisible.value = !isCostPanelVisible.value;
+};
+
+const simulationCosts = reactive({
+  costA: 0.0,
+  costB: 0.0,
+  costC: 0.0,
+  costD: 0.0
+});
+
+// 获取实时成本的接口请求
+const fetchSimulationCosts = async () => {
+  try {
+    const response = await request.get('/api/simulation/costs');
+    if (response.data) {
+      simulationCosts.costA = response.data.costA || 0;
+      simulationCosts.costB = response.data.costB || 0;
+      simulationCosts.costC = response.data.costC || 0;
+      simulationCosts.costD = response.data.costD || 0;
+    }
+  } catch (error) {
+    console.error('获取成本数据失败:', error);
+  }
 };
 
 // 清除高亮
@@ -1331,6 +1413,8 @@ const startSimulationTimer = () => {
 
       // 更新车辆信息
       await updateVehicleInfo();
+
+      await fetchSimulationCosts();
     }
   }, simulationInterval.value);
 };

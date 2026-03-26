@@ -12,6 +12,7 @@ import org.example.roadsimulation.entity.Vehicle;
 import org.example.roadsimulation.repository.AssignmentRepository;
 import org.example.roadsimulation.repository.POIRepository;
 import org.example.roadsimulation.repository.VehicleRepository;
+import org.example.roadsimulation.service.GetCostService;
 import org.example.roadsimulation.service.POIService;
 import org.example.roadsimulation.service.VehicleService;
 import org.example.roadsimulation.service.impl.VehicleInitializationServiceImpl;
@@ -20,12 +21,11 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
 
 @RestController
@@ -149,6 +149,19 @@ public class SimulationController {
         @Setter
         private Long endPOIId;
 
+    }
+
+    @Autowired
+    private GetCostService getCostService;
+
+    @GetMapping("/costs")
+    public Map<String, Double> getCurrentCosts() {
+        Map<String, Double> costs = new HashMap<>();
+        costs.put("costA", getCostService.getCostByAllWaitingTimeAndMileageWithoutGoods());
+        costs.put("costB", getCostService.getCostByAllEffectiveTimeAndEffectiveMileageWithWorst());
+        costs.put("costC", getCostService.getCostByAllEffectiveTransportCapacityWithWorst());
+        costs.put("costD", getCostService.getCostByALlOilAndFixedConsumptionWithWorst());
+        return costs;
     }
 
 }

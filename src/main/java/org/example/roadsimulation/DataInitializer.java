@@ -11,10 +11,7 @@ import org.example.roadsimulation.dto.*;
 import org.example.roadsimulation.dto.AssignmentStatusDTO;
 import org.example.roadsimulation.entity.*;
 import org.example.roadsimulation.repository.*;
-import org.example.roadsimulation.service.GoodsPOIGenerateService;
-import org.example.roadsimulation.service.ShipmentItemService;
-import org.example.roadsimulation.service.ShipmentProgressService;
-import org.example.roadsimulation.service.VehicleMatchingService;
+import org.example.roadsimulation.service.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -69,6 +66,7 @@ public class DataInitializer{
     private final SimulationDataCleanupService cleanupService;
     private final ShipmentItemService shipmentItemService;
     private final VehicleRepository vehicleRepository;
+    private final RouteService routeService;
 
     private final Map<POI, POI> startToEndMapping = new ConcurrentHashMap<>(); // 起点到终点的映射关系
     // 修改成员变量，使用起点-终点对作为键
@@ -129,6 +127,9 @@ public class DataInitializer{
     private final int maxTrueCount = 45; // 最大为真的数量
     private double trueProbability = 0.009; // 判断为真的概率
 
+    // 当前轮次
+    private int currentLoopCount;
+
     @Autowired
     public DataInitializer(EnrollmentRepository enrollmentRepository,
                            GoodsRepository goodsRepository,
@@ -140,7 +141,8 @@ public class DataInitializer{
                            AssignmentRepository assignmentRepository,
                            VehicleRepository vehicleRepository,
                            ShipmentItemService shipmentItemService,
-                           @Lazy ShipmentProgressService shipmentProgressService) {
+                           @Lazy ShipmentProgressService shipmentProgressService,
+                           RouteService routeService) {
         this.enrollmentRepository = enrollmentRepository;
         this.goodsRepository = goodsRepository;
         this.poiRepository = poiRepository;
@@ -152,6 +154,7 @@ public class DataInitializer{
         this.vehicleRepository = vehicleRepository;
         this.shipmentItemService = shipmentItemService;
         this.shipmentProgressService = shipmentProgressService;
+        this.routeService = routeService;
     }
 
     /**
@@ -163,6 +166,7 @@ public class DataInitializer{
             System.out.println("生成工厂为空");
             return;
         }
+        currentLoopCount = loopCount;
 
         System.out.println("开始货物生成检查（循环 " + loopCount + "）");
 
@@ -800,6 +804,81 @@ public class DataInitializer{
                         .multiply(BigDecimal.valueOf(assignQuantity))
                         .setScale(2, RoundingMode.HALF_UP);
                 selectedVehicle.setCurrentLoad(assignedWeight.doubleValue());
+
+                POI endPOI = shipment.getDestPOI();
+                POI vehiclePOI = selectedVehicle.getCurrentPOI();
+                Double mileage = 0.0;
+                Double mileageWithoutThings = 0.0;
+
+                try {
+                    // 1. 获取带有货物的距离
+                    GaodeRouteResponse response_1 = routeService.planRouteBetweenPois(startPOI.getId(), endPOI.getId(), "0");
+                    if (response_1 != null && response_1.getData() != null && response_1.getData().getTotalDistance() != null) {
+                        // 注意：这里假设你的 DTO 里 getDistance() 才能拿到距离，而不是 getDestination()
+                        mileage = response_1.getData().getTotalDistance() / 1000.0;
+                    } else {
+                        System.err.println("警告：未能获取 response_1 路线距离，使用直线距离或默认值");
+                        // 备用方案：使用直线距离兜底
+                        mileage = calculateHaversineDistance(startPOI.getLatitude(), startPOI.getLongitude(), endPOI.getLatitude(), endPOI.getLongitude());
+                    }
+
+                    // 2. 获取空车前往起点的距离
+                    if (vehiclePOI != null) {
+                        GaodeRouteResponse response_2 = routeService.planRouteBetweenPois(vehiclePOI.getId(), startPOI.getId(), "0");
+                        if (response_2 != null && response_2.getData() != null && response_2.getData().getTotalDistance() != null) {
+                            mileageWithoutThings = response_2.getData().getTotalDistance() / 1000.0;
+                        } else {
+                            System.err.println("警告：未能获取 response_2 路线距离，使用直线距离兜底");
+                            mileageWithoutThings = calculateHaversineDistance(vehiclePOI.getLatitude(), vehiclePOI.getLongitude(), startPOI.getLatitude(), startPOI.getLongitude());
+                        }
+                    } else if (selectedVehicle.getCurrentLatitude() != null && selectedVehicle.getCurrentLongitude() != null){
+                        // 如果 vehiclePOI 为空但经纬度存在，用直线距离兜底
+                        mileageWithoutThings = calculateHaversineDistance(selectedVehicle.getCurrentLatitude(), selectedVehicle.getCurrentLongitude(), startPOI.getLatitude(), startPOI.getLongitude());
+                    }
+
+                } catch (Exception e) {
+                    System.err.println("路线规划计算里程时发生异常: " + e.getMessage());
+                }
+                Double realityCapacity = assignedWeight.doubleValue() * mileage;
+                Double theoryCapacity = selectedVehicle.getMaxLoadCapacity() * mileage;
+
+                Double waitingTime = (currentLoopCount - selectedVehicle.getLoopCount()) * 0.5;
+                Double transportTime = (mileage + mileageWithoutThings) / 20.0;
+
+                Double theoryRealityCapacity = theoryCapacity - realityCapacity;
+                Double waitingTransportTime = waitingTime / transportTime;
+                
+                Double oilLoss = realityCapacity / theoryRealityCapacity;
+                Double fixedLoss = waitingTime + transportTime;
+                Double loss = 0.5 * oilLoss + 0.3 * fixedLoss;
+                
+                CostEntity.totalMileage += mileage;
+                CostEntity.totalTransportTime += transportTime;
+                CostEntity.totalWaitingTime += waitingTime;
+                CostEntity.totalMileageWithoutThings += mileageWithoutThings;
+                CostEntity.totalRealityCapacity += realityCapacity;
+                CostEntity.totalTheoryCapacity += theoryCapacity;
+
+                if(CostEntity.WorstTheoryRealityCapacity == 0.0){
+                    CostEntity.WorstTheoryRealityCapacity = theoryRealityCapacity;
+                } else if(CostEntity.WorstTheoryRealityCapacity < theoryRealityCapacity){
+                    CostEntity.WorstTheoryRealityCapacity = theoryRealityCapacity;
+                }
+
+                if(CostEntity.WorstWaitingTransportTime == 0.0){
+                    CostEntity.WorstWaitingTransportTime = waitingTransportTime;
+                } else if(CostEntity.WorstWaitingTransportTime < waitingTransportTime){
+                    CostEntity.WorstWaitingTransportTime = waitingTransportTime;
+                }
+                
+                if(CostEntity.WorstLoss == 0.0){
+                    CostEntity.WorstLoss = loss;
+                } else if(CostEntity.WorstLoss < loss){
+                    CostEntity.WorstLoss = loss;
+                }
+
+                selectedVehicle.setLoopCount(currentLoopCount);
+                vehicleRepository.save(selectedVehicle);
 
                 // 标记车辆已分配
                 assignedVehicleIds.add(selectedVehicle.getId());
