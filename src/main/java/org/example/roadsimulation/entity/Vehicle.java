@@ -12,11 +12,9 @@ import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.HashSet;
+import java.util.Objects;
 import java.util.Set;
 
-/**
- * 车辆实体类 - 最终优化完整版
- */
 @Entity
 @Table(name = "vehicle")
 public class Vehicle {
@@ -58,7 +56,6 @@ public class Vehicle {
     @Column(name = "current_status", length = 30)
     private VehicleStatus currentStatus;
 
-    // 新增：上一个状态（用于日志和审计）
     @Enumerated(EnumType.STRING)
     @Column(name = "previous_status", length = 30)
     private VehicleStatus previousStatus;
@@ -128,6 +125,22 @@ public class Vehicle {
     @Column(name = "updated_time")
     private LocalDateTime updatedTime = LocalDateTime.now();
 
+    // ==================== 新增指标属性 ====================
+    @Column(name = "loading_wait_time")
+    private Long loadingWaitTime; // 秒
+
+    @Column(name = "empty_driving_time")
+    private Long emptyDrivingTime; // 秒
+
+    @Column(name = "empty_driving_distance")
+    private Double emptyDrivingDistance; // 公里
+
+    @Column(name = "total_driving_time")
+    private Long totalDrivingTime; // 秒
+
+    @Column(name = "total_driving_distance")
+    private Double totalDrivingDistance; // 公里
+
     // 自动更新 updatedTime
     @PreUpdate
     public void preUpdate() {
@@ -136,27 +149,63 @@ public class Vehicle {
 
     // ==================== 枚举 ====================
     public enum VehicleStatus {
-        IDLE(0),
-        ORDER_DRIVING(1),
-        LOADING(2),
-        TRANSPORT_DRIVING(3),
-        UNLOADING(4),
-        WAITING(5),
-        BREAKDOWN(6);
-
-        private final int index;
-        VehicleStatus(int index) { this.index = index; }
-        public int getIndex() { return index; }
+        IDLE, ORDER_DRIVING, LOADING, TRANSPORT_DRIVING, UNLOADING, WAITING, BREAKDOWN
     }
 
-    // ==================== 构造器 ====================
-    public Vehicle() {}
+    // ==================== 任务相关便捷方法 ====================
 
-    public Vehicle(String licensePlate, String brand, String modelType, Double maxLoadCapacity) {
-        this.licensePlate = licensePlate;
-        this.brand = brand;
-        this.modelType = modelType;
-        this.maxLoadCapacity = maxLoadCapacity;
+    /**
+     * 获取当前进行中的任务
+     */
+    public Assignment getCurrentAssignment() {
+        if (assignments == null || assignments.isEmpty()) {
+            return null;
+        }
+
+        return assignments.stream()
+                .filter(Objects::nonNull)
+                .filter(Assignment::isInProgress)
+                .findFirst()
+                .orElse(null);
+    }
+
+    /**
+     * 是否存在进行中的任务
+     */
+    public boolean hasAssignmentInProgress() {
+        return getCurrentAssignment() != null;
+    }
+
+    /**
+     * 添加任务并维护双向关系
+     */
+    public void addAssignment(Assignment assignment) {
+        if (assignment == null) {
+            return;
+        }
+
+        if (assignments == null) {
+            assignments = new HashSet<>();
+        }
+
+        assignments.add(assignment);
+        if (assignment.getAssignedVehicle() != this) {
+            assignment.setAssignedVehicle(this);
+        }
+    }
+
+    /**
+     * 移除任务并维护双向关系
+     */
+    public void removeAssignment(Assignment assignment) {
+        if (assignment == null || assignments == null) {
+            return;
+        }
+
+        assignments.remove(assignment);
+        if (assignment.getAssignedVehicle() == this) {
+            assignment.setAssignedVehicle(null);
+        }
     }
 
     // ==================== Getter & Setter ====================
@@ -237,41 +286,10 @@ public class Vehicle {
     public void setCurrentLatitude(BigDecimal currentLatitude) { this.currentLatitude = currentLatitude; }
 
     public Set<Driver> getDrivers() { return drivers; }
-    public void setDrivers(Set<Driver> drivers) {
-        for (Driver d : new HashSet<>(this.drivers)) removeDriver(d);
-        for (Driver d : drivers) addDriver(d);
-    }
-    public void addDriver(Driver driver) {
-        this.drivers.add(driver);
-        driver.getVehicles().add(this);
-    }
-    public void removeDriver(Driver driver) {
-        this.drivers.remove(driver);
-        driver.getVehicles().remove(this);
-    }
+    public void setDrivers(Set<Driver> drivers) { this.drivers = drivers; }
 
     public Set<Assignment> getAssignments() { return assignments; }
     public void setAssignments(Set<Assignment> assignments) { this.assignments = assignments; }
-    public void addAssignment(Assignment assignment) {
-        this.assignments.add(assignment);
-        assignment.setAssignedVehicle(this);
-    }
-    public void removeAssignment(Assignment assignment) {
-        this.assignments.remove(assignment);
-        assignment.setAssignedVehicle(null);
-    }
-
-    // 关键：获取当前活跃任务（兼容 ASSIGNED 和 IN_PROGRESS）
-    public Assignment getCurrentAssignment() {
-        return assignments.stream()
-                .filter(a -> a.getStatus() == Assignment.AssignmentStatus.IN_PROGRESS ||
-                        a.getStatus() == Assignment.AssignmentStatus.ASSIGNED)
-                .findFirst()
-                .orElse(null);
-    }
-
-    public Long getStatusDurationSeconds() { return statusDurationSeconds; }
-    public void setStatusDurationSeconds(Long statusDurationSeconds) { this.statusDurationSeconds = statusDurationSeconds; }
 
     public String getUpdatedBy() { return updatedBy; }
     public void setUpdatedBy(String updatedBy) { this.updatedBy = updatedBy; }

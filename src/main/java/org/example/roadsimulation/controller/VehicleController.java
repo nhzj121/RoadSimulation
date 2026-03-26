@@ -1,7 +1,9 @@
 package org.example.roadsimulation.controller;
 
 import jakarta.validation.Valid;
-import org.example.roadsimulation.DataInitializer;
+import org.example.roadsimulation.dto.ApiResponse;
+import org.example.roadsimulation.dto.VehicleArrivalEventDTO;
+import org.example.roadsimulation.dto.VehicleDTO;
 import org.example.roadsimulation.entity.Vehicle;
 import org.example.roadsimulation.service.VehicleService;
 import org.slf4j.Logger;
@@ -12,30 +14,19 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.ResponseEntity;
-import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
 import java.net.URI;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 
-/**
- * VehicleController - 车辆管理REST API控制器
- */
-@Validated
 @RestController
 @RequestMapping("/api/vehicles")
 public class VehicleController {
-
     private static final Logger logger = LoggerFactory.getLogger(VehicleController.class);
 
     private final VehicleService vehicleService;
-
-    @Autowired
-    private DataInitializer dataInitializer;
 
     @Autowired
     public VehicleController(VehicleService vehicleService) {
@@ -74,12 +65,11 @@ public class VehicleController {
         logger.debug("查询车辆详情，ID: {}", id);
 
         Optional<Vehicle> vehicle = vehicleService.getVehicleById(id);
-        if (vehicle.isPresent()) {
-            return ResponseEntity.ok(vehicle.get());
-        } else {
-            logger.warn("车辆不存在，ID: {}", id);
-            return ResponseEntity.notFound().build();
-        }
+        return vehicle.map(ResponseEntity::ok)
+                .orElseGet(() -> {
+                    logger.warn("车辆不存在，ID: {}", id);
+                    return ResponseEntity.notFound().build();
+                });
     }
 
     /**
@@ -95,6 +85,48 @@ public class VehicleController {
     }
 
     /**
+     * 获取车辆统计信息（空驶时间、空驶距离、装货等待时间）
+     */
+    @GetMapping("/{id}/statistics")
+    public ResponseEntity<VehicleDTO> getVehicleStatistics(@PathVariable Long id) {
+        logger.debug("获取车辆统计信息，ID: {}", id);
+
+        Optional<Vehicle> vehicle = vehicleService.getVehicleById(id);
+        if (vehicle.isPresent()) {
+            Vehicle v = vehicle.get();
+            VehicleDTO dto = new VehicleDTO();
+            dto.setEmptyDrivingTime(v.getEmptyDrivingTime());
+            dto.setEmptyDrivingDistance(v.getEmptyDrivingDistance());
+            dto.setLoadingWaitTime(v.getLoadingWaitTime());
+            return ResponseEntity.ok(dto);
+        } else {
+            logger.warn("车辆不存在，ID: {}", id);
+            return ResponseEntity.notFound().build();
+        }
+    }
+
+    /**
+     * 更新车辆统计信息（空驶时间、空驶距离、装货等待时间）
+     */
+    @PutMapping("/{id}/statistics")
+    public ResponseEntity<Vehicle> updateVehicleStatistics(@PathVariable Long id, @RequestBody VehicleDTO vehicleDTO) {
+        logger.debug("更新车辆统计信息，ID: {}", id);
+
+        Optional<Vehicle> vehicle = vehicleService.getVehicleById(id);
+        if (vehicle.isPresent()) {
+            Vehicle v = vehicle.get();
+            v.setEmptyDrivingTime(vehicleDTO.getEmptyDrivingTime());
+            v.setEmptyDrivingDistance(vehicleDTO.getEmptyDrivingDistance());
+            v.setLoadingWaitTime(vehicleDTO.getLoadingWaitTime());
+            Vehicle updatedVehicle = vehicleService.updateVehicle(id, v);
+            return ResponseEntity.ok(updatedVehicle);
+        } else {
+            logger.warn("车辆不存在，ID: {}", id);
+            return ResponseEntity.notFound().build();
+        }
+    }
+
+    /**
      * 分页查询车辆列表
      */
     @GetMapping("/page")
@@ -107,8 +139,10 @@ public class VehicleController {
         logger.debug("分页查询车辆，页码: {}, 每页大小: {}, 排序字段: {}, 排序方向: {}",
                 page, size, sortBy, direction);
 
-        Sort.Direction sortDirection = "desc".equalsIgnoreCase(direction) ?
-                Sort.Direction.DESC : Sort.Direction.ASC;
+        Sort.Direction sortDirection = "desc".equalsIgnoreCase(direction)
+                ? Sort.Direction.DESC
+                : Sort.Direction.ASC;
+
         Pageable pageable = PageRequest.of(page, size, Sort.by(sortDirection, sortBy));
 
         Page<Vehicle> vehiclePage = vehicleService.getAllVehicles(pageable);
@@ -143,26 +177,6 @@ public class VehicleController {
     }
 
     /**
-     * 全量更新车辆信息
-     */
-    @PutMapping("/{id}")
-    public ResponseEntity<Vehicle> updateVehicle(
-            @PathVariable Long id,
-            @Valid @RequestBody Vehicle vehicleDetails) {
-
-        logger.info("全量更新车辆信息，ID: {}", id);
-
-        try {
-            Vehicle updatedVehicle = vehicleService.updateVehicle(id, vehicleDetails);
-            logger.info("车辆更新成功，ID: {}", id);
-            return ResponseEntity.ok(updatedVehicle);
-        } catch (IllegalArgumentException e) {
-            logger.error("车辆更新失败，ID: {}, 错误: {}", id, e.getMessage());
-            return ResponseEntity.badRequest().body(null);
-        }
-    }
-
-    /**
      * 删除指定车辆
      */
     @DeleteMapping("/{id}")
@@ -173,7 +187,7 @@ public class VehicleController {
             vehicleService.deleteVehicle(id);
             logger.info("车辆删除成功，ID: {}", id);
             return ResponseEntity.noContent().build();
-        } catch (IllegalArgumentException e) {
+        } catch (RuntimeException e) {
             logger.error("车辆删除失败，ID: {}, 错误: {}", id, e.getMessage());
             return ResponseEntity.notFound().build();
         }
@@ -194,7 +208,8 @@ public class VehicleController {
             logger.info("司机分配成功，车辆ID: {}, 司机姓名: {}", vehicleId, driverName);
             return ResponseEntity.ok(vehicle);
         } catch (RuntimeException e) {
-            logger.error("司机分配失败，车辆ID: {}, 司机姓名: {}, 错误: {}", vehicleId, driverName, e.getMessage());
+            logger.error("司机分配失败，车辆ID: {}, 司机姓名: {}, 错误: {}",
+                    vehicleId, driverName, e.getMessage());
             return ResponseEntity.badRequest().body(null);
         }
     }
@@ -213,8 +228,9 @@ public class VehicleController {
             Vehicle vehicle = vehicleService.setVehicleLocation(vehicleId, poiId);
             logger.info("车辆位置设置成功，车辆ID: {}, POI ID: {}", vehicleId, poiId);
             return ResponseEntity.ok(vehicle);
-        } catch (IllegalArgumentException e) {
-            logger.error("车辆位置设置失败，车辆ID: {}, POI ID: {}, 错误: {}", vehicleId, poiId, e.getMessage());
+        } catch (RuntimeException e) {
+            logger.error("车辆位置设置失败，车辆ID: {}, POI ID: {}, 错误: {}",
+                    vehicleId, poiId, e.getMessage());
             return ResponseEntity.badRequest().body(null);
         }
     }
@@ -230,34 +246,43 @@ public class VehicleController {
         return ResponseEntity.ok(exists);
     }
 
-    @GetMapping("/current-positions")
-    public ResponseEntity<Map<Long, double[]>> getVehicleCurrentPositions() {
-        Map<Long, double[]> positions = dataInitializer.getVehicleCurrentPositions();
-        return ResponseEntity.ok(positions);
-    }
+    /**
+     * 处理车辆到达POI点事件
+     *
+     * @param arrivalEvent 到达事件数据
+     * @return 处理结果
+     */
+    @PostMapping("/arrival")
+    public ResponseEntity<ApiResponse<Vehicle>> handleVehicleArrival(@RequestBody VehicleArrivalEventDTO arrivalEvent) {
+        logger.info("收到车辆到达事件上报 - 车辆ID: {}, POI ID: {}, 时间: {}",
+                arrivalEvent.getVehicleId(),
+                arrivalEvent.getPoiId(),
+                arrivalEvent.getArrivalTime());
 
-    @GetMapping("/positions")
-    public ResponseEntity<Map<String, double[]>> getVehiclePositions() {
         try {
-            Map<String, double[]> positions = new HashMap<>();
+            // 1. 验证车辆和POI是否存在
+            Vehicle vehicle = vehicleService.getVehicleById(arrivalEvent.getVehicleId())
+                    .orElseThrow(() -> new IllegalArgumentException("车辆不存在，ID: " + arrivalEvent.getVehicleId()));
 
-            // 获取所有有任务的车辆
-            List<Vehicle> vehiclesWithAssignments = vehicleService.getVehiclesWithActiveAssignments();
+            // 2. 调用服务层处理到达事件
+            Vehicle updatedVehicle = vehicleService.setVehicleLocation(arrivalEvent.getVehicleId(), arrivalEvent.getPoiId());
 
-            for (Vehicle vehicle : vehiclesWithAssignments) {
-                if (vehicle.getCurrentLongitude() != null && vehicle.getCurrentLatitude() != null) {
-                    double[] position = new double[] {
-                            vehicle.getCurrentLongitude().doubleValue(),
-                            vehicle.getCurrentLatitude().doubleValue()
-                    };
-                    positions.put(vehicle.getId().toString(), position);
-                }
-            }
+            // 3. 记录到达事件到日志或数据库
+            logger.info("车辆[{}]成功到达POI[{}]，位置已更新",
+                    arrivalEvent.getVehicleId(),
+                    arrivalEvent.getPoiId());
 
-            return ResponseEntity.ok(positions);
+            // 4. 返回成功响应
+            return ResponseEntity.ok(ApiResponse.success("车辆到达事件已处理", updatedVehicle));
+
+        } catch (IllegalArgumentException e) {
+            logger.error("车辆到达事件参数错误: {}", e.getMessage());
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error(e.getMessage()));
         } catch (Exception e) {
-            logger.error("获取车辆位置失败", e);
-            return ResponseEntity.internalServerError().build();
+            logger.error("处理车辆到达事件失败: ", e);
+            return ResponseEntity.internalServerError()
+                    .body(ApiResponse.error("处理车辆到达事件时发生内部错误"));
         }
     }
 }

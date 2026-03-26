@@ -6,7 +6,6 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
-import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.math.BigDecimal;
@@ -33,10 +32,6 @@ public interface POIRepository extends JpaRepository<POI, Long> {
      * 根据 POI 类型查询
      */
     List<POI> findByPoiType(POI.POIType poiType);
-
-    // 针对指定种类随机抽取 1 条
-    @Query(value = "SELECT * FROM POI WHERE poi_type = :typeStr ORDER BY RAND() LIMIT 1", nativeQuery = true)
-    POI findRandomByPoiTypeNative(@Param("typeStr") String typeStr);
 
     /**
      * 分页查询

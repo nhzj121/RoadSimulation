@@ -17,4 +17,5 @@ public class RoadSimulationApplication {
         需要尝试在Assignment中统一管理状态 ToDo
         */
 	}
+
 }

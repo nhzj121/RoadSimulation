@@ -5,7 +5,15 @@ import org.example.roadsimulation.entity.*;
 import org.example.roadsimulation.repository.EnrollmentRepository;
 import org.example.roadsimulation.repository.GoodsRepository;
 import org.example.roadsimulation.repository.POIRepository;
+import org.example.roadsimulation.dto.GaodeRouteRequest;
+import org.example.roadsimulation.dto.GaodeRouteResponse;
+import org.example.roadsimulation.dto.RouteMetricsResponse;
+import org.example.roadsimulation.entity.POI;
+import org.example.roadsimulation.entity.Shipment;
+import org.example.roadsimulation.entity.Vehicle;
 import org.example.roadsimulation.repository.ShipmentRepository;
+import org.example.roadsimulation.repository.VehicleRepository;
+import org.example.roadsimulation.service.GaodeMapService;
 import org.example.roadsimulation.service.ShipmentService;
 import org.jetbrains.annotations.NotNull;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -13,7 +21,9 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.*;
 
@@ -25,9 +35,13 @@ public class ShipmentServiceImpl implements ShipmentService {
     private final EnrollmentRepository enrollmentRepository;
     private final GoodsRepository goodsRepository;
     private final DataInitializer dataInitializer;
+    private final VehicleRepository vehicleRepository;
+    private final GaodeMapService gaodeMapService;
 
     @Autowired
     public ShipmentServiceImpl(ShipmentRepository shipmentRepository,
+                               VehicleRepository vehicleRepository,
+                               GaodeMapService gaodeMapService,
                                POIRepository poiRepository,
                                EnrollmentRepository enrollmentRepository,
                                GoodsRepository goodsRepository,
@@ -37,6 +51,8 @@ public class ShipmentServiceImpl implements ShipmentService {
         this.enrollmentRepository = enrollmentRepository;
         this.goodsRepository = goodsRepository;
         this.dataInitializer = dataInitializer;
+        this.vehicleRepository = vehicleRepository;
+        this.gaodeMapService = gaodeMapService;
     }
 
     @Override
@@ -68,8 +84,9 @@ public class ShipmentServiceImpl implements ShipmentService {
                     shipment.setPickupAppoint(shipmentDetails.getPickupAppoint());
                     shipment.setDeliveryAppoint(shipmentDetails.getDeliveryAppoint());
 
-                    // 注意：关联实体（如customer, originPOI, destPOI）的更新需要特殊处理
-                    // 通常需要先通过它们的ID查找并设置完整的实体对象
+                    // 如需允许修改起点终点，可放开这两行
+                    shipment.setOriginPOI(shipmentDetails.getOriginPOI());
+                    shipment.setDestPOI(shipmentDetails.getDestPOI());
 
                     return shipmentRepository.save(shipment);
                 })
@@ -80,10 +97,7 @@ public class ShipmentServiceImpl implements ShipmentService {
     public Shipment updateStatus(Long id, Shipment.ShipmentStatus newStatus) {
         return shipmentRepository.findById(id)
                 .map(shipment -> {
-                    // 这里可以添加状态转换的业务规则校验
-                    // 例如：不能从CANCELLED直接变为IN_TRANSIT
                     validateStatusTransition(shipment.getStatus(), newStatus);
-
                     shipment.setStatus(newStatus);
                     return shipmentRepository.save(shipment);
                 })
@@ -96,7 +110,6 @@ public class ShipmentServiceImpl implements ShipmentService {
     public List<Shipment> getAllShipments(){
         return shipmentRepository.findAll();
     }
-
 
     // 分页获取运单
     @Override
@@ -145,24 +158,82 @@ public class ShipmentServiceImpl implements ShipmentService {
         return shipmentRepository.findShipments(customerId, status, startDate, endDate, pageable);
     }
 
+    @Override
+    public RouteMetricsResponse calculateAndStoreRouteMetrics(Long shipmentId, Long vehicleId) {
+        Shipment shipment = shipmentRepository.findById(shipmentId)
+                .orElseThrow(() -> new RuntimeException("运单不存在，ID: " + shipmentId));
+
+        Vehicle vehicle = vehicleRepository.findById(vehicleId)
+                .orElseThrow(() -> new RuntimeException("车辆不存在，ID: " + vehicleId));
+
+        validateCoordinates(vehicle, shipment);
+
+        // 1. 空驶：车辆当前位置 -> 运单起点
+        String vehicleLocation = buildLocation(vehicle.getCurrentLongitude(), vehicle.getCurrentLatitude());
+        String shipmentOrigin = buildLocation(
+                shipment.getOriginPOI().getLongitude(),
+                shipment.getOriginPOI().getLatitude()
+        );
+
+        GaodeRouteResponse emptyRouteResponse = gaodeMapService.planDrivingRoute(
+                new GaodeRouteRequest(vehicleLocation, shipmentOrigin)
+        );
+
+        if (!emptyRouteResponse.isSuccess() || emptyRouteResponse.getData() == null) {
+            throw new RuntimeException("空驶路线计算失败: " + emptyRouteResponse.getMessage());
+        }
+
+        Integer emptyDistance = emptyRouteResponse.getData().getTotalDistance();
+        Integer emptyDuration = emptyRouteResponse.getData().getTotalDuration();
+
+        vehicle.setEmptyDrivingDistance(emptyDistance == null ? null : emptyDistance.doubleValue());
+        vehicle.setEmptyDrivingTime(emptyDuration == null ? null : emptyDuration.longValue());
+
+        // 2. 总行驶：运单起点 -> 运单终点
+        String shipmentDestination = buildLocation(
+                shipment.getDestPOI().getLongitude(),
+                shipment.getDestPOI().getLatitude()
+        );
+
+        GaodeRouteResponse totalRouteResponse = gaodeMapService.planDrivingRoute(
+                new GaodeRouteRequest(shipmentOrigin, shipmentDestination)
+        );
+
+        if (!totalRouteResponse.isSuccess() || totalRouteResponse.getData() == null) {
+            throw new RuntimeException("总行驶路线计算失败: " + totalRouteResponse.getMessage());
+        }
+
+        Integer totalDistance = totalRouteResponse.getData().getTotalDistance();
+        Integer totalDuration = totalRouteResponse.getData().getTotalDuration();
+
+        shipment.setTotalDrivingDistance(totalDistance == null ? null : totalDistance.doubleValue());
+        shipment.setTotalDrivingTime(totalDuration == null ? null : totalDuration.longValue());
+
+        vehicleRepository.save(vehicle);
+        shipmentRepository.save(shipment);
+
+        RouteMetricsResponse response = new RouteMetricsResponse();
+        response.setVehicleId(vehicleId);
+        response.setShipmentId(shipmentId);
+        response.setEmptyDrivingDistance(vehicle.getEmptyDrivingDistance());
+        response.setEmptyDrivingTime(vehicle.getEmptyDrivingTime());
+        response.setTotalDrivingDistance(shipment.getTotalDrivingDistance());
+        response.setTotalDrivingTime(shipment.getTotalDrivingTime());
+
+        return response;
+    }
+
     // 删除运单
     @Override
     public void deleteShipment(Long id) {
         Shipment shipment = shipmentRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("运单信息不存在"));
 
-        // 检查运单状态 - 可能只有特定状态的运单才能删除
+        // 检查运单状态
         if (shipment.getStatus() != Shipment.ShipmentStatus.CREATED &&
                 shipment.getStatus() != Shipment.ShipmentStatus.CANCELLED) {
             throw new IllegalStateException("只能删除已创建或已取消状态的运单");
         }
-
-        // 检查是否已被分配运输任务等其它业务关联
-        // 这里需要根据你的业务规则实现
-        // if (shipment.hasAssignedTasks()) {
-        //     throw new IllegalStateException("无法删除已分配运输任务的运单");
-        // }
-        // ToDo
 
         shipmentRepository.delete(shipment);
     }
@@ -176,13 +247,37 @@ public class ShipmentServiceImpl implements ShipmentService {
 
     // 状态转换验证的辅助方法
     private void validateStatusTransition(Shipment.ShipmentStatus current, Shipment.ShipmentStatus next) {
-        // 实现你的状态机规则
-        // 例如：
         if (current == Shipment.ShipmentStatus.CANCELLED &&
                 next != Shipment.ShipmentStatus.CREATED) {
             throw new IllegalStateException("已取消的运单只能重新创建");
         }
-        // 添加其他规则...ToDo
+    }
+
+    private void validateCoordinates(Vehicle vehicle, Shipment shipment) {
+        if (vehicle.getCurrentLongitude() == null || vehicle.getCurrentLatitude() == null) {
+            throw new IllegalArgumentException("车辆当前经纬度为空，无法计算空驶路线");
+        }
+
+        if (shipment.getOriginPOI() == null) {
+            throw new IllegalArgumentException("运单起点为空，无法计算路线");
+        }
+
+        if (shipment.getDestPOI() == null) {
+            throw new IllegalArgumentException("运单终点为空，无法计算路线");
+        }
+
+        validatePoiCoordinates(shipment.getOriginPOI(), "运单起点");
+        validatePoiCoordinates(shipment.getDestPOI(), "运单终点");
+    }
+
+    private void validatePoiCoordinates(POI poi, String poiName) {
+        if (poi.getLongitude() == null || poi.getLatitude() == null) {
+            throw new IllegalArgumentException(poiName + "经纬度为空，无法计算路线");
+        }
+    }
+
+    private String buildLocation(BigDecimal longitude, BigDecimal latitude) {
+        return longitude.toPlainString() + "," + latitude.toPlainString();
     }
 
     // ToDo 出于演示需要，这里的生成逻辑先是本地的，后续需要改成 加工链

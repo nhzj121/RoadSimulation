@@ -15,6 +15,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -73,7 +75,17 @@ public class VehicleServiceImpl implements VehicleService {
                     vehicle.setCurrentLoad(vehicleDetails.getCurrentLoad());
                     vehicle.setCurrentLongitude(vehicleDetails.getCurrentLongitude());
                     vehicle.setCurrentLatitude(vehicleDetails.getCurrentLatitude());
-                    vehicle.setVehicleType(vehicleDetails.getVehicleType()); // 更新车辆类型
+                    vehicle.setVehicleType(vehicleDetails.getVehicleType());
+                    vehicle.setDriverName(vehicleDetails.getDriverName());
+                    vehicle.setSuitableGoods(vehicleDetails.getSuitableGoods());
+
+                    // 新增指标字段
+                    vehicle.setLoadingWaitTime(vehicleDetails.getLoadingWaitTime());
+                    vehicle.setEmptyDrivingTime(vehicleDetails.getEmptyDrivingTime());
+                    vehicle.setEmptyDrivingDistance(vehicleDetails.getEmptyDrivingDistance());
+                    vehicle.setTotalDrivingTime(vehicleDetails.getTotalDrivingTime());
+                    vehicle.setTotalDrivingDistance(vehicleDetails.getTotalDrivingDistance());
+
                     return vehicleRepository.save(vehicle);
                 })
                 .orElseThrow(() -> new RuntimeException("车辆不存在，ID: " + id));
@@ -122,14 +134,11 @@ public class VehicleServiceImpl implements VehicleService {
         return vehicleRepository.existsByLicensePlate(licensePlate);
     }
 
-    // ================ 新增的方法实现 ================
-
     @Override
     public Vehicle assignDriverToVehicle(Long vehicleId, String driverName) {
         return vehicleRepository.findById(vehicleId)
                 .map(vehicle -> {
-                    // 这里只是简单设置司机姓名，如果需要完整的司机实体关联可以扩展
-                    // vehicle.setDriverName(driverName);
+                    vehicle.setDriverName(driverName);
                     return vehicleRepository.save(vehicle);
                 })
                 .orElseThrow(() -> new RuntimeException("车辆不存在，ID: " + vehicleId));
@@ -181,8 +190,29 @@ public class VehicleServiceImpl implements VehicleService {
     }
 
     @Override
+    public Vehicle calculateLoadingWaitTime(Long vehicleId, LocalDateTime loadingStartTime) {
+        Vehicle vehicle = vehicleRepository.findById(vehicleId)
+                .orElseThrow(() -> new RuntimeException("车辆不存在，ID: " + vehicleId));
+
+        if (loadingStartTime == null) {
+            throw new IllegalArgumentException("装货开始时间不能为空");
+        }
+
+        long waitingTime = Duration.between(loadingStartTime, LocalDateTime.now()).getSeconds();
+        if (waitingTime < 0) waitingTime = 0;
+
+        vehicle.setLoadingWaitTime(waitingTime);
+        return vehicleRepository.save(vehicle);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
     public List<Vehicle> getVehiclesWithActiveAssignments() {
         return vehicleRepository.findByAssignmentsIsNotNull();
+    }
+
+    public void updateVehicleMetrics(Vehicle vehicle){
+        vehicleRepository.save(vehicle); // 直接保存即可
     }
 
     // 获取适配车辆

@@ -54,20 +54,14 @@ public class POI {
     public enum POIType {
         WAREHOUSE,              // 仓库
         DISTRIBUTION_CENTER,    // 配送中心
+        FACTORY,                // 工厂
         GAS_STATION,            // 加油站
         MAINTENANCE_CENTER,     // 维修中心
         REST_AREA,               // 休息区
-        TEST,
-        TIMBER_YARD,            // 原木厂 (林场/原木堆场)
-        SAWMILL,                // 锯木厂
-        BOARD_FACTORY,          // 板材厂
-        IRON_MINE,              // 铁矿厂
-        STEEL_MILL,             // 冶钢厂
-        STEEL_PROCESSING_PLANT, // 钢材加工厂
-        FURNITURE_FACTORY,       // 家具制造厂
-        RUBBER_PROCESSING_PLANT,   // 橡胶加工厂
-        TIRE_MANUFACTURING_PLANT,  // 轮胎制造厂
-        AUTO_ASSEMBLY_PLANT        // 汽车总装厂
+        MATERIAL_MARKET,         // 建材市场
+        VEGETABLE_BASE,         // 蔬菜基地
+        VEGETABLE_MARKET,       // 蔬菜市场
+        TEST
     }
 
     @Enumerated(EnumType.STRING)
@@ -84,7 +78,7 @@ public class POI {
     /**
      * 一对多关系： 一个 POI 可以产生或接受多个种类的货物
      */
-    @OneToMany(mappedBy = "poi", cascade = CascadeType.PERSIST, fetch = FetchType.LAZY)
+    @OneToMany(mappedBy = "poi", cascade = CascadeType.PERSIST, fetch = FetchType.EAGER)
     @JsonIgnore
     private List<Enrollment> enrollments = new ArrayList<>();
 
