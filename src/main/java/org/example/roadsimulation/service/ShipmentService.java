@@ -4,6 +4,7 @@ import org.example.roadsimulation.dto.RouteMetricsResponse;
 import org.example.roadsimulation.entity.Shipment;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -62,4 +63,7 @@ public interface ShipmentService {
      * @return 路线指标结果
      */
     RouteMetricsResponse calculateAndStoreRouteMetrics(Long shipmentId, Long vehicleId);
+
+    @Transactional(rollbackFor = Exception.class)
+    List<Shipment> batchGenerateShipments(int count);
 }

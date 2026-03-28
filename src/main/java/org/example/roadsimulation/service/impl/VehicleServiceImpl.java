@@ -1,10 +1,13 @@
 package org.example.roadsimulation.service.impl;
 
-import org.example.roadsimulation.entity.POI;
+import org.example.roadsimulation.entity.Goods;
 import org.example.roadsimulation.entity.Vehicle;
+import org.example.roadsimulation.entity.POI;
+import org.example.roadsimulation.repository.GoodsRepository;
+import org.example.roadsimulation.repository.POIRepository;
 import org.example.roadsimulation.repository.VehicleRepository;
-import org.example.roadsimulation.service.POIService;
 import org.example.roadsimulation.service.VehicleService;
+import org.example.roadsimulation.service.POIService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -17,17 +20,31 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
+/**
+ * VehicleServiceImpl
+ *
+ * 功能说明：
+ * 1. 实现 VehicleService 接口
+ * 2. 提供增删改查、分页、模糊搜索、状态查询、唯一性校验
+ * 3. 双向关系维护：
+ *    - Driver-Vehicle
+ *    - Vehicle-POI
+ */
 @Service
 @Transactional
 public class VehicleServiceImpl implements VehicleService {
 
     private final VehicleRepository vehicleRepository;
     private final POIService poiService;
+    private final GoodsRepository goodsRepository;
 
     @Autowired
-    public VehicleServiceImpl(VehicleRepository vehicleRepository, POIService poiService) {
+    public VehicleServiceImpl(VehicleRepository vehicleRepository,
+                              POIService poiService,
+                              GoodsRepository goodsRepository) {
         this.vehicleRepository = vehicleRepository;
         this.poiService = poiService;
+        this.goodsRepository = goodsRepository;
     }
 
     @Override
@@ -46,11 +63,11 @@ public class VehicleServiceImpl implements VehicleService {
                             vehicleRepository.existsByLicensePlate(vehicleDetails.getLicensePlate())) {
                         throw new IllegalArgumentException("车牌号已存在: " + vehicleDetails.getLicensePlate());
                     }
-
                     vehicle.setLicensePlate(vehicleDetails.getLicensePlate());
                     vehicle.setBrand(vehicleDetails.getBrand());
                     vehicle.setModelType(vehicleDetails.getModelType());
                     vehicle.setMaxLoadCapacity(vehicleDetails.getMaxLoadCapacity());
+                    vehicle.setCargoVolume(vehicleDetails.getCargoVolume());
                     vehicle.setCurrentStatus(vehicleDetails.getCurrentStatus());
                     vehicle.setLength(vehicleDetails.getLength());
                     vehicle.setWidth(vehicleDetails.getWidth());
@@ -77,7 +94,7 @@ public class VehicleServiceImpl implements VehicleService {
     @Override
     @Transactional(readOnly = true)
     public Optional<Vehicle> getVehicleById(Long id) {
-        return vehicleRepository.findById(id); // ✅ 返回 Optional<Vehicle>
+        return vehicleRepository.findById(id);
     }
 
     @Override
@@ -135,7 +152,10 @@ public class VehicleServiceImpl implements VehicleService {
         POI poi = poiService.getById(poiId)
                 .orElseThrow(() -> new RuntimeException("POI 不存在，ID: " + poiId));
 
+        // 使用 Vehicle 实体的方法来维护双向关系
         vehicle.setCurrentPOI(poi);
+
+        // 同时更新车辆的坐标到POI的坐标
         vehicle.setCurrentLongitude(poi.getLongitude());
         vehicle.setCurrentLatitude(poi.getLatitude());
 
@@ -191,8 +211,20 @@ public class VehicleServiceImpl implements VehicleService {
         return vehicleRepository.findByAssignmentsIsNotNull();
     }
 
-    // ==================== 新增方法：更新车辆指标 ====================
     public void updateVehicleMetrics(Vehicle vehicle){
         vehicleRepository.save(vehicle); // 直接保存即可
+    }
+
+    // 获取适配车辆
+    @Override
+    public List<Vehicle> getVehicleSuitable(String sku){
+        Goods goods = goodsRepository.findBySku(sku).isPresent() ?
+                goodsRepository.findBySku(sku).get() : null;
+        if (goods == null) {
+            throw new RuntimeException("没有sku对应的货物");
+        }
+
+        String vehicleType = goods.getVehicleFit();
+        return vehicleRepository.findByVehicleType(vehicleType);
     }
 }

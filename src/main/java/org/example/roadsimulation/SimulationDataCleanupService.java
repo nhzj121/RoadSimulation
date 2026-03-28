@@ -210,6 +210,7 @@ public class SimulationDataCleanupService {
                     vehicle.setPreviousStatus(null);
                     vehicle.setStatusStartTime(LocalDateTime.now());
                     vehicle.setStatusDurationSeconds(0L);
+                    vehicle.setLoopCount(0);
 
                     // 3. 重置位置到成都市中心
                     vehicle.setCurrentPOI(chengduCenter);

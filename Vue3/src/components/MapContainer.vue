@@ -7,6 +7,9 @@
         </div>
         <div class="navbar-menu">
           <ElButton text @click="goToPOIManager">POI点管理</ElButton>
+          <ElButton type="primary" text @click="toggleCostPanel">
+            {{ isCostPanelVisible ? '隐藏成本监控' : '成本监控' }}
+          </ElButton>
         </div>
       </div>
     </ElHeader>
@@ -26,9 +29,9 @@
                 <div class="speed-slider">
                   <ElSlider
                       v-model="speedFactor"
-                      :min="0.1"
-                      :max="10"
-                      :step="0.1"
+                      :min="1"
+                      :max="50"
+                      :step="1"
                       :format-tooltip="formatSpeedTooltip"
                       @change="onSpeedChange"
                       size="small"
@@ -45,7 +48,20 @@
               </div>
             </ElCard>
           </div>
+          <!-- 运单生成 -->
+         <div class="shipment-control">
+           <label>生成运单数量:</label>
+           <input type="number" v-model.number="shipmentCount" min="1" />
+           <button @click="generateShipments">生成运单</button>
+         </div>
 
+         <div class="task-sidebar">
+           <ul>
+           <li v-for="shipment in shipments" :key="shipment.id">
+           {{ shipment.refNo }} - {{ shipment.status }}
+           </li>
+           </ul>
+         </div>
           <!-- 车辆状态 -->
           <div class="panel-section">
             <ElCard shadow="never" class="box-card vehicle-status">
@@ -132,6 +148,57 @@
       <ElMain>
         <div id="container"></div>
       </ElMain>
+      <transition name="el-zoom-in-left">
+        <ElAside v-show="isCostPanelVisible" width="300px" class="right-side-panel">
+          <div class="side-panel-scroll">
+            <div class="panel-section">
+              <ElCard shadow="never" class="box-card cost-card">
+                <template #header>
+                  <div class="card-header" style="justify-content: space-between;">
+                    <span>实时成本分析</span>
+                    <ElButton link type="info" @click="toggleCostPanel">✖</ElButton>
+                  </div>
+                </template>
+
+                <div class="cost-list">
+                  <div class="cost-item">
+                    <div class="cost-info">
+                      <span class="cost-title">直接成本 (A)</span>
+                      <span class="cost-desc">等待时间与空驶里程</span>
+                    </div>
+                    <div class="cost-value">{{ simulationCosts.costA.toFixed(2) }}</div>
+                  </div>
+
+                  <div class="cost-item">
+                    <div class="cost-info">
+                      <span class="cost-title">效率成本 (B)</span>
+                      <span class="cost-desc">空驶率与等待率</span>
+                    </div>
+                    <div class="cost-value">{{ simulationCosts.costB.toFixed(2) }}</div>
+                  </div>
+
+                  <div class="cost-item">
+                    <div class="cost-info">
+                      <span class="cost-title">运能损耗 (C)</span>
+                      <span class="cost-desc">理论与实际运能差</span>
+                    </div>
+                    <div class="cost-value">{{ simulationCosts.costC.toFixed(2) }}</div>
+                  </div>
+
+                  <div class="cost-item">
+                    <div class="cost-info">
+                      <span class="cost-title">经济收益 (D)</span>
+                      <span class="cost-desc">油耗与固定损耗</span>
+                    </div>
+                    <div class="cost-value">{{ simulationCosts.costD.toFixed(2) }}</div>
+                  </div>
+                </div>
+
+              </ElCard>
+            </div>
+          </div>
+        </ElAside>
+      </transition>
     </ElContainer>
   </ElContainer>
 </template>
@@ -149,9 +216,16 @@ import gasStationIcon from '../../public/icons/gas-station.png';
 import maintenanceIcon from '../../public/icons/maintenance-center.png';
 import restAreaIcon from '../../public/icons/rest-area.png';
 import transportIcon from '../../public/icons/distribution-center.png';
-import materialMarketIcon from '../../public/icons/materialMarket.png';
-import vegetableBaseIcon from '../../public/icons/vegetable-base.png';
-import vegetableMarketIcon from '../../public/icons/vegetable-market.png';
+import testIcon from '../../public/icons/test.png';
+import timberYardIcon from '../../public/icons/timber-yard.png';
+import sawmillIcon from '../../public/icons/sawmill.png';
+import boardFactoryIcon from '../../public/icons/board-factory.png';
+import ironMineIcon from '../../public/icons/iron-mine.png';
+import steelMillIcon from '../../public/icons/steel-mill.png';
+import steelProcessingPlantIcon from '../../public/icons/steel-processing-plant.png';
+import furnitureFactoryIcon from '../../public/icons/furniture-factory.png';
+import tireManufacturingPlant from '../../public/icons/tire-manufacturing-plant.png';
+import autoAssemblyPlant from '../../public/icons/auto-assembly-plant.png';
 import {
   ElHeader,
   ElAside,
@@ -169,6 +243,8 @@ import { InfoFilled } from '@element-plus/icons-vue'
 
 let map = null;
 let AMapLib = null; // 保存加载后的 AMap 构造对象
+const shipmentCount = ref(1);
+const shipments = ref([]);
 const router = useRouter()
 const goToPOIManager = () => {
   router.push('/poi-manager')
@@ -194,7 +270,6 @@ const handleVehicleClick = (vehicle) => {
   // highlightVehicleOnMap(vehicle);
 };
 
-// 新增导入
 import { useVehicleArrivalMonitor } from '@/composables/useVehicleArrivalMonitor';
 
 // 在您的组件逻辑中添加以下内容
@@ -323,6 +398,34 @@ const scrollToVehicle = (vehicleId) => {
   });
 };
 
+// --- 成本监控面板相关状态 ---
+const isCostPanelVisible = ref(false); // 默认关闭，点击后再打开
+const toggleCostPanel = () => {
+  isCostPanelVisible.value = !isCostPanelVisible.value;
+};
+
+const simulationCosts = reactive({
+  costA: 0.0,
+  costB: 0.0,
+  costC: 0.0,
+  costD: 0.0
+});
+
+// 获取实时成本的接口请求
+const fetchSimulationCosts = async () => {
+  try {
+    const response = await request.get('/api/simulation/costs');
+    if (response.data) {
+      simulationCosts.costA = response.data.costA || 0;
+      simulationCosts.costB = response.data.costB || 0;
+      simulationCosts.costC = response.data.costC || 0;
+      simulationCosts.costD = response.data.costD || 0;
+    }
+  } catch (error) {
+    console.error('获取成本数据失败:', error);
+  }
+};
+
 // 清除高亮
 const clearHighlight = () => {
   if (highlightTimer) {
@@ -330,6 +433,18 @@ const clearHighlight = () => {
     highlightTimer = null;
   }
   highlightedVehicleId.value = null;
+};
+
+// 生成运单（批量）
+const generateShipments = async () => {
+  if (shipmentCount.value <= 0) return;
+  try {
+    const res = await request.post('/api/shipments/batch-generate', { count: shipmentCount.value });
+    shipments.value = res.data;
+  } catch (error) {
+    console.error("生成运单失败", error);
+    alert("生成运单失败，请检查控制台日志");
+  }
 };
 
 // --- 仿真控制 ---
@@ -368,15 +483,22 @@ const assignmentStates = new Map();
 
 // 图标配置 - 根据POI类型使用不同的图标
 const poiIcons = {
-  'FACTORY': factoryIcon,
   'WAREHOUSE': warehouseIcon,
   'GAS_STATION': gasStationIcon,
   'MAINTENANCE_CENTER': maintenanceIcon,
   'REST_AREA': restAreaIcon,
   'DISTRIBUTION_CENTER': transportIcon,
-  'MATERIAL_MARKET': materialMarketIcon,
-  'VEGETABLE_BASE': vegetableBaseIcon,
-  'VEGETABLE_MARKET': vegetableMarketIcon,
+  'TEST': testIcon,
+  'TIMBER_YARD': timberYardIcon,
+  'SAWMILL': sawmillIcon,
+  'BOARD_FACTORY': boardFactoryIcon,
+  'IRON_MINE': ironMineIcon,
+  'STEEL_MILL': steelMillIcon,
+  'STEEL_PROCESSING_PLANT': steelProcessingPlantIcon,
+  'FURNITURE_FACTORY': furnitureFactoryIcon,
+  'RUBBER_PROCESSING_PLANT': factoryIcon, // 橡胶加工厂复用工厂
+  'TIRE_MANUFACTURING_PLANT': tireManufacturingPlant,
+  'AUTO_ASSEMBLY_PLANT': autoAssemblyPlant
 };
 
 // 获取POI类型对应的图标
@@ -662,7 +784,7 @@ class VehicleAnimation {
     this.stage2Segments = this._calculateSegments(this.stage2Path);
 
     // 基础速度
-    this.baseSpeed = 900; // 米/秒
+    this.baseSpeed = 20; // 米/秒
 
     // 标记引用
     this.movingMarker = routeData.movingMarker;
@@ -1136,7 +1258,7 @@ class VehicleAnimationManager {
 
   // 设置全局速度因子
   setGlobalSpeedFactor(factor) {
-    this.globalSpeedFactor = Math.max(0.1, Math.min(10, factor));
+    this.globalSpeedFactor = Math.max(1, Math.min(50, factor));
     this.animations.forEach(animation => {
       animation.updateSpeedFactor(this.globalSpeedFactor);
     });
@@ -1354,6 +1476,11 @@ const resetSimulation = async () => {
       stats.tasks = 0;
       stats.anomalyRate = 0;
 
+      speedFactor.value = 1;
+      if (animationManager) {
+        animationManager.setGlobalSpeedFactor(1);
+      }
+
       ElMessage.success('仿真已重置');
     }
 
@@ -1381,6 +1508,8 @@ const startSimulationTimer = () => {
 
       // 更新车辆信息
       await updateVehicleInfo();
+
+      await fetchSimulationCosts();
     }
   }, simulationInterval.value);
 };
@@ -1600,10 +1729,13 @@ const updateVehicleInfo = async () => {
             quantity: assignment.quantity,
             startPOI: assignment.startPOIName,
             endPOI: assignment.endPOIName,
+            // 载重信息
             currentLoad: assignment.currentLoad || 0,
             maxLoadCapacity: assignment.maxLoadCapacity || 0,
+            // 载容信息
             currentVolume: assignment.currentVolume || 0,
             maxVolumeCapacity: assignment.maxVolumeCapacity || 0,
+            // 货物单位信息
             goodsWeightPerUnit: assignment.goodsWeightPerUnit || 0,
             goodsVolumePerUnit: assignment.goodsVolumePerUnit || 0,
             // 为"到达检测"功能预留的字段
@@ -2609,6 +2741,31 @@ onUnmounted(() => {
   overflow: hidden;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
   box-sizing: border-box; /* 确保padding包含在内 */
+}
+
+/*运单*/
+.shipment-control {
+  margin-bottom: 16px;
+}
+
+.task-sidebar {
+  border: 1px solid #ccc;
+  padding: 8px;
+  width: 200px;
+  background-color: #fff; /* 确保背景是白色的 */
+  color: #303133;         /* 强制设置文字为深灰色，解决隐形问题 */
+  border-radius: 4px;     /* 稍微加个圆角好看点（可选）*/
+}
+
+.task-sidebar ul {
+  padding-left: 20px; /* 调整列表缩进 */
+  margin: 0;
+}
+
+.task-sidebar li {
+  margin-bottom: 6px;
+  font-size: 13px;    /* 调整一下字号更协调 */
+  word-break: break-all; /* 防止运单号太长撑破容器 */
 }
 
 .box-card:hover {

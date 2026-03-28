@@ -218,7 +218,7 @@ public class RoutePlanningServiceImpl implements RoutePlanningService {
 
     // 生成总结信息
     private String buildSummary(GaodeRouteResponse.GaodeRouteData data) {
-        return String.format("路线包含 %d 个步骤，其中短步骤 %.2f 个（占比 %.2f），左转 %d 次，右转 %d 次，调头 %d 次，匝道 %d 次，环岛 %d 次，方向变化 %d 次（其中大幅变化 %d 次），综合复杂度为 %.2f，等级：%s。",
+        return String.format("路线包含 %d 个步骤，其中短步骤 %d 个（占比 %.2f），左转 %d 次，右转 %d 次，调头 %d 次，匝道 %d 次，环岛 %d 次，方向变化 %d 次（其中大幅变化 %d 次），综合复杂度为 %.2f，等级：%s。",
                 data.getStepCount(),
                 data.getShortStepCount(), data.getShortStepRatio(),
                 data.getLeftTurnCount(), data.getRightTurnCount(),
