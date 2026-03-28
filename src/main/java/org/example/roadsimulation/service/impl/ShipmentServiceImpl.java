@@ -21,7 +21,6 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -183,10 +182,10 @@ public class ShipmentServiceImpl implements ShipmentService {
             throw new RuntimeException("空驶路线计算失败: " + emptyRouteResponse.getMessage());
         }
 
-        Integer emptyDistance = emptyRouteResponse.getData().getTotalDistance();
-        Integer emptyDuration = emptyRouteResponse.getData().getTotalDuration();
+        Double emptyDistance = emptyRouteResponse.getData().getTotalDistance();
+        Double emptyDuration = emptyRouteResponse.getData().getTotalDuration();
 
-        vehicle.setEmptyDrivingDistance(emptyDistance == null ? null : emptyDistance.doubleValue());
+        vehicle.setEmptyDrivingDistance(emptyDistance);
         vehicle.setEmptyDrivingTime(emptyDuration == null ? null : emptyDuration.longValue());
 
         // 2. 总行驶：运单起点 -> 运单终点
@@ -203,10 +202,10 @@ public class ShipmentServiceImpl implements ShipmentService {
             throw new RuntimeException("总行驶路线计算失败: " + totalRouteResponse.getMessage());
         }
 
-        Integer totalDistance = totalRouteResponse.getData().getTotalDistance();
-        Integer totalDuration = totalRouteResponse.getData().getTotalDuration();
+        Double totalDistance = totalRouteResponse.getData().getTotalDistance();
+        Double totalDuration = totalRouteResponse.getData().getTotalDuration();
 
-        shipment.setTotalDrivingDistance(totalDistance == null ? null : totalDistance.doubleValue());
+        shipment.setTotalDrivingDistance(totalDistance);
         shipment.setTotalDrivingTime(totalDuration == null ? null : totalDuration.longValue());
 
         vehicleRepository.save(vehicle);
@@ -292,8 +291,8 @@ public class ShipmentServiceImpl implements ShipmentService {
             // 以后新增规则，只需加在这里或数据库里
     );
 
-    @Override
     @Transactional(rollbackFor = Exception.class)
+    @Override
     public List<Shipment> batchGenerateShipments(int count) {
         if (count <= 0) return Collections.emptyList();
 

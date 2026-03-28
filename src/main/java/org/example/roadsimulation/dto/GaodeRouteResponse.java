@@ -35,8 +35,8 @@ public class GaodeRouteResponse {
         private String origin;
         private String destination;
         private Double taxiCost;
-        private Integer totalDistance;  // 总距离(米)
-        private Integer totalDuration;  // 总时间(秒)
+        private Double totalDistance;  // 总距离(米)，改为Double完美接收各种精度
+        private Double totalDuration;  // 总时间(秒)
 
         // 新增字段，用于存储复杂度分析结果
         private Double complexityScore;  // 复杂度得分
@@ -61,6 +61,34 @@ public class GaodeRouteResponse {
         private String summary;             // 路线总结
         private String explanation;         // 复杂度解释
 
+        // ================== 智能距离提取逻辑开始 ==================
+
+        // 外部直接获取 Double 类型的距离，保留小数点精度
+        public Double getTotalDistance() {
+            // 如果高德原生 JSON 解析到了根节点的 totalDistance，直接返回
+            if (this.totalDistance != null) {
+                return this.totalDistance;
+            }
+            // 兜底逻辑：自动去 paths 数组里提取真实规划路线的距离
+            if (this.paths != null && !this.paths.isEmpty() && this.paths.get(0).getDistance() != null) {
+                return this.paths.get(0).getDistance();
+            }
+            return null;
+        }
+
+        public Double getTotalDuration() {
+            if (this.totalDuration != null) {
+                return this.totalDuration;
+            }
+            if (this.paths != null && !this.paths.isEmpty() && this.paths.get(0).getDuration() != null) {
+                return this.paths.get(0).getDuration();
+            }
+            return null;
+        }
+
+        // 注：Lombok 的 @Data 会自动生成接收 Double 的 setter，专门供 JSON 框架反序列化时平滑注入。
+        // ================== 智能距离提取逻辑结束 ==================
+
         // 添加set方法
         public void setComplexityScore(Double complexityScore) {
             this.complexityScore = complexityScore;
@@ -83,6 +111,7 @@ public class GaodeRouteResponse {
         }
 
         public Double getShortStepRatio() {
+            if (getStepCount() == 0) return 0.0;
             return (double) getShortStepCount() / getStepCount();
         }
 

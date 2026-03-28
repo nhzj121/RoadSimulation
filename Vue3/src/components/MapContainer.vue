@@ -216,9 +216,16 @@ import gasStationIcon from '../../public/icons/gas-station.png';
 import maintenanceIcon from '../../public/icons/maintenance-center.png';
 import restAreaIcon from '../../public/icons/rest-area.png';
 import transportIcon from '../../public/icons/distribution-center.png';
-import materialMarketIcon from '../../public/icons/materialMarket.png';
-import vegetableBaseIcon from '../../public/icons/vegetable-base.png';
-import vegetableMarketIcon from '../../public/icons/vegetable-market.png';
+import testIcon from '../../public/icons/test.png';
+import timberYardIcon from '../../public/icons/timber-yard.png';
+import sawmillIcon from '../../public/icons/sawmill.png';
+import boardFactoryIcon from '../../public/icons/board-factory.png';
+import ironMineIcon from '../../public/icons/iron-mine.png';
+import steelMillIcon from '../../public/icons/steel-mill.png';
+import steelProcessingPlantIcon from '../../public/icons/steel-processing-plant.png';
+import furnitureFactoryIcon from '../../public/icons/furniture-factory.png';
+import tireManufacturingPlant from '../../public/icons/tire-manufacturing-plant.png';
+import autoAssemblyPlant from '../../public/icons/auto-assembly-plant.png';
 import {
   ElHeader,
   ElAside,
@@ -476,15 +483,22 @@ const assignmentStates = new Map();
 
 // 图标配置 - 根据POI类型使用不同的图标
 const poiIcons = {
-  'FACTORY': factoryIcon,
   'WAREHOUSE': warehouseIcon,
   'GAS_STATION': gasStationIcon,
   'MAINTENANCE_CENTER': maintenanceIcon,
   'REST_AREA': restAreaIcon,
   'DISTRIBUTION_CENTER': transportIcon,
-  'MATERIAL_MARKET': materialMarketIcon,
-  'VEGETABLE_BASE': vegetableBaseIcon,
-  'VEGETABLE_MARKET': vegetableMarketIcon,
+  'TEST': testIcon,
+  'TIMBER_YARD': timberYardIcon,
+  'SAWMILL': sawmillIcon,
+  'BOARD_FACTORY': boardFactoryIcon,
+  'IRON_MINE': ironMineIcon,
+  'STEEL_MILL': steelMillIcon,
+  'STEEL_PROCESSING_PLANT': steelProcessingPlantIcon,
+  'FURNITURE_FACTORY': furnitureFactoryIcon,
+  'RUBBER_PROCESSING_PLANT': factoryIcon, // 橡胶加工厂复用工厂
+  'TIRE_MANUFACTURING_PLANT': tireManufacturingPlant,
+  'AUTO_ASSEMBLY_PLANT': autoAssemblyPlant
 };
 
 // 获取POI类型对应的图标

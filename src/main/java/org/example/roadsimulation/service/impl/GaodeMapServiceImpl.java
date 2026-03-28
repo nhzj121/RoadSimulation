@@ -290,11 +290,11 @@ public class GaodeMapServiceImpl implements GaodeMapService {
                 GaodeRouteResponse.RoutePath firstPath = pathList.get(0);
 
                 if (firstPath.getDistance() != null) {
-                    data.setTotalDistance(firstPath.getDistance().intValue());
+                    data.setTotalDistance(firstPath.getDistance());
                 }
 
                 if (firstPath.getDuration() != null) {
-                    data.setTotalDuration(firstPath.getDuration().intValue());
+                    data.setTotalDuration(firstPath.getDuration());
                 }
             }
 

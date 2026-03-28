@@ -126,18 +126,24 @@ public class Vehicle {
     private LocalDateTime updatedTime = LocalDateTime.now();
 
     // ==================== 新增指标属性 ====================
+    @Getter
+    @Setter
     @Column(name = "loading_wait_time")
     private Long loadingWaitTime; // 秒
-
+    @Getter
+    @Setter
     @Column(name = "empty_driving_time")
     private Long emptyDrivingTime; // 秒
-
+    @Getter
+    @Setter
     @Column(name = "empty_driving_distance")
     private Double emptyDrivingDistance; // 公里
-
+    @Getter
+    @Setter
     @Column(name = "total_driving_time")
     private Long totalDrivingTime; // 秒
-
+    @Getter
+    @Setter
     @Column(name = "total_driving_distance")
     private Double totalDrivingDistance; // 公里
 
@@ -254,6 +260,11 @@ public class Vehicle {
     public LocalDateTime getStatusEndTime() {
         return statusStartTime != null ? statusStartTime.plus(getStatusDuration()) : null;
     }
+
+    public void setStatusDurationSeconds(Long statusDurationSeconds) {
+        this.statusDurationSeconds = statusDurationSeconds;
+    }
+    public Long getStatusDurationSeconds() { return statusDurationSeconds; }
 
     public Double getCurrentLoad() { return currentLoad; }
     public void setCurrentLoad(Double currentLoad) { this.currentLoad = currentLoad; }

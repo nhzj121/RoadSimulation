@@ -64,7 +64,7 @@ public class DataInitializer{
     private final SimulationDataCleanupService cleanupService;
     private final ShipmentItemService shipmentItemService;
     private final VehicleRepository vehicleRepository;
-    private final RouteService routeService;
+    private final RoutePlanningService routePlanningService;
 
     private final Map<POI, POI> startToEndMapping = new ConcurrentHashMap<>(); // 起点到终点的映射关系
     // 修改成员变量，使用起点-终点对作为键
@@ -140,7 +140,7 @@ public class DataInitializer{
                            VehicleRepository vehicleRepository,
                            ShipmentItemService shipmentItemService,
                            @Lazy ShipmentProgressService shipmentProgressService,
-                           RouteService routeService) {
+                           RoutePlanningService routePlanningService) {
         this.enrollmentRepository = enrollmentRepository;
         this.goodsRepository = goodsRepository;
         this.poiRepository = poiRepository;
@@ -152,7 +152,7 @@ public class DataInitializer{
         this.vehicleRepository = vehicleRepository;
         this.shipmentItemService = shipmentItemService;
         this.shipmentProgressService = shipmentProgressService;
-        this.routeService = routeService;
+        this.routePlanningService = routePlanningService;
     }
 
     /**
@@ -892,19 +892,25 @@ public class DataInitializer{
 
                 try {
                     // 1. 获取带有货物的距离
-                    GaodeRouteResponse response_1 = routeService.planRouteBetweenPois(startPOI.getId(), endPOI.getId(), "0");
+                    GaodeRouteResponse response_1 = routePlanningService.planDrivingRouteByPois(startPOI.getId(), endPOI.getId(), "0");
                     if (response_1 != null && response_1.getData() != null && response_1.getData().getTotalDistance() != null) {
-                        // 注意：这里假设你的 DTO 里 getDistance() 才能拿到距离，而不是 getDestination()
+                        // 底层 DTO 已经做好了寻找 paths.get(0) 的工作，这里直接拿来除以 1000 即可
                         mileage = response_1.getData().getTotalDistance() / 1000.0;
                     } else {
-                        System.err.println("警告：未能获取 response_1 路线距离，使用直线距离或默认值");
-                        // 备用方案：使用直线距离兜底
+                        System.err.println("警告：未能获取 response_1 路线距离，使用直线距离兜底");
                         mileage = calculateHaversineDistance(startPOI.getLatitude(), startPOI.getLongitude(), endPOI.getLatitude(), endPOI.getLongitude());
+                    }
+
+                    try {
+                        // 加上 250 毫秒的延迟，完美避开高德的 5 QPS 限制
+                        Thread.sleep(250);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
                     }
 
                     // 2. 获取空车前往起点的距离
                     if (vehiclePOI != null) {
-                        GaodeRouteResponse response_2 = routeService.planRouteBetweenPois(vehiclePOI.getId(), startPOI.getId(), "0");
+                        GaodeRouteResponse response_2 = routePlanningService.planDrivingRouteByPois(vehiclePOI.getId(), startPOI.getId(), "0");
                         if (response_2 != null && response_2.getData() != null && response_2.getData().getTotalDistance() != null) {
                             mileageWithoutThings = response_2.getData().getTotalDistance() / 1000.0;
                         } else {
@@ -1009,7 +1015,7 @@ public class DataInitializer{
                 if (vehicle != null) {
                     assignment.setAssignedVehicle(vehicle);
                 }
-
+                assignment.setStatus(Assignment.AssignmentStatus.ASSIGNED);
                 assignmentRepository.save(assignment);
                 assignments.add(assignment);
             }
