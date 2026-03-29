@@ -57,4 +57,41 @@ public interface ShipmentRepository extends JpaRepository<Shipment, Long> {
             @Param("startDate") LocalDateTime startDate,
             @Param("endDate") LocalDateTime endDate,
             Pageable pageable); // 使用分页，对于大量数据结果非常必要
+
+    // ==================== 加工运单查询方法 ====================
+
+    /**
+     * 根据加工链 ID 查询运单
+     */
+    List<Shipment> findByProcessingChainId(Long chainId);
+
+    /**
+     * 根据加工状态查询运单
+     */
+    List<Shipment> findByProcessingStatus(Shipment.ProcessingStatus status);
+
+    /**
+     * 根据多个加工链 ID 和加工状态查询运单（用于 Y 形加工链合并）
+     */
+    List<Shipment> findByProcessingChainIdInAndProcessingStatus(
+        List<Long> chainIds, 
+        Shipment.ProcessingStatus status
+    );
+
+    /**
+     * 统计加工链下的运单数量
+     */
+    long countByProcessingChainId(Long chainId);
+
+    /**
+     * 查找所有合并运单（有上游运单的运单）
+     */
+    @Query("SELECT s FROM Shipment s WHERE SIZE(s.upstreamShipmentIds) > 0 AND s.processingShipment = true")
+    List<Shipment> findAllMergeShipments();
+
+    /**
+     * 根据上游运单 ID 查找下游合并运单
+     */
+    @Query("SELECT s FROM Shipment s JOIN s.upstreamShipmentIds uId WHERE uId = :upstreamShipmentId")
+    List<Shipment> findByUpstreamShipmentId(@Param("upstreamShipmentId") Long upstreamShipmentId);
 }
