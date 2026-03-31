@@ -15,6 +15,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 
+import java.io.UnsupportedEncodingException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -170,6 +171,7 @@ public class GaodeMapServiceImpl implements GaodeMapService {
         params.put("key", gaodeApiKey);
         params.put("origin", request.getOrigin());
         params.put("destination", request.getDestination());
+        params.put("show_fields", "polyline");
 
         addIfPresent(params, "strategy", request.getStrategy());
 
@@ -224,7 +226,12 @@ public class GaodeMapServiceImpl implements GaodeMapService {
      * 统一用 UTF-8
      */
     private String encode(String value) {
-        return URLEncoder.encode(value, StandardCharsets.UTF_8);
+        if (value == null) return ""; // 增加这一行判空兜底
+        try {
+            return URLEncoder.encode(value, StandardCharsets.UTF_8.toString());
+        } catch (UnsupportedEncodingException e) {
+            return value;
+        }
     }
 
     /**

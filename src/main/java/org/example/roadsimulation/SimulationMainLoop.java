@@ -46,10 +46,10 @@ public class SimulationMainLoop {
      */
     @Scheduled(fixedRate = 4000)
     public void executeMainLoop() {
-//        // 前端/API 控制是否运行
-//        if (!isRunning) {
-//            return;
-//        }
+        // 前端/API 控制是否运行
+        if (!isRunning) {
+            return;
+        }
 
         // ✅ 计算仿真当前时间（统一时间框架核心）
         int simMinutes = loopCount * MINUTES_PER_LOOP;

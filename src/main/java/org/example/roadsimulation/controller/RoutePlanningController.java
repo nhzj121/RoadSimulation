@@ -7,6 +7,7 @@ import org.example.roadsimulation.dto.RouteComplexityAnalysisDTO;
 import org.example.roadsimulation.dto.RoutePlanningAnalysisResponseDTO;
 import org.example.roadsimulation.service.RouteComplexityAnalysisService;
 import org.example.roadsimulation.service.RoutePlanningService;
+import org.example.roadsimulation.service.RouteService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -225,6 +226,41 @@ public class RoutePlanningController {
             logger.error("查询 POI 坐标异常", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(ApiResponse.error("查询 POI 坐标异常"));
+        }
+    }
+
+    /**
+     * 直接使用坐标规划路线
+     */
+    // 前端最可能使用的方法。
+    @GetMapping("/gaode/plan-by-coordinates")
+    public ResponseEntity<ApiResponse<GaodeRouteResponse>> planRouteByCoordinates(
+            @RequestParam String startLon,
+            @RequestParam String startLat,
+            @RequestParam String endLon,
+            @RequestParam String endLat,
+            @RequestParam(defaultValue = "0") String strategy) {
+
+        String startLocation = startLon + "," + startLat;
+        String endLocation = endLon + "," + endLat;
+
+        logger.info("坐标路线规划: {} -> {}", startLocation, endLocation);
+
+        try {
+            GaodeRouteRequest request = new GaodeRouteRequest(startLocation, endLocation);
+            request.setStrategy(strategy);
+
+            GaodeRouteResponse response = routePlanningService.planRouteWithGaode(request);
+            if (response.isSuccess()) {
+                return ResponseEntity.ok(ApiResponse.success("路线规划成功", response));
+            } else {
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                        .body(ApiResponse.error(response.getMessage()));
+            }
+        } catch (Exception e) {
+            logger.error("坐标路线规划异常", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(ApiResponse.error("路线规划服务异常"));
         }
     }
 }

@@ -79,4 +79,11 @@ public interface RoutePlanningService {
      * @return 坐标字符串；如果查不到则返回 null
      */
     String getPoiLocation(Long poiId);
+
+    /**
+     * 使用高德地图API规划驾车路线
+     * @param request 高德路线规划请求
+     * @return 高德路线规划响应
+     */
+    GaodeRouteResponse planRouteWithGaode(GaodeRouteRequest request);
 }
