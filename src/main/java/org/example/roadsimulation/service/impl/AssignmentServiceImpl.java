@@ -1,5 +1,6 @@
 package org.example.roadsimulation.service.impl;
 
+import org.example.roadsimulation.DataInitializer;
 import org.example.roadsimulation.dto.*;
 import org.example.roadsimulation.entity.*;
 import org.example.roadsimulation.entity.Assignment.AssignmentStatus;
@@ -27,6 +28,9 @@ public class AssignmentServiceImpl implements AssignmentService {
 
     @Autowired
     private VehicleService vehicleService;
+
+    @Autowired
+    private DataInitializer dataInitializer;
 
     // ==================== CRUD ====================
 
@@ -192,12 +196,12 @@ public class AssignmentServiceImpl implements AssignmentService {
 
     @Override
     public List<AssignmentBriefDTO> getActiveAssignments() {
-        return new ArrayList<>();
+        return dataInitializer.getActiveAssignments();
     }
 
     @Override
     public List<AssignmentBriefDTO> getNewAssignments() {
-        return new ArrayList<>();
+        return dataInitializer.getNewAssignmentsForDrawing();
     }
 
     @Override

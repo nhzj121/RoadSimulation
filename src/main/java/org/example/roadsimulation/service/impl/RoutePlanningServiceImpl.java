@@ -178,9 +178,6 @@ public class RoutePlanningServiceImpl implements RoutePlanningService {
                 String complexityLevel = resolveComplexityLevel(complexityScore);
                 response.getData().setComplexityLevel(complexityLevel);
 
-                // 设置总结和解释
-                response.getData().setSummary(buildSummary(response.getData()));
-                response.getData().setExplanation(buildExplanation(response.getData()));
             }
         }
     }
@@ -239,5 +236,24 @@ public class RoutePlanningServiceImpl implements RoutePlanningService {
                 data.getManeuverContribution(),
                 data.getDirectionChangeContribution(),
                 data.getShapeContribution());
+    }
+
+    @Override
+    public GaodeRouteResponse planRouteWithGaode(GaodeRouteRequest request) {
+        // 简单的参数验证
+        if (request.getOrigin() == null || request.getOrigin().trim().isEmpty()) {
+            return GaodeRouteResponse.error("起点坐标不能为空");
+        }
+        if (request.getDestination() == null || request.getDestination().trim().isEmpty()) {
+            return GaodeRouteResponse.error("终点坐标不能为空");
+        }
+
+        // 验证坐标格式
+        if (!isValidCoordinate(request.getOrigin()) || !isValidCoordinate(request.getDestination())) {
+            return GaodeRouteResponse.error("坐标格式不正确，应为：经度,纬度");
+        }
+
+        System.out.println("高德路线规划: " + request.getOrigin() + " -> " + request.getDestination());
+        return gaodeMapService.planDrivingRoute(request);
     }
 }

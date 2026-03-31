@@ -2094,7 +2094,7 @@ const drawTwoStageRouteForAssignment = async (assignment) => {
       position: [assignment.endLng, assignment.endLat],
       title: `卸货点: ${assignment.endPOIName || '未知'}`,
       icon: new AMapLib.Icon({
-        image: materialMarketIcon,
+        image: getPOIIcon('REST_AREA'),
         size: new AMapLib.Size(24, 24),
         imageSize: new AMapLib.Size(24, 24)
       })
@@ -2462,7 +2462,7 @@ const computeSingleRoute = async (start, end, strategy = '0') => {
     };
 
     const res = await request.get(
-        '/api/routes/gaode/plan-by-coordinates',
+        '/api/route-planning/gaode/plan-by-coordinates',
         { params }
     );
 
@@ -2495,6 +2495,11 @@ const computeSingleRoute = async (start, end, strategy = '0') => {
           });
         }
       });
+    }
+
+    if (fullPath.length === 0) {
+      console.error(`规划成功但未获取到路线坐标！请检查后端是否传了 show_fields=polyline 参数。`);
+      return null;
     }
 
     return {

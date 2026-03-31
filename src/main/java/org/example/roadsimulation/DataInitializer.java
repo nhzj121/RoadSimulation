@@ -15,12 +15,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -1120,11 +1116,19 @@ public class DataInitializer{
     // POI点与货物关系的建立与删除
     @Transactional
     public void initRelationBetweenPOIAndGoods(POI poiForTest, Goods goodsForTest, Integer generateQuantity) {
-        try{
+        try {
+            // 先查数据库，这是最铁的证据
+            Optional<Enrollment> existing = enrollmentRepository.findByPoiAndGoods(poiForTest, goodsForTest);
+
+            if (existing.isPresent()) {
+                System.out.println("警告：数据库中已存在该POI的货物关系，跳过插入，避免 Duplicate entry");
+                // 这里也可以顺手修复一下你内存里错乱的 Map 状态
+                poiIsWithGoods.put(poiForTest, true);
+                return;
+            }
+
             Enrollment enrollmentForTest = new Enrollment(poiForTest, goodsForTest, generateQuantity);
             enrollmentRepository.save(enrollmentForTest);
-
-            System.out.println("为POI [" + poiForTest.getName() + "] 初始化关系，数量: " + generateQuantity);
         } catch (Exception e) {
             System.err.println("生成货物关系失败: " + e.getMessage());
         }
