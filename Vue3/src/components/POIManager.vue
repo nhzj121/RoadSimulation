@@ -1617,7 +1617,12 @@ onUnmounted(() => {
 }
 
 :deep(.el-card__body) {
-  padding: 15px;
+  display: block;           /* 让 span 独占一行，并且宽度撑满 */
+  border-bottom: 1px solid #e0e0e0;  /* 横线 */
+  padding-bottom: 8px;      /* 可选：文字与线的距离 */
+  margin-bottom: 8px;       /* 可选：线与下方 div 的距离 */
+  
+  
 }
 
 :deep(.el-main) {

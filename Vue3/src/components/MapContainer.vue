@@ -165,32 +165,36 @@
                     <div class="cost-info">
                       <span class="cost-title">直接成本 (A)</span>
                       <span class="cost-desc">等待时间与空驶里程</span>
+                      <span class="cost-value">{{ simulationCosts.costA.toFixed(2) }}</span>
                     </div>
-                    <div class="cost-value">{{ simulationCosts.costA.toFixed(2) }}</div>
+                    
                   </div>
 
                   <div class="cost-item">
                     <div class="cost-info">
                       <span class="cost-title">效率成本 (B)</span>
                       <span class="cost-desc">空驶率与等待率</span>
+                      <span class="cost-value">{{ simulationCosts.costB.toFixed(2) }}</span>
                     </div>
-                    <div class="cost-value">{{ simulationCosts.costB.toFixed(2) }}</div>
+                    
                   </div>
 
                   <div class="cost-item">
                     <div class="cost-info">
                       <span class="cost-title">运能损耗 (C)</span>
                       <span class="cost-desc">理论与实际运能差</span>
+                      <span class="cost-value">{{ simulationCosts.costC.toFixed(2) }}</span>
                     </div>
-                    <div class="cost-value">{{ simulationCosts.costC.toFixed(2) }}</div>
+                    
                   </div>
 
                   <div class="cost-item">
                     <div class="cost-info">
                       <span class="cost-title">经济收益 (D)</span>
                       <span class="cost-desc">油耗与固定损耗</span>
+                      <span class="cost-value">{{ simulationCosts.costD.toFixed(2) }}</span>
                     </div>
-                    <div class="cost-value">{{ simulationCosts.costD.toFixed(2) }}</div>
+                    
                   </div>
                 </div>
 
@@ -3226,4 +3230,16 @@ onUnmounted(() => {
 .simulation-control :deep(.el-button-group .el-button) {
   flex: 1;
 }
+.cost-info {
+    border-bottom: 1px solid #e0e0e0;
+    font-size: 12px;
+    margin-bottom: 8px;
+        display: flex;
+    justify-content: space-between;
+  transition: background-color 0.2s;
+}
+.cost-info:hover {
+  background-color: #f5f5f5;   /* 深一些的颜色 */
+}
+
 </style>
