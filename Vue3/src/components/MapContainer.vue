@@ -16,7 +16,7 @@
     <ElContainer>
       <ElAside width="320px" class="side-panel">
         <div class="side-panel-scroll" ref="sidePanelScroll">
-          <!-- 仿真控制 -->
+
           <div class="panel-section">
             <ElCard shadow="never" class="box-card simulation-control">
               <template #header>
@@ -48,21 +48,32 @@
               </div>
             </ElCard>
           </div>
-          <!-- 运单生成 -->
-         <div class="shipment-control">
-           <label>生成运单数量:</label>
-           <input type="number" v-model.number="shipmentCount" min="1" />
-           <button @click="generateShipments">生成运单</button>
-         </div>
 
-         <div class="task-sidebar">
-           <ul>
-           <li v-for="shipment in shipments" :key="shipment.id">
-           {{ shipment.refNo }} - {{ shipment.status }}
-           </li>
-           </ul>
-         </div>
-          <!-- 车辆状态 -->
+          <div class="panel-section">
+            <ElCard shadow="never" class="box-card shipment-control-card">
+              <template #header>
+                <div class="card-header">
+                  <span>运单生成</span>
+                </div>
+              </template>
+
+              <div class="shipment-control">
+                <span class="control-label">生成数量:</span>
+                <input type="number" class="custom-input" v-model.number="shipmentCount" min="1" />
+                <ElButton type="primary" size="small" @click="generateShipments">生成</ElButton>
+              </div>
+
+              <div class="task-sidebar" v-if="shipments && shipments.length > 0">
+                <ul>
+                  <li v-for="shipment in shipments" :key="shipment.id">
+                    <span class="shipment-no">{{ shipment.refNo }}</span>
+                    <span class="shipment-status">{{ shipment.status }}</span>
+                  </li>
+                </ul>
+              </div>
+            </ElCard>
+          </div>
+
           <div class="panel-section">
             <ElCard shadow="never" class="box-card vehicle-status">
               <template #header>
@@ -71,7 +82,6 @@
                 </div>
               </template>
               <div class="vehicle-list">
-                <!-- 为每个车辆项添加唯一的ID，用于滚动定位 -->
                 <div
                     v-for="v in vehicles"
                     :key="v.id"
@@ -85,7 +95,6 @@
                   <div class="vehicle-info">
                     <div class="vehicle-id">{{ v.licensePlate }}</div>
                     <div class="vehicle-stats">
-                      <!-- 载重信息 -->
                       <div class="load-info">
                         <span class="label">载重:</span>
                         <span class="value">{{ v.currentLoad?.toFixed(1) || '0.0' }}/{{ v.maxLoadCapacity?.toFixed(1) || '0.0' }}t</span>
@@ -96,7 +105,6 @@
                           ></div>
                         </div>
                       </div>
-                      <!-- 载容信息 -->
                       <div class="volume-info">
                         <span class="label">载容:</span>
                         <span class="value">{{ v.currentVolume?.toFixed(1) || '0.0' }}/{{ v.maxVolumeCapacity?.toFixed(1) || '0.0' }}m³</span>
@@ -107,7 +115,6 @@
                           ></div>
                         </div>
                       </div>
-                      <!-- 位置和状态 -->
                       <div class="vehicle-location" :class="`status-${v.status?.toLowerCase()}`">
                         {{ v.actionDescription || statusMap[v.status]?.text || v.status || '未知' }}
                       </div>
@@ -129,7 +136,6 @@
             </ElCard>
           </div>
 
-          <!-- 统计信息 -->
           <div class="panel-section">
             <ElCard shadow="never" class="box-card statistics-info">
               <template #header>
@@ -145,9 +151,11 @@
           </div>
         </div>
       </ElAside>
+
       <ElMain>
         <div id="container"></div>
       </ElMain>
+
       <transition name="el-zoom-in-left">
         <ElAside v-show="isCostPanelVisible" width="300px" class="right-side-panel">
           <div class="side-panel-scroll">
@@ -162,39 +170,35 @@
 
                 <div class="cost-list">
                   <div class="cost-item">
-                    <div class="cost-info">
+                    <div class="cost-header-row">
                       <span class="cost-title">直接成本 (A)</span>
-                      <span class="cost-desc">等待时间与空驶里程</span>
                       <span class="cost-value">{{ simulationCosts.costA.toFixed(2) }}</span>
                     </div>
-                    
+                    <span class="cost-desc">等待时间与空驶里程</span>
                   </div>
 
                   <div class="cost-item">
-                    <div class="cost-info">
+                    <div class="cost-header-row">
                       <span class="cost-title">效率成本 (B)</span>
-                      <span class="cost-desc">空驶率与等待率</span>
                       <span class="cost-value">{{ simulationCosts.costB.toFixed(2) }}</span>
                     </div>
-                    
+                    <span class="cost-desc">空驶率与等待率</span>
                   </div>
 
                   <div class="cost-item">
-                    <div class="cost-info">
+                    <div class="cost-header-row">
                       <span class="cost-title">运能损耗 (C)</span>
-                      <span class="cost-desc">理论与实际运能差</span>
                       <span class="cost-value">{{ simulationCosts.costC.toFixed(2) }}</span>
                     </div>
-                    
+                    <span class="cost-desc">理论与实际运能差</span>
                   </div>
 
-                  <div class="cost-item">
-                    <div class="cost-info">
+                  <div class="cost-item total-cost">
+                    <div class="cost-header-row">
                       <span class="cost-title">经济收益 (D)</span>
-                      <span class="cost-desc">油耗与固定损耗</span>
-                      <span class="cost-value">{{ simulationCosts.costD.toFixed(2) }}</span>
+                      <span class="cost-value highlight-value">{{ simulationCosts.costD.toFixed(2) }}</span>
                     </div>
-                    
+                    <span class="cost-desc">油耗与固定损耗</span>
                   </div>
                 </div>
 
@@ -203,6 +207,7 @@
           </div>
         </ElAside>
       </transition>
+
     </ElContainer>
   </ElContainer>
 </template>
@@ -3240,6 +3245,148 @@ onUnmounted(() => {
 }
 .cost-info:hover {
   background-color: #f5f5f5;   /* 深一些的颜色 */
+}
+
+/* ==================== 运单生成美化 ==================== */
+.shipment-control-card {
+  margin-bottom: 10px;
+}
+
+.shipment-control {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.shipment-control .control-label {
+  color: #606266; /* 强制指定深灰色，避免与背景混合 */
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.custom-input {
+  width: 70px;
+  height: 26px;
+  border: 1px solid #dcdfe6;
+  border-radius: 4px;
+  padding: 0 8px;
+  color: #303133;
+  outline: none;
+  transition: border-color 0.2s;
+  box-sizing: border-box;
+}
+
+.custom-input:focus {
+  border-color: #409eff;
+}
+
+.task-sidebar {
+  border: 1px solid #ebeef5;
+  padding: 8px 12px;
+  background-color: #fafafa;
+  border-radius: 6px;
+  max-height: 120px;
+  overflow-y: auto;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.task-sidebar ul {
+  padding-left: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.task-sidebar li {
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: #606266;
+  display: flex;
+  justify-content: space-between;
+  border-bottom: 1px dashed #e4e7ed;
+  padding-bottom: 4px;
+}
+
+.task-sidebar li:last-child {
+  margin-bottom: 0;
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.shipment-no {
+  font-family: monospace;
+  color: #909399;
+}
+
+.shipment-status {
+  color: #67c23a;
+  font-weight: 500;
+}
+
+/* ==================== 右侧成本监控面板美化 ==================== */
+.right-side-panel {
+  background-color: #f7f8fa; /* 覆盖黑底色，统一侧边栏背景 */
+  border-left: 1px solid #e6e6e6;
+  display: flex;
+  flex-direction: column;
+  box-shadow: -2px 0 8px rgba(0, 0, 0, 0.05); /* 左侧加一点阴影区分层次 */
+  z-index: 10;
+}
+
+.cost-card {
+  background: transparent;
+}
+
+.cost-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* 单个成本卡片设计 */
+.cost-item {
+  background-color: #ffffff;
+  border: 1px solid #ebeef5;
+  border-radius: 8px;
+  padding: 14px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+  transition: all 0.3s ease;
+  position: relative; /* 为伪元素绝对定位提供参照 */
+  overflow: hidden;   /* 关键：防止内部元素超出圆角边界 */
+}
+
+.cost-item:hover {
+  box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+  transform: translateY(-2px);
+  border-color: #dcdfe6;
+}
+
+.cost-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.cost-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.cost-value {
+  font-size: 18px;
+  font-weight: 700;
+  color: #409eff; /* 蓝色数值 */
+  font-family: 'Helvetica Neue', Helvetica, 'PingFang SC', sans-serif;
+}
+
+.cost-desc {
+  font-size: 12px;
+  color: #909399; /* 浅灰色副标题 */
+  display: block;
 }
 
 </style>
