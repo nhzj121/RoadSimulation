@@ -15,6 +15,7 @@ import java.time.LocalDateTime;
 @Component
 public class SimulationMainLoop {
 
+
     private final DataInitializer dataInitializer;
     private final StateUpdateService stateUpdateService;
 
@@ -25,7 +26,7 @@ public class SimulationMainLoop {
     private int loopCount = 0;
 
     // 运行状态
-    private boolean isRunning = false;
+    private boolean isRunning = true;
 
     // 每个循环代表的分钟数
     private final int MINUTES_PER_LOOP = 30;
@@ -46,6 +47,7 @@ public class SimulationMainLoop {
      */
     @Scheduled(fixedRate = 4000)
     public void executeMainLoop() {
+        System.out.println("定时任务触发，isRunning=" + isRunning);
         // 前端/API 控制是否运行
         if (!isRunning) {
             return;

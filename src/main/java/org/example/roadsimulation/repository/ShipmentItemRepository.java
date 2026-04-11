@@ -35,7 +35,7 @@ public interface ShipmentItemRepository extends JpaRepository<ShipmentItem, Long
      * 根据状态查找运单项
      */
     List<ShipmentItem> findByStatus(String status);
-
+    List<ShipmentItem> findByStatus(ShipmentItem.ShipmentItemStatus status);
     /**
      * 统计运单的运单项数量
      */

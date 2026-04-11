@@ -107,7 +107,7 @@ public class Vehicle {
     @Getter
     @Setter
     @Column(name = "loop-count")
-    private int loopCount = 0;
+    private Integer loopCount = 0;
 
     // 与司机多对多
     @ManyToMany(mappedBy = "vehicles")

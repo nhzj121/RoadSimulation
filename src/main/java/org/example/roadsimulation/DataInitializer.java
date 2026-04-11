@@ -125,6 +125,9 @@ public class DataInitializer{
     private int currentLoopCount;
 
     @Autowired
+    private org.example.roadsimulation.optimizer.OptimizerBridge optimizerBridge;
+
+    @Autowired
     public DataInitializer(EnrollmentRepository enrollmentRepository,
                            GoodsRepository goodsRepository,
                            POIRepository poiRepository,
@@ -260,9 +263,9 @@ public class DataInitializer{
         if (existingGoods.isPresent()) {
             goalGoods = existingGoods.get();
             System.out.println("从数据库加载货物: " + goalGoods.getName());
-        } else{
-            // 如果不存在，创建并保存
-            goalGoods = new Goods("玻璃", "00001");
+        } else {
+            // 如果不存在，创建并保存（修复：使用入参sku，名称改为水泥）
+            goalGoods = new Goods("水泥", sku);
             goodsRepository.save(goalGoods);
             System.out.println("创建新货物: " + goalGoods.getName());
         }
@@ -809,7 +812,8 @@ public class DataInitializer{
         // 1. 创建Shipment
         Shipment shipment = initalizeShipment(startPOI, endPOI, goods, quantity);
 
-        Map<Vehicle, ShipmentItem> vehicleShipmentItemMap = splitAndCreateShipmentItemsWithSmartMatching(shipment, goods, quantity, vehicles, startPOI);
+        Map<Vehicle, ShipmentItem> vehicleShipmentItemMap = optimizerBridge.optimizedMatching(
+                shipment, goods, quantity, vehicles, startPOI);
 
         // 3. 建立POI与Goods的Enrollment关系
         initRelationBetweenPOIAndGoods(startPOI, goods, quantity);
