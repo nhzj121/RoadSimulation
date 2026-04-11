@@ -30,6 +30,7 @@ import java.util.Set;
         }
 )
 public class Shipment {
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -51,6 +52,18 @@ public class Shipment {
     @Column(name = "total_volume")
     private Double totalVolume;
 
+    /**
+     * 新增：总行驶时间（秒）
+     */
+    @Column(name = "total_driving_time")
+    private Long totalDrivingTime;
+
+    /**
+     * 新增：总行驶距离（米）
+     */
+    @Column(name = "total_driving_distance")
+    private Double totalDrivingDistance;
+
     public enum ShipmentStatus {
         CREATED, PLANNED, PICKED_UP, IN_TRANSIT, DELIVERED, CANCELLED
     }
@@ -69,10 +82,12 @@ public class Shipment {
     @Column(name = "status", length = 20, nullable = false)
     private ShipmentStatus status = ShipmentStatus.CREATED;
 
+    // 与客户的多对一关系
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "customer_id")
     private Customer customer;
 
+    // 起运地 / 目的地
     @NotNull(message = "起运地不能为空")
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "origin_poi_id")
@@ -174,49 +189,134 @@ public class Shipment {
         }
     }
 
-    // ==================== Getter & Setter ====================
+    // Getter & Setter
+    public Long getId() {
+        return id;
+    }
 
-    public Long getId() { return id; }
-    public void setId(Long id) { this.id = id; }
+    public void setId(Long id) {
+        this.id = id;
+    }
 
-    public String getRefNo() { return refNo; }
-    public void setRefNo(String refNo) { this.refNo = refNo; }
+    public String getRefNo() {
+        return refNo;
+    }
 
-    public String getCargoType() { return cargoType; }
-    public void setCargoType(String cargoType) { this.cargoType = cargoType; }
+    public void setRefNo(String refNo) {
+        this.refNo = refNo;
+    }
 
-    public Double getTotalWeight() { return totalWeight; }
-    public void setTotalWeight(Double totalWeight) { this.totalWeight = totalWeight; }
+    public String getCargoType() {
+        return cargoType;
+    }
 
-    public Double getTotalVolume() { return totalVolume; }
-    public void setTotalVolume(Double totalVolume) { this.totalVolume = totalVolume; }
+    public void setCargoType(String cargoType) {
+        this.cargoType = cargoType;
+    }
 
-    public ShipmentStatus getStatus() { return status; }
-    public void setStatus(ShipmentStatus status) { this.status = status; }
+    public Double getTotalWeight() {
+        return totalWeight;
+    }
 
-    public Customer getCustomer() { return customer; }
-    public void setCustomer(Customer customer) { this.customer = customer; }
+    public void setTotalWeight(Double totalWeight) {
+        this.totalWeight = totalWeight;
+    }
 
-    public POI getOriginPOI() { return originPOI; }
-    public void setOriginPOI(POI originPOI) { this.originPOI = originPOI; }
+    public Double getTotalVolume() {
+        return totalVolume;
+    }
 
-    public POI getDestPOI() { return destPOI; }
-    public void setDestPOI(POI destPOI) { this.destPOI = destPOI; }
+    public void setTotalVolume(Double totalVolume) {
+        this.totalVolume = totalVolume;
+    }
 
-    public LocalDateTime getPickupAppoint() { return pickupAppoint; }
-    public void setPickupAppoint(LocalDateTime pickupAppoint) { this.pickupAppoint = pickupAppoint; }
+    public Long getTotalDrivingTime() {
+        return totalDrivingTime;
+    }
 
-    public LocalDateTime getDeliveryAppoint() { return deliveryAppoint; }
-    public void setDeliveryAppoint(LocalDateTime deliveryAppoint) { this.deliveryAppoint = deliveryAppoint; }
+    public void setTotalDrivingTime(Long totalDrivingTime) {
+        this.totalDrivingTime = totalDrivingTime;
+    }
 
-    public LocalDateTime getCreatedAt() { return createdAt; }
-    public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
+    public Double getTotalDrivingDistance() {
+        return totalDrivingDistance;
+    }
 
-    public LocalDateTime getUpdatedAt() { return updatedAt; }
-    public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
+    public void setTotalDrivingDistance(Double totalDrivingDistance) {
+        this.totalDrivingDistance = totalDrivingDistance;
+    }
 
-    public Set<ShipmentItem> getItems() { return items; }
-    public void setItems(Set<ShipmentItem> items) { this.items = items; }
+    public ShipmentStatus getStatus() {
+        return status;
+    }
+
+    public void setStatus(ShipmentStatus status) {
+        this.status = status;
+    }
+
+    public Customer getCustomer() {
+        return customer;
+    }
+
+    public void setCustomer(Customer customer) {
+        this.customer = customer;
+    }
+
+    public POI getOriginPOI() {
+        return originPOI;
+    }
+
+    public void setOriginPOI(POI originPOI) {
+        this.originPOI = originPOI;
+    }
+
+    public POI getDestPOI() {
+        return destPOI;
+    }
+
+    public void setDestPOI(POI destPOI) {
+        this.destPOI = destPOI;
+    }
+
+    public LocalDateTime getPickupAppoint() {
+        return pickupAppoint;
+    }
+
+    public void setPickupAppoint(LocalDateTime pickupAppoint) {
+        this.pickupAppoint = pickupAppoint;
+    }
+
+    public LocalDateTime getDeliveryAppoint() {
+        return deliveryAppoint;
+    }
+
+    public void setDeliveryAppoint(LocalDateTime deliveryAppoint) {
+        this.deliveryAppoint = deliveryAppoint;
+    }
+
+    public LocalDateTime getCreatedAt() {
+        return createdAt;
+    }
+
+    public void setCreatedAt(LocalDateTime createdAt) {
+        this.createdAt = createdAt;
+    }
+
+    public LocalDateTime getUpdatedAt() {
+        return updatedAt;
+    }
+
+    public void setUpdatedAt(LocalDateTime updatedAt) {
+        this.updatedAt = updatedAt;
+    }
+
+    public Set<ShipmentItem> getItems() {
+        return items;
+    }
+
+    public void setItems(Set<ShipmentItem> items) {
+        this.items = items;
+    }
 
     public String getUpdatedBy() { return updatedBy; }
     public void setUpdatedBy(String updatedBy) { this.updatedBy = updatedBy; }
@@ -272,6 +372,12 @@ public class Shipment {
      */
     public boolean isMergeShipment() {
         return upstreamShipmentIds != null && !upstreamShipmentIds.isEmpty();
+    public String getUpdatedBy() {
+        return updatedBy;
+    }
+
+    public void setUpdatedBy(String updatedBy) {
+        this.updatedBy = updatedBy;
     }
 
     @PreUpdate
@@ -287,6 +393,11 @@ public class Shipment {
                 ", status=" + status +
                 ", processingShipment=" + processingShipment +
                 ", processingStatus=" + processingStatus +
+                ", customer=" + (customer != null ? customer.getId() : "null") +
+                ", originPOI=" + (originPOI != null ? originPOI.getId() : "null") +
+                ", destPOI=" + (destPOI != null ? destPOI.getId() : "null") +
+                ", totalDrivingTime=" + totalDrivingTime +
+                ", totalDrivingDistance=" + totalDrivingDistance +
                 '}';
     }
 }

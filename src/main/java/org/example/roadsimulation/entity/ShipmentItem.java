@@ -142,7 +142,6 @@ public class ShipmentItem {
         this.sku = sku;
         this.weight = weight;
         this.volume = volume;
-        setShipment(shipment);
     }
 
     // ==================== Getter & Setter ====================

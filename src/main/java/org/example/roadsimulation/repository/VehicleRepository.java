@@ -16,9 +16,6 @@ public interface VehicleRepository extends JpaRepository<Vehicle, Long> {
     // 根据车牌号查找
     Vehicle findByLicensePlate(String licensePlate);
 
-    // 根据ID查找
-    Vehicle findById(long id);
-
     // 模糊查询车牌号（忽略大小写）
     List<Vehicle> findByLicensePlateContainingIgnoreCase(String partialLicense);
 
@@ -28,7 +25,7 @@ public interface VehicleRepository extends JpaRepository<Vehicle, Long> {
     // 根据车型查找
     List<Vehicle> findByModelType(String modelType);
 
-    // 根据车辆类型查找（使用已有的 vehicleType 字段）
+    // 根据车辆类型查找
     List<Vehicle> findByVehicleType(String vehicleType);
 
     // 根据车辆状态查找
@@ -37,10 +34,10 @@ public interface VehicleRepository extends JpaRepository<Vehicle, Long> {
     // 分页查询
     Page<Vehicle> findAll(Pageable pageable);
 
-    // 检查车牌号是否存在（唯一性校验）
+    // 检查车牌号是否存在
     boolean existsByLicensePlate(String licensePlate);
 
-    // === 新增方法：用于车辆匹配服务 ===
+    // === 车辆匹配相关 ===
 
     // 根据最小载重能力查询可用车辆
     @Query("SELECT v FROM Vehicle v WHERE v.maxLoadCapacity >= :minLoadCapacity AND v.currentStatus = 'IDLE'")
@@ -51,7 +48,9 @@ public interface VehicleRepository extends JpaRepository<Vehicle, Long> {
     List<Vehicle> findAvailableByLoadRange(@Param("minLoad") Double minLoad, @Param("maxLoad") Double maxLoad);
 
     // 根据品牌和车辆类型查询可用车辆
-    List<Vehicle> findByBrandAndVehicleTypeAndCurrentStatus(String brand, String vehicleType, Vehicle.VehicleStatus status);
+    List<Vehicle> findByBrandAndVehicleTypeAndCurrentStatus(String brand,
+                                                            String vehicleType,
+                                                            Vehicle.VehicleStatus status);
 
     // 根据车辆类型和最小载重查询
     @Query("SELECT v FROM Vehicle v WHERE v.vehicleType = :vehicleType AND v.maxLoadCapacity >= :minLoadCapacity AND v.currentStatus = 'IDLE'")
@@ -86,6 +85,8 @@ public interface VehicleRepository extends JpaRepository<Vehicle, Long> {
     // 查询所有车辆类型（去重）
     @Query("SELECT DISTINCT v.vehicleType FROM Vehicle v WHERE v.vehicleType IS NOT NULL")
     List<String> findAllVehicleTypes();
+
+    // 查询指定半径范围内的空闲车辆
     @Query("SELECT v FROM Vehicle v WHERE " +
             "v.currentStatus = 'IDLE' AND " +
             "v.currentPOI.id IN (" +
@@ -100,7 +101,8 @@ public interface VehicleRepository extends JpaRepository<Vehicle, Long> {
     List<Vehicle> findBySuitableGoods(String suitableGoods);
 
     // 按适合货物和状态查询
-    List<Vehicle> findBySuitableGoodsAndCurrentStatus(String suitableGoods, Vehicle.VehicleStatus currentStatus);
+    List<Vehicle> findBySuitableGoodsAndCurrentStatus(String suitableGoods,
+                                                      Vehicle.VehicleStatus currentStatus);
 
     List<Vehicle> findByAssignmentsIsNotNull();
 }

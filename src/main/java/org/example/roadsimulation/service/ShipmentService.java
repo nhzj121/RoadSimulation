@@ -1,14 +1,17 @@
 package org.example.roadsimulation.service;
 
+import org.example.roadsimulation.dto.RouteMetricsResponse;
 import org.example.roadsimulation.entity.Shipment;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
 public interface ShipmentService {
+
     // 创建运单
     Shipment createShipment(Shipment shipment);
 
@@ -49,4 +52,18 @@ public interface ShipmentService {
 
     // 检查运单系统参考号是否存在
     boolean existsByRefNo(String refNo);
+
+    /**
+     * 计算并保存路线指标
+     * 1. 空驶距离/时间：车辆当前位置 -> 运单起点
+     * 2. 总行驶距离/时间：运单起点 -> 运单终点
+     *
+     * @param shipmentId 运单ID
+     * @param vehicleId 车辆ID
+     * @return 路线指标结果
+     */
+    RouteMetricsResponse calculateAndStoreRouteMetrics(Long shipmentId, Long vehicleId);
+
+    @Transactional(rollbackFor = Exception.class)
+    List<Shipment> batchGenerateShipments(int count);
 }

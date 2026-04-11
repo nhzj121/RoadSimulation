@@ -138,14 +138,14 @@
             <el-button size="small" @click="clearAllData">清空数据</el-button>
           </div>
 
-<!--          <div>-->
-<!--            <el-button @click="resetAutoIncrement" type="danger" style="margin-top: 10px;">-->
-<!--              重置数据库ID（危险！）-->
-<!--            </el-button>-->
-<!--            <el-button @click="safeResetAutoIncrement" type="warning" style="margin-top: 5px;">-->
-<!--              安全重置ID-->
-<!--            </el-button>-->
-<!--          </div>-->
+          <!--          <div>-->
+          <!--            <el-button @click="resetAutoIncrement" type="danger" style="margin-top: 10px;">-->
+          <!--              重置数据库ID（危险！）-->
+          <!--            </el-button>-->
+          <!--            <el-button @click="safeResetAutoIncrement" type="warning" style="margin-top: 5px;">-->
+          <!--              安全重置ID-->
+          <!--            </el-button>-->
+          <!--          </div>-->
         </el-aside>
 
         <el-main>
@@ -168,10 +168,16 @@ import gasStationIcon from '../../public/icons/gas-station.png';
 import maintenanceIcon from '../../public/icons/maintenance-center.png';
 import restAreaIcon from '../../public/icons/rest-area.png';
 import transportIcon from '../../public/icons/distribution-center.png';
-import materialMarketIcon from '../../public/icons/materialMarket.png';
-import vegetableBaseIcon from '../../public/icons/vegetable-base.png';
-import vegetableMarketIcon from '../../public/icons/vegetable-market.png';
 import testIcon from '../../public/icons/test.png';
+import timberYardIcon from '../../public/icons/timber-yard.png';
+import sawmillIcon from '../../public/icons/sawmill.png';
+import boardFactoryIcon from '../../public/icons/board-factory.png';
+import ironMineIcon from '../../public/icons/iron-mine.png';
+import steelMillIcon from '../../public/icons/steel-mill.png';
+import steelProcessingPlantIcon from '../../public/icons/steel-processing-plant.png';
+import furnitureFactoryIcon from '../../public/icons/furniture-factory.png';
+import tireManufacturingPlant from '../../public/icons/tire-manufacturing-plant.png';
+import autoAssemblyPlant from '../../public/icons/auto-assembly-plant.png';
 import { useRouter } from 'vue-router'
 
 // VueRouter配置
@@ -215,27 +221,26 @@ interface POICategory {
 
 // POI数据状态
 const poiData = ref<Record<string, POI[]>>({
-  factory: [],
   warehouse: [],
   gasStation: [],
   maintenance: [],
   restArea: [],
   transport: [],
-  materialMarket: [],
-  vegetableBase: [],
-  vegetableMarket: [],
+  timberYard: [],
+  sawmill: [],
+  boardFactory: [],
+  ironMine: [],
+  steelMill: [],
+  steelProcessingPlant: [],
+  furnitureFactory: [],
+  rubberProcessingPlant: [],
+  tireManufacturingPlant: [],
+  autoAssemblyPlant: [],
   test: [],
 })
 
 // POI分类配置
 const poiCategories = ref<POICategory[]>([
-  {
-    name: 'factory',
-    label: '工厂',
-    types: ['170300'],
-    keywords: ['水泥'],//'木材厂','家具厂'
-    visible: true
-  },
   {
     name: 'warehouse',
     label: '仓库',
@@ -272,24 +277,73 @@ const poiCategories = ref<POICategory[]>([
     visible: true
   },
   {
-    name: 'materialMarket',
-    label: '建材市场',
-    types: ['060603'],
-    keywords: ['建材市场'],//'建材市场'
+    name: 'timberYard',
+    label: '原木厂',
+    types: [],
+    keywords: ['林场'],
     visible: true
   },
   {
-    name: 'vegetableBase',
-    label: '蔬菜基地',
-    types: ['170400'],
-    keywords: [],//'蔬菜基地', '蔬菜'
+    name: 'sawmill',
+    label: '锯木厂',
+    types: ['170300'],
+    keywords: ['木材加工'],
     visible: true
   },
   {
-    name: 'vegetableMarket',
-    label: '蔬菜市场',
-    types: ['060705'],
-    keywords: [],//'蔬菜市场'
+    name: 'boardFactory',
+    label: '板材厂',
+    types: [],
+    keywords: ['板材'],
+    visible: true
+  },
+  {
+    name: 'ironMine',
+    label: '铁矿厂',
+    types: ['170209'], // 160100 偏向矿产
+    keywords: ['铁矿','钢'],
+    visible: true
+  },
+  {
+    name: 'steelMill',
+    label: '冶钢厂',
+    types: ['170205'],
+    keywords: ['钢厂'],
+    visible: true
+  },
+  {
+    name: 'steelProcessingPlant',
+    label: '钢材加工厂',
+    types: ['170300'],
+    keywords: ['钢材加工'],
+    visible: true
+  },
+  {
+    name: 'furnitureFactory',
+    label: '家具制造厂',
+    types: ['170300'],
+    keywords: ['家具厂'],
+    visible: true
+  },
+  {
+    name: 'rubberProcessingPlant',
+    label: '橡胶加工厂',
+    types: ['170300'],
+    keywords: ['橡胶'],
+    visible: true
+  },
+  {
+    name: 'tireManufacturingPlant',
+    label: '轮胎制造厂',
+    types: ['170300'],
+    keywords: ['轮胎制造', '轮胎厂'],
+    visible: true
+  },
+  {
+    name: 'autoAssemblyPlant',
+    label: '汽车总装厂',
+    types: ['170300'],
+    keywords: ['汽车制造'],
     visible: true
   },
   {
@@ -312,20 +366,16 @@ const isSearching = ref(false)
 
 // 成都平原搜索区域
 const chengduPlainPolygon = [
-  [103.566708, 31.019274], [103.7000, 31.1000],
-  [104.8000, 31.1000], [104.8000, 30.3000],
-  [103.848084, 30.076928], [103.463537, 30.174276]
+  [105.142653,31.953638],
+  [105.754144,31.049152],
+  [105.310195,29.575159],
+  [102.521285,26.021473],
+  [101.792754,26.001013],
+  [100.74549,26.531822],
+  [102.726817,31.722436]
 ];
-// 103.566708,31.019274|103.700000,31.100000|104.800000,31.100000|104.800000,30.300000|103.848084,30.076928|103.463537,30.174276|103.566708,31.019274
-
 // 图标配置
 const poiIcons = {
-  '工厂': {
-    url: factoryIcon,
-    size: [22, 22],
-    anchor: 'bottom-center',
-    color: '#FF6B6B'
-  },
   '仓库': {
     url: warehouseIcon,
     size: [22, 22],
@@ -356,30 +406,22 @@ const poiIcons = {
     anchor: 'bottom-center',
     color: '#073B4C'
   },
-  '建材市场':{
-    url: materialMarketIcon,
-    size:[22, 22],
-    anchor: 'bottom-center',
-    color: '#0c0b09'
-  },
-  '蔬菜基地': {
-    url: vegetableBaseIcon,
-    size: [22, 22],
-    anchor: 'bottom-center',
-    color: '#4CAF50' // 绿色
-  },
-  '蔬菜市场': {
-    url: vegetableMarketIcon,
-    size: [22, 22],
-    anchor: 'bottom-center',
-    color: '#8BC34A' // 浅绿色
-  },
   '测试': {
     url: testIcon,
     size: [22,22],
     anchor: 'bottom-center',
     color: '#ff0000'
-  }
+  },
+  '原木厂': { url: timberYardIcon, size: [22, 22], anchor: 'bottom-center', color: '#8B4513' },      // 棕色
+  '锯木厂': { url: sawmillIcon, size: [22, 22], anchor: 'bottom-center', color: '#A0522D' },      // 赭色
+  '板材厂': { url: boardFactoryIcon, size: [22, 22], anchor: 'bottom-center', color: '#DEB887' },      // 浅木色
+  '铁矿厂': { url: ironMineIcon, size: [22, 22], anchor: 'bottom-center', color: '#708090' },      // 铁灰色
+  '冶钢厂': { url: steelMillIcon, size: [22, 22], anchor: 'bottom-center', color: '#B22222' },      // 火红色
+  '钢材加工厂': { url: steelProcessingPlantIcon, size: [22, 22], anchor: 'bottom-center', color: '#4682B4' },  // 钢蓝色
+  '家具制造厂': { url: furnitureFactoryIcon, size: [22, 22], anchor: 'bottom-center', color: '#D2691E' },   // 橙棕色
+  '橡胶加工厂': { url: factoryIcon, size: [22, 22], anchor: 'bottom-center', color: '#556B2F' },        // 暗橄榄绿
+  '轮胎制造厂': { url: tireManufacturingPlant, size: [22, 22], anchor: 'bottom-center', color: '#2F4F4F' },        // 深石板灰 (偏黑，类似轮胎)
+  '汽车总装厂': { url: autoAssemblyPlant, size: [22, 22], anchor: 'bottom-center', color: '#4169E1' }         // 皇家蓝 (科技工业感)
 };
 
 // 数据加载状态
@@ -394,29 +436,41 @@ const dataStats = ref({
 // 类型映射
 const showTypeMappingWarning = ref(false)
 const typeMapping = {
-  'factory': 'FACTORY',
   'warehouse': 'WAREHOUSE',
   'gasStation': 'GAS_STATION',
   'maintenance': 'MAINTENANCE_CENTER',
   'restArea': 'REST_AREA',
   'transport': 'DISTRIBUTION_CENTER',
-  'materialMarket': 'MATERIAL_MARKET',
-  'vegetableBase': 'VEGETABLE_BASE',
-  'vegetableMarket': 'VEGETABLE_MARKET',
   'test': 'TEST',
+  'timberYard': 'TIMBER_YARD',
+  'sawmill': 'SAWMILL',
+  'boardFactory': 'BOARD_FACTORY',
+  'ironMine': 'IRON_MINE',
+  'steelMill': 'STEEL_MILL',
+  'steelProcessingPlant': 'STEEL_PROCESSING_PLANT',
+  'furnitureFactory': 'FURNITURE_FACTORY',
+  'rubberProcessingPlant': 'RUBBER_PROCESSING_PLANT',
+  'tireManufacturingPlant': 'TIRE_MANUFACTURING_PLANT',
+  'autoAssemblyPlant': 'AUTO_ASSEMBLY_PLANT',
 } as const;
 
 const reverseTypeMapping = {
-  'FACTORY': 'factory',
   'WAREHOUSE': 'warehouse',
   'GAS_STATION': 'gasStation',
   'MAINTENANCE_CENTER': 'maintenance',
   'REST_AREA': 'restArea',
   'DISTRIBUTION_CENTER': 'transport',
-  'MATERIAL_MARKET': 'materialMarket',
-  'VEGETABLE_BASE': 'vegetableBase',
-  'VEGETABLE_MARKET': 'vegetableMarket',
-  'TEST': 'test'
+  'TEST': 'test',
+  'TIMBER_YARD': 'timberYard',
+  'SAWMILL': 'sawmill',
+  'BOARD_FACTORY': 'boardFactory',
+  'IRON_MINE': 'ironMine',
+  'STEEL_MILL': 'steelMill',
+  'STEEL_PROCESSING_PLANT': 'steelProcessingPlant',
+  'FURNITURE_FACTORY': 'furnitureFactory',
+  'RUBBER_PROCESSING_PLANT': 'rubberProcessingPlant',
+  'TIRE_MANUFACTURING_PLANT': 'tireManufacturingPlant',
+  'AUTO_ASSEMBLY_PLANT': 'autoAssemblyPlant'
 } as const;
 
 // 地图初始化
@@ -891,23 +945,23 @@ const searchSinglePage = (keyword: string, categoryName: string, pageIndex: numb
         const categoryKey = categoryConfig ? categoryConfig.name : categoryName;
         // 过滤POI数据：如果是工厂分类，跳过名称中包含"仓库"的POI
         const pois: POI[] = result.poiList.pois
-          .filter((poi: any) => {
-            // 如果是工厂分类，检查名称是否包含"仓库"
-            if (categoryName === '工厂' && poi.name && poi.name.includes('仓库')) {
-              console.log(`🚫 跳过工厂分类中的仓库POI: ${poi.name}`);
-              return false; // 跳过这个POI
-            }
-            return true; // 保留其他POI
-          })
-          .map((poi: any) => ({
-            id: poi.id,
-            name: poi.name,
-            type: categoryName,
-            location: poi.location,
-            address: poi.address,
-            tel: poi.tel || '',
-            category: categoryKey
-          }));
+            .filter((poi: any) => {
+              // 如果是工厂分类，检查名称是否包含"仓库"
+              if (categoryName === '工厂' && poi.name && poi.name.includes('仓库')) {
+                console.log(`🚫 跳过工厂分类中的仓库POI: ${poi.name}`);
+                return false; // 跳过这个POI
+              }
+              return true; // 保留其他POI
+            })
+            .map((poi: any) => ({
+              id: poi.id,
+              name: poi.name,
+              type: categoryName,
+              location: poi.location,
+              address: poi.address,
+              tel: poi.tel || '',
+              category: categoryKey
+            }));
         resolve(pois);
       } else {
         console.warn(`搜索 "${keyword}" 第${pageIndex}页状态: ${status}`);
@@ -1563,7 +1617,12 @@ onUnmounted(() => {
 }
 
 :deep(.el-card__body) {
-  padding: 15px;
+  display: block;           /* 让 span 独占一行，并且宽度撑满 */
+  border-bottom: 1px solid #e0e0e0;  /* 横线 */
+  padding-bottom: 8px;      /* 可选：文字与线的距离 */
+  margin-bottom: 8px;       /* 可选：线与下方 div 的距离 */
+  
+  
 }
 
 :deep(.el-main) {

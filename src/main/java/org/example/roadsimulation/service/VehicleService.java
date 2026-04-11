@@ -5,6 +5,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -37,6 +38,8 @@ public interface VehicleService {
     void deleteVehicle(Long id);
 
     boolean existsByLicensePlate(String licensePlate);
+
+    List<Vehicle> getVehicleSuitable(String sku);
 
     // ================ 新增的方法 ================
 
@@ -79,4 +82,11 @@ public interface VehicleService {
      * @return 更新后的车辆对象
      */
     Vehicle updateVehicleCoordinates(Long vehicleId, BigDecimal longitude, BigDecimal latitude);
+
+    Vehicle calculateLoadingWaitTime(Long vehicleId, LocalDateTime loadingStartTime);
+
+    /**
+     * 新增方法：更新车辆指标信息（空驶距离、等待时间、总行驶距离等）
+     */
+    void updateVehicleMetrics(Vehicle vehicle);
 }

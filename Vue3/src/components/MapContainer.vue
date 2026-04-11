@@ -7,13 +7,16 @@
         </div>
         <div class="navbar-menu">
           <ElButton text @click="goToPOIManager">POI点管理</ElButton>
+          <ElButton type="primary" text @click="toggleCostPanel">
+            {{ isCostPanelVisible ? '隐藏成本监控' : '成本监控' }}
+          </ElButton>
         </div>
       </div>
     </ElHeader>
     <ElContainer>
       <ElAside width="320px" class="side-panel">
         <div class="side-panel-scroll" ref="sidePanelScroll">
-          <!-- 仿真控制 -->
+
           <div class="panel-section">
             <ElCard shadow="never" class="box-card simulation-control">
               <template #header>
@@ -46,7 +49,31 @@
             </ElCard>
           </div>
 
-          <!-- 车辆状态 -->
+          <div class="panel-section">
+            <ElCard shadow="never" class="box-card shipment-control-card">
+              <template #header>
+                <div class="card-header">
+                  <span>运单生成</span>
+                </div>
+              </template>
+
+              <div class="shipment-control">
+                <span class="control-label">生成数量:</span>
+                <input type="number" class="custom-input" v-model.number="shipmentCount" min="1" />
+                <ElButton type="primary" size="small" @click="generateShipments">生成</ElButton>
+              </div>
+
+              <div class="task-sidebar" v-if="shipments && shipments.length > 0">
+                <ul>
+                  <li v-for="shipment in shipments" :key="shipment.id">
+                    <span class="shipment-no">{{ shipment.refNo }}</span>
+                    <span class="shipment-status">{{ shipment.status }}</span>
+                  </li>
+                </ul>
+              </div>
+            </ElCard>
+          </div>
+
           <div class="panel-section">
             <ElCard shadow="never" class="box-card vehicle-status">
               <template #header>
@@ -55,7 +82,6 @@
                 </div>
               </template>
               <div class="vehicle-list">
-                <!-- 为每个车辆项添加唯一的ID，用于滚动定位 -->
                 <div
                     v-for="v in vehicles"
                     :key="v.id"
@@ -69,7 +95,6 @@
                   <div class="vehicle-info">
                     <div class="vehicle-id">{{ v.licensePlate }}</div>
                     <div class="vehicle-stats">
-                      <!-- 载重信息 -->
                       <div class="load-info">
                         <span class="label">载重:</span>
                         <span class="value">{{ v.currentLoad?.toFixed(1) || '0.0' }}/{{ v.maxLoadCapacity?.toFixed(1) || '0.0' }}t</span>
@@ -80,7 +105,6 @@
                           ></div>
                         </div>
                       </div>
-                      <!-- 载容信息 -->
                       <div class="volume-info">
                         <span class="label">载容:</span>
                         <span class="value">{{ v.currentVolume?.toFixed(1) || '0.0' }}/{{ v.maxVolumeCapacity?.toFixed(1) || '0.0' }}m³</span>
@@ -91,7 +115,6 @@
                           ></div>
                         </div>
                       </div>
-                      <!-- 位置和状态 -->
                       <div class="vehicle-location" :class="`status-${v.status?.toLowerCase()}`">
                         {{ v.actionDescription || statusMap[v.status]?.text || v.status || '未知' }}
                       </div>
@@ -113,7 +136,6 @@
             </ElCard>
           </div>
 
-          <!-- 统计信息 -->
           <div class="panel-section">
             <ElCard shadow="never" class="box-card statistics-info">
               <template #header>
@@ -129,9 +151,63 @@
           </div>
         </div>
       </ElAside>
+
       <ElMain>
         <div id="container"></div>
       </ElMain>
+
+      <transition name="el-zoom-in-left">
+        <ElAside v-show="isCostPanelVisible" width="300px" class="right-side-panel">
+          <div class="side-panel-scroll">
+            <div class="panel-section">
+              <ElCard shadow="never" class="box-card cost-card">
+                <template #header>
+                  <div class="card-header" style="justify-content: space-between;">
+                    <span>实时成本分析</span>
+                    <ElButton link type="info" @click="toggleCostPanel">✖</ElButton>
+                  </div>
+                </template>
+
+                <div class="cost-list">
+                  <div class="cost-item">
+                    <div class="cost-header-row">
+                      <span class="cost-title">直接成本 (A)</span>
+                      <span class="cost-value">{{ simulationCosts.costA.toFixed(2) }}</span>
+                    </div>
+                    <span class="cost-desc">等待时间与空驶里程</span>
+                  </div>
+
+                  <div class="cost-item">
+                    <div class="cost-header-row">
+                      <span class="cost-title">效率成本 (B)</span>
+                      <span class="cost-value">{{ simulationCosts.costB.toFixed(2) }}</span>
+                    </div>
+                    <span class="cost-desc">空驶率与等待率</span>
+                  </div>
+
+                  <div class="cost-item">
+                    <div class="cost-header-row">
+                      <span class="cost-title">运能损耗 (C)</span>
+                      <span class="cost-value">{{ simulationCosts.costC.toFixed(2) }}</span>
+                    </div>
+                    <span class="cost-desc">理论与实际运能差</span>
+                  </div>
+
+                  <div class="cost-item total-cost">
+                    <div class="cost-header-row">
+                      <span class="cost-title">经济收益 (D)</span>
+                      <span class="cost-value highlight-value">{{ simulationCosts.costD.toFixed(2) }}</span>
+                    </div>
+                    <span class="cost-desc">油耗与固定损耗</span>
+                  </div>
+                </div>
+
+              </ElCard>
+            </div>
+          </div>
+        </ElAside>
+      </transition>
+
     </ElContainer>
   </ElContainer>
 </template>
@@ -149,9 +225,16 @@ import gasStationIcon from '../../public/icons/gas-station.png';
 import maintenanceIcon from '../../public/icons/maintenance-center.png';
 import restAreaIcon from '../../public/icons/rest-area.png';
 import transportIcon from '../../public/icons/distribution-center.png';
-import materialMarketIcon from '../../public/icons/materialMarket.png';
-import vegetableBaseIcon from '../../public/icons/vegetable-base.png';
-import vegetableMarketIcon from '../../public/icons/vegetable-market.png';
+import testIcon from '../../public/icons/test.png';
+import timberYardIcon from '../../public/icons/timber-yard.png';
+import sawmillIcon from '../../public/icons/sawmill.png';
+import boardFactoryIcon from '../../public/icons/board-factory.png';
+import ironMineIcon from '../../public/icons/iron-mine.png';
+import steelMillIcon from '../../public/icons/steel-mill.png';
+import steelProcessingPlantIcon from '../../public/icons/steel-processing-plant.png';
+import furnitureFactoryIcon from '../../public/icons/furniture-factory.png';
+import tireManufacturingPlant from '../../public/icons/tire-manufacturing-plant.png';
+import autoAssemblyPlant from '../../public/icons/auto-assembly-plant.png';
 import {
   ElHeader,
   ElAside,
@@ -169,6 +252,8 @@ import { InfoFilled } from '@element-plus/icons-vue'
 
 let map = null;
 let AMapLib = null; // 保存加载后的 AMap 构造对象
+const shipmentCount = ref(1);
+const shipments = ref([]);
 const router = useRouter()
 const goToPOIManager = () => {
   router.push('/poi-manager')
@@ -192,6 +277,86 @@ const handleVehicleClick = (vehicle) => {
 
   // 可以在地图上高亮显示该车辆
   // highlightVehicleOnMap(vehicle);
+};
+
+import { useVehicleArrivalMonitor } from '@/composables/useVehicleArrivalMonitor';
+
+// 在您的组件逻辑中添加以下内容
+// 假设您已经有以下响应式数据
+// const vehiclePositions = ref([]); // 车辆位置数组
+// const currentPOIs = ref([]); // POI列表
+
+// 创建监控实例
+const arrivalMonitor = useVehicleArrivalMonitor({
+  checkInterval: 1000, // 每秒检查一次
+  arrivalThreshold: 50, // 50米内视为到达
+  preventDuplicateReports: true, // 防止重复上报
+  duplicateTimeout: 30000 // 30秒内不上报重复事件
+});
+
+/**
+ * 获取所有车辆的当前位置 - 修复版本
+ * 从动画管理器中获取车辆实时位置
+ */
+const getVehiclePositions = () => {
+  const positions = [];
+
+  console.log(`[调试] animationManager 状态:`, {
+    exists: !!animationManager,
+    animationsCount: animationManager?.animations?.size || 0
+  });
+
+  if (animationManager && animationManager.animations) {
+    console.log(`[调试] 动画列表:`, Array.from(animationManager.animations.entries()));
+
+    animationManager.animations.forEach((animation, assignmentId) => {
+      if (animation && animation.currentPosition && !animation.isCompleted) {
+        console.log(`[调试] 找到动画:`, {
+          assignmentId,
+          vehicleId: animation.vehicleId,
+          position: animation.currentPosition,
+          isCompleted: animation.isCompleted
+        });
+
+        // ... 原有的处理逻辑
+      }
+    });
+  }
+
+  console.log(`[到达检测] 获取到 ${positions.length} 辆车辆的位置`);
+  return positions;
+};
+
+// 获取POI列表的函数
+const getPOIList = () => {
+  // 根据您的实际数据结构进行调整
+  return currentPOIs.value.map(poi => ({
+    id: poi.id,
+    name: poi.name,
+    longitude: poi.longitude,
+    latitude: poi.latitude,
+    radius: poi.radius // 如果有自定义半径
+  }));
+};
+
+// 在仿真开始时启动监控
+const startSimulationWithMonitoring = async () => {
+  // 调用您现有的启动仿真方法
+  // await yourExistingStartSimulationFunction();
+
+  // 启动车辆到达监控
+  arrivalMonitor.startMonitoring(getVehiclePositions, getPOIList);
+
+  console.log('车辆到达监控已启动');
+};
+
+// 在仿真停止时停止监控
+const stopSimulationWithMonitoring = () => {
+  // 调用您现有的停止仿真方法
+  // yourExistingStopSimulationFunction();
+
+  // 停止车辆到达监控
+  arrivalMonitor.stopMonitoring();
 };
 
 // 滚动到指定车辆
@@ -242,6 +407,34 @@ const scrollToVehicle = (vehicleId) => {
   });
 };
 
+// --- 成本监控面板相关状态 ---
+const isCostPanelVisible = ref(false); // 默认关闭，点击后再打开
+const toggleCostPanel = () => {
+  isCostPanelVisible.value = !isCostPanelVisible.value;
+};
+
+const simulationCosts = reactive({
+  costA: 0.0,
+  costB: 0.0,
+  costC: 0.0,
+  costD: 0.0
+});
+
+// 获取实时成本的接口请求
+const fetchSimulationCosts = async () => {
+  try {
+    const response = await request.get('/api/simulation/costs');
+    if (response.data) {
+      simulationCosts.costA = response.data.costA || 0;
+      simulationCosts.costB = response.data.costB || 0;
+      simulationCosts.costC = response.data.costC || 0;
+      simulationCosts.costD = response.data.costD || 0;
+    }
+  } catch (error) {
+    console.error('获取成本数据失败:', error);
+  }
+};
+
 // 清除高亮
 const clearHighlight = () => {
   if (highlightTimer) {
@@ -249,6 +442,18 @@ const clearHighlight = () => {
     highlightTimer = null;
   }
   highlightedVehicleId.value = null;
+};
+
+// 生成运单（批量）
+const generateShipments = async () => {
+  if (shipmentCount.value <= 0) return;
+  try {
+    const res = await request.post('/api/shipments/batch-generate', { count: shipmentCount.value });
+    shipments.value = res.data;
+  } catch (error) {
+    console.error("生成运单失败", error);
+    alert("生成运单失败，请检查控制台日志");
+  }
 };
 
 // --- 仿真控制 ---
@@ -287,15 +492,22 @@ const assignmentStates = new Map();
 
 // 图标配置 - 根据POI类型使用不同的图标
 const poiIcons = {
-  'FACTORY': factoryIcon,
   'WAREHOUSE': warehouseIcon,
   'GAS_STATION': gasStationIcon,
   'MAINTENANCE_CENTER': maintenanceIcon,
   'REST_AREA': restAreaIcon,
   'DISTRIBUTION_CENTER': transportIcon,
-  'MATERIAL_MARKET': materialMarketIcon,
-  'VEGETABLE_BASE': vegetableBaseIcon,
-  'VEGETABLE_MARKET': vegetableMarketIcon,
+  'TEST': testIcon,
+  'TIMBER_YARD': timberYardIcon,
+  'SAWMILL': sawmillIcon,
+  'BOARD_FACTORY': boardFactoryIcon,
+  'IRON_MINE': ironMineIcon,
+  'STEEL_MILL': steelMillIcon,
+  'STEEL_PROCESSING_PLANT': steelProcessingPlantIcon,
+  'FURNITURE_FACTORY': furnitureFactoryIcon,
+  'RUBBER_PROCESSING_PLANT': factoryIcon, // 橡胶加工厂复用工厂
+  'TIRE_MANUFACTURING_PLANT': tireManufacturingPlant,
+  'AUTO_ASSEMBLY_PLANT': autoAssemblyPlant
 };
 
 // 获取POI类型对应的图标
@@ -1193,6 +1405,7 @@ const startSimulation = async () => {
     ElMessage.error('启动仿真失败：' + error.message);
     isSimulationRunning.value = false;
   }
+  arrivalMonitor.startMonitoring(getVehiclePositions, getPOIList);
 };
 
 /**
@@ -1304,6 +1517,8 @@ const startSimulationTimer = () => {
 
       // 更新车辆信息
       await updateVehicleInfo();
+
+      await fetchSimulationCosts();
     }
   }, simulationInterval.value);
 };
@@ -1316,6 +1531,7 @@ const stopSimulationTimer = () => {
     clearInterval(simulationTimer.value);
     simulationTimer.value = null;
   }
+  arrivalMonitor.stopMonitoring();
 };
 
 /**
@@ -1490,56 +1706,33 @@ const statusMap = {
 
 const vehicles = reactive([]); // 车辆列表，将从Assignment中获取
 
-// 更新车辆信息的方法
+/**
+ * 更新车辆信息 - 修复版本
+ * 从有效的后端接口 `/api/assignments/active` 获取任务数据，并提取车辆信息。
+ * 此函数为侧边栏车辆列表和统计信息提供数据。
+ */
 const updateVehicleInfo = async () => {
   try {
-    // 从Assignment获取车辆信息
+    console.log('[车辆信息] 正在从 /api/assignments/active 获取数据...');
+
+    // 调用项目中已存在且有效的接口
     const response = await request.get('/api/assignments/active');
     const activeAssignments = response.data;
+
+    console.log(`[车辆信息] 获取到 ${activeAssignments?.length || 0} 个活动任务`);
 
     // 清空当前车辆列表
     vehicles.splice(0, vehicles.length);
 
-    const positionsResponse = await request.get('/api/vehicles/current-positions');
-    const vehiclePositions = positionsResponse.data;
+    const vehicleMap = new Map(); // 用于按车辆ID去重
 
-    // 从Assignment中提取车辆信息
-    const vehicleMap = new Map(); // 用于去重，key为vehicleId
-
-    activeAssignments.forEach(assignment => {
-      if (assignment.vehicleId && assignment.licensePlate) {
-        // 如果车辆已在map中，合并信息
-        if (vehicleMap.has(assignment.vehicleId)) {
-          const existingVehicle = vehicleMap.get(assignment.vehicleId);
-          // 如果当前assignment有更详细的信息，更新
-          if (assignment.vehicleStatus) {
-            existingVehicle.status = assignment.vehicleStatus;
-          }
-          // ToDo
-          // 添加当前assignment到车辆的任务列表中
-          if (!existingVehicle.assignments) {
-            existingVehicle.assignments = [];
-          }
-          existingVehicle.assignments.push({
-            id: assignment.assignmentId,
-            routeName: assignment.routeName,
-            goodsName: assignment.goodsName,
-            quantity: assignment.quantity
-          });
-        } else {
-          // 创建新车辆记录
+    if (activeAssignments && Array.isArray(activeAssignments)) {
+      activeAssignments.forEach(assignment => {
+        if (assignment.vehicleId) {
           const vehicle = {
             id: assignment.vehicleId,
-            licensePlate: assignment.licensePlate,
-            status: assignment.vehicleStatus || 'ORDER_DRIVING',
-            // ToDO
-            assignments: [{
-              id: assignment.assignmentId,
-              routeName: assignment.routeName,
-              goodsName: assignment.goodsName,
-              quantity: assignment.quantity
-            }],
-            // 任务信息
+            licensePlate: assignment.licensePlate || `车辆${assignment.vehicleId}`,
+            status: assignment.vehicleStatus || 'IDLE',
             currentAssignment: assignment.routeName,
             goodsInfo: assignment.goodsName,
             quantity: assignment.quantity,
@@ -1553,26 +1746,26 @@ const updateVehicleInfo = async () => {
             maxVolumeCapacity: assignment.maxVolumeCapacity || 0,
             // 货物单位信息
             goodsWeightPerUnit: assignment.goodsWeightPerUnit || 0,
-            goodsVolumePerUnit: assignment.goodsVolumePerUnit || 0
+            goodsVolumePerUnit: assignment.goodsVolumePerUnit || 0,
+            // 为"到达检测"功能预留的字段
+            currentPOIName: assignment.currentPOIName || null,
+            lastArrivalPOI: null,
+            recentlyArrived: false
           };
-          // 尝试从车辆位置接口获取最新位置
-          if (vehiclePositions && vehiclePositions[vehicle.id]) {
-            const position = vehiclePositions[vehicle.id];
-            vehicle.currentLongitude = position[0];
-            vehicle.currentLatitude = position[1];
-          }
 
-          // 计算载重和载容的百分比（用于进度条显示）
+          // 计算载重/载容百分比
           vehicle.loadPercentage = vehicle.maxLoadCapacity > 0 ?
               Math.min(100, (vehicle.currentLoad / vehicle.maxLoadCapacity) * 100) : 0;
           vehicle.volumePercentage = vehicle.maxVolumeCapacity > 0 ?
               Math.min(100, (vehicle.currentVolume / vehicle.maxVolumeCapacity) * 100) : 0;
+
+          // 通过Map去重，避免同一车辆在列表中出现多次
           vehicleMap.set(assignment.vehicleId, vehicle);
         }
-      }
-    });
+      });
+    }
 
-    // 将map中的车辆添加到列表中
+    // 将处理好的车辆信息添加到响应式数组
     vehicleMap.forEach(vehicle => {
       vehicles.push(vehicle);
     });
@@ -1584,13 +1777,15 @@ const updateVehicleInfo = async () => {
         v.status === 'TRANSPORT_DRIVING' ||
         v.status === 'UNLOADING'
     ).length;
-
     stats.tasks = vehicles.length;
-    console.log(`更新了 ${vehicles.length} 辆车辆信息`);
+
+    console.log(`[车辆信息] 更新完成，共 ${vehicles.length} 辆车`);
+    return vehicles;
 
   } catch (error) {
-    console.error('获取车辆信息失败:', error);
-    ElMessage.error('获取车辆信息失败');
+    console.error('[车辆信息] 获取任务数据失败:', error);
+    // 此处选择静默失败，不影响仿真主流程
+    return [];
   }
 };
 
@@ -1908,7 +2103,7 @@ const drawTwoStageRouteForAssignment = async (assignment) => {
       position: [assignment.endLng, assignment.endLat],
       title: `卸货点: ${assignment.endPOIName || '未知'}`,
       icon: new AMapLib.Icon({
-        image: materialMarketIcon,
+        image: getPOIIcon('REST_AREA'),
         size: new AMapLib.Size(24, 24),
         imageSize: new AMapLib.Size(24, 24)
       })
@@ -2276,7 +2471,7 @@ const computeSingleRoute = async (start, end, strategy = '0') => {
     };
 
     const res = await request.get(
-        '/api/routes/gaode/plan-by-coordinates',
+        '/api/route-planning/gaode/plan-by-coordinates',
         { params }
     );
 
@@ -2309,6 +2504,11 @@ const computeSingleRoute = async (start, end, strategy = '0') => {
           });
         }
       });
+    }
+
+    if (fullPath.length === 0) {
+      console.error(`规划成功但未获取到路线坐标！请检查后端是否传了 show_fields=polyline 参数。`);
+      return null;
     }
 
     return {
@@ -2555,6 +2755,31 @@ onUnmounted(() => {
   overflow: hidden;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
   box-sizing: border-box; /* 确保padding包含在内 */
+}
+
+/*运单*/
+.shipment-control {
+  margin-bottom: 16px;
+}
+
+.task-sidebar {
+  border: 1px solid #ccc;
+  padding: 8px;
+  width: 200px;
+  background-color: #fff; /* 确保背景是白色的 */
+  color: #303133;         /* 强制设置文字为深灰色，解决隐形问题 */
+  border-radius: 4px;     /* 稍微加个圆角好看点（可选）*/
+}
+
+.task-sidebar ul {
+  padding-left: 20px; /* 调整列表缩进 */
+  margin: 0;
+}
+
+.task-sidebar li {
+  margin-bottom: 6px;
+  font-size: 13px;    /* 调整一下字号更协调 */
+  word-break: break-all; /* 防止运单号太长撑破容器 */
 }
 
 .box-card:hover {
@@ -3010,4 +3235,158 @@ onUnmounted(() => {
 .simulation-control :deep(.el-button-group .el-button) {
   flex: 1;
 }
+.cost-info {
+    border-bottom: 1px solid #e0e0e0;
+    font-size: 12px;
+    margin-bottom: 8px;
+        display: flex;
+    justify-content: space-between;
+  transition: background-color 0.2s;
+}
+.cost-info:hover {
+  background-color: #f5f5f5;   /* 深一些的颜色 */
+}
+
+/* ==================== 运单生成美化 ==================== */
+.shipment-control-card {
+  margin-bottom: 10px;
+}
+
+.shipment-control {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.shipment-control .control-label {
+  color: #606266; /* 强制指定深灰色，避免与背景混合 */
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.custom-input {
+  width: 70px;
+  height: 26px;
+  border: 1px solid #dcdfe6;
+  border-radius: 4px;
+  padding: 0 8px;
+  color: #303133;
+  outline: none;
+  transition: border-color 0.2s;
+  box-sizing: border-box;
+}
+
+.custom-input:focus {
+  border-color: #409eff;
+}
+
+.task-sidebar {
+  border: 1px solid #ebeef5;
+  padding: 8px 12px;
+  background-color: #fafafa;
+  border-radius: 6px;
+  max-height: 120px;
+  overflow-y: auto;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.task-sidebar ul {
+  padding-left: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.task-sidebar li {
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: #606266;
+  display: flex;
+  justify-content: space-between;
+  border-bottom: 1px dashed #e4e7ed;
+  padding-bottom: 4px;
+}
+
+.task-sidebar li:last-child {
+  margin-bottom: 0;
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.shipment-no {
+  font-family: monospace;
+  color: #909399;
+}
+
+.shipment-status {
+  color: #67c23a;
+  font-weight: 500;
+}
+
+/* ==================== 右侧成本监控面板美化 ==================== */
+.right-side-panel {
+  background-color: #f7f8fa; /* 覆盖黑底色，统一侧边栏背景 */
+  border-left: 1px solid #e6e6e6;
+  display: flex;
+  flex-direction: column;
+  box-shadow: -2px 0 8px rgba(0, 0, 0, 0.05); /* 左侧加一点阴影区分层次 */
+  z-index: 10;
+}
+
+.cost-card {
+  background: transparent;
+}
+
+.cost-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* 单个成本卡片设计 */
+.cost-item {
+  background-color: #ffffff;
+  border: 1px solid #ebeef5;
+  border-radius: 8px;
+  padding: 14px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+  transition: all 0.3s ease;
+  position: relative; /* 为伪元素绝对定位提供参照 */
+  overflow: hidden;   /* 关键：防止内部元素超出圆角边界 */
+}
+
+.cost-item:hover {
+  box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+  transform: translateY(-2px);
+  border-color: #dcdfe6;
+}
+
+.cost-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.cost-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.cost-value {
+  font-size: 18px;
+  font-weight: 700;
+  color: #409eff; /* 蓝色数值 */
+  font-family: 'Helvetica Neue', Helvetica, 'PingFang SC', sans-serif;
+}
+
+.cost-desc {
+  font-size: 12px;
+  color: #909399; /* 浅灰色副标题 */
+  display: block;
+}
+
 </style>

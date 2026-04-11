@@ -1,1 +1,7 @@
 /Vue3/package.json
+
+
+node_modules/
+**/node_modules/
+target/
+

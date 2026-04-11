@@ -18,7 +18,7 @@ import java.util.Set;
  * 3. 支持基本属性：名称、经纬度、类型
  */
 @Entity
-@Table(name = "POI")
+@Table(name = "poi")
 public class POI {
 
     @Id
@@ -52,27 +52,22 @@ public class POI {
      * POI 类型枚举
      */
     public enum POIType {
-        WAREHOUSE,                  // 仓库
-        DISTRIBUTION_CENTER,        // 配送中心
-        FACTORY,                    // 工厂
-        GAS_STATION,                // 加油站
-        MAINTENANCE_CENTER,         // 维修中心
-        REST_AREA,                  // 休息区
-        MATERIAL_MARKET,            // 建材市场
-        VEGETABLE_BASE,             // 蔬菜基地
-        VEGETABLE_MARKET,           // 蔬菜市场
-        TEST,                       // 测试
-        // 新增类型
-        AUTO_ASSEMBLY_PLANT,        // 汽车装配厂
-        BOARD_FACTORY,              // 板材厂
-        FURNITURE_FACTORY,          // 家具厂
-        IRON_MINE,                  // 铁矿
-        RUBBER_PROCESSING_PLANT,    // 橡胶加工厂
-        SAWMILL,                    // 锯木厂
-        STEEL_MILL,                 // 钢铁厂
-        STEEL_PROCESSING_PLANT,     // 钢材加工厂
-        TIMBER_YARD,                // 木材场
-        TIRE_MANUFACTURING_PLANT    // 轮胎制造厂
+        WAREHOUSE,              // 仓库
+        DISTRIBUTION_CENTER,    // 配送中心
+        GAS_STATION,            // 加油站
+        MAINTENANCE_CENTER,     // 维修中心
+        REST_AREA,               // 休息区
+        TEST,
+        TIMBER_YARD,            // 原木厂 (林场/原木堆场)
+        SAWMILL,                // 锯木厂
+        BOARD_FACTORY,          // 板材厂
+        IRON_MINE,              // 铁矿厂
+        STEEL_MILL,             // 冶钢厂
+        STEEL_PROCESSING_PLANT, // 钢材加工厂
+        FURNITURE_FACTORY,       // 家具制造厂
+        RUBBER_PROCESSING_PLANT,   // 橡胶加工厂
+        TIRE_MANUFACTURING_PLANT,  // 轮胎制造厂
+        AUTO_ASSEMBLY_PLANT        // 汽车总装厂
     }
 
     @Enumerated(EnumType.STRING)
