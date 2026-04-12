@@ -195,7 +195,7 @@
 
                   <div class="cost-item total-cost">
                     <div class="cost-header-row">
-                      <span class="cost-title">经济收益 (D)</span>
+                      <span class="cost-title">经济损耗 (D)</span>
                       <span class="cost-value highlight-value">{{ simulationCosts.costD.toFixed(2) }}</span>
                     </div>
                     <span class="cost-desc">油耗与固定损耗</span>
