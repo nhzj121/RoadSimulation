@@ -372,6 +372,7 @@ public class Shipment {
      */
     public boolean isMergeShipment() {
         return upstreamShipmentIds != null && !upstreamShipmentIds.isEmpty();
+    }
     public String getUpdatedBy() {
         return updatedBy;
     }
