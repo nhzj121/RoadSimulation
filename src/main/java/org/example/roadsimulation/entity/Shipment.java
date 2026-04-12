@@ -38,19 +38,19 @@ public class Shipment {
     @NotBlank(message = "参考号不能为空")
     @Size(max = 100, message = "参考号长度不能超过 100 个字符")
     @Column(name = "ref_no", unique = true)
-    private String refNo;
+    private String refNo; // 客户/系统参考号
 
     @Size(max = 100, message = "货类长度不能超过 100 个字符")
     @Column(name = "cargo_type")
-    private String cargoType;
+    private String cargoType; // 货类，如普货、冷链、危化
 
     @Min(value = 0, message = "总重量不能为负数")
     @Column(name = "total_weight")
-    private Double totalWeight;
+    private Double totalWeight; // kg
 
     @Min(value = 0, message = "总体积不能为负数")
     @Column(name = "total_volume")
-    private Double totalVolume;
+    private Double totalVolume; // m3
 
     /**
      * 新增：总行驶时间（秒）
@@ -99,10 +99,10 @@ public class Shipment {
     private POI destPOI;
 
     @Column(name = "pickup_appoint")
-    private LocalDateTime pickupAppoint;
+    private LocalDateTime pickupAppoint;   // 预约提货时间
 
     @Column(name = "delivery_appoint")
-    private LocalDateTime deliveryAppoint;
+    private LocalDateTime deliveryAppoint; // 预约送达时间
 
     @Column(name = "created_at")
     private LocalDateTime createdAt = LocalDateTime.now();
@@ -175,6 +175,7 @@ public class Shipment {
         this.totalVolume = totalVolume;
     }
 
+    // 便捷方法：维护双向关系
     public void addItem(ShipmentItem item) {
         if (item != null) {
             items.add(item);

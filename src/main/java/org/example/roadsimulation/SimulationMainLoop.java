@@ -1,17 +1,16 @@
 package org.example.roadsimulation;
 
-import org.example.roadsimulation.core.SimulationContext;
-import org.example.roadsimulation.service.ProcessingChainServiceV2;
 import org.example.roadsimulation.service.VehicleInitializationService;
 import org.example.roadsimulation.service.impl.StateUpdateService;
+import org.example.roadsimulation.service.impl.VehicleInitializationServiceImpl;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-
 import java.time.LocalDateTime;
 
 /**
  * 仿真主循环 - 控制中心
+ * 职责：控制所有仿真模块的执行节奏（唯一驱动入口）
  */
 @Component
 public class SimulationMainLoop {
@@ -22,19 +21,23 @@ public class SimulationMainLoop {
     @Autowired
     private VehicleInitializationService vehicleInitializationService;
 
-    @Autowired(required = false)
-    private ProcessingChainServiceV2 processingChainServiceV2;
+    // 循环计数器
+    private int loopCount = 0;
 
-    @Autowired
-    private SimulationContext simulationContext;
+    // 运行状态
+    private boolean isRunning = false;
+
+    // 每个循环代表的分钟数
+    private final int MINUTES_PER_LOOP = 30;
+
+    // 仿真起始时间（用于把 loopCount 映射为 simNow）
+    private static final LocalDateTime SIM_START = LocalDateTime.of(2026, 1, 1, 0, 0);
 
     @Autowired
     SimulationMainLoop(DataInitializer dataInitializer,
-                       StateUpdateService stateUpdateService,
-                       SimulationContext simulationContext) {
+                       StateUpdateService stateUpdateService) {
         this.dataInitializer = dataInitializer;
         this.stateUpdateService = stateUpdateService;
-        this.simulationContext = simulationContext;
     }
 
     /**
@@ -43,76 +46,98 @@ public class SimulationMainLoop {
      */
     @Scheduled(fixedRate = 4000)
     public void executeMainLoop() {
-        if (!simulationContext.isRunning()) {
+        // 前端/API 控制是否运行
+        if (!isRunning) {
             return;
         }
 
-        LocalDateTime simNow = simulationContext.getCurrentSimTime();
-        int simMinutes = (int) java.time.Duration.between(
-                simulationContext.getSimStart(), simNow).toMinutes();
+        // ✅ 计算仿真当前时间（统一时间框架核心）
+        int simMinutes = loopCount * MINUTES_PER_LOOP;
+        LocalDateTime simNow = SIM_START.plusMinutes(simMinutes);
 
-        System.out.println("=== 主循环第 " + simulationContext.getLoopCount() + " 次 ===");
-        System.out.println("模拟时间：" + (simMinutes / 60.0) + " 小时 | simNow=" + simNow);
+        System.out.println("=== 主循环第 " + loopCount + " 次 ===");
+        System.out.println("模拟时间: " + (simMinutes / 60.0) + " 小时 | simNow=" + simNow);
 
-        if (simulationContext.getLoopCount() == 0) {
-            stateUpdateService.resetWindowsOnce(simNow, 30);
+        if (loopCount == 0) {
+            stateUpdateService.resetWindowsOnce(simNow, MINUTES_PER_LOOP);
             vehicleInitializationService.initializeAllVehicleStatus();
         }
-
-        if (simulationContext.getLoopCount() % 2 == 0) {
-            dataInitializer.generateGoods(simulationContext.getLoopCount());
+        // ======================
+        // 1) 货物生成（每 1 小时）
+        if (loopCount % 2 == 0) {
+            System.out.println(">>> 执行货物生成逻辑");
+            dataInitializer.generateGoods(loopCount);
         }
 
-        if (simulationContext.getLoopCount() % 10 == 0) {
-            dataInitializer.printSimulationStatus(simulationContext.getLoopCount());
+//        // 2) 货物运出（每 2 小时）
+//        if (loopCount % 4 == 0) {
+//            System.out.println(">>> 执行货物运出逻辑");
+//            dataInitializer.shipOutGoods(loopCount);
+//        }
+
+        // 3) 打印仿真状态（每 5 小时）
+        if (loopCount % 10 == 0) {
+            System.out.println(">>> 打印仿真状态");
+            dataInitializer.printSimulationStatus(loopCount);
         }
 
-        // 加工链进度更新
-        if (processingChainServiceV2 != null) {
-            processingChainServiceV2.updateProcessingProgress(simNow, 30);
-        }
+        // ✅ 4) 车辆状态更新（每循环一次）：统一接入主循环
+        // stateUpdateService.tick(simNow, MINUTES_PER_LOOP, loopCount);
 
-        simulationContext.incrementLoop();
+        // ======================
+        loopCount++;
     }
-
     public LocalDateTime getCurrentSimTime() {
-        return simulationContext.getCurrentSimTime();
+        long simMinutes = (long) loopCount * MINUTES_PER_LOOP;
+        return SIM_START.plusMinutes(simMinutes);
     }
 
     public int getMinutesPerLoop() {
-        return 30;
+        return MINUTES_PER_LOOP;
     }
-
+    /**
+     * 启动仿真
+     */
     public void start() {
-        simulationContext.setRunning(true);
+        isRunning = true;
         System.out.println("仿真主循环已启动");
     }
 
+    /**
+     * 停止仿真
+     */
     public void stop() {
-        simulationContext.setRunning(false);
+        isRunning = false;
         System.out.println("仿真主循环已停止");
     }
 
+    /**
+     * 单步执行：执行一次主循环
+     */
     public void step() {
-        if (simulationContext.isRunning()) {
+        if (isRunning) {
             System.out.println("请先停止仿真再进行单步执行");
             return;
         }
-        simulationContext.setRunning(true);
+        isRunning = true;
         executeMainLoop();
-        simulationContext.setRunning(false);
+        isRunning = false;
     }
 
+    /**
+     * 重置仿真
+     */
     public void reset() {
-        simulationContext.reset();
+        loopCount = 0;
+        isRunning = false;
         System.out.println("仿真已重置");
     }
 
     public int getLoopCount() {
-        return simulationContext.getLoopCount();
+        return loopCount;
     }
 
     public boolean isRunning() {
-        return simulationContext.isRunning();
+        return isRunning;
     }
 }

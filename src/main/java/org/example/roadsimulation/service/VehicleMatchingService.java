@@ -4,7 +4,6 @@ import org.example.roadsimulation.dto.VehicleMatchResult;
 import org.example.roadsimulation.dto.VehicleMatchingCriteria;
 import org.example.roadsimulation.entity.Goods;
 import org.example.roadsimulation.entity.Vehicle;
-import org.example.roadsimulation.entity.VehicleGoodsMatch;
 
 import java.util.List;
 
@@ -85,43 +84,4 @@ public interface VehicleMatchingService {
      * 获取推荐车辆（根据货物出发地推荐最近车辆）
      */
     List<Vehicle> getRecommendedVehicles(Long originPoiId, VehicleMatchingCriteria criteria);
-
-    // ============ 新增方法：匹配记录管理 ============
-
-    /**
-     * 为货物匹配车辆并保存匹配记录
-     * @param goods 货物信息
-     * @param quantity 货物数量
-     * @param originPoiId 出发地 POI ID
-     * @param destinationPoiId 目的地 POI ID
-     * @return 匹配记录列表
-     */
-    List<VehicleGoodsMatch> matchAndSaveRecords(Goods goods, Integer quantity,
-                                                 Long originPoiId, Long destinationPoiId);
-
-    /**
-     * 确认匹配记录
-     * @param matchId 匹配记录 ID
-     * @return 更新后的匹配记录
-     */
-    VehicleGoodsMatch confirmMatch(Long matchId);
-
-    /**
-     * 拒绝匹配记录
-     * @param matchId 匹配记录 ID
-     * @param reason 拒绝原因
-     * @return 更新后的匹配记录
-     */
-    VehicleGoodsMatch rejectMatch(Long matchId, String reason);
-
-    /**
-     * 获取最佳匹配并保存记录
-     * @param goods 货物信息
-     * @param quantity 货物数量
-     * @param originPoiId 出发地 POI ID
-     * @param destinationPoiId 目的地 POI ID
-     * @return 最佳匹配记录
-     */
-    VehicleGoodsMatch findBestMatchAndSave(Goods goods, Integer quantity,
-                                            Long originPoiId, Long destinationPoiId);
 }
