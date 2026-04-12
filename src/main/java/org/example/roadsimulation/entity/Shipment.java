@@ -42,7 +42,7 @@ public class Shipment {
 
     @Size(max = 100, message = "货类长度不能超过 100 个字符")
     @Column(name = "cargo_type")
-    private String cargoType; // 货类，如普货、冷链、危化
+    private String cargoType;
 
     @Min(value = 0, message = "总重量不能为负数")
     @Column(name = "total_weight")
@@ -152,7 +152,7 @@ public class Shipment {
      * 例如：运单 C 的 upstreamShipmentIds = [A.id, B.id]
      */
     @ElementCollection
-    @CollectionTable(name = "shipment_upstream_relations", 
+    @CollectionTable(name = "shipment_upstream_relations",
                      joinColumns = @JoinColumn(name = "shipment_id"))
     @Column(name = "upstream_shipment_id")
     private Set<Long> upstreamShipmentIds = new HashSet<>();
@@ -162,6 +162,7 @@ public class Shipment {
     @OneToMany(mappedBy = "shipment", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     private Set<ShipmentItem> items = new HashSet<>();
 
+    // 进行修改的对象和时间
     @Column(name = "updated_by", length = 50)
     private String updatedBy;
 
@@ -374,7 +375,6 @@ public class Shipment {
     public boolean isMergeShipment() {
         return upstreamShipmentIds != null && !upstreamShipmentIds.isEmpty();
     }
-
     @PreUpdate
     public void touchUpdateTime() {
         this.updatedAt = LocalDateTime.now();

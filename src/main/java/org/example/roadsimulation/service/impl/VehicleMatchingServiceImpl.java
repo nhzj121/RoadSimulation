@@ -5,7 +5,9 @@ import org.example.roadsimulation.dto.VehicleMatchingCriteria;
 import org.example.roadsimulation.entity.Goods;
 import org.example.roadsimulation.entity.POI;
 import org.example.roadsimulation.entity.Vehicle;
+import org.example.roadsimulation.entity.VehicleGoodsMatch;
 import org.example.roadsimulation.repository.POIRepository;
+import org.example.roadsimulation.repository.VehicleGoodsMatchRepository;
 import org.example.roadsimulation.repository.VehicleRepository;
 import org.example.roadsimulation.service.VehicleMatchingService;
 import org.slf4j.Logger;
@@ -13,6 +15,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -23,7 +27,8 @@ public class VehicleMatchingServiceImpl implements VehicleMatchingService {
     private static final Logger logger = LoggerFactory.getLogger(VehicleMatchingServiceImpl.class);
 
     private final VehicleRepository vehicleRepository;
-    private final POIRepository poiRepository; // 新增
+    private final POIRepository poiRepository;
+    private final VehicleGoodsMatchRepository matchRepository;
 
     // 匹配权重配置
     private static final double WEIGHT_CAPACITY_WEIGHT = 0.4;
@@ -36,14 +41,16 @@ public class VehicleMatchingServiceImpl implements VehicleMatchingService {
     private static final double MAX_DISTANCE_KM = 100.0; // 最大考虑距离
 
     public VehicleMatchingServiceImpl(VehicleRepository vehicleRepository,
-                                      POIRepository poiRepository) { // 修改构造器
+                                      POIRepository poiRepository,
+                                      VehicleGoodsMatchRepository matchRepository) {
         this.vehicleRepository = vehicleRepository;
         this.poiRepository = poiRepository;
+        this.matchRepository = matchRepository;
     }
 
     @Override
     public List<VehicleMatchResult> matchVehiclesForGoods(Goods goods, Integer quantity) {
-        logger.info("开始为货物 {} (数量: {}) 匹配车辆", goods.getName(), quantity);
+        logger.info("开始为货物 {} (数量：{}) 匹配车辆", goods.getName(), quantity);
 
         // 计算货物总需求
         Double totalWeight = calculateTotalWeight(goods, quantity);
@@ -62,7 +69,7 @@ public class VehicleMatchingServiceImpl implements VehicleMatchingService {
     @Override
     public List<VehicleMatchResult> matchVehiclesByCriteria(VehicleMatchingCriteria criteria) {
         List<Vehicle> availableVehicles = getAvailableVehicles();
-        logger.info("开始根据条件匹配车辆，可用车辆数量: {}", availableVehicles.size());
+        logger.info("开始根据条件匹配车辆，可用车辆数量：{}", availableVehicles.size());
 
         // 如果没有可用车辆，直接返回空列表
         if (availableVehicles.isEmpty()) {
@@ -87,12 +94,12 @@ public class VehicleMatchingServiceImpl implements VehicleMatchingService {
 
     @Override
     public List<VehicleMatchResult> matchVehiclesByProximity(VehicleMatchingCriteria criteria) {
-        logger.info("开始就近匹配，出发地POI ID: {}", criteria.getOriginPoiId());
+        logger.info("开始就近匹配，出发地 POI ID: {}", criteria.getOriginPoiId());
 
-        // 获取出发地POI信息
+        // 获取出发地 POI 信息
         POI originPOI = poiRepository.findById(criteria.getOriginPoiId()).orElse(null);
         if (originPOI == null) {
-            logger.warn("未找到指定的出发地POI: {}", criteria.getOriginPoiId());
+            logger.warn("未找到指定的出发地 POI: {}", criteria.getOriginPoiId());
             return Collections.emptyList();
         }
 
@@ -129,14 +136,14 @@ public class VehicleMatchingServiceImpl implements VehicleMatchingService {
 
     @Override
     public List<VehicleMatchResult> smartMatchWithDistance(VehicleMatchingCriteria criteria, Double distanceWeight) {
-        logger.info("开始智能匹配，距离权重: {}", distanceWeight);
+        logger.info("开始智能匹配，距离权重：{}", distanceWeight);
 
         // 使用默认权重
         if (distanceWeight == null) {
             distanceWeight = DEFAULT_DISTANCE_WEIGHT;
         }
 
-        // 获取出发地POI
+        // 获取出发地 POI
         POI originPOI = criteria.getOriginPoiId() != null ?
                 poiRepository.findById(criteria.getOriginPoiId()).orElse(null) : null;
 
@@ -259,6 +266,99 @@ public class VehicleMatchingServiceImpl implements VehicleMatchingService {
         return vehicleRepository.findAllVehicleTypes();
     }
 
+    // ==================== 新增方法：匹配记录管理 ====================
+
+    @Override
+    @Transactional
+    public List<VehicleGoodsMatch> matchAndSaveRecords(Goods goods, Integer quantity,
+                                                        Long originPoiId, Long destinationPoiId) {
+        logger.info("开始为货物 {} 匹配车辆并保存记录", goods.getName());
+
+        // 执行匹配
+        List<VehicleMatchResult> matchResults = matchVehiclesForGoods(goods, quantity);
+
+        if (matchResults.isEmpty()) {
+            logger.warn("未找到匹配的车辆");
+            return Collections.emptyList();
+        }
+
+        // 获取 POI 信息
+        POI originPOI = originPoiId != null ? poiRepository.findById(originPoiId).orElse(null) : null;
+        POI destinationPOI = destinationPoiId != null ? poiRepository.findById(destinationPoiId).orElse(null) : null;
+
+        // 计算货物需求
+        Double totalWeight = calculateTotalWeight(goods, quantity);
+        Double totalVolume = calculateTotalVolume(goods, quantity);
+
+        // 转换为匹配记录并保存
+        List<VehicleGoodsMatch> matchRecords = new ArrayList<>();
+        for (VehicleMatchResult result : matchResults) {
+            VehicleGoodsMatch match = createMatchRecord(result, goods, quantity,
+                    totalWeight, totalVolume, originPOI, destinationPOI);
+            matchRecords.add(matchRepository.save(match));
+        }
+
+        logger.info("成功保存 {} 条匹配记录", matchRecords.size());
+        return matchRecords;
+    }
+
+    @Override
+    @Transactional
+    public VehicleGoodsMatch findBestMatchAndSave(Goods goods, Integer quantity,
+                                                   Long originPoiId, Long destinationPoiId) {
+        logger.info("开始为货物 {} 查找最佳匹配并保存记录", goods.getName());
+
+        // 执行匹配
+        List<VehicleMatchResult> matchResults = matchVehiclesForGoods(goods, quantity);
+
+        if (matchResults.isEmpty()) {
+            logger.warn("未找到匹配的车辆");
+            return null;
+        }
+
+        // 获取最佳匹配（第一个）
+        VehicleMatchResult bestResult = matchResults.get(0);
+
+        // 获取 POI 信息
+        POI originPOI = originPoiId != null ? poiRepository.findById(originPoiId).orElse(null) : null;
+        POI destinationPOI = destinationPoiId != null ? poiRepository.findById(destinationPoiId).orElse(null) : null;
+
+        // 计算货物需求
+        Double totalWeight = calculateTotalWeight(goods, quantity);
+        Double totalVolume = calculateTotalVolume(goods, quantity);
+
+        // 创建并保存匹配记录
+        VehicleGoodsMatch match = createMatchRecord(bestResult, goods, quantity,
+                totalWeight, totalVolume, originPOI, destinationPOI);
+
+        VehicleGoodsMatch savedMatch = matchRepository.save(match);
+        logger.info("成功保存最佳匹配记录，车辆：{}", bestResult.getVehicle().getLicensePlate());
+
+        return savedMatch;
+    }
+
+    @Override
+    @Transactional
+    public VehicleGoodsMatch confirmMatch(Long matchId) {
+        VehicleGoodsMatch match = matchRepository.findById(matchId)
+                .orElseThrow(() -> new RuntimeException("匹配记录不存在，ID: " + matchId));
+
+        match.setMatchStatus(VehicleGoodsMatch.MatchStatus.CONFIRMED);
+        return matchRepository.save(match);
+    }
+
+    @Override
+    @Transactional
+    public VehicleGoodsMatch rejectMatch(Long matchId, String reason) {
+        VehicleGoodsMatch match = matchRepository.findById(matchId)
+                .orElseThrow(() -> new RuntimeException("匹配记录不存在，ID: " + matchId));
+
+        match.setMatchStatus(VehicleGoodsMatch.MatchStatus.REJECTED);
+        String description = match.getMatchDescription();
+        match.setMatchDescription(description + " [拒绝原因：" + reason + "]");
+        return matchRepository.save(match);
+    }
+
     /**
      * 评估单个车辆与条件的匹配度
      */
@@ -291,7 +391,7 @@ public class VehicleMatchingServiceImpl implements VehicleMatchingService {
         VehicleMatchResult result = new VehicleMatchResult();
         result.setVehicle(vehicle);
         result.setMatchScore(totalScore * 100); // 转换为百分比
-        result.setFullyMatched(isFullyMatched && totalScore > 0.8); // 匹配度80%以上认为完全匹配
+        result.setFullyMatched(isFullyMatched && totalScore > 0.8); // 匹配度 80% 以上认为完全匹配
         result.setMatchDescription(String.join("; ", matchDescriptions));
         result.setCapacityUtilization(capacityUtilization);
         result.setWeightUtilization(weightUtilization);
@@ -319,10 +419,10 @@ public class VehicleMatchingServiceImpl implements VehicleMatchingService {
         if (vehicleCapacity >= requiredWeight) {
             double utilization = requiredWeight / vehicleCapacity;
             double score = calculateUtilizationScore(utilization);
-            descriptions.add(String.format("载重匹配(需要%.2f吨, 车辆%.2f吨)", requiredWeight, vehicleCapacity));
+            descriptions.add(String.format("载重匹配 (需要%.2f 吨，车辆%.2f 吨)", requiredWeight, vehicleCapacity));
             return score;
         } else {
-            descriptions.add(String.format("载重不足(需要%.2f吨, 车辆%.2f吨)", requiredWeight, vehicleCapacity));
+            descriptions.add(String.format("载重不足 (需要%.2f 吨，车辆%.2f 吨)", requiredWeight, vehicleCapacity));
             return 0.0;
         }
     }
@@ -346,10 +446,10 @@ public class VehicleMatchingServiceImpl implements VehicleMatchingService {
         if (vehicleVolume >= requiredVolume) {
             double utilization = requiredVolume / vehicleVolume;
             double score = calculateUtilizationScore(utilization);
-            descriptions.add(String.format("容积匹配(需要%.2fm³, 车辆%.2fm³)", requiredVolume, vehicleVolume));
+            descriptions.add(String.format("容积匹配 (需要%.2fm³, 车辆%.2fm³)", requiredVolume, vehicleVolume));
             return score;
         } else {
-            descriptions.add(String.format("容积不足(需要%.2fm³, 车辆%.2fm³)", requiredVolume, vehicleVolume));
+            descriptions.add(String.format("容积不足 (需要%.2fm³, 车辆%.2fm³)", requiredVolume, vehicleVolume));
             return 0.0;
         }
     }
@@ -360,27 +460,35 @@ public class VehicleMatchingServiceImpl implements VehicleMatchingService {
     private double evaluateSpecialRequirements(Vehicle vehicle, VehicleMatchingCriteria criteria, List<String> descriptions) {
         double score = 1.0;
 
-        // 温控要求匹配
+        // 温控要求匹配 - 使用扩展后的车辆字段
         if (Boolean.TRUE.equals(criteria.getRequireTempControl())) {
-            // 这里需要车辆实体有温控字段，目前先标记为不匹配
-            descriptions.add("需要温控但车辆不支持");
-            score *= 0.0;
+            if (Boolean.TRUE.equals(vehicle.getHasTempControl())) {
+                descriptions.add("车辆支持温控，满足要求");
+                score *= 1.0;
+            } else {
+                descriptions.add("需要温控但车辆不支持");
+                score *= 0.0;
+            }
         }
 
-        // 危险品要求匹配
+        // 危险品要求匹配 - 使用扩展后的车辆字段
         if (criteria.getHazmatLevel() != null && !criteria.getHazmatLevel().isEmpty()) {
-            // 这里需要车辆实体有危险品运输资质字段
-            descriptions.add("需要危险品运输资质但车辆未配置");
-            score *= 0.0;
+            if (vehicle.getHazmatQualification() != null && !vehicle.getHazmatQualification().isEmpty()) {
+                descriptions.add("车辆具有危险品运输资质：" + vehicle.getHazmatQualification());
+                score *= 1.0;
+            } else {
+                descriptions.add("需要危险品运输资质但车辆未配置");
+                score *= 0.0;
+            }
         }
 
         // 车型要求匹配
         if (criteria.getVehicleType() != null && !criteria.getVehicleType().isEmpty()) {
             if (criteria.getVehicleType().equals(vehicle.getVehicleType())) {
-                descriptions.add("车型匹配: " + vehicle.getVehicleType());
+                descriptions.add("车型匹配：" + vehicle.getVehicleType());
                 score *= 1.1; // 车型匹配，稍微加分
             } else {
-                descriptions.add("车型不匹配(需要: " + criteria.getVehicleType() + ", 当前: " + vehicle.getVehicleType() + ")");
+                descriptions.add("车型不匹配 (需要：" + criteria.getVehicleType() + ", 当前：" + vehicle.getVehicleType() + ")");
                 score *= 0.7; // 车型不匹配但不致命
             }
         }
@@ -388,14 +496,14 @@ public class VehicleMatchingServiceImpl implements VehicleMatchingService {
         // 品牌要求匹配
         if (criteria.getBrand() != null && !criteria.getBrand().isEmpty()) {
             if (criteria.getBrand().equals(vehicle.getBrand())) {
-                descriptions.add("品牌匹配: " + vehicle.getBrand());
+                descriptions.add("品牌匹配：" + vehicle.getBrand());
             } else {
-                descriptions.add("品牌不匹配(需要: " + criteria.getBrand() + ", 当前: " + vehicle.getBrand() + ")");
+                descriptions.add("品牌不匹配 (需要：" + criteria.getBrand() + ", 当前：" + vehicle.getBrand() + ")");
                 score *= 0.9; // 品牌不匹配影响较小
             }
         }
 
-        return Math.min(score, 1.0); // 确保不超过1.0
+        return Math.min(score, 1.0); // 确保不超过 1.0
     }
 
     /**
@@ -409,21 +517,21 @@ public class VehicleMatchingServiceImpl implements VehicleMatchingService {
         if (criteria.getMinLength() != null && vehicle.getLength() != null) {
             if (vehicle.getLength() < criteria.getMinLength()) {
                 dimensionOk = false;
-                dimensionIssues.add(String.format("长度不足(需要%.2fm, 车辆%.2fm)", criteria.getMinLength(), vehicle.getLength()));
+                dimensionIssues.add(String.format("长度不足 (需要%.2fm, 车辆%.2fm)", criteria.getMinLength(), vehicle.getLength()));
             }
         }
 
         if (criteria.getMinWidth() != null && vehicle.getWidth() != null) {
             if (vehicle.getWidth() < criteria.getMinWidth()) {
                 dimensionOk = false;
-                dimensionIssues.add(String.format("宽度不足(需要%.2fm, 车辆%.2fm)", criteria.getMinWidth(), vehicle.getWidth()));
+                dimensionIssues.add(String.format("宽度不足 (需要%.2fm, 车辆%.2fm)", criteria.getMinWidth(), vehicle.getWidth()));
             }
         }
 
         if (criteria.getMinHeight() != null && vehicle.getHeight() != null) {
             if (vehicle.getHeight() < criteria.getMinHeight()) {
                 dimensionOk = false;
-                dimensionIssues.add(String.format("高度不足(需要%.2fm, 车辆%.2fm)", criteria.getMinHeight(), vehicle.getHeight()));
+                dimensionIssues.add(String.format("高度不足 (需要%.2fm, 车辆%.2fm)", criteria.getMinHeight(), vehicle.getHeight()));
             }
         }
 
@@ -511,7 +619,7 @@ public class VehicleMatchingServiceImpl implements VehicleMatchingService {
     }
 
     /**
-     * 计算车辆与POI之间的距离（公里）
+     * 计算车辆与 POI 之间的距离（公里）
      */
     private double calculateDistance(Vehicle vehicle, POI poi) {
         // 如果车辆有当前位置坐标，优先使用
@@ -524,7 +632,7 @@ public class VehicleMatchingServiceImpl implements VehicleMatchingService {
             );
         }
 
-        // 如果车辆关联到POI，计算POI之间的距离
+        // 如果车辆关联到 POI，计算 POI 之间的距离
         if (vehicle.getCurrentPOI() != null) {
             POI vehiclePOI = vehicle.getCurrentPOI();
             return calculateHaversineDistance(
@@ -541,7 +649,7 @@ public class VehicleMatchingServiceImpl implements VehicleMatchingService {
     }
 
     /**
-     * 使用Haversine公式计算两点间距离（单位：公里）
+     * 使用 Haversine 公式计算两点间距离（单位：公里）
      */
     private double calculateHaversineDistance(double lat1, double lon1, double lat2, double lon2) {
         final int R = 6371; // 地球半径（公里）
@@ -582,9 +690,53 @@ public class VehicleMatchingServiceImpl implements VehicleMatchingService {
      * 计算预计到达时间（小时）
      */
     private double calculateEstimatedTime(double distanceKm) {
-        // 假设平均车速为60km/h
+        // 假设平均车速为 60km/h
         final double AVERAGE_SPEED_KMH = 60.0;
         return distanceKm / AVERAGE_SPEED_KMH;
+    }
+
+    /**
+     * 创建匹配记录
+     */
+    private VehicleGoodsMatch createMatchRecord(VehicleMatchResult result, Goods goods, Integer quantity,
+                                                  Double totalWeight, Double totalVolume,
+                                                  POI originPOI, POI destinationPOI) {
+        Vehicle vehicle = result.getVehicle();
+
+        VehicleGoodsMatch match = new VehicleGoodsMatch();
+        match.setGoodsId(goods.getId());
+        match.setGoodsName(goods.getName());
+        match.setGoodsSku(goods.getSku());
+        match.setVehicleId(vehicle.getId());
+        match.setLicensePlate(vehicle.getLicensePlate());
+        match.setMatchScore(BigDecimal.valueOf(result.getMatchScore()));
+        match.setIsFullyMatched(result.getFullyMatched());
+        match.setMatchStatus(VehicleGoodsMatch.MatchStatus.PENDING);
+        match.setRequiredWeight(totalWeight);
+        match.setRequiredVolume(totalVolume);
+        match.setVehicleLoadCapacity(vehicle.getMaxLoadCapacity());
+        match.setVehicleCargoVolume(vehicle.getCargoVolume());
+        match.setWeightUtilization(result.getWeightUtilization());
+        match.setVolumeUtilization(result.getVolumeUtilization());
+        match.setRequireTempControl(goods.getRequireTemp());
+        match.setHazmatLevel(goods.getHazmatLevel());
+        match.setMatchDescription(result.getMatchDescription());
+        match.setDistanceKm(result.getDistanceKm());
+
+        if (originPOI != null) {
+            match.setOriginPoiId(originPOI.getId());
+            match.setOriginPoiName(originPOI.getName());
+        }
+
+        if (destinationPOI != null) {
+            match.setDestinationPoiId(destinationPOI.getId());
+            match.setDestinationPoiName(destinationPOI.getName());
+        }
+
+        match.setMatchTime(LocalDateTime.now());
+        match.setCreatedAt(LocalDateTime.now());
+
+        return match;
     }
 
     /**
@@ -593,11 +745,11 @@ public class VehicleMatchingServiceImpl implements VehicleMatchingService {
     public List<Vehicle> getAvailableVehiclesInArea(Long centerPoiId, Double radiusKm) {
         POI centerPOI = poiRepository.findById(centerPoiId).orElse(null);
         if (centerPOI == null) {
-            logger.warn("未找到指定的中心点POI: {}", centerPoiId);
+            logger.warn("未找到指定的中心点 POI: {}", centerPoiId);
             return Collections.emptyList();
         }
 
-        logger.info("查询区域内车辆，中心点: {}, 半径: {}km", centerPOI.getName(), radiusKm);
+        logger.info("查询区域内车辆，中心点：{}, 半径：{}km", centerPOI.getName(), radiusKm);
 
         List<Vehicle> allAvailable = vehicleRepository.findByCurrentStatus(Vehicle.VehicleStatus.IDLE);
 
