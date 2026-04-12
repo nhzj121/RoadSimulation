@@ -74,6 +74,20 @@ public class Vehicle {
     @Column(name = "current-volumn", precision = 10)
     private Double currentVolumn;
 
+    // 温控设备支持
+    @Column(name = "has_temp_control")
+    private Boolean hasTempControl = Boolean.FALSE;
+
+    // 危险品运输资质级别
+    @Column(name = "hazmat_qualification", length = 20)
+    private String hazmatQualification;
+
+    // 专用车型标识
+    @Column(name = "special_vehicle_type", length = 50)
+    private String specialVehicleType;
+
+
+
     @Min(value = 0, message = "长度不能为负数")
     @Column(name = "length", precision = 8)
     private Double length;
@@ -271,6 +285,15 @@ public class Vehicle {
 
     public Double getCurrentVolumn() { return currentVolumn; }
     public void setCurrentVolumn(Double currentVolumn) { this.currentVolumn = currentVolumn; }
+
+    public Boolean getHasTempControl() { return hasTempControl; }
+    public void setHasTempControl(Boolean hasTempControl) { this.hasTempControl = hasTempControl; }
+
+    public String getHazmatQualification() { return hazmatQualification; }
+    public void setHazmatQualification(String hazmatQualification) { this.hazmatQualification = hazmatQualification; }
+
+    public String getSpecialVehicleType() { return specialVehicleType; }
+    public void setSpecialVehicleType(String specialVehicleType) { this.specialVehicleType = specialVehicleType; }
 
     public Double getLength() { return length; }
     public void setLength(Double length) { this.length = length; }

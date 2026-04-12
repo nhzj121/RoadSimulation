@@ -8,15 +8,16 @@ import jakarta.validation.constraints.Size;
 import java.time.LocalDateTime;
 
 /**
- * 运单明细（与 Shipment 多对一；与 Goods 多对一）
- * 说明：冗余 name/sku 以便历史追溯（即使 Goods 主数据后来被修改）。
+ * 运单明细 - 方案 A：直接添加加工字段
  */
 @Entity
 @Table(
         name = "shipment_item",
         indexes = {
                 @Index(name = "idx_item_shipment", columnList = "shipment_id"),
-                @Index(name = "idx_item_goods", columnList = "goods_id")
+                @Index(name = "idx_item_goods", columnList = "goods_id"),
+                @Index(name = "idx_item_stage", columnList = "stage_id"),
+                @Index(name = "idx_item_processing_status", columnList = "processing_status")
         }
 )
 public class ShipmentItem {
@@ -32,55 +33,100 @@ public class ShipmentItem {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "goods_id")
-    private Goods goods; // 可为空：支持临时品名直接录入
+    private Goods goods;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "assignment_id")
     private Assignment assignment;
 
-    // 冗余字段（下单时快照）
+    // ==================== 加工特有字段（方案 A）====================
+    
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "stage_id")
+    private ProcessingStage stage;  // 关联的工序
+    
+    @Column(name = "stage_order")
+    private Integer stageOrder;  // 工序顺序
+    
+    @Column(name = "stage_name", length = 100)
+    private String stageName;  // 工序名称
+    
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "processing_poi_id")
+    private POI processingPOI;  // 加工点 POI
+    
+    @Enumerated(EnumType.STRING)
+    @Column(name = "processing_status", length = 20)
+    private ProcessingItemStatus processingStatus = ProcessingItemStatus.WAITING;  // 加工状态
+    
+    @Column(name = "processed_weight")
+    private Double processedWeight;  // 已加工重量
+    
+    @Column(name = "progress_percent")
+    private Integer progressPercent = 0;  // 加工进度 0-100
+    
+    @Column(name = "processing_start_time")
+    private LocalDateTime processingStartTime;  // 开始加工时间
+    
+    @Column(name = "processing_end_time")
+    private LocalDateTime processingEndTime;  // 完成加工时间
+    
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "inbound_assignment_id")
+    private Assignment inboundAssignment;  // 原料运入任务
+    
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "outbound_assignment_id")
+    private Assignment outboundAssignment;  // 成品运出任务
+
+    // ==================== 原有字段 ====================
+
     @NotNull
-    @Size(max = 200, message = "品名长度不能超过200个字符")
+    @Size(max = 200, message = "品名长度不能超过 200 个字符")
     @Column(name = "name", nullable = false)
     private String name;
 
-    // 创建的时间
     @Column(name = "created_time")
     private LocalDateTime createdTime = LocalDateTime.now();
 
     public enum ShipmentItemStatus {
-        NOT_ASSIGNED, //未分配
-        ASSIGNED, //已分配
-        LOADED, //已装货
-        IN_TRANSIT, //运输中
-        DELIVERED, //已送达
+        NOT_ASSIGNED, ASSIGNED, LOADED, IN_TRANSIT, DELIVERED
+    }
+
+    /**
+     * 加工物料项状态
+     */
+    public enum ProcessingItemStatus {
+        WAITING,      // 等待加工
+        READY,        // 已就绪
+        PROCESSING,   // 加工中
+        COMPLETED,    // 已完成
+        BLOCKED,      // 阻塞
+        FAILED,       // 失败
+        CANCELLED     // 已取消
     }
 
     @Enumerated(EnumType.STRING)
     @Column(name = "status", length = 20, nullable = false)
     private ShipmentItem.ShipmentItemStatus status = ShipmentItem.ShipmentItemStatus.NOT_ASSIGNED;
 
-    // 商品唯一标识代码，用于区分和追踪库存中的不同商品；
-    // 区别于SPU（产品编码），SKU用于对同一商品下的不同种类进行区分
-    // 在这里我们暂设为商品唯一性标识 ToDo
-    @Size(max = 100, message = "SKU长度不能超过100个字符")
+    @Size(max = 100, message = "SKU 长度不能超过 100 个字符")
     @Column(name = "sku")
     private String sku;
 
-    @NotNull(message = "数量不能为空") // 添加非空校验
-    @Min(value = 1, message = "数量必须大于0") // 将最小值从0改为1
+    @NotNull(message = "数量不能为空")
+    @Min(value = 1, message = "数量必须大于 0")
     @Column(name = "qty")
     private Integer qty;
 
     @Min(value = 0, message = "重量不能为负数")
     @Column(name = "weight")
-    private Double weight; // 单项总重（非单件重）
+    private Double weight;
 
     @Min(value = 0, message = "体积不能为负数")
     @Column(name = "volume")
-    private Double volume; // 单项总体积
+    private Double volume;
 
-    // 进行修改的对象和时间
     @Column(name = "updated_by", length = 50)
     private String updatedBy;
 
@@ -98,15 +144,14 @@ public class ShipmentItem {
         this.volume = volume;
     }
 
-    // Getter & Setter
+    // ==================== Getter & Setter ====================
+
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
 
     public Shipment getShipment() { return shipment; }
     public void setShipment(Shipment shipment) {
-        if (this.shipment == shipment) {
-            return;
-        }
+        if (this.shipment == shipment) return;
         Shipment oldShipment = this.shipment;
         this.shipment = shipment;
         if (oldShipment != null) {
@@ -120,14 +165,62 @@ public class ShipmentItem {
     public Goods getGoods() { return goods; }
     public void setGoods(Goods goods) { this.goods = goods; }
 
+    public Assignment getAssignment() { return assignment; }
+    public void setAssignment(Assignment assignment) {
+        if (this.assignment == assignment) return;
+        Assignment oldAssignment = this.assignment;
+        if (oldAssignment != null) {
+            oldAssignment.getShipmentItems().remove(this);
+        }
+        this.assignment = assignment;
+        if (assignment != null) {
+            assignment.addShipmentItem(this);
+        }
+    }
+
+    // 加工特有字段 Getter & Setter
+    public ProcessingStage getStage() { return stage; }
+    public void setStage(ProcessingStage stage) { this.stage = stage; }
+
+    public Integer getStageOrder() { return stageOrder; }
+    public void setStageOrder(Integer stageOrder) { this.stageOrder = stageOrder; }
+
+    public String getStageName() { return stageName; }
+    public void setStageName(String stageName) { this.stageName = stageName; }
+
+    public POI getProcessingPOI() { return processingPOI; }
+    public void setProcessingPOI(POI processingPOI) { this.processingPOI = processingPOI; }
+
+    public ProcessingItemStatus getProcessingStatus() { return processingStatus; }
+    public void setProcessingStatus(ProcessingItemStatus processingStatus) { this.processingStatus = processingStatus; }
+
+    public Double getProcessedWeight() { return processedWeight; }
+    public void setProcessedWeight(Double processedWeight) { this.processedWeight = processedWeight; }
+
+    public Integer getProgressPercent() { return progressPercent; }
+    public void setProgressPercent(Integer progressPercent) { this.progressPercent = progressPercent; }
+
+    public LocalDateTime getProcessingStartTime() { return processingStartTime; }
+    public void setProcessingStartTime(LocalDateTime processingStartTime) { this.processingStartTime = processingStartTime; }
+
+    public LocalDateTime getProcessingEndTime() { return processingEndTime; }
+    public void setProcessingEndTime(LocalDateTime processingEndTime) { this.processingEndTime = processingEndTime; }
+
+    public Assignment getInboundAssignment() { return inboundAssignment; }
+    public void setInboundAssignment(Assignment inboundAssignment) { this.inboundAssignment = inboundAssignment; }
+
+    public Assignment getOutboundAssignment() { return outboundAssignment; }
+    public void setOutboundAssignment(Assignment outboundAssignment) { this.outboundAssignment = outboundAssignment; }
+
+    // 原有字段 Getter & Setter
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
 
     public String getSku() { return sku; }
     public void setSku(String sku) { this.sku = sku; }
 
-    public ShipmentItem.ShipmentItemStatus getStatus() { return status; }
-    public void setStatus(ShipmentItem.ShipmentItemStatus status) { this.status = status; }
+    public ShipmentItemStatus getStatus() { return status; }
+    public void setStatus(ShipmentItemStatus status) { this.status = status; }
 
     public Integer getQty() { return qty; }
     public void setQty(Integer qty) { this.qty = qty; }
@@ -138,51 +231,24 @@ public class ShipmentItem {
     public Double getVolume() { return volume; }
     public void setVolume(Double volume) { this.volume = volume; }
 
-    // 四元组字段的getter和setter
-    public LocalDateTime getCreatedTime() {return createdTime;}
-    public void setCreatedTime(LocalDateTime createdTime) {this.createdTime = createdTime;}
-    public String getUpdatedBy() {return updatedBy;}
-    public void setUpdatedBy(String updatedBy) {this.updatedBy = updatedBy;}
-    public LocalDateTime getUpdatedTime() {return updatedTime;}
-    public void setUpdatedTime(LocalDateTime updatedTime) {this.updatedTime = updatedTime;}
+    public LocalDateTime getCreatedTime() { return createdTime; }
+    public void setCreatedTime(LocalDateTime createdTime) { this.createdTime = createdTime; }
 
+    public String getUpdatedBy() { return updatedBy; }
+    public void setUpdatedBy(String updatedBy) { this.updatedBy = updatedBy; }
 
-    /// ShipmentItem与Assignment之间的方法
-    public Assignment getAssignment() { return assignment; }
-
-    // 设置运单清单分配到的任务，并维护双向关系
-    public void setAssignment(Assignment assignment) {
-        // 如果当前分配任务与要设置的分配任务相同，则不执行任何操作
-        if (this.assignment == assignment) {
-            return;
-        }
-
-        // 如果当前已有分配任务，先从该任务的集合中移除自己
-        Assignment oldAssignment = this.assignment;
-        if (oldAssignment != null) {
-            oldAssignment.getShipmentItems().remove(this);
-        }
-
-        // 设置新的分配任务
-        this.assignment = assignment;
-
-        // 如果新分配任务不为空，将自己添加到新任务的集合中
-        if (assignment != null) {
-            assignment.addShipmentItem(this);
-        }
-    }
-
-
+    public LocalDateTime getUpdatedTime() { return updatedTime; }
+    public void setUpdatedTime(LocalDateTime updatedTime) { this.updatedTime = updatedTime; }
 
     @Override
     public String toString() {
         return "ShipmentItem{" +
                 "id=" + id +
                 ", name='" + name + '\'' +
-                ", qty=" + qty +
-                ", shipment=" + (shipment != null ? shipment.getId() : null) +
-                ", goods=" + (goods != null ? goods.getId() : null) +
-                ", assignment=" + (assignment != null ? assignment.getId() : null) +
+                ", stageName='" + stageName + '\'' +
+                ", processingStatus=" + processingStatus +
+                ", progress=" + progressPercent +
+                '%'+
                 '}';
     }
 }
