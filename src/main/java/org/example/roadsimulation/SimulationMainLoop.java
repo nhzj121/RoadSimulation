@@ -16,6 +16,7 @@ import java.time.LocalDateTime;
 @Component
 public class SimulationMainLoop {
 
+
     private final DataInitializer dataInitializer;
     private final StateUpdateService stateUpdateService;
 

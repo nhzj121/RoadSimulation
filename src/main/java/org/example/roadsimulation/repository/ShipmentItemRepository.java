@@ -29,7 +29,10 @@ public interface ShipmentItemRepository extends JpaRepository<ShipmentItem, Long
     List<ShipmentItem> findByAssignmentId(Long assignmentId);
 
     List<ShipmentItem> findByStatus(String status);
-
+    List<ShipmentItem> findByStatus(ShipmentItem.ShipmentItemStatus status);
+    /**
+     * 统计运单的运单项数量
+     */
     Long countByShipmentId(Long shipmentId);
 
     Long countByShipmentIdAndStatus(Long shipmentId, String status);
