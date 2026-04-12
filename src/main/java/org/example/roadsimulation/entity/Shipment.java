@@ -374,6 +374,13 @@ public class Shipment {
     public boolean isMergeShipment() {
         return upstreamShipmentIds != null && !upstreamShipmentIds.isEmpty();
     }
+    public String getUpdatedBy() {
+        return updatedBy;
+    }
+
+    public void setUpdatedBy(String updatedBy) {
+        this.updatedBy = updatedBy;
+    }
 
     @PreUpdate
     public void touchUpdateTime() {
