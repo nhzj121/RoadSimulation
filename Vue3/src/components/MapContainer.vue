@@ -1266,10 +1266,28 @@ class VrpVehicleAnimation extends VehicleAnimation {
       // 通知后端到达！
       handleVehicleArrived(this.assignmentId, this.vehicleId, nodeInfo.poiId, this.licensePlate);
 
+      // ================= 🌟 核心修复：清理整条路线的视觉残留 =================
       setTimeout(() => {
+        // 1. 调用父类的清理（负责清理移动的小车本身）
         this.cleanup();
+
+        // 2. 调用我们在绘制时精心准备的 routeData.cleanup
+        // 它会遍历 elements 数组，把所有的紫线、沿途的工厂Marker全部从地图上抹去
+        if (this.routeData && typeof this.routeData.cleanup === 'function') {
+          this.routeData.cleanup();
+        }
+
+        // 3. 从前端的全局活跃路线池中彻底抹除这条记录，防止重复渲染
+        if (activeRoutes.value && activeRoutes.value.has(this.assignmentId)) {
+          activeRoutes.value.delete(this.assignmentId);
+        }
+
+        // 4. 从动画管理器中注销
         this.manager.removeAnimation(this.assignmentId);
-      }, 1000);
+
+        console.log(`🧹 [VRP 清理] 任务 ${this.assignmentId} 的路线及节点已从地图上移除`);
+      }, 1000); // 延迟 1 秒消失，给用户一个“到达终点”的视觉缓冲期
+      // =========================================================================
 
       this.onCompleteCallbacks.forEach(callback => callback(this));
     }
