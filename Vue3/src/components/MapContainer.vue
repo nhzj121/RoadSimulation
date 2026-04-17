@@ -1183,6 +1183,99 @@ class VehicleAnimation {
   }
 }
 
+// ==================== VRP 专属动画类 (多段节点插值版) ====================
+class VrpVehicleAnimation extends VehicleAnimation {
+  constructor(assignment, routeData, statusManager) {
+    super(assignment, routeData, statusManager);
+
+    // VRP 专有属性
+    this.stages = routeData.stages || [];
+    this.currentStageIndex = 0; // 当前跑到了第几段
+
+    // 计算每一段的 segments (用于物理插值)
+    this.stageSegments = this.stages.map(stage => this._calculateSegments(stage.path));
+  }
+
+  // 重写：获取当前路径
+  _getCurrentPath() {
+    if (this.currentStageIndex >= this.stages.length) return [];
+    return this.stages[this.currentStageIndex].path;
+  }
+
+  // 重写：获取当前路段数据
+  _getCurrentSegments() {
+    if (this.currentStageIndex >= this.stages.length) return { segments: [], totalLength: 0 };
+    return this.stageSegments[this.currentStageIndex];
+  }
+
+  // 重写：单段完成后的节点处理逻辑
+  async _completeCurrentStage() {
+    const currentStage = this.stages[this.currentStageIndex];
+    const nodeInfo = currentStage.nodeInfo;
+
+    const currentPath = this._getCurrentPath();
+    if (currentPath && currentPath.length > 0) {
+      this.currentPosition = [...currentPath[currentPath.length - 1]];
+      this._updateMarkerPosition();
+    }
+
+    // 触发装卸货动作
+    const actionStatus = nodeInfo.actionType === 'LOAD' ? 'LOADING' : 'UNLOADING';
+    if (this.statusManager) {
+      this.statusManager.updateVehicleStatus(this.vehicleId, actionStatus, {
+        assignment: this.routeData.assignment,
+        position: this.currentPosition
+      });
+    }
+
+    console.log(`[VrpAnimation] ${this.licensePlate} 到达 ${nodeInfo.poiName}, 动作: ${nodeInfo.actionType}`);
+
+    // 模拟装卸停留 2 秒 (受全局速度因子影响)
+    await this._waitWithSpeedFactor(2000);
+
+    // 推进到下一段
+    this.currentStageIndex++;
+
+    if (this.currentStageIndex < this.stages.length) {
+      // 还没跑完，继续跑下一段
+      if (this.statusManager) {
+        this.statusManager.updateVehicleStatus(this.vehicleId, 'TRANSPORT_DRIVING', {
+          assignment: this.routeData.assignment,
+          position: this.currentPosition
+        });
+      }
+      this.animationTime = 0;
+      this.lastUpdateTime = performance.now();
+      this.currentProgress = 0;
+      this._animate();
+    } else {
+      // 所有阶段全部跑完，任务结束！
+      if (this.statusManager) {
+        this.statusManager.updateVehicleStatus(this.vehicleId, 'WAITING', {
+          assignment: {
+            ...this.routeData.assignment,
+            currentLoad: 0,
+            currentVolume: 0
+          },
+          position: this.currentPosition
+        });
+      }
+
+      this.isCompleted = true;
+
+      // 通知后端到达！
+      handleVehicleArrived(this.assignmentId, this.vehicleId, nodeInfo.poiId, this.licensePlate);
+
+      setTimeout(() => {
+        this.cleanup();
+        this.manager.removeAnimation(this.assignmentId);
+      }, 1000);
+
+      this.onCompleteCallbacks.forEach(callback => callback(this));
+    }
+  }
+}
+
 // ==================== 车辆动画管理器类 ====================
 class VehicleAnimationManager {
   constructor(statusManager = null) {
@@ -1208,7 +1301,12 @@ class VehicleAnimationManager {
     routeData.color = this.vehicleColors[colorIndex];
 
     // 创建动画实例，传入状态管理器
-    const animation = new VehicleAnimation(assignment, routeData, this.statusManager);
+    let animation;
+    if (assignment.vrp) {
+      animation = new VrpVehicleAnimation(assignment, routeData, this.statusManager);
+    } else {
+      animation = new VehicleAnimation(assignment, routeData, this.statusManager);
+    }
     this.animations.set(assignment.assignmentId, animation);
 
     // 设置初始速度因子
@@ -1968,7 +2066,11 @@ const fetchCurrentAssignments = async () => {
         if (assignment && assignment.assignmentId) {
           // 检查是否已有动画
           if (!animationManager.animations.has(assignment.assignmentId)) {
-            await drawTwoStageRouteForAssignment(assignment);
+            if (assignment.vrp === true) {
+              await drawMultiStageRouteForVrpAssignment(assignment);
+            } else {
+              await drawTwoStageRouteForAssignment(assignment);
+            }
             drawnAssignmentIds.value.add(assignment.assignmentId);
           }
         }
@@ -2000,7 +2102,11 @@ const fetchAndDrawNewAssignments = async () => {
     for (const assignment of newAssignments) {
       if (assignment && assignment.assignmentId) {
         if (!drawnAssignmentIds.value.has(assignment.assignmentId)) {
-          await drawTwoStageRouteForAssignment(assignment);
+          if (assignment.vrp === true) {
+            await drawMultiStageRouteForVrpAssignment(assignment);
+          } else {
+            await drawTwoStageRouteForAssignment(assignment);
+          }
 
           drawnAssignmentIds.value.add(assignment.assignmentId);
 
@@ -2227,6 +2333,154 @@ const drawTwoStageRouteForAssignment = async (assignment) => {
   } catch (e) {
     console.error('绘制两段路线错误', e);
     ElMessage.error(`绘制任务路线失败: ${assignment.assignmentId}`);
+    return null;
+  }
+};
+
+// ==================== VRP 专线：绘制多节点复杂路线 ====================
+const drawMultiStageRouteForVrpAssignment = async (assignment) => {
+  if (!AMapLib || !map) return null;
+
+  try {
+    if (activeRoutes.value.has(assignment.assignmentId)) {
+      return activeRoutes.value.get(assignment.assignmentId);
+    }
+
+    const nodes = assignment.nodes || [];
+    if (nodes.length === 0) {
+      console.warn(`VRP Assignment ${assignment.assignmentId} 没有节点数据`);
+      return null;
+    }
+
+    let currentLng = assignment.vehicleStartLng;
+    let currentLat = assignment.vehicleStartLat;
+    const stages = [];
+    const elements = [];
+
+    // 1. 逐段请求高德路线，把多点串联起来
+    for (let i = 0; i < nodes.length; i++) {
+      const targetNode = nodes[i];
+
+      // 防并发限流缓冲
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      let path = [];
+      let distance = 0;
+
+      try {
+        const routeResult = await computeSingleRouteWithCache(
+            [currentLng, currentLat],
+            [targetNode.lng, targetNode.lat],
+            `${assignment.assignmentId}_vrp_stage_${i}`
+        );
+        if (routeResult && routeResult.path && routeResult.path.length > 0) {
+          path = routeResult.path;
+          distance = routeResult.distance;
+        }
+      } catch (err) {
+        console.warn(`[VRP] 第 ${i} 段路线规划失败，使用直线兜底`);
+      }
+
+      // 【修复】：直线兜底，绝不瞬移
+      if (path.length === 0) {
+        path = [
+          [currentLng, currentLat],
+          [targetNode.lng, targetNode.lat]
+        ];
+        distance = AMap.GeometryUtil.distance(path[0], path[1]);
+      }
+
+      stages.push({
+        stageIndex: i,
+        path: path,
+        distance: distance,
+        nodeInfo: targetNode
+      });
+
+      // 画线：第一段(空驶接货)用灰色虚线，后面用紫色实线
+      const isFirstStage = i === 0;
+      const polyline = new AMapLib.Polyline({
+        path: path,
+        strokeColor: isFirstStage ? '#95a5a6' : '#9b59b6',
+        strokeOpacity: 0.8,
+        strokeWeight: isFirstStage ? 3 : 4,
+        strokeDasharray: isFirstStage ? [5, 5] : [],
+        lineJoin: 'round',
+      });
+      polyline.setMap(map);
+      elements.push(polyline);
+
+      // 画节点Marker
+      const iconType = targetNode.actionType === 'LOAD' ? factoryIcon : getPOIIcon('REST_AREA');
+      const nodeMarker = new AMapLib.Marker({
+        position: [targetNode.lng, targetNode.lat],
+        title: `${targetNode.actionType === 'LOAD' ? '装货' : '卸货'}: ${targetNode.poiName}`,
+        icon: new AMapLib.Icon({
+          image: iconType,
+          size: new AMapLib.Size(24, 24),
+          imageSize: new AMapLib.Size(24, 24)
+        })
+      });
+      nodeMarker.setMap(map);
+      elements.push(nodeMarker);
+
+      currentLng = targetNode.lng;
+      currentLat = targetNode.lat;
+    }
+
+    if (stages.length === 0) return null;
+
+    // 2. 车辆移动标记
+    const movingEl = createVehicleIcon(32, 'ORDER_DRIVING', '#9b59b6');
+    const movingMarker = new AMapLib.Marker({
+      position: stages[0].path[0],
+      content: movingEl,
+      offset: new AMapLib.Pixel(-16, -16),
+      title: `VRP拼单 - ${assignment.licensePlate}`,
+      extData: {
+        type: 'vehicle',
+        vehicleId: assignment.vehicleId,
+        assignmentId: assignment.assignmentId,
+        licensePlate: assignment.licensePlate,
+        status: 'ORDER_DRIVING'
+      }
+    });
+    movingMarker.setMap(map);
+    elements.push(movingMarker);
+
+    if (vehicleStatusManager.value) {
+      vehicleStatusManager.value.registerVehicleMarker(assignment.vehicleId, movingMarker, assignment);
+    }
+    movingMarker.on('click', () => { showVehicleInfoWindowFromMarker(assignment, null); });
+
+    // 3. 构建清理对象 (注意这里把 stages 传进去了)
+    const routeData = {
+      assignment,
+      elements,
+      movingMarker,
+      stages: stages, // 将 stages 存入 routeData 供动画类读取
+      manager: animationManager,
+      cleanup: () => {
+        elements.forEach(el => { try { el.setMap && el.setMap(null); } catch (_) {} });
+        if (vehicleStatusManager.value) {
+          vehicleStatusManager.value.vehicleMarkers.delete(assignment.vehicleId);
+          vehicleStatusManager.value.assignmentData.delete(assignment.vehicleId);
+        }
+      }
+    };
+
+    activeRoutes.value.set(assignment.assignmentId, routeData);
+
+    // 4. 将 VRP 动画加入你们原本的全局动画管理器！
+    if (animationManager) {
+      animationManager.addAnimation(assignment, routeData);
+    }
+
+    console.log(`成功绘制 VRP 拼载任务 ${assignment.assignmentId}，共 ${stages.length} 段路线`);
+    return routeData;
+
+  } catch (e) {
+    console.error('绘制 VRP 路线错误', e);
     return null;
   }
 };
@@ -2588,7 +2842,7 @@ onMounted(() => {
   AMapLoader.load({
     key: "e0ea478e44e417b4c2fc9a54126debaa",
     version: "2.0",
-    plugins: ["AMap.Scale", "AMap.Driving", "AMap.Marker", "AMap.Polyline", "AMap.InfoWindow"],
+    plugins: ["AMap.Scale", "AMap.Driving", "AMap.Marker", "AMap.Polyline", "AMap.InfoWindow", "AMap.MoveAnimation"],
   })
       .then((AMap) => {
         AMapLib = AMap; // 保存 AMap 构造体以便后续创建覆盖物

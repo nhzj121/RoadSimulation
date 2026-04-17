@@ -26,10 +26,20 @@ public class Assignment {
     private Long id;
 
     public Assignment(ShipmentItem item, Route route) {
+        // 先把路线存进去，解决 null 的问题！
+        this.route = route;
+
+        // 原来的老逻辑好像还期待这里把 shipmentItem 绑定上
+        if (item != null) {
+            this.addShipmentItem(item);
+        }
     }
 
     public void addShipmentItem(ShipmentItem shipmentItem) {
-
+        if (shipmentItem != null) {
+            this.shipmentItems.add(shipmentItem);
+            shipmentItem.setAssignment(this);
+        }
     }
 
     public enum AssignmentStatus {

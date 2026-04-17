@@ -6,6 +6,7 @@ import lombok.Setter;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * Assignment 简要信息DTO（用于列表和状态同步）
@@ -95,4 +96,26 @@ public class AssignmentBriefDTO {
     // 用于前端快速访问的字段
     @Setter @Getter
     private String pairId; // 兼容旧格式: startPOIId_endPOIId
+
+    // ==================== VRP 一车多装新增扩展字段 ====================
+    @Setter @Getter
+    private boolean isVrp = false; // 标识该任务是否为多点拼载(VRP)任务
+
+    @Setter @Getter
+    private List<NodeDTO> nodes; // 动作节点列表（有序）
+
+    /**
+     * 内部静态类：用于向前端传递每个途径节点的详细动作
+     */
+    @Data
+    public static class NodeDTO {
+        private Integer sequenceIndex; // 执行顺序
+        private Long poiId;            // 途径点ID
+        private String poiName;        // 途径点名称
+        private BigDecimal lng;        // 经度
+        private BigDecimal lat;        // 纬度
+        private String actionType;     // 动作类型 (LOAD / UNLOAD)
+        private Double weightDelta;    // 载重变化量 (正为装，负为卸)
+        private Double volumeDelta;    // 体积变化量
+    }
 }
