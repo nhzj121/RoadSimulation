@@ -199,7 +199,6 @@ public class DataInitializer{
         // 初始化 POI 列表
         this.CementPlantList = poiRepository.findByPoiType(POI.POIType.GAS_STATION);
         this.MaterialMarketList = getFilterdPOIByType(POI.POIType.REST_AREA);
-        // this.goalFactoryList = getFilteredPOIByNameAndType("水泥", POI.POIType.FACTORY);
         this.Cement = getGoodsForTest("CEMENT");
         System.out.println("DataInitializer 初始化完成，共加载 " + CementPlantList.size() + " 个起点POI 和 " + MaterialMarketList.size() + "个终点POI");
 
@@ -217,12 +216,7 @@ public class DataInitializer{
             poiIsWithGoods.put(poi, false);
             poiTrueCount.put(poi, 0);
         }
-        /* ----------------- */
-        ///  对相关POI进行初始化操作
-//        for(POI poi: goalPOITypeList){
-//            poiIsWithGoods.put(poi, true);
-//            poiTrueCount.put(poi, 0);
-//        }
+
     }
 
     /// 测试 关键词检索 获取 模拟所需POI
@@ -811,8 +805,12 @@ public class DataInitializer{
     public Map<Vehicle, ShipmentItem> createCompleteGoodsTransport(POI startPOI, POI endPOI, Goods goods, Integer quantity, List<Vehicle> vehicles) {
         // 1. 创建Shipment
         Shipment shipment = initalizeShipment(startPOI, endPOI, goods, quantity);
+        // 运用启发式算法的分配函数
+//        Map<Vehicle, ShipmentItem> vehicleShipmentItemMap = optimizerBridge.optimizedMatching(
+//                shipment, goods, quantity, vehicles, startPOI);
 
-        Map<Vehicle, ShipmentItem> vehicleShipmentItemMap = optimizerBridge.optimizedMatching(
+        // 原始的就近分配，能运尽运分配函数
+        Map<Vehicle, ShipmentItem> vehicleShipmentItemMap = splitAndCreateShipmentItemsWithSmartMatching(
                 shipment, goods, quantity, vehicles, startPOI);
 
         // 3. 建立POI与Goods的Enrollment关系

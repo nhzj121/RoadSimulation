@@ -86,4 +86,6 @@ public interface RoutePlanningService {
      * @return 高德路线规划响应
      */
     GaodeRouteResponse planRouteWithGaode(GaodeRouteRequest request);
+
+    GaodeRouteResponse planMultiPointRoute(List<Long> poiIds, String strategy);
 }
