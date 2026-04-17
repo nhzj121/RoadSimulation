@@ -1663,6 +1663,84 @@ public class DataInitializer{
         }
     }
 
+    /**
+     * VRP 多点配送专属结算大脑 (期末统一清算)
+     */
+    @Transactional
+    public void processVrpVehicleDelivery(Assignment assignment, Vehicle vehicle, POI endPOI) {
+        try {
+            // 1. 遍历车上的每一票货物 (ShipmentItem)
+            Set<ShipmentItem> items = assignment.getShipmentItems();
+            for (ShipmentItem item : items) {
+
+                // A. 将该票货物标记为已送达
+                item.setStatus(ShipmentItem.ShipmentItemStatus.DELIVERED);
+                item.setUpdatedTime(LocalDateTime.now());
+                shipmentItemRepository.save(item);
+
+                // B. 追溯这票货物的源头，精准扣减库存
+                Shipment shipment = item.getShipment();
+                if (shipment != null) {
+                    POI originPOI = shipment.getOriginPOI();
+                    Goods goods = item.getGoods();
+
+                    if (originPOI != null && goods != null) {
+                        // 找到当年那个源头工厂的库存 (Enrollment)
+                        Optional<Enrollment> enrollmentOpt = enrollmentRepository.findByPoiAndGoods(originPOI, goods);
+                        if (enrollmentOpt.isPresent()) {
+                            Enrollment enrollment = enrollmentOpt.get();
+                            int remaining = enrollment.getQuantity();
+                            if (remaining > 0) {
+                                // 扣减库存 (保持你原本每次减1的逻辑，或者按真实重量扣减)
+                                enrollment.setQuantity(remaining - 1);
+                                if (enrollment.getQuantity() <= 0) {
+                                    originPOI.removeGoodsEnrollment(enrollment);
+                                    goods.removePOIEnrollment(enrollment);
+                                    enrollmentRepository.delete(enrollment);
+                                    System.out.println("📦 工厂 " + originPOI.getName() + " 的 " + goods.getName() + " 库存已彻底清空");
+                                } else {
+                                    enrollmentRepository.save(enrollment);
+                                }
+                            }
+                        }
+                    }
+                    // C. 检查这个大运单是不是所有子件都送达了
+                    checkAndUpdateShipmentStatus(shipment);
+                }
+            }
+
+            // 2. 释放 Assignment 任务
+            assignment.setStatus(Assignment.AssignmentStatus.COMPLETED);
+            assignment.setEndTime(LocalDateTime.now());
+            assignmentRepository.save(assignment);
+
+            // 3. 释放 Vehicle (让它变回空车，重回全局车池)
+            vehicle.setPreviousStatus(vehicle.getCurrentStatus());
+            vehicle.setCurrentStatus(Vehicle.VehicleStatus.IDLE);
+            vehicle.setStatusStartTime(LocalDateTime.now());
+            vehicle.setCurrentPOI(endPOI); // 车辆停在最后这个卸货点
+            vehicle.setCurrentLongitude(endPOI.getLongitude());
+            vehicle.setCurrentLatitude(endPOI.getLatitude());
+            vehicle.setCurrentLoad(0.0);
+            vehicle.setCurrentVolumn(0.0);
+            vehicle.setUpdatedTime(LocalDateTime.now());
+            vehicleRepository.save(vehicle);
+
+            // 4. 清理前端用来刷新的缓存
+            if (assignmentBriefMap.containsKey(assignment.getId())) {
+                AssignmentBriefDTO dto = assignmentBriefMap.get(assignment.getId());
+                dto.setStatus("COMPLETED");
+                assignmentBriefMap.put(assignment.getId(), dto);
+            }
+
+            System.out.println("✅ VRP 车辆 " + vehicle.getLicensePlate() + " 沿途所有账目清算完毕，车辆已释放！");
+
+        } catch (Exception e) {
+            System.err.println("❌ VRP 车辆送货清算失败: " + e.getMessage());
+            throw new RuntimeException("VRP 车辆清算失败", e);
+        }
+    }
+
     // 新增：检查和更新Shipment状态
     private void checkAndUpdateShipmentStatus(Shipment shipment) {
         // 检查该Shipment的所有Item是否都是DELIVERED
