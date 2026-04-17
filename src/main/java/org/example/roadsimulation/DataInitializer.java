@@ -1207,6 +1207,67 @@ public class DataInitializer{
 
         System.out.printf("🚀 [VRP 派车] 车辆 %s 成功拼载 %d 票货物 (总重 %.2ft)，生成多点行程单！%n",
                 vehicle.getLicensePlate(), packedItems.size(), totalAssignedWeight);
+
+        // ==================== 新增：将 VRP 任务组装为 DTO 并推入前端广播缓存 ====================
+        try {
+            AssignmentBriefDTO brief = new AssignmentBriefDTO();
+            brief.setAssignmentId(assignment.getId());
+            brief.setStatus(assignment.getStatus().toString());
+            brief.setCreatedTime(assignment.getCreatedTime());
+            brief.setStartTime(assignment.getStartTime());
+            brief.setDrawn(false); // 标记为未绘制，等待前端拉取
+
+            // 标记这是一个 VRP 任务
+            brief.setVrp(true);
+
+            // 车辆信息
+            brief.setVehicleId(vehicle.getId());
+            brief.setLicensePlate(vehicle.getLicensePlate());
+            brief.setVehicleStatus(vehicle.getCurrentStatus().toString());
+            brief.setCurrentLoad(vehicle.getCurrentLoad());
+            brief.setMaxLoadCapacity(vehicle.getMaxLoadCapacity());
+
+            // 车辆初始位置 (VRP专车的当前位置)
+            if (vehicle.getCurrentPOI() != null) {
+                brief.setVehicleStartLng(vehicle.getCurrentPOI().getLongitude().doubleValue());
+                brief.setVehicleStartLat(vehicle.getCurrentPOI().getLatitude().doubleValue());
+            } else if (vehicle.getCurrentLongitude() != null && vehicle.getCurrentLatitude() != null) {
+                brief.setVehicleStartLng(vehicle.getCurrentLongitude().doubleValue());
+                brief.setVehicleStartLat(vehicle.getCurrentLatitude().doubleValue());
+            }
+
+            // 构建有序节点集合 NodeDTOs
+            List<AssignmentBriefDTO.NodeDTO> nodeDTOs = new ArrayList<>();
+            for (AssignmentNode node : assignment.getNodes()) {
+                AssignmentBriefDTO.NodeDTO nodeDTO = new AssignmentBriefDTO.NodeDTO();
+                nodeDTO.setSequenceIndex(node.getSequenceIndex());
+                nodeDTO.setPoiId(node.getPoi().getId());
+                nodeDTO.setPoiName(node.getPoi().getName());
+                nodeDTO.setLng(node.getPoi().getLongitude());
+                nodeDTO.setLat(node.getPoi().getLatitude());
+                nodeDTO.setActionType(node.getActionType().name());
+                nodeDTO.setWeightDelta(node.getWeightDelta());
+                nodeDTO.setVolumeDelta(node.getVolumeDelta());
+                nodeDTOs.add(nodeDTO);
+            }
+            brief.setNodes(nodeDTOs);
+
+            // 将 VRP 任务放入缓存字典，供前端 /api/assignments/new 接口轮询
+            assignmentBriefMap.put(assignment.getId(), brief);
+
+            // 同步生成简易的 status 记录防止空指针
+            AssignmentStatusDTO status = new AssignmentStatusDTO(
+                    assignment.getId(),
+                    "VRP_MULTI_POINT", // VRP任务不需要传统的start_end_pair
+                    vehicle.getId(),
+                    null
+            );
+            assignmentStatusMap.put("VRP_" + assignment.getId(), status);
+
+            System.out.println("📡 [VRP 广播] VRP 行程单已推入缓存，等待前端拉取。Assignment ID: " + assignment.getId());
+        } catch (Exception e) {
+            System.err.println("❌ [VRP 广播] 推入缓存失败: " + e.getMessage());
+        }
     }
 
     /**
