@@ -84,7 +84,7 @@ public class OptimizerBridge {
         // ── Step1：筛选适配车辆 ──────────────────────────────────────
         List<Vehicle> compatibleVehicles = new ArrayList<>();
         for (Vehicle v : candidateVehicles) {
-            if (evaluator.isCompatible(v, goods)) {
+            if (evaluator.isCompatible(v, goods)) { // ToDo 这个对应的逻辑要改，应该是货物对车
                 compatibleVehicles.add(v);
             }
         }

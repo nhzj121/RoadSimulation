@@ -77,6 +77,11 @@ public class Assignment {
     @Column(name = "updated_time")
     private LocalDateTime updatedTime;
 
+    // ================= 新增：支持一车多装的节点集合 =================
+    @OneToMany(mappedBy = "assignment", cascade = CascadeType.ALL, orphanRemoval = true)
+    @OrderBy("sequenceIndex ASC") // 确保从数据库查出来时是有序的
+    private List<AssignmentNode> nodes = new ArrayList<>();
+
     public Assignment() {}
 
     // ==================== Getter / Setter ====================
@@ -105,6 +110,13 @@ public class Assignment {
     public void setUpdatedTime(LocalDateTime updatedTime) { this.updatedTime = updatedTime; }
     public String getUpdatedBy() { return updatedBy; }
     public void setUpdatedBy(String updatedBy) { this.updatedBy = updatedBy; }
+
+    public List<AssignmentNode> getNodes() {
+        return nodes;
+    }
+    public void setNodes(List<AssignmentNode> nodes) {
+        this.nodes = nodes;
+    }
 
     // ==================== Action Line JSON ====================
     @JsonIgnore
@@ -147,6 +159,30 @@ public class Assignment {
             return false;
         }
     }
+    /// ======================= 涉及AssignmentNode的相关辅助方法 ================
+    // 辅助方法：确保双向关联的正确性
+    public void addNode(AssignmentNode node) {
+        nodes.add(node);
+        node.setAssignment(this);
+    }
+
+    public void removeNode(AssignmentNode node) {
+        nodes.remove(node);
+        node.setAssignment(null);
+    }
+
+    // 辅助方法：获取当前未完成的下一个节点
+    public AssignmentNode getNextPendingNode() {
+        if (nodes == null || nodes.isEmpty()) return null;
+        for (AssignmentNode node : nodes) {
+            if (!node.isCompleted()) {
+                return node;
+            }
+        }
+        return null; // 全部完成
+    }
+    ///  ===============================================
+
     public boolean isAssigned() {
         return this.status == AssignmentStatus.ASSIGNED;
     }

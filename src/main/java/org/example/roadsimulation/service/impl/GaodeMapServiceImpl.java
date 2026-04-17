@@ -174,7 +174,7 @@ public class GaodeMapServiceImpl implements GaodeMapService {
         params.put("show_fields", "polyline");
 
         addIfPresent(params, "strategy", request.getStrategy());
-
+        addIfPresent(params,  "waypoints", request.getWaypoints());
         return DRIVING_API_URL + "?" + buildQueryString(params);
     }
 
@@ -210,7 +210,7 @@ public class GaodeMapServiceImpl implements GaodeMapService {
                     String value = entry.getValue();
 
                     // 坐标参数不要编码，保持和浏览器里成功请求一致
-                    if ("origin".equals(key) || "destination".equals(key)) {
+                    if ("origin".equals(key) || "destination".equals(key) || "waypoints".equals(key)) {
                         return key + "=" + value;
                     }
 
@@ -355,15 +355,30 @@ public class GaodeMapServiceImpl implements GaodeMapService {
             path.setPolyline(pathNode.path("polyline").asText());
         }
 
-        // 解析 steps
+        // 解析 steps 并同时组装完整的 polyline
         List<GaodeRouteResponse.Step> stepList = new ArrayList<>();
+        StringBuilder fullPolyline = new StringBuilder(); // 用于组装完整折线
+
         JsonNode stepsNode = pathNode.path("steps");
         if (stepsNode.isArray()) {
             for (JsonNode stepNode : stepsNode) {
-                stepList.add(parseStep(stepNode));
+                GaodeRouteResponse.Step step = parseStep(stepNode);
+                stepList.add(step);
+
+                // 将每个 step 的 polyline 拼接到完整路径中
+                if (step.getPolyline() != null && !step.getPolyline().isEmpty()) {
+                    if (fullPolyline.length() > 0) {
+                        fullPolyline.append(";"); // 高德的坐标点之间用分号相连
+                    }
+                    fullPolyline.append(step.getPolyline());
+                }
             }
         }
         path.setSteps(stepList);
+        // 如果高德外层没给 polyline，我们就把拼接好的赋给它
+        if ((path.getPolyline() == null || path.getPolyline().isEmpty()) && fullPolyline.length() > 0) {
+            path.setPolyline(fullPolyline.toString());
+        }
 
         return path;
     }
