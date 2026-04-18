@@ -161,6 +161,11 @@ public class Vehicle {
     @Column(name = "total_driving_distance")
     private Double totalDrivingDistance; // 公里
 
+    @Column(name = "unloading_wait_time")
+    private Long unloadingWaitTime;          // 等待卸货时间（秒）
+    @Column(name = "waiting_assignment_time")
+    private Long waitingAssignmentTime;      // 等待分配任务时间（秒）
+
     // 自动更新 updatedTime
     @PreUpdate
     public void preUpdate() {
@@ -330,6 +335,12 @@ public class Vehicle {
 
     public LocalDateTime getUpdatedTime() { return updatedTime; }
     public void setUpdatedTime(LocalDateTime updatedTime) { this.updatedTime = updatedTime; }
+
+    public Long getUnloadingWaitTime() { return unloadingWaitTime; }
+    public void setUnloadingWaitTime(Long unloadingWaitTime) { this.unloadingWaitTime = unloadingWaitTime; }
+
+    public Long getWaitingAssignmentTime() { return waitingAssignmentTime; }
+    public void setWaitingAssignmentTime(Long waitingAssignmentTime) { this.waitingAssignmentTime = waitingAssignmentTime; }
 
     @Override
     public String toString() {
