@@ -57,6 +57,7 @@ public class DataInitializer{
     private final AssignmentRepository assignmentRepository;
     private final ShipmentRepository shipmentRepository;
     private final ShipmentItemRepository shipmentItemRepository;
+    private final ProcessingChainRepository processingChainRepository;
     private final SimulationDataCleanupService cleanupService;
     private final ShipmentItemService shipmentItemService;
     private final VehicleRepository vehicleRepository;
@@ -108,10 +109,10 @@ public class DataInitializer{
     }
     // ToDO
 
-    public List<POI> CementPlantList; // 水泥厂
-    public List<POI> MaterialMarketList; // 建材市场
-
-    public Goods Cement; // 水泥
+    public List<POI> sourcePoiList; // 当前货源起点 POI 列表
+    public List<POI> targetPoiList; // 当前货运终点 POI 列表
+    public Goods currentGoods; // 当前使用的货物
+    private ProcessingChainSegmentSelection currentProcessingSegmentSelection;
 
 //    public List<POI> goalNeedGoodsPOIList = getFilteredPOI("家具", POI.POIType.FACTORY);
     // POI的判断状态和计数
@@ -124,6 +125,7 @@ public class DataInitializer{
 
     // 当前轮次
     private int currentLoopCount;
+    private final Random random = new Random();
 
     @Autowired
     private org.example.roadsimulation.optimizer.OptimizerBridge optimizerBridge;
@@ -135,6 +137,7 @@ public class DataInitializer{
                            RouteRepository routeRepository,
                            ShipmentRepository shipmentRepository,
                            ShipmentItemRepository shipmentItemRepository,
+                           ProcessingChainRepository processingChainRepository,
                            SimulationDataCleanupService cleanupService,
                            AssignmentRepository assignmentRepository,
                            VehicleRepository vehicleRepository,
@@ -148,6 +151,7 @@ public class DataInitializer{
         this.routeRepository = routeRepository;
         this.shipmentRepository = shipmentRepository;
         this.shipmentItemRepository = shipmentItemRepository;
+        this.processingChainRepository = processingChainRepository;
         this.cleanupService = cleanupService;
         this.assignmentRepository = assignmentRepository;
         this.vehicleRepository = vehicleRepository;
@@ -162,7 +166,7 @@ public class DataInitializer{
      */
     @Transactional
     public void generateGoods(int loopCount) {
-        if (CementPlantList.isEmpty() || MaterialMarketList.isEmpty()) {
+        if (sourcePoiList.isEmpty() || targetPoiList.isEmpty()) {
             System.out.println("生成工厂为空");
             return;
         }
@@ -199,23 +203,47 @@ public class DataInitializer{
 
     @PostConstruct
     public void initialize(){
-        // 初始化 POI 列表
-        this.CementPlantList = poiRepository.findByPoiType(POI.POIType.GAS_STATION);
-        this.MaterialMarketList = getFilterdPOIByType(POI.POIType.REST_AREA);
-        this.Cement = getGoodsForTest("CEMENT");
-        System.out.println("DataInitializer 初始化完成，共加载 " + CementPlantList.size() + " 个起点POI 和 " + MaterialMarketList.size() + "个终点POI");
+        initializeFromRandomProcessingSegment();
 
         initalizePOIStatus();
 
         System.out.println("DataInitializer 初始化完成");
     }
 
+    private void initializeFromRandomProcessingSegment() {
+        Optional<ProcessingChainSegmentSelection> selectionOpt = getRandomProcessingChainSegmentSelection();
+        if (selectionOpt.isPresent() && selectionOpt.get().getGoods() != null) {
+            ProcessingChainSegmentSelection selection = selectionOpt.get();
+            this.currentProcessingSegmentSelection = selection;
+            this.sourcePoiList = getFilterdPOIByType(selection.getFromPoiType());
+            this.targetPoiList = getFilterdPOIByType(selection.getToPoiType());
+            this.currentGoods = selection.getGoods();
+
+            System.out.println("DataInitializer 基于加工链段初始化: chain=" + selection.getChainCode()
+                    + ", stage=" + selection.getFromStageName() + " -> " + selection.getToStageName()
+                    + ", goods=" + selection.getGoods().getSku()
+                    + ", 起点类型=" + selection.getFromPoiType()
+                    + ", 终点类型=" + selection.getToPoiType());
+        } else {
+            this.currentProcessingSegmentSelection = null;
+            this.sourcePoiList = poiRepository.findByPoiType(POI.POIType.GAS_STATION);
+            this.targetPoiList = getFilterdPOIByType(POI.POIType.REST_AREA);
+            this.currentGoods = getGoodsForTest("CEMENT");
+            System.out.println("未找到有效加工链段，回退到默认初始化配置");
+        }
+
+        System.out.println("DataInitializer 初始化完成，共加载 " + sourcePoiList.size() + " 个起点POI 和 "
+                + targetPoiList.size() + " 个终点POI，货物=" + (currentGoods != null ? currentGoods.getSku() : "null"));
+    }
+
     /**
      * POI 状态表示的初始化
      */
     private void initalizePOIStatus(){ //List<POI> goalPOITypeList
+        poiIsWithGoods.clear();
+        poiTrueCount.clear();
         /// 测试用例
-        for(POI poi: CementPlantList){
+        for(POI poi: sourcePoiList){
             poiIsWithGoods.put(poi, false);
             poiTrueCount.put(poi, 0);
         }
@@ -270,6 +298,140 @@ public class DataInitializer{
     }
 
     /**
+     * 随机选择一段加工链，返回该链段的起点类型、终点类型和运输货物。
+     * 这里的“链段”定义为相邻两道工序之间的运输段：
+     * 当前工序产出 -> 下一工序输入。
+     */
+    public Optional<ProcessingChainSegmentSelection> getRandomProcessingChainSegmentSelection() {
+        List<ProcessingChain> candidateChains = processingChainRepository.findAll().stream()
+                .filter(chain -> chain.getStatus() == ProcessingChain.ChainStatus.ACTIVE)
+                .filter(chain -> chain.getStages() != null && chain.getStages().size() >= 2)
+                .toList();
+
+        if (candidateChains.isEmpty()) {
+            logger.warn("当前没有可用于随机选择的有效加工链段");
+            return Optional.empty();
+        }
+
+        ProcessingChain selectedChain = candidateChains.get(random.nextInt(candidateChains.size()));
+        List<ProcessingStage> stages = selectedChain.getStages();
+        int startIndex = random.nextInt(stages.size() - 1);
+
+        ProcessingStage fromStage = stages.get(startIndex);
+        ProcessingStage toStage = stages.get(startIndex + 1);
+        Goods segmentGoods = resolveSegmentGoods(fromStage, toStage);
+
+        if (fromStage.getProcessingPOI() == null || toStage.getProcessingPOI() == null) {
+            logger.warn("加工链 {} 存在未绑定 POI 的工序，跳过本次随机链段选择", selectedChain.getChainCode());
+            return Optional.empty();
+        }
+
+        ProcessingChainSegmentSelection selection = new ProcessingChainSegmentSelection(
+                selectedChain.getId(),
+                selectedChain.getChainCode(),
+                selectedChain.getChainName(),
+                fromStage.getId(),
+                fromStage.getStageName(),
+                fromStage.getStageOrder(),
+                fromStage.getProcessingPOI(),
+                fromStage.getProcessingPOI().getPoiType(),
+                toStage.getId(),
+                toStage.getStageName(),
+                toStage.getStageOrder(),
+                toStage.getProcessingPOI(),
+                toStage.getProcessingPOI().getPoiType(),
+                segmentGoods
+        );
+
+        logger.info("随机选择加工链段: chain={}, {}({}) -> {}({}), goods={}",
+                selection.getChainCode(),
+                selection.getFromStageName(),
+                selection.getFromPoiType(),
+                selection.getToStageName(),
+                selection.getToPoiType(),
+                selection.getGoods() != null ? selection.getGoods().getSku() : "null");
+
+        return Optional.of(selection);
+    }
+
+    private Goods resolveSegmentGoods(ProcessingStage fromStage, ProcessingStage toStage) {
+        if (fromStage.getOutputGoods() != null) {
+            return fromStage.getOutputGoods();
+        }
+        if (toStage.getInputGoods() != null) {
+            return toStage.getInputGoods();
+        }
+        if (fromStage.getOutputGoodsSku() != null && !fromStage.getOutputGoodsSku().isBlank()) {
+            return goodsRepository.findBySku(fromStage.getOutputGoodsSku()).orElse(null);
+        }
+        if (toStage.getInputGoodsSku() != null && !toStage.getInputGoodsSku().isBlank()) {
+            return goodsRepository.findBySku(toStage.getInputGoodsSku()).orElse(null);
+        }
+        return null;
+    }
+
+    public static class ProcessingChainSegmentSelection {
+        @Getter
+        private final Long chainId;
+        @Getter
+        private final String chainCode;
+        @Getter
+        private final String chainName;
+        @Getter
+        private final Long fromStageId;
+        @Getter
+        private final String fromStageName;
+        @Getter
+        private final Integer fromStageOrder;
+        @Getter
+        private final POI fromPOI;
+        @Getter
+        private final POI.POIType fromPoiType;
+        @Getter
+        private final Long toStageId;
+        @Getter
+        private final String toStageName;
+        @Getter
+        private final Integer toStageOrder;
+        @Getter
+        private final POI toPOI;
+        @Getter
+        private final POI.POIType toPoiType;
+        @Getter
+        private final Goods goods;
+
+        public ProcessingChainSegmentSelection(Long chainId,
+                                               String chainCode,
+                                               String chainName,
+                                               Long fromStageId,
+                                               String fromStageName,
+                                               Integer fromStageOrder,
+                                               POI fromPOI,
+                                               POI.POIType fromPoiType,
+                                               Long toStageId,
+                                               String toStageName,
+                                               Integer toStageOrder,
+                                               POI toPOI,
+                                               POI.POIType toPoiType,
+                                               Goods goods) {
+            this.chainId = chainId;
+            this.chainCode = chainCode;
+            this.chainName = chainName;
+            this.fromStageId = fromStageId;
+            this.fromStageName = fromStageName;
+            this.fromStageOrder = fromStageOrder;
+            this.fromPOI = fromPOI;
+            this.fromPoiType = fromPoiType;
+            this.toStageId = toStageId;
+            this.toStageName = toStageName;
+            this.toStageOrder = toStageOrder;
+            this.toPOI = toPOI;
+            this.toPoiType = toPoiType;
+            this.goods = goods;
+        }
+    }
+
+    /**
      * 在创建配对时记录状态
      */
     private void createPairStatus(POI startPOI, POI endPOI, Shipment shipment) {
@@ -285,7 +447,7 @@ public class DataInitializer{
     //@Scheduled(fixedRate = 10000)
     @Transactional
     public void periodicJudgement(){
-        if (CementPlantList.isEmpty() ||  MaterialMarketList.isEmpty()) {
+        if (sourcePoiList.isEmpty() ||  targetPoiList.isEmpty()) {
             return;
         }
 
@@ -294,7 +456,7 @@ public class DataInitializer{
 
         // 1. 收集所有需要生成货物的POI
         List<POI> poisToGenerateGoods = new ArrayList<>();
-        for (POI poi : CementPlantList) {
+        for (POI poi : sourcePoiList) {
             // 如果当前POI已经为真，跳过判断
             if (poiIsWithGoods.get(poi)) {
                 continue;
@@ -317,15 +479,16 @@ public class DataInitializer{
         System.out.println("本轮有 " + poisToGenerateGoods.size() + " 个POI需要生成货物");
 
         // 2. 批量获取空闲车辆（只查询一次）
+        String targetGoodsSku = currentGoods != null ? currentGoods.getSku() : "CEMENT";
         List<Vehicle> allIdleVehicles = vehicleRepository.findBySuitableGoodsAndCurrentStatus(
-                "CEMENT", Vehicle.VehicleStatus.IDLE);
+                targetGoodsSku, Vehicle.VehicleStatus.IDLE);
 
         if (allIdleVehicles.isEmpty()) {
-            System.out.println("警告：没有适配水泥的空闲车辆，跳过此次周期");
+            System.out.println("警告：没有适配货物 " + targetGoodsSku + " 的空闲车辆，跳过此次周期");
             return;
         }
 
-        System.out.println("获取到 " + allIdleVehicles.size() + " 辆空闲水泥运输车辆");
+        System.out.println("获取到 " + allIdleVehicles.size() + " 辆适配货物 " + targetGoodsSku + " 的空闲车辆");
 
         // 3. 为每个POI批量处理货物生成
         for (POI poi : poisToGenerateGoods) {
@@ -334,22 +497,21 @@ public class DataInitializer{
                 setPoiToTrue(poi);
                 trueProbability = trueProbability * 0.95;
 
-                Random random = new Random();
                 // 随机获取终点POI
-                POI endPOI = this.MaterialMarketList.get(random.nextInt(this.MaterialMarketList.size()));
+                POI endPOI = this.targetPoiList.get(random.nextInt(this.targetPoiList.size()));
                 Integer generateQuantity = generateRandomQuantity();
 
                 // 从总空闲车辆列表中创建一个副本用于本次POI
                 List<Vehicle> availableVehicles = new ArrayList<>(allIdleVehicles);
 
                 // 计算需要的总重量
-                Double requiredWeight = Cement.getWeightPerUnit() * generateQuantity;
+                Double requiredWeight = currentGoods.getWeightPerUnit() * generateQuantity;
 
                 Route route = initializeRoute(poi, endPOI);
 
                 // 批量创建货物运输
                 Map<Vehicle, ShipmentItem> vehicleShipmentItemMap = createCompleteGoodsTransport(
-                        poi, endPOI, Cement, generateQuantity, availableVehicles);
+                        poi, endPOI, currentGoods, generateQuantity, availableVehicles);
 
                 List<Assignment> goalAssignments = initalizeAssignment(vehicleShipmentItemMap, route);
 
@@ -428,7 +590,7 @@ public class DataInitializer{
 //    //@Scheduled(fixedRate = 15000) // 12秒一个周期
 //    @Transactional
 //    public void periodicReset() {
-//        if (CementPlantList.isEmpty() || MaterialMarketList.isEmpty()) {
+//        if (sourcePoiList.isEmpty() || targetPoiList.isEmpty()) {
 //            return;
 //        }
 //
@@ -2227,9 +2389,9 @@ public class DataInitializer{
 
                 // 获取货物信息（通过Enrollment）
                 Optional<Enrollment> enrollment = enrollmentRepository
-                        .findByPoiAndGoods(freshStartPOI, Cement);
+                        .findByPoiAndGoods(freshStartPOI, currentGoods);
                 enrollment.ifPresent(e -> {
-                    pair.setGoodsName(Cement.getName());
+                    pair.setGoodsName(currentGoods.getName());
                     pair.setQuantity(e.getQuantity());
                 });
 
@@ -2401,5 +2563,3 @@ public class DataInitializer{
         return positions;
     }
 }
-
-
