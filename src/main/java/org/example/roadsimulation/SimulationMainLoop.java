@@ -68,6 +68,10 @@ public class SimulationMainLoop {
             dataInitializer.printSimulationStatus(simulationContext.getLoopCount());
         }
 
+        if (simulationContext.getLoopCount() != 0 && simulationContext.getLoopCount() % 7 == 0){
+            dataInitializer.vrpDispatchingCycle();
+        }
+
         // 加工链进度更新
         if (processingChainServiceV2 != null) {
             processingChainServiceV2.updateProcessingProgress(simNow, 30);

@@ -26,10 +26,20 @@ public class Assignment {
     private Long id;
 
     public Assignment(ShipmentItem item, Route route) {
+        // 先把路线存进去，解决 null 的问题！
+        this.route = route;
+
+        // 原来的老逻辑好像还期待这里把 shipmentItem 绑定上
+        if (item != null) {
+            this.addShipmentItem(item);
+        }
     }
 
     public void addShipmentItem(ShipmentItem shipmentItem) {
-
+        if (shipmentItem != null) {
+            this.shipmentItems.add(shipmentItem);
+            shipmentItem.setAssignment(this);
+        }
     }
 
     public enum AssignmentStatus {
@@ -168,6 +178,10 @@ public class Assignment {
 
     @Column(name = "waiting_assignment_time")
     private Long waitingAssignmentTime;      // 等待分配任务时间（秒）
+    // ================= 新增：支持一车多装的节点集合 =================
+    @OneToMany(mappedBy = "assignment", cascade = CascadeType.ALL, orphanRemoval = true)
+    @OrderBy("sequenceIndex ASC") // 确保从数据库查出来时是有序的
+    private List<AssignmentNode> nodes = new ArrayList<>();
 
     public Assignment() {}
 
@@ -275,6 +289,12 @@ public class Assignment {
 
     public Long getWaitingAssignmentTime() { return waitingAssignmentTime; }
     public void setWaitingAssignmentTime(Long waitingAssignmentTime) { this.waitingAssignmentTime = waitingAssignmentTime; }
+    public List<AssignmentNode> getNodes() {
+        return nodes;
+    }
+    public void setNodes(List<AssignmentNode> nodes) {
+        this.nodes = nodes;
+    }
 
     // ==================== Action Line JSON ====================
     @JsonIgnore
@@ -317,6 +337,30 @@ public class Assignment {
             return false;
         }
     }
+    /// ======================= 涉及AssignmentNode的相关辅助方法 ================
+    // 辅助方法：确保双向关联的正确性
+    public void addNode(AssignmentNode node) {
+        nodes.add(node);
+        node.setAssignment(this);
+    }
+
+    public void removeNode(AssignmentNode node) {
+        nodes.remove(node);
+        node.setAssignment(null);
+    }
+
+    // 辅助方法：获取当前未完成的下一个节点
+    public AssignmentNode getNextPendingNode() {
+        if (nodes == null || nodes.isEmpty()) return null;
+        for (AssignmentNode node : nodes) {
+            if (!node.isCompleted()) {
+                return node;
+            }
+        }
+        return null; // 全部完成
+    }
+    ///  ===============================================
+
     public boolean isAssigned() {
         return this.status == AssignmentStatus.ASSIGNED;
     }

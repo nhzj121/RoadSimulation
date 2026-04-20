@@ -91,42 +91,23 @@ public class SimulationController {
                 throw new RuntimeException("No vehicle assigned to assignment: " + request.getAssignmentId());
             }
 
-            // 3. 获取卸货点POI
+            // 3. 获取到达点POI
             POI endPOI = poiRepository.findById(request.getEndPOIId())
                     .orElseThrow(() -> new RuntimeException("End POI not found: " + request.getEndPOIId()));
 
-            Route route = assignment.getRoute();
-            POI startPOI = route.getStartPOI();
-
-            // 4. 更新车辆状态
-            vehicle.setPreviousStatus(vehicle.getCurrentStatus());
-            vehicle.setCurrentStatus(Vehicle.VehicleStatus.IDLE);
-            vehicle.setStatusStartTime(LocalDateTime.now());
-            vehicle.setStatusDurationSeconds(0L);
-
-            // 5. 更新车辆位置到卸货点（重要！）
-            vehicle.setCurrentPOI(endPOI);
-            vehicle.setCurrentLongitude(endPOI.getLongitude());
-            vehicle.setCurrentLatitude(endPOI.getLatitude());
-
-            // 6. 载货量清零
-            vehicle.setCurrentLoad(0.0);
-            vehicle.setCargoVolume(0.0);
-
-            // 7. 保存车辆
-            vehicleRepository.save(vehicle);
-
-            // 8. 标记Assignment为已完成（如果尚未完成）
-            if (assignment.getStatus() != Assignment.AssignmentStatus.COMPLETED) {
-                assignment.setStatus(Assignment.AssignmentStatus.COMPLETED);
-                assignment.setEndTime(LocalDateTime.now());
-                assignmentRepository.save(assignment);
+            // ================= 🌟 核心分流逻辑：双轨并行结算 =================
+            if (assignment.getNodes() != null && !assignment.getNodes().isEmpty()) {
+                // 轨道 B：如果是 VRP 多点任务，走 VRP 专属结算池
+                dataInitializer.processVrpVehicleDelivery(assignment, vehicle, endPOI);
+                logger.info("🚚 VRP 车辆到达处理完成: 车辆 {}", vehicle.getLicensePlate());
+            } else {
+                // 轨道 A：如果是传统的 FTL 单线任务，走老结算池
+                Route route = assignment.getRoute();
+                POI startPOI = route.getStartPOI(); // 现在 route 肯定不为 null 了
+                dataInitializer.processVehicleDelivery(startPOI, vehicle, endPOI);
+                logger.info("🚗 普通车辆到达处理完成: 车辆 {}", vehicle.getLicensePlate());
             }
-
-            dataInitializer.shipOutGoodsWhenVehicleArrives(startPOI, endPOI, vehicle);
-
-            logger.info("车辆到达处理完成: 车辆 {} 到达 POI {}, 状态更新为 IDLE",
-                    vehicle.getLicensePlate(), endPOI.getName());
+            // ===============================================================
 
             return ResponseEntity.ok().build();
 

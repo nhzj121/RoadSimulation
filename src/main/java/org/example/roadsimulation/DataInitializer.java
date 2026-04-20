@@ -61,6 +61,7 @@ public class DataInitializer{
     private final ShipmentItemService shipmentItemService;
     private final VehicleRepository vehicleRepository;
     private final RoutePlanningService routePlanningService;
+    private final GetCostService getCostService;
 
     private final Map<POI, POI> startToEndMapping = new ConcurrentHashMap<>(); // 起点到终点的映射关系
     // 修改成员变量，使用起点-终点对作为键
@@ -139,7 +140,8 @@ public class DataInitializer{
                            VehicleRepository vehicleRepository,
                            ShipmentItemService shipmentItemService,
                            @Lazy ShipmentProgressService shipmentProgressService,
-                           RoutePlanningService routePlanningService) {
+                           RoutePlanningService routePlanningService,
+                           GetCostService getCostService) {
         this.enrollmentRepository = enrollmentRepository;
         this.goodsRepository = goodsRepository;
         this.poiRepository = poiRepository;
@@ -152,6 +154,7 @@ public class DataInitializer{
         this.shipmentItemService = shipmentItemService;
         this.shipmentProgressService = shipmentProgressService;
         this.routePlanningService = routePlanningService;
+        this.getCostService = getCostService;
     }
 
     /**
@@ -199,7 +202,6 @@ public class DataInitializer{
         // 初始化 POI 列表
         this.CementPlantList = poiRepository.findByPoiType(POI.POIType.GAS_STATION);
         this.MaterialMarketList = getFilterdPOIByType(POI.POIType.REST_AREA);
-        // this.goalFactoryList = getFilteredPOIByNameAndType("水泥", POI.POIType.FACTORY);
         this.Cement = getGoodsForTest("CEMENT");
         System.out.println("DataInitializer 初始化完成，共加载 " + CementPlantList.size() + " 个起点POI 和 " + MaterialMarketList.size() + "个终点POI");
 
@@ -217,12 +219,7 @@ public class DataInitializer{
             poiIsWithGoods.put(poi, false);
             poiTrueCount.put(poi, 0);
         }
-        /* ----------------- */
-        ///  对相关POI进行初始化操作
-//        for(POI poi: goalPOITypeList){
-//            poiIsWithGoods.put(poi, true);
-//            poiTrueCount.put(poi, 0);
-//        }
+
     }
 
     /// 测试 关键词检索 获取 模拟所需POI
@@ -595,7 +592,7 @@ public class DataInitializer{
      */
     private Integer generateRandomQuantity() {
         Random random = new Random();
-        return random.nextInt(250) + 50; // 100-600之间的随机数
+        return random.nextInt(50) + 50; // 100-600之间的随机数
     }
 
     // 起点与终点之间通过 route 实现的关系建立
@@ -811,8 +808,12 @@ public class DataInitializer{
     public Map<Vehicle, ShipmentItem> createCompleteGoodsTransport(POI startPOI, POI endPOI, Goods goods, Integer quantity, List<Vehicle> vehicles) {
         // 1. 创建Shipment
         Shipment shipment = initalizeShipment(startPOI, endPOI, goods, quantity);
+        // 运用启发式算法的分配函数
+//        Map<Vehicle, ShipmentItem> vehicleShipmentItemMap = optimizerBridge.optimizedMatching(
+//                shipment, goods, quantity, vehicles, startPOI);
 
-        Map<Vehicle, ShipmentItem> vehicleShipmentItemMap = optimizerBridge.optimizedMatching(
+        // 原始的就近分配，能运尽运分配函数
+        Map<Vehicle, ShipmentItem> vehicleShipmentItemMap = splitAndCreateShipmentItemsWithSmartMatching(
                 shipment, goods, quantity, vehicles, startPOI);
 
         // 3. 建立POI与Goods的Enrollment关系
@@ -873,6 +874,20 @@ public class DataInitializer{
             // 本次分配的数量 = min(车辆容量, 剩余货物量)
             int assignQuantity = Math.min(capacityInUnits, remainingQuantity);
 
+            // ================== 新增：装载率拦截逻辑 ==================
+            if (assignQuantity > 0) {
+                // 计算本次分配的预计装载率
+                double expectedLoadFactor = (assignQuantity * goods.getWeightPerUnit()) / maxLoad;
+
+                // 假设阈值为 60% (0.6)
+                if (expectedLoadFactor < 0.60) {
+                    System.out.printf("拦截提醒: 车辆 %s 预计装载率仅为 %.1f%% (<60%%)，取消直接派车，转入全局待接单池%n",
+                            selectedVehicle.getLicensePlate(), expectedLoadFactor * 100);
+                    // 直接跳出循环。剩余的 remainingQuantity 会自然流转到下方的 (remainingQuantity > 0) 兜底逻辑中
+                    break;
+                }
+            }
+
             if (assignQuantity > 0) {
                 // 为这辆车创建运单清单
                 ShipmentItem shipmentItem = shipmentItemService.initalizeShipmentItem(
@@ -891,13 +906,20 @@ public class DataInitializer{
                 Double mileageWithoutThings = 0.0;
 
                 try {
+                    try {
+                        // 加上 250 毫秒的延迟，完美避开高德的 5 QPS 限制
+                        Thread.sleep(250);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
                     // 1. 获取带有货物的距离
                     GaodeRouteResponse response_1 = routePlanningService.planDrivingRouteByPois(startPOI.getId(), endPOI.getId(), "0");
                     if (response_1 != null && response_1.getData() != null && response_1.getData().getTotalDistance() != null) {
                         // 底层 DTO 已经做好了寻找 paths.get(0) 的工作，这里直接拿来除以 1000 即可
                         mileage = response_1.getData().getTotalDistance() / 1000.0;
                     } else {
-                        System.err.println("警告：未能获取 response_1 路线距离，使用直线距离兜底");
+                        String errorMsg = (response_1 != null) ? response_1.getMessage() : "响应为空";
+                        System.err.println("警告：未能获取 response_1 路线距离，原因：" + errorMsg + "。使用直线距离兜底");
                         mileage = calculateHaversineDistance(startPOI.getLatitude(), startPOI.getLongitude(), endPOI.getLatitude(), endPOI.getLongitude());
                     }
 
@@ -914,7 +936,8 @@ public class DataInitializer{
                         if (response_2 != null && response_2.getData() != null && response_2.getData().getTotalDistance() != null) {
                             mileageWithoutThings = response_2.getData().getTotalDistance() / 1000.0;
                         } else {
-                            System.err.println("警告：未能获取 response_2 路线距离，使用直线距离兜底");
+                            String errorMsg = (response_2 != null) ? response_2.getMessage() : "响应为空";
+                            System.err.println("警告：未能获取 response_2 路线距离，原因：" + errorMsg + "。使用直线距离兜底");
                             mileageWithoutThings = calculateHaversineDistance(vehiclePOI.getLatitude(), vehiclePOI.getLongitude(), startPOI.getLatitude(), startPOI.getLongitude());
                         }
                     } else if (selectedVehicle.getCurrentLatitude() != null && selectedVehicle.getCurrentLongitude() != null){
@@ -1009,18 +1032,242 @@ public class DataInitializer{
             } else if (route == null) {
                 throw new IllegalArgumentException("运输线路规划出错");
             } else {
-                Assignment assignment = new Assignment(shipmentItem, route);
-
-                // 关键：如果车辆不为null，则分配给任务
-                if (vehicle != null) {
-                    assignment.setAssignedVehicle(vehicle);
+                // ================== 新增：尾货/熔断货物的拦截处理 ==================
+                if (vehicle == null) {
+                    // 对于没有分配到车辆的货物（由于运力不足，或装载率低于60%被拦截的尾货）
+                    // 我们【不】生成 Assignment，而是将明细状态重置为待分配，留在池子里给 VRP 算法用
+                    shipmentItem.setStatus(ShipmentItem.ShipmentItemStatus.NOT_ASSIGNED);
+                    shipmentItemRepository.save(shipmentItem);
+                    System.out.println("✅ 尾货成功进入全局待接单池，等待VRP算法拼载。ShipmentItem ID: " + shipmentItem.getId());
+                    continue; // 关键：跳过 Assignment 的生成
                 }
+                // ===============================================================
+
+                Assignment assignment = new Assignment(shipmentItem, route);
+                assignment.setAssignedVehicle(vehicle);
+                // 这里的状态确保只有真正派了车的才会变成 ASSIGNED
                 assignment.setStatus(Assignment.AssignmentStatus.ASSIGNED);
+
+                // 将 ShipmentItem 状态同步为已分配
+                shipmentItem.setStatus(ShipmentItem.ShipmentItemStatus.ASSIGNED);
+                shipmentItemRepository.save(shipmentItem);
+
                 assignmentRepository.save(assignment);
                 assignments.add(assignment);
             }
         }
         return assignments;
+    }
+
+    @Transactional
+    public void vrpDispatchingCycle() {
+        System.out.println("====== [VRP 大脑] 开始扫描全局待接单池 ======");
+
+        // 1. 捞取所有待拼车的尾货，并按重量降序排序 (FFD 算法的核心第一步)
+        List<ShipmentItem> pendingItems = shipmentItemRepository.findAll().stream()
+                .filter(item -> item.getStatus() == ShipmentItem.ShipmentItemStatus.NOT_ASSIGNED)
+                .sorted((a, b) -> Double.compare(b.getWeight(), a.getWeight())) // 挑大的先运
+                .collect(Collectors.toList());
+
+        if (pendingItems.isEmpty()) {
+            System.out.println("[VRP 大脑] 待接单池为空，进入休眠。");
+            return;
+        }
+
+        // 2. 获取专属的 VRP 测试车队 (空闲状态)
+        List<Vehicle> vrpVehicles = vehicleRepository.findByCurrentStatus(Vehicle.VehicleStatus.IDLE);
+        if (vrpVehicles.isEmpty()) {
+            System.out.println("[VRP 大脑] 没有空闲的车辆。");
+            return;
+        }
+
+        System.out.printf("[VRP 大脑] 发现 %d 个待拼订单，%d 辆空闲车辆。开始拼载计算...%n", pendingItems.size(), vrpVehicles.size());
+
+        // 3. 遍历每辆车，进行贪心拼载
+        for (Vehicle vehicle : vrpVehicles) {
+            double currentVehicleCapacity = vehicle.getMaxLoadCapacity() != null ? vehicle.getMaxLoadCapacity() : 0.0;
+            if (currentVehicleCapacity <= 0) continue;
+
+            List<ShipmentItem> packedItems = new ArrayList<>();
+            List<POI> pickupPois = new ArrayList<>();
+            List<POI> dropoffPois = new ArrayList<>();
+
+            double remainingCapacity = currentVehicleCapacity;
+            double currentSimulatedCost = 0.0;
+
+            Iterator<ShipmentItem> iterator = pendingItems.iterator();
+            while (iterator.hasNext()) {
+                ShipmentItem item = iterator.next();
+
+                // 【第一关】：物理容量硬约束 (装不下直接跳过)
+                if (item.getWeight() > remainingCapacity) {
+                    continue;
+                }
+
+                POI itemOrigin = item.getShipment().getOriginPOI();
+                POI itemDest = item.getShipment().getDestPOI();
+
+                // 【第二关】：空间与绕路粗筛 (防走火入魔)
+                // 假设：如果为了装这个货，直线距离跨度超过 100km，直接拒绝
+                if (!pickupPois.isEmpty()) {
+                    double distToNewPickup = calculateHaversineDistance(
+                            pickupPois.get(pickupPois.size()-1).getLatitude(), pickupPois.get(pickupPois.size()-1).getLongitude(),
+                            itemOrigin.getLatitude(), itemOrigin.getLongitude());
+                    if (distToNewPickup > 500.0) { // 100公里熔断阈值
+                        continue;
+                    }
+                }
+
+                // 【第三关】：边际成本精算 (调用预估器)
+                // 模拟加入这个订单后的新增里程和成本
+                double simulatedDeltaMileage = calculateHaversineDistance(itemOrigin.getLatitude(), itemOrigin.getLongitude(), itemDest.getLatitude(), itemDest.getLongitude()) * 1.2; // 粗略乘以1.2作为实际路网系数
+                double deltaTransportTime = simulatedDeltaMileage / 60.0; // 假设时速60
+
+                Double marginalCost = getCostService.estimateMarginalCost(
+                        simulatedDeltaMileage, 0.0, deltaTransportTime, 0.5,
+                        vehicle.getMaxLoadCapacity() * simulatedDeltaMileage,
+                        item.getWeight() * simulatedDeltaMileage, 0.0, 0.0, 0.0);
+
+                // ToDo 判断成本是否可接受（这里设一个宽泛的阈值，比如成本增量 < 500 视为值得拼）
+                if (marginalCost < 5000.0) {
+                    // ✅ 拼载成功！加入车厢
+                    packedItems.add(item);
+                    pickupPois.add(itemOrigin);
+                    dropoffPois.add(itemDest);
+
+                    remainingCapacity -= item.getWeight();
+                    currentSimulatedCost += marginalCost;
+
+                    iterator.remove(); // 从全局池中移除
+                }
+            }
+
+            // 4. 如果这辆车成功拼到了货，生成真正的 VRP 任务 (Assignment + Nodes)
+            if (!packedItems.isEmpty()) {
+                dispatchVrpVehicle(vehicle, packedItems, pickupPois, dropoffPois);
+            }
+        }
+        System.out.println("====== [VRP 大脑] 拼载计算结束 ======");
+    }
+
+    /**
+     * VRP 专用的派车方法：将拼好的货物打包成多节点路线，并派发车辆
+     */
+    private void dispatchVrpVehicle(Vehicle vehicle, List<ShipmentItem> packedItems, List<POI> pickupPois, List<POI> dropoffPois) {
+        // 为了避免 LIFO(后进先出) 的倒厢问题，VRP 调度通常采用 "先集中装，后集中卸" 的策略
+        List<POI> fullRoutePois = new ArrayList<>();
+        fullRoutePois.addAll(pickupPois);
+        fullRoutePois.addAll(dropoffPois);
+
+        // 创建多点 Route 实体 (复用你的路由逻辑，这里存首尾，中间的依靠 Node 表达)
+        Route route = initializeRoute(fullRoutePois.get(0), fullRoutePois.get(fullRoutePois.size()-1));
+
+        // 我们随便取一个 item 作为主关联 (在 VRP 中，Assignment 是对车的，不只对一个货)
+        Assignment assignment = new Assignment(packedItems.get(0), route);
+        assignment.setAssignedVehicle(vehicle);
+        assignment.setStatus(Assignment.AssignmentStatus.ASSIGNED);
+
+        // --- 核心：生成 AssignmentNodes 行程单 ---
+        int sequence = 0;
+
+        // 1. 生成所有装货节点 (LOAD)
+        for (ShipmentItem item : packedItems) {
+            AssignmentNode loadNode = new AssignmentNode(assignment, sequence++,
+                    item.getShipment().getOriginPOI(),
+                    AssignmentNode.NodeActionType.LOAD,
+                    item.getWeight(), item.getVolume());
+            assignment.addNode(loadNode);
+        }
+
+        // 2. 生成所有卸货节点 (UNLOAD)
+        for (ShipmentItem item : packedItems) {
+            AssignmentNode unloadNode = new AssignmentNode(assignment, sequence++,
+                    item.getShipment().getDestPOI(),
+                    AssignmentNode.NodeActionType.UNLOAD,
+                    -item.getWeight(), -item.getVolume()); // 卸货为负数
+            assignment.addNode(unloadNode);
+        }
+
+        // 保存 Assignment 及级联的 Nodes
+        assignmentRepository.save(assignment);
+
+        // 更新车辆状态与载重
+        double totalAssignedWeight = packedItems.stream().mapToDouble(ShipmentItem::getWeight).sum();
+        vehicle.setCurrentStatus(Vehicle.VehicleStatus.ORDER_DRIVING);
+        vehicle.setCurrentLoad(totalAssignedWeight);
+        vehicle.addAssignment(assignment);
+        vehicleRepository.save(vehicle);
+
+        // 更新 ShipmentItems 状态
+        for (ShipmentItem item : packedItems) {
+            item.setStatus(ShipmentItem.ShipmentItemStatus.ASSIGNED);
+            item.setAssignment(assignment);
+            shipmentItemRepository.save(item);
+        }
+
+        System.out.printf("🚀 [VRP 派车] 车辆 %s 成功拼载 %d 票货物 (总重 %.2ft)，生成多点行程单！%n",
+                vehicle.getLicensePlate(), packedItems.size(), totalAssignedWeight);
+
+        // ==================== 新增：将 VRP 任务组装为 DTO 并推入前端广播缓存 ====================
+        try {
+            AssignmentBriefDTO brief = new AssignmentBriefDTO();
+            brief.setAssignmentId(assignment.getId());
+            brief.setStatus(assignment.getStatus().toString());
+            brief.setCreatedTime(assignment.getCreatedTime());
+            brief.setStartTime(assignment.getStartTime());
+            brief.setDrawn(false); // 标记为未绘制，等待前端拉取
+
+            // 标记这是一个 VRP 任务
+            brief.setVrp(true);
+
+            // 车辆信息
+            brief.setVehicleId(vehicle.getId());
+            brief.setLicensePlate(vehicle.getLicensePlate());
+            brief.setVehicleStatus(vehicle.getCurrentStatus().toString());
+            brief.setCurrentLoad(vehicle.getCurrentLoad());
+            brief.setMaxLoadCapacity(vehicle.getMaxLoadCapacity());
+
+            // 车辆初始位置 (VRP专车的当前位置)
+            if (vehicle.getCurrentPOI() != null) {
+                brief.setVehicleStartLng(vehicle.getCurrentPOI().getLongitude().doubleValue());
+                brief.setVehicleStartLat(vehicle.getCurrentPOI().getLatitude().doubleValue());
+            } else if (vehicle.getCurrentLongitude() != null && vehicle.getCurrentLatitude() != null) {
+                brief.setVehicleStartLng(vehicle.getCurrentLongitude().doubleValue());
+                brief.setVehicleStartLat(vehicle.getCurrentLatitude().doubleValue());
+            }
+
+            // 构建有序节点集合 NodeDTOs
+            List<AssignmentBriefDTO.NodeDTO> nodeDTOs = new ArrayList<>();
+            for (AssignmentNode node : assignment.getNodes()) {
+                AssignmentBriefDTO.NodeDTO nodeDTO = new AssignmentBriefDTO.NodeDTO();
+                nodeDTO.setSequenceIndex(node.getSequenceIndex());
+                nodeDTO.setPoiId(node.getPoi().getId());
+                nodeDTO.setPoiName(node.getPoi().getName());
+                nodeDTO.setLng(node.getPoi().getLongitude());
+                nodeDTO.setLat(node.getPoi().getLatitude());
+                nodeDTO.setActionType(node.getActionType().name());
+                nodeDTO.setWeightDelta(node.getWeightDelta());
+                nodeDTO.setVolumeDelta(node.getVolumeDelta());
+                nodeDTOs.add(nodeDTO);
+            }
+            brief.setNodes(nodeDTOs);
+
+            // 将 VRP 任务放入缓存字典，供前端 /api/assignments/new 接口轮询
+            assignmentBriefMap.put(assignment.getId(), brief);
+
+            // 同步生成简易的 status 记录防止空指针
+            AssignmentStatusDTO status = new AssignmentStatusDTO(
+                    assignment.getId(),
+                    "VRP_MULTI_POINT", // VRP任务不需要传统的start_end_pair
+                    vehicle.getId(),
+                    null
+            );
+            assignmentStatusMap.put("VRP_" + assignment.getId(), status);
+
+            System.out.println("📡 [VRP 广播] VRP 行程单已推入缓存，等待前端拉取。Assignment ID: " + assignment.getId());
+        } catch (Exception e) {
+            System.err.println("❌ [VRP 广播] 推入缓存失败: " + e.getMessage());
+        }
     }
 
     /**
@@ -1413,6 +1660,84 @@ public class DataInitializer{
         } catch (Exception e) {
             System.err.println("处理车辆送货失败: " + e.getMessage());
             throw new RuntimeException("车辆送货处理失败", e);
+        }
+    }
+
+    /**
+     * VRP 多点配送专属结算大脑 (期末统一清算)
+     */
+    @Transactional
+    public void processVrpVehicleDelivery(Assignment assignment, Vehicle vehicle, POI endPOI) {
+        try {
+            // 1. 遍历车上的每一票货物 (ShipmentItem)
+            Set<ShipmentItem> items = assignment.getShipmentItems();
+            for (ShipmentItem item : items) {
+
+                // A. 将该票货物标记为已送达
+                item.setStatus(ShipmentItem.ShipmentItemStatus.DELIVERED);
+                item.setUpdatedTime(LocalDateTime.now());
+                shipmentItemRepository.save(item);
+
+                // B. 追溯这票货物的源头，精准扣减库存
+                Shipment shipment = item.getShipment();
+                if (shipment != null) {
+                    POI originPOI = shipment.getOriginPOI();
+                    Goods goods = item.getGoods();
+
+                    if (originPOI != null && goods != null) {
+                        // 找到当年那个源头工厂的库存 (Enrollment)
+                        Optional<Enrollment> enrollmentOpt = enrollmentRepository.findByPoiAndGoods(originPOI, goods);
+                        if (enrollmentOpt.isPresent()) {
+                            Enrollment enrollment = enrollmentOpt.get();
+                            int remaining = enrollment.getQuantity();
+                            if (remaining > 0) {
+                                // 扣减库存 (保持你原本每次减1的逻辑，或者按真实重量扣减)
+                                enrollment.setQuantity(remaining - 1);
+                                if (enrollment.getQuantity() <= 0) {
+                                    originPOI.removeGoodsEnrollment(enrollment);
+                                    goods.removePOIEnrollment(enrollment);
+                                    enrollmentRepository.delete(enrollment);
+                                    System.out.println("📦 工厂 " + originPOI.getName() + " 的 " + goods.getName() + " 库存已彻底清空");
+                                } else {
+                                    enrollmentRepository.save(enrollment);
+                                }
+                            }
+                        }
+                    }
+                    // C. 检查这个大运单是不是所有子件都送达了
+                    checkAndUpdateShipmentStatus(shipment);
+                }
+            }
+
+            // 2. 释放 Assignment 任务
+            assignment.setStatus(Assignment.AssignmentStatus.COMPLETED);
+            assignment.setEndTime(LocalDateTime.now());
+            assignmentRepository.save(assignment);
+
+            // 3. 释放 Vehicle (让它变回空车，重回全局车池)
+            vehicle.setPreviousStatus(vehicle.getCurrentStatus());
+            vehicle.setCurrentStatus(Vehicle.VehicleStatus.IDLE);
+            vehicle.setStatusStartTime(LocalDateTime.now());
+            vehicle.setCurrentPOI(endPOI); // 车辆停在最后这个卸货点
+            vehicle.setCurrentLongitude(endPOI.getLongitude());
+            vehicle.setCurrentLatitude(endPOI.getLatitude());
+            vehicle.setCurrentLoad(0.0);
+            vehicle.setCurrentVolumn(0.0);
+            vehicle.setUpdatedTime(LocalDateTime.now());
+            vehicleRepository.save(vehicle);
+
+            // 4. 清理前端用来刷新的缓存
+            if (assignmentBriefMap.containsKey(assignment.getId())) {
+                AssignmentBriefDTO dto = assignmentBriefMap.get(assignment.getId());
+                dto.setStatus("COMPLETED");
+                assignmentBriefMap.put(assignment.getId(), dto);
+            }
+
+            System.out.println("✅ VRP 车辆 " + vehicle.getLicensePlate() + " 沿途所有账目清算完毕，车辆已释放！");
+
+        } catch (Exception e) {
+            System.err.println("❌ VRP 车辆送货清算失败: " + e.getMessage());
+            throw new RuntimeException("VRP 车辆清算失败", e);
         }
     }
 
