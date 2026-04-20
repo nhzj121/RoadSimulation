@@ -166,6 +166,15 @@ public class Shipment {
     @Column(name = "updated_by", length = 50)
     private String updatedBy;
 
+    @Column(name = "loading_wait_time")
+    private Long loadingWaitTime;            // 等待装货时间（秒）
+
+    @Column(name = "unloading_wait_time")
+    private Long unloadingWaitTime;          // 等待卸货时间（秒）
+
+    @Column(name = "waiting_assignment_time")
+    private Long waitingAssignmentTime;      // 等待分配任务时间（秒）
+
     public Shipment() {}
 
     public Shipment(String refNo, POI startPOI, POI endPOI, Double totalWeight, Double totalVolume) {
@@ -359,6 +368,15 @@ public class Shipment {
 
     public Set<Long> getUpstreamShipmentIds() { return upstreamShipmentIds; }
     public void setUpstreamShipmentIds(Set<Long> upstreamShipmentIds) { this.upstreamShipmentIds = upstreamShipmentIds; }
+
+    public Long getLoadingWaitTime() { return loadingWaitTime; }
+    public void setLoadingWaitTime(Long loadingWaitTime) { this.loadingWaitTime = loadingWaitTime; }
+
+    public Long getUnloadingWaitTime() { return unloadingWaitTime; }
+    public void setUnloadingWaitTime(Long unloadingWaitTime) { this.unloadingWaitTime = unloadingWaitTime; }
+
+    public Long getWaitingAssignmentTime() { return waitingAssignmentTime; }
+    public void setWaitingAssignmentTime(Long waitingAssignmentTime) { this.waitingAssignmentTime = waitingAssignmentTime; }
 
     /**
      * 添加上游运单 ID
