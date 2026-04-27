@@ -1070,7 +1070,7 @@ public class DataInitializer{
                 try {
                     try {
                         // 加上 250 毫秒的延迟，完美避开高德的 5 QPS 限制
-                        Thread.sleep(250);
+                        Thread.sleep(500);
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
                     }
@@ -1087,7 +1087,7 @@ public class DataInitializer{
 
                     try {
                         // 加上 250 毫秒的延迟，完美避开高德的 5 QPS 限制
-                        Thread.sleep(250);
+                        Thread.sleep(500);
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
                     }
@@ -1206,6 +1206,12 @@ public class DataInitializer{
                 // ===============================================================
 
                 Assignment assignment = new Assignment(shipmentItem, route);
+                if (route != null) {
+                    assignment.setOriginPOI(route.getStartPOI());
+                    assignment.setDestPOI(route.getEndPOI());
+                } else{
+                    logger.warn("道路起点与终点为空");
+                }
                 assignment.setAssignedVehicle(vehicle);
                 // 这里的状态确保只有真正派了车的才会变成 ASSIGNED
                 assignment.setStatus(Assignment.AssignmentStatus.ASSIGNED);
@@ -1272,18 +1278,41 @@ public class DataInitializer{
                 // 【第二关】：空间与绕路粗筛 (防走火入魔)
                 // 假设：如果为了装这个货，直线距离跨度超过 100km，直接拒绝
                 if (!pickupPois.isEmpty()) {
-                    double distToNewPickup = calculateHaversineDistance(
-                            pickupPois.get(pickupPois.size()-1).getLatitude(), pickupPois.get(pickupPois.size()-1).getLongitude(),
+                    POI anchorPoi = pickupPois.get(0); // 锚点：首个装货点
+                    double distToAnchor = calculateHaversineDistance(
+                            anchorPoi.getLatitude(), anchorPoi.getLongitude(),
                             itemOrigin.getLatitude(), itemOrigin.getLongitude());
-                    if (distToNewPickup > 500.0) { // 100公里熔断阈值
+
+                    if (distToAnchor > 450.0) {
                         continue;
                     }
                 }
 
                 // 【第三关】：边际成本精算 (调用预估器)
                 // 模拟加入这个订单后的新增里程和成本
-                double simulatedDeltaMileage = calculateHaversineDistance(itemOrigin.getLatitude(), itemOrigin.getLongitude(), itemDest.getLatitude(), itemDest.getLongitude()) * 1.2; // 粗略乘以1.2作为实际路网系数
-                double deltaTransportTime = simulatedDeltaMileage / 60.0; // 假设时速60
+                double simulatedDeltaMileage = 0.0;
+
+                if (pickupPois.isEmpty()) {
+                    simulatedDeltaMileage = calculateHaversineDistance(itemOrigin.getLatitude(), itemOrigin.getLongitude(), itemDest.getLatitude(), itemDest.getLongitude());
+                } else {
+                    // LIFO 模式下的断点永远在 "最新装货点" 和 "最新卸货点" 之间
+                    POI lastPickup = pickupPois.get(pickupPois.size() - 1);
+                    POI firstDropoff = dropoffPois.get(0);
+
+                    // 旧距离： A装 -> A卸
+                    double oldBridge = calculateHaversineDistance(lastPickup.getLatitude(), lastPickup.getLongitude(), firstDropoff.getLatitude(), firstDropoff.getLongitude());
+
+                    // 新距离： A装 -> B装 -> B卸 -> A卸
+                    double newBridge = calculateHaversineDistance(lastPickup.getLatitude(), lastPickup.getLongitude(), itemOrigin.getLatitude(), itemOrigin.getLongitude())
+                            + calculateHaversineDistance(itemOrigin.getLatitude(), itemOrigin.getLongitude(), itemDest.getLatitude(), itemDest.getLongitude())
+                            + calculateHaversineDistance(itemDest.getLatitude(), itemDest.getLongitude(), firstDropoff.getLatitude(), firstDropoff.getLongitude());
+
+                    // 绕路距离就是新旧距离之差
+                    simulatedDeltaMileage = newBridge - oldBridge;
+                    if (simulatedDeltaMileage <= 0) simulatedDeltaMileage = 5.0; // 防止因为情况过于理想叠加各种情况导致负数
+                }
+
+                double deltaTransportTime = simulatedDeltaMileage / 60.0;
 
                 Double marginalCost = getCostService.estimateMarginalCost(
                         simulatedDeltaMileage, 0.0, deltaTransportTime, 0.5,
@@ -1292,10 +1321,9 @@ public class DataInitializer{
 
                 // ToDo 判断成本是否可接受（这里设一个宽泛的阈值，比如成本增量 < 500 视为值得拼）
                 if (marginalCost < 5000.0) {
-                    // ✅ 拼载成功！加入车厢
                     packedItems.add(item);
                     pickupPois.add(itemOrigin);
-                    dropoffPois.add(itemDest);
+                    dropoffPois.add(0, itemDest);
 
                     remainingCapacity -= item.getWeight();
                     currentSimulatedCost += marginalCost;
@@ -1304,7 +1332,6 @@ public class DataInitializer{
                 }
             }
 
-            // 4. 如果这辆车成功拼到了货，生成真正的 VRP 任务 (Assignment + Nodes)
             if (!packedItems.isEmpty()) {
                 dispatchVrpVehicle(vehicle, packedItems, pickupPois, dropoffPois);
             }
@@ -1329,6 +1356,9 @@ public class DataInitializer{
         assignment.setAssignedVehicle(vehicle);
         assignment.setStatus(Assignment.AssignmentStatus.ASSIGNED);
 
+        assignment.setOriginPOI(fullRoutePois.get(0));
+        assignment.setDestPOI(fullRoutePois.get(fullRoutePois.size() - 1));
+
         // --- 核心：生成 AssignmentNodes 行程单 ---
         int sequence = 0;
 
@@ -1342,7 +1372,8 @@ public class DataInitializer{
         }
 
         // 2. 生成所有卸货节点 (UNLOAD)
-        for (ShipmentItem item : packedItems) {
+        for (int i = packedItems.size() - 1; i >= 0; i--) {
+            ShipmentItem item = packedItems.get(i);
             AssignmentNode unloadNode = new AssignmentNode(assignment, sequence++,
                     item.getShipment().getDestPOI(),
                     AssignmentNode.NodeActionType.UNLOAD,
@@ -1359,6 +1390,93 @@ public class DataInitializer{
         vehicle.setCurrentLoad(totalAssignedWeight);
         vehicle.addAssignment(assignment);
         vehicleRepository.save(vehicle);
+
+        try {
+            double mileageWithoutThings = 0.0;
+            POI firstPickup = pickupPois.get(0);
+
+            // 1. 获取空车前往起点的距离 (使用高德API，带休眠防限流)
+            try {
+                Thread.sleep(500);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+
+            if (vehicle.getCurrentPOI() != null) {
+                GaodeRouteResponse response_2 = routePlanningService.planDrivingRouteByPois(vehicle.getCurrentPOI().getId(), firstPickup.getId(), "0");
+                if (response_2 != null && response_2.getData() != null && response_2.getData().getTotalDistance() != null) {
+                    mileageWithoutThings = response_2.getData().getTotalDistance() / 1000.0;
+                } else {
+                    mileageWithoutThings = calculateHaversineDistance(vehicle.getCurrentPOI().getLatitude(), vehicle.getCurrentPOI().getLongitude(), firstPickup.getLatitude(), firstPickup.getLongitude());
+                }
+            } else if (vehicle.getCurrentLatitude() != null && vehicle.getCurrentLongitude() != null) {
+                mileageWithoutThings = calculateHaversineDistance(vehicle.getCurrentLatitude(), vehicle.getCurrentLongitude(), firstPickup.getLatitude(), firstPickup.getLongitude());
+            }
+
+            // 2. 获取多点路线的真实载重和里程 (逐段物理拆解法)
+            double mileage = 0.0;
+            double realityCapacity = 0.0;
+            double currentWeightInVehicle = 0.0;
+
+            // 拼装完整的重量变化线 (正数为装，负数为卸)
+            List<Double> weightChanges = new ArrayList<>();
+            for (ShipmentItem item : packedItems) weightChanges.add(item.getWeight());
+            for (int i = packedItems.size() - 1; i >= 0; i--) weightChanges.add(-packedItems.get(i).getWeight());
+
+            // 遍历拼接好的整条节点折线
+            for (int i = 0; i < fullRoutePois.size() - 1; i++) {
+                POI p1 = fullRoutePois.get(i);
+                POI p2 = fullRoutePois.get(i + 1);
+
+                // 为防止多节点并发API把高德限流打爆，多点段间距离使用 直线*1.2 近似替代
+                double segDist = calculateHaversineDistance(p1.getLatitude(), p1.getLongitude(), p2.getLatitude(), p2.getLongitude()) * 1.2;
+                mileage += segDist;
+
+                // 物理累加：驶入该路段前的车厢总重 × 该路段里程
+                currentWeightInVehicle += weightChanges.get(i);
+                realityCapacity += currentWeightInVehicle * segDist;
+            }
+
+            // 3. 计算各项基础指标
+            double theoryCapacity = vehicle.getMaxLoadCapacity() * mileage;
+            double waitingTime = (currentLoopCount - vehicle.getLoopCount()) * 0.5;
+            double transportTime = (mileage + mileageWithoutThings) / 20.0;
+
+            double theoryRealityCapacity = theoryCapacity - realityCapacity;
+            double waitingTransportTime = transportTime > 0 ? waitingTime / transportTime : 0.0;
+
+            // 防御性计算，防止满载时 theoryRealityCapacity 为 0 导致除数为 0 异常
+            double oilLoss = theoryRealityCapacity > 0.1 ? realityCapacity / theoryRealityCapacity : 0.0;
+            double fixedLoss = waitingTime + transportTime;
+            double loss = 0.5 * oilLoss + 0.3 * fixedLoss;
+
+            // 4. 累加到全局 CostEntity 监控面板
+            CostEntity.totalMileage += mileage;
+            CostEntity.totalTransportTime += transportTime;
+            CostEntity.totalWaitingTime += waitingTime;
+            CostEntity.totalMileageWithoutThings += mileageWithoutThings;
+            CostEntity.totalRealityCapacity += realityCapacity;
+            CostEntity.totalTheoryCapacity += theoryCapacity;
+
+            if (CostEntity.WorstTheoryRealityCapacity == 0.0 || CostEntity.WorstTheoryRealityCapacity < theoryRealityCapacity) {
+                CostEntity.WorstTheoryRealityCapacity = theoryRealityCapacity;
+            }
+
+            if (CostEntity.WorstWaitingTransportTime == 0.0 || CostEntity.WorstWaitingTransportTime < waitingTransportTime) {
+                CostEntity.WorstWaitingTransportTime = waitingTransportTime;
+            }
+
+            if (CostEntity.WorstLoss == 0.0 || CostEntity.WorstLoss < loss) {
+                CostEntity.WorstLoss = loss;
+            }
+
+            // 同步车辆最新的生命周期计步器
+            vehicle.setLoopCount(currentLoopCount);
+            vehicleRepository.save(vehicle);
+
+        } catch (Exception e) {
+            System.err.println("VRP 路线成本精算时发生异常: " + e.getMessage());
+        }
 
         // 更新 ShipmentItems 状态
         for (ShipmentItem item : packedItems) {
