@@ -68,7 +68,7 @@ public class SimulationMainLoop {
             dataInitializer.printSimulationStatus(simulationContext.getLoopCount());
         }
 
-        if (simulationContext.getLoopCount() != 0 && simulationContext.getLoopCount() % 7 == 0){
+        if (simulationContext.getLoopCount() != 0 && simulationContext.getLoopCount() % 3 == 0){
             dataInitializer.vrpDispatchingCycle();
         }
 
