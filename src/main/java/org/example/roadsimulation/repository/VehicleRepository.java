@@ -104,5 +104,9 @@ public interface VehicleRepository extends JpaRepository<Vehicle, Long> {
     List<Vehicle> findBySuitableGoodsAndCurrentStatus(String suitableGoods,
                                                       Vehicle.VehicleStatus currentStatus);
 
+    // 按适合车辆类型和状态查询
+    List<Vehicle> findByVehicleTypeAndCurrentStatus(String vehicleFit,
+                                                    Vehicle.VehicleStatus currentStatus);
+
     List<Vehicle> findByAssignmentsIsNotNull();
 }

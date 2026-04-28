@@ -14,6 +14,7 @@ import org.example.roadsimulation.service.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.CommandLineRunner;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -45,7 +46,7 @@ import java.util.stream.Collectors;
  */
 
 @Component
-public class DataInitializer{
+public class DataInitializer implements CommandLineRunner {
 
     private static final Logger logger = LoggerFactory.getLogger(DataInitializer.class);
 
@@ -121,7 +122,7 @@ public class DataInitializer{
 
     // 限制条件
     private final int maxTrueCount = 45; // 最大为真的数量
-    private double trueProbability = 0.009; // 判断为真的概率
+    private double trueProbability = 0.049; // 判断为真的概率
 
     // 当前轮次
     private int currentLoopCount;
@@ -201,10 +202,12 @@ public class DataInitializer{
         System.out.println("===================================");
     }
 
-    @PostConstruct
-    public void initialize(){
-        initializeFromRandomProcessingSegment();
+    @Override
+    @Transactional
+    public void run(String... args) throws Exception {
+        System.out.println("Spring Boot 启动完毕，开始执行 DataInitializer...");
 
+        initializeFromRandomProcessingSegment();
         initalizePOIStatus();
 
         System.out.println("DataInitializer 初始化完成");
@@ -447,24 +450,44 @@ public class DataInitializer{
     //@Scheduled(fixedRate = 10000)
     @Transactional
     public void periodicJudgement(){
-        if (sourcePoiList.isEmpty() ||  targetPoiList.isEmpty()) {
-            return;
-        }
-
         System.out.println("开始新一轮的POI判断周期...");
         // 对所有POI进行判断
 
+        // 1. 随机选取一个加工链段（包含了起点类型、终点类型和货物）
+        Optional<ProcessingChainSegmentSelection> selectionOpt = getRandomProcessingChainSegmentSelection();
+        if (selectionOpt.isEmpty() || selectionOpt.get().getGoods() == null) {
+            System.out.println("本轮未获取到有效的加工链段或货物为空，跳过");
+            return;
+        }
+
+        ProcessingChainSegmentSelection selection = selectionOpt.get();
+        Goods dynamicGoods = selection.getGoods();
+
+        // 2. 【核心优化】按需从数据库拉取对应类型的起点和终点 POI
+        // 这一步是高效的，因为利用了数据库的类型索引，比内存里全量过滤快得多
+        List<POI> dynamicSourcePois = getFilterdPOIByType(selection.getFromPoiType());
+        List<POI> dynamicTargetPois = getFilterdPOIByType(selection.getToPoiType());
+
+        if (dynamicSourcePois.isEmpty() || dynamicTargetPois.isEmpty()) {
+            System.out.println("警告：该加工链段对应的起点或终点POI列表为空，跳过本轮");
+            return;
+        }
+
+        System.out.println("🎯 本轮选中链段: [" + selection.getFromPoiType() + "] -> [" + selection.getToPoiType() +
+                "]，货物: " + dynamicGoods.getSku());
+
         // 1. 收集所有需要生成货物的POI
         List<POI> poisToGenerateGoods = new ArrayList<>();
-        for (POI poi : sourcePoiList) {
-            // 如果当前POI已经为真，跳过判断
-            if (poiIsWithGoods.get(poi)) {
-                continue;
+        for (POI poi : dynamicSourcePois) {
+            // 【核心优化】懒加载判断：如果字典里没有这个POI，默认它为 false（没货）
+            boolean hasGoods = poiIsWithGoods.getOrDefault(poi, false);
+            if (hasGoods) {
+                continue; // 肚子里有货还没运走，跳过
             }
 
             // 伪随机判断
             if (pseudoRandomJudgement(poi)) {
-                // 检查是否超过最大限度
+                // 检查是否超过了全局最大同时派货数量 (maxTrueCount)
                 if (canSetToTrue()) {
                     poisToGenerateGoods.add(poi);
                 }
@@ -478,10 +501,10 @@ public class DataInitializer{
 
         System.out.println("本轮有 " + poisToGenerateGoods.size() + " 个POI需要生成货物");
 
-        // 2. 批量获取空闲车辆（只查询一次）
-        String targetGoodsSku = currentGoods != null ? currentGoods.getSku() : "CEMENT";
-        List<Vehicle> allIdleVehicles = vehicleRepository.findBySuitableGoodsAndCurrentStatus(
-                targetGoodsSku, Vehicle.VehicleStatus.IDLE);
+        // 4. 批量获取空闲车辆（适配动态随机出来的货物）
+        String targetGoodsSku = dynamicGoods.getSku();
+        String targetVehicleType = dynamicGoods.getVehicleFit() != null ? dynamicGoods.getVehicleFit() : "载货车";
+        List<Vehicle> allIdleVehicles = vehicleRepository.findByCurrentStatus(Vehicle.VehicleStatus.IDLE);
 
         if (allIdleVehicles.isEmpty()) {
             System.out.println("警告：没有适配货物 " + targetGoodsSku + " 的空闲车辆，跳过此次周期");
@@ -498,8 +521,13 @@ public class DataInitializer{
                 trueProbability = trueProbability * 0.95;
 
                 // 随机获取终点POI
-                POI endPOI = this.targetPoiList.get(random.nextInt(this.targetPoiList.size()));
+                POI endPOI = dynamicTargetPois.get(random.nextInt(dynamicTargetPois.size()));
                 Integer generateQuantity = generateRandomQuantity();
+
+                POI managedStartPOI = poiRepository.findById(poi.getId())
+                        .orElseThrow(() -> new RuntimeException("起点POI状态失效"));
+                POI managedEndPOI = poiRepository.findById(endPOI.getId())
+                        .orElseThrow(() -> new RuntimeException("终点POI状态失效"));
 
                 // 从总空闲车辆列表中创建一个副本用于本次POI
                 List<Vehicle> availableVehicles = new ArrayList<>(allIdleVehicles);
@@ -507,16 +535,16 @@ public class DataInitializer{
                 // 计算需要的总重量
                 Double requiredWeight = currentGoods.getWeightPerUnit() * generateQuantity;
 
-                Route route = initializeRoute(poi, endPOI);
+                Route route = initializeRoute(managedStartPOI, managedEndPOI);
 
                 // 批量创建货物运输
                 Map<Vehicle, ShipmentItem> vehicleShipmentItemMap = createCompleteGoodsTransport(
-                        poi, endPOI, currentGoods, generateQuantity, availableVehicles);
+                        managedStartPOI, managedEndPOI, dynamicGoods, generateQuantity, availableVehicles);
 
                 List<Assignment> goalAssignments = initalizeAssignment(vehicleShipmentItemMap, route);
 
                 // 建立车辆分配关系
-                establishVehicleAssignmentRelationship(goalAssignments, poi, endPOI);
+                establishVehicleAssignmentRelationship(goalAssignments, managedStartPOI, managedEndPOI);
 
                 // 从总列表中移除已分配的车辆
                 for (Vehicle assignedVehicle : vehicleShipmentItemMap.keySet()) {
@@ -536,7 +564,7 @@ public class DataInitializer{
                                 break;
                             }
                         }
-                        createAssignmentStatusRecord(assignment, poi, endPOI, shipment);
+                        createAssignmentStatusRecord(assignment, managedStartPOI, managedEndPOI, shipment);
                     }
                 }
 
@@ -705,7 +733,7 @@ public class DataInitializer{
      */
     private void setPoiToTrue(POI poi) {
         poiIsWithGoods.put(poi, true);
-        poiTrueCount.put(poi, poiTrueCount.get(poi) + 1);
+        poiTrueCount.put(poi, poiTrueCount.getOrDefault(poi, 0) + 1);
     }
 
     /**
