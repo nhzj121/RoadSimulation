@@ -377,7 +377,6 @@ public class ShipmentServiceImpl implements ShipmentService {
     }
 
     private Integer generateRandomQuantity(Random random) {
-        // 保持原有的逻辑：生成 50 - 299 之间的随机数
         return random.nextInt(10) + 5;
     }
 

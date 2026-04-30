@@ -1,6 +1,7 @@
 package org.example.roadsimulation.controller;
 
 import jakarta.validation.Valid;
+import org.example.roadsimulation.DataInitializer;
 import org.example.roadsimulation.dto.ActiveShipmentSummaryDTO;
 import org.example.roadsimulation.dto.RouteMetricsResponse;
 import org.example.roadsimulation.dto.ShipmentProgressDTO;
@@ -19,6 +20,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -31,12 +33,15 @@ public class ShipmentController {
 
     private final ShipmentService shipmentService;
     private final ShipmentProgressService shipmentProgressService;
+    private final DataInitializer dataInitializer;
 
     @Autowired
     public ShipmentController(ShipmentService shipmentService,
-                              ShipmentProgressService shipmentProgressService) {
+                              ShipmentProgressService shipmentProgressService,
+                              DataInitializer dataInitializer) {
         this.shipmentService = shipmentService;
         this.shipmentProgressService = shipmentProgressService;
+        this.dataInitializer = dataInitializer;
     }
 
     // 1. 创建运单 - POST /api/shipments
@@ -213,6 +218,30 @@ public class ShipmentController {
     // ============================
     // 运单进度相关接口
     // ============================
+
+    /**
+     * 手动批量生成运单 (前端点击触发)
+     * POST /api/shipments/batch-generate
+     */
+    @PostMapping("/batch-generate")
+    public ResponseEntity<Map<String, Object>> batchGenerateShipments(@RequestBody Map<String, Integer> request) {
+        int count = request.getOrDefault("count", 0); // 默认生成0个
+        logger.info("收到手动批量生成运单请求，目标数量: {}", count);
+
+        try {
+            // 调用核心业务方法
+            int generatedCount = dataInitializer.generateManualShipments(count);
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("message", "成功生成 " + generatedCount + " 个运单并唤醒 VRP 大脑！");
+            response.put("count", generatedCount);
+            return ResponseEntity.ok(response);
+
+        } catch (Exception e) {
+            logger.error("手动批量生成运单失败", e);
+            return ResponseEntity.internalServerError().build();
+        }
+    }
 
     /**
      * 获取活跃运单列表（包含进度概览）
