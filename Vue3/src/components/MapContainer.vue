@@ -2214,7 +2214,7 @@ const drawTwoStageRouteForAssignment = async (assignment) => {
       position: [assignment.startLng, assignment.startLat],
       title: `装货点: ${assignment.startPOIName || '未知'}`,
       icon: new AMapLib.Icon({
-        image: factoryIcon,
+        image: getPOIIcon(assignment.startPOIType),
         size: new AMapLib.Size(24, 24),
         imageSize: new AMapLib.Size(24, 24)
       })
@@ -2227,7 +2227,7 @@ const drawTwoStageRouteForAssignment = async (assignment) => {
       position: [assignment.endLng, assignment.endLat],
       title: `卸货点: ${assignment.endPOIName || '未知'}`,
       icon: new AMapLib.Icon({
-        image: getPOIIcon('REST_AREA'),
+        image: getPOIIcon(assignment.startPOIType),
         size: new AMapLib.Size(24, 24),
         imageSize: new AMapLib.Size(24, 24)
       })
@@ -2429,15 +2429,27 @@ const drawMultiStageRouteForVrpAssignment = async (assignment) => {
       elements.push(polyline);
 
       // 画节点Marker
-      const iconType = targetNode.actionType === 'LOAD' ? factoryIcon : getPOIIcon('REST_AREA');
+      let actualPoiType = targetNode.poiType;
+
+      // 容错兜底：兼容旧的未透传 poiType 的缓存数据
+      if (!actualPoiType) {
+        actualPoiType = targetNode.actionType === 'LOAD' ? 'FURNITURE_FACTORY' : 'REST_AREA';
+      }
+
+      // 调用匹配引擎获取切图
+      const iconType = getPOIIcon(actualPoiType);
+
+      // 画节点Marker
       const nodeMarker = new AMapLib.Marker({
         position: [targetNode.lng, targetNode.lat],
         title: `${targetNode.actionType === 'LOAD' ? '装货' : '卸货'}: ${targetNode.poiName}`,
         icon: new AMapLib.Icon({
           image: iconType,
-          size: new AMapLib.Size(24, 24),
+          // 尺寸可以根据你切图的实际情况微调，24x24 或 32x32 均可
+          size: new AMapLib.Size(24,24),
           imageSize: new AMapLib.Size(24, 24)
-        })
+        }),
+        // offset: new AMapLib.Pixel(-16, -16) // 如果图标偏了，可以加这行调整中心锚点
       });
       nodeMarker.setMap(map);
       elements.push(nodeMarker);

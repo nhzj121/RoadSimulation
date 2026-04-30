@@ -504,7 +504,7 @@ public class DataInitializer implements CommandLineRunner {
         // 4. 批量获取空闲车辆（适配动态随机出来的货物）
         String targetGoodsSku = dynamicGoods.getSku();
         String targetVehicleType = dynamicGoods.getVehicleFit() != null ? dynamicGoods.getVehicleFit() : "载货车";
-        List<Vehicle> allIdleVehicles = vehicleRepository.findByCurrentStatus(Vehicle.VehicleStatus.IDLE);
+        List<Vehicle> allIdleVehicles = vehicleRepository.findByCurrentStatus(Vehicle.VehicleStatus.IDLE); // ToDo 只考虑车辆状态，暂时不考虑适配性
 
         if (allIdleVehicles.isEmpty()) {
             System.out.println("警告：没有适配货物 " + targetGoodsSku + " 的空闲车辆，跳过此次周期");
@@ -612,56 +612,89 @@ public class DataInitializer implements CommandLineRunner {
         }
     }
 
-//    /**
-//     * 周期性的重置判断 - 每12秒执行一次
-//     */
-//    //@Scheduled(fixedRate = 15000) // 12秒一个周期
-//    @Transactional
-//    public void periodicReset() {
-//        if (sourcePoiList.isEmpty() || targetPoiList.isEmpty()) {
-//            return;
-//        }
-//
-//        System.out.println("开始重置POI判断状态...");
-//
-//        // 随机选择一个为真的POI重置为假
-//        List<POI> truePois = getCurrentTruePois();
-//        if (!truePois.isEmpty()) {
-//            Random random = new Random();
-//            POI selectedPoi = truePois.get(random.nextInt(truePois.size()));
-//
-//            // 关键：从数据库中重新加载POI，而不是使用map中的旧引用
-//            POI freshSelectedPoi = poiRepository.findById(selectedPoi.getId())
-//                    .orElseThrow(() -> new RuntimeException("POI not found: " + selectedPoi.getId()));
-//
-//            // 使用重新加载的POI
-//            deleteRelationBetweenPOIAndGoods(selectedPoi);
-//
-//            // 更新映射关系
-//            POI correspondingEndPOI = null;
-//            for (Map.Entry<POI, POI> entry : startToEndMapping.entrySet()) {
-//                if (entry.getKey().getId().equals(freshSelectedPoi.getId())) {
-//                    correspondingEndPOI = entry.getValue();
-//                    break;
-//                }
-//            }
-//
-//            if (correspondingEndPOI != null) {
-//                startToEndMapping.keySet().removeIf(key -> key.getId().equals(freshSelectedPoi.getId()));
-//                System.out.println("同时移除对应的终点POI: " + correspondingEndPOI.getName());
-//            }
-//
-//            trueProbability = trueProbability / 0.95;
-//
-//            // 更新状态，使用freshSelectedPoi
-//            setPoiToFalse(selectedPoi);
-//            System.out.println("POI [" + freshSelectedPoi.getName() + "] 已被重置为假");
-//        } else{
-//            System.out.println("无可重置的POI数据");
-//        }
-//
-//        printCurrentStatus();
-//    }
+    /**
+     * 手动批量生成运单，同步生成库存，并直接唤醒 VRP 大脑派车
+     */
+    @Transactional
+    public int generateManualShipments(int count) {
+        int successCount = 0;
+        System.out.println("====== [手动干预] 开始批量生成 " + count + " 票随机运单 ======");
+
+        for (int i = 0; i < count; i++) {
+            try {
+                // 1. 从真实的加工链中随机抽取合法的业务线
+                Optional<ProcessingChainSegmentSelection> selectionOpt = getRandomProcessingChainSegmentSelection();
+                if (!selectionOpt.isPresent() || selectionOpt.get().getGoods() == null) {
+                    continue;
+                }
+                ProcessingChainSegmentSelection selection = selectionOpt.get();
+
+                // 2. 随机抽取具体的起点和终点 POI
+                List<POI> sourcePois = getFilterdPOIByType(selection.getFromPoiType());
+                List<POI> targetPois = getFilterdPOIByType(selection.getToPoiType());
+                if (sourcePois.isEmpty() || targetPois.isEmpty()) continue;
+
+                POI detachedStartPOI = sourcePois.get(random.nextInt(sourcePois.size()));
+                POI detachedEndPOI = targetPois.get(random.nextInt(targetPois.size()));
+
+                // 【架构级修复】：立刻将“游离态”洗白为“受管态(Managed)”，防止 Hibernate 报错
+                POI managedStartPOI = poiRepository.findById(detachedStartPOI.getId())
+                        .orElseThrow(() -> new RuntimeException("起点POI状态失效"));
+                POI managedEndPOI = poiRepository.findById(detachedEndPOI.getId())
+                        .orElseThrow(() -> new RuntimeException("终点POI状态失效"));
+
+                Goods goods = selection.getGoods();
+                Integer quantity = generateRandomQuantity();
+
+                // 3. 🚨 核心排雷：同步生成或累加起点的库存 (Enrollment)，防止车辆到达时结算空指针！
+                Optional<Enrollment> existingEnrollment = enrollmentRepository.findByPoiAndGoods(managedStartPOI, goods);
+                if (existingEnrollment.isPresent()) {
+                    Enrollment e = existingEnrollment.get();
+                    e.setQuantity(e.getQuantity() + quantity); // 累加库存
+                    enrollmentRepository.save(e);
+                } else {
+                    Enrollment newEnrollment = new Enrollment(managedStartPOI, goods, quantity);
+                    enrollmentRepository.save(newEnrollment);
+                    managedStartPOI.addGoodsEnrollment(newEnrollment); // 维护双向关系
+                }
+
+                // 4. 生成大运单 (Shipment)
+                Shipment shipment = initalizeShipment(managedStartPOI, managedEndPOI, goods, quantity);
+
+                // 5. 生成运单明细 (ShipmentItem)
+                ShipmentItem item = shipmentItemService.initalizeShipmentItem(shipment, goods, quantity);
+
+                // 🌟 最关键的一步：将状态设为 NOT_ASSIGNED，把它推入 VRP 算法的全局待接单池！
+                item.setStatus(ShipmentItem.ShipmentItemStatus.NOT_ASSIGNED);
+                shipmentItemRepository.save(item);
+
+                // 记录状态映射关系 (兼容你的旧系统缓存)
+                startToEndMapping.put(detachedStartPOI, detachedEndPOI);
+                String key = generatePoiPairKey(detachedStartPOI, detachedEndPOI);
+                poiPairShipmentMapping.put(key, shipment);
+                createPairStatus(detachedStartPOI, detachedEndPOI, shipment);
+
+                successCount++;
+            } catch (Exception e) {
+                System.err.println("❌ 手动生成单条运单失败: " + e.getMessage());
+            }
+        }
+
+        System.out.println("====== [手动干预] 生成结束，成功向路网注入: " + successCount + " 票运单 ======");
+
+        // 6. 🚀 打铁趁热：如果成功生成了货，立刻强制唤醒 VRP 大脑！
+        // 这样前端点完按钮，瞬间就能看到紫车（多点拼载车）蜂拥而出
+        if (successCount > 0) {
+            System.out.println("====== [手动干预] 正在强制唤醒 VRP 大脑进行瞬间吞吐... ======");
+            try {
+                vrpDispatchingCycle();
+            } catch (Exception e) {
+                System.err.println("❌ VRP 瞬间唤醒失败: " + e.getMessage());
+            }
+        }
+
+        return successCount;
+    }
 
     /**
      * 伪随机判断逻辑
@@ -1551,6 +1584,7 @@ public class DataInitializer implements CommandLineRunner {
                 nodeDTO.setSequenceIndex(node.getSequenceIndex());
                 nodeDTO.setPoiId(node.getPoi().getId());
                 nodeDTO.setPoiName(node.getPoi().getName());
+                nodeDTO.setPoiType(node.getPoi().getPoiType().name());
                 nodeDTO.setLng(node.getPoi().getLongitude());
                 nodeDTO.setLat(node.getPoi().getLatitude());
                 nodeDTO.setActionType(node.getActionType().name());

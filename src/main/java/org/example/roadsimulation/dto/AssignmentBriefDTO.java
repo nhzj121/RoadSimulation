@@ -115,6 +115,7 @@ public class AssignmentBriefDTO {
         private BigDecimal lng;        // 经度
         private BigDecimal lat;        // 纬度
         private String actionType;     // 动作类型 (LOAD / UNLOAD)
+        private String poiType;        // POI类型
         private Double weightDelta;    // 载重变化量 (正为装，负为卸)
         private Double volumeDelta;    // 体积变化量
     }

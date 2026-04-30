@@ -61,7 +61,7 @@ public class SimulationMainLoop {
         }
 
         if (simulationContext.getLoopCount() % 2 == 0) {
-            dataInitializer.generateGoods(simulationContext.getLoopCount());
+            // dataInitializer.generateGoods(simulationContext.getLoopCount());
         }
 
         if (simulationContext.getLoopCount() % 10 == 0) {
