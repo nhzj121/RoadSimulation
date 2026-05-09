@@ -1219,6 +1219,18 @@ class VrpVehicleAnimation extends VehicleAnimation {
       this._updateMarkerPosition();
     }
 
+    // 确保有初始值
+    let currentLoad = this.routeData.assignment.currentLoad || 0;
+    let currentVolume = this.routeData.assignment.currentVolume || 0;
+
+    // 累加 Delta 值 (装货是正数，卸货是负数)
+    currentLoad += (nodeInfo.weightDelta || 0);
+    currentVolume += (nodeInfo.volumeDelta || 0);
+
+    // 避免浮点数精度问题导致的负数
+    this.routeData.assignment.currentLoad = Math.max(0, currentLoad);
+    this.routeData.assignment.currentVolume = Math.max(0, currentVolume);
+
     // 触发装卸货动作
     const actionStatus = nodeInfo.actionType === 'LOAD' ? 'LOADING' : 'UNLOADING';
     if (this.statusManager) {
@@ -1868,6 +1880,20 @@ const updateVehicleInfo = async () => {
             lastArrivalPOI: null,
             recentlyArrived: false
           };
+
+          if (animationManager && animationManager.animations.has(assignment.assignmentId)) {
+            const activeAnimation = animationManager.animations.get(assignment.assignmentId);
+
+            // 取本地的状态和载重，而不是后端的死数据
+            if (vehicleStatusManager.value) {
+              vehicle.status = vehicleStatusManager.value.getVehicleStatus(assignment.vehicleId) || vehicle.status;
+            }
+
+            if (activeAnimation.routeData && activeAnimation.routeData.assignment) {
+              vehicle.currentLoad = activeAnimation.routeData.assignment.currentLoad || 0;
+              vehicle.currentVolume = activeAnimation.routeData.assignment.currentVolume || 0;
+            }
+          }
 
           // 计算载重/载容百分比
           vehicle.loadPercentage = vehicle.maxLoadCapacity > 0 ?

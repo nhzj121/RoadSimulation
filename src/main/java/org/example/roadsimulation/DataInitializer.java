@@ -1084,6 +1084,7 @@ public class DataInitializer implements CommandLineRunner {
 
             // 计算这辆车能运输的最大货物量
             Double maxLoad = selectedVehicle.getMaxLoadCapacity();
+            Double maxVolume = selectedVehicle.getCargoVolume();
             if (maxLoad == null || goods.getWeightPerUnit() == null) {
                 System.out.println("车辆 " + selectedVehicle.getLicensePlate() +
                         " 缺少载重信息，跳过");
@@ -1092,21 +1093,29 @@ public class DataInitializer implements CommandLineRunner {
             }
 
             // 计算车辆能承载的货物数量（考虑安全余量）
-            int capacityInUnits = (int) Math.floor(maxLoad / goods.getWeightPerUnit()) - 2;
+            int capacityByWeight = (int) Math.floor(maxLoad / goods.getWeightPerUnit());
+            int capacityByVolume = (int) Math.floor(maxVolume / goods.getVolumePerUnit());
+            int capacityInUnits = Math.min(capacityByWeight, capacityByVolume);
 
+            if (capacityInUnits <= 0) {
+                System.out.println("车辆 " + selectedVehicle.getLicensePlate() + " 安全容量不足，跳过");
+                candidateVehicles.remove(selectedVehicle);
+                continue;
+            }
             // 本次分配的数量 = min(车辆容量, 剩余货物量)
             int assignQuantity = Math.min(capacityInUnits, remainingQuantity);
 
             // ================== 新增：装载率拦截逻辑 ==================
             if (assignQuantity > 0) {
-                // 计算本次分配的预计装载率
-                double expectedLoadFactor = (assignQuantity * goods.getWeightPerUnit()) / maxLoad;
+                double expectedWeightFactor = (assignQuantity * goods.getWeightPerUnit()) / maxLoad;
+                double expectedVolumeFactor = (assignQuantity * goods.getVolumePerUnit()) / maxVolume;
 
-                // 假设阈值为 60% (0.6)
-                if (expectedLoadFactor < 0.60) {
-                    System.out.printf("拦截提醒: 车辆 %s 预计装载率仅为 %.1f%% (<60%%)，取消直接派车，转入全局待接单池%n",
-                            selectedVehicle.getLicensePlate(), expectedLoadFactor * 100);
-                    // 直接跳出循环。剩余的 remainingQuantity 会自然流转到下方的 (remainingQuantity > 0) 兜底逻辑中
+                // 只要 重量装载率 或 体积装载率 其中一个达到了 60%，就认为是可以发车的（考虑到泡货/重货的特性）
+                double bestLoadFactor = Math.max(expectedWeightFactor, expectedVolumeFactor);
+
+                if (bestLoadFactor < 0.60) {
+                    System.out.printf("拦截提醒: 车辆 %s 预计最高装载率仅为 %.1f%% (<60%%)，转入VRP池%n",
+                            selectedVehicle.getLicensePlate(), bestLoadFactor * 100);
                     break;
                 }
             }
@@ -1122,6 +1131,11 @@ public class DataInitializer implements CommandLineRunner {
                         .multiply(BigDecimal.valueOf(assignQuantity))
                         .setScale(2, RoundingMode.HALF_UP);
                 selectedVehicle.setCurrentLoad(assignedWeight.doubleValue());
+
+                BigDecimal assignedVolume = BigDecimal.valueOf(goods.getVolumePerUnit())
+                        .multiply(BigDecimal.valueOf(assignQuantity))
+                        .setScale(2, RoundingMode.HALF_UP);
+                selectedVehicle.setCurrentVolumn(assignedVolume.doubleValue());
 
                 POI endPOI = shipment.getDestPOI();
                 POI vehiclePOI = selectedVehicle.getCurrentPOI();
@@ -1315,13 +1329,14 @@ public class DataInitializer implements CommandLineRunner {
         // 3. 遍历每辆车，进行贪心拼载
         for (Vehicle vehicle : vrpVehicles) {
             double currentVehicleCapacity = vehicle.getMaxLoadCapacity() != null ? vehicle.getMaxLoadCapacity() : 0.0;
-            if (currentVehicleCapacity <= 0) continue;
-
+            double currentVehicleVolume = vehicle.getCargoVolume() != null ? vehicle.getCargoVolume() : 0.0;
+            if (currentVehicleCapacity <= 0 || currentVehicleVolume <= 0) continue;
             List<ShipmentItem> packedItems = new ArrayList<>();
             List<POI> pickupPois = new ArrayList<>();
             List<POI> dropoffPois = new ArrayList<>();
 
             double remainingCapacity = currentVehicleCapacity;
+            double remainingVolume = currentVehicleVolume; // 🌟 追踪剩余体积
             double currentSimulatedCost = 0.0;
 
             Iterator<ShipmentItem> iterator = pendingItems.iterator();
@@ -1329,7 +1344,10 @@ public class DataInitializer implements CommandLineRunner {
                 ShipmentItem item = iterator.next();
 
                 // 【第一关】：物理容量硬约束 (装不下直接跳过)
-                if (item.getWeight() > remainingCapacity) {
+                double itemWeight = item.getWeight() != null ? item.getWeight() : 0.0;
+                double itemVolume = item.getVolume() != null ? item.getVolume() : 0.0;
+
+                if (itemWeight > remainingCapacity || itemVolume > remainingVolume) {
                     continue;
                 }
 
@@ -1386,7 +1404,8 @@ public class DataInitializer implements CommandLineRunner {
                     pickupPois.add(itemOrigin);
                     dropoffPois.add(0, itemDest);
 
-                    remainingCapacity -= item.getWeight();
+                    remainingCapacity -= itemWeight;
+                    remainingVolume -= itemVolume;
                     currentSimulatedCost += marginalCost;
 
                     iterator.remove(); // 从全局池中移除
@@ -1447,8 +1466,10 @@ public class DataInitializer implements CommandLineRunner {
 
         // 更新车辆状态与载重
         double totalAssignedWeight = packedItems.stream().mapToDouble(ShipmentItem::getWeight).sum();
+        double totalAssignedVolume = packedItems.stream().mapToDouble(ShipmentItem::getVolume).sum();
         vehicle.setCurrentStatus(Vehicle.VehicleStatus.ORDER_DRIVING);
-        vehicle.setCurrentLoad(totalAssignedWeight);
+        vehicle.setCurrentLoad(0.0);
+        vehicle.setCurrentVolumn(0.0);
         vehicle.addAssignment(assignment);
         vehicleRepository.save(vehicle);
 
@@ -1567,6 +1588,8 @@ public class DataInitializer implements CommandLineRunner {
             brief.setVehicleStatus(vehicle.getCurrentStatus().toString());
             brief.setCurrentLoad(vehicle.getCurrentLoad());
             brief.setMaxLoadCapacity(vehicle.getMaxLoadCapacity());
+            brief.setCurrentVolume(vehicle.getCurrentVolumn());
+            brief.setMaxVolumeCapacity(vehicle.getCargoVolume());
 
             // 车辆初始位置 (VRP专车的当前位置)
             if (vehicle.getCurrentPOI() != null) {
@@ -2197,6 +2220,9 @@ public class DataInitializer implements CommandLineRunner {
             // 载重信息
             brief.setCurrentLoad(vehicle.getCurrentLoad());
             brief.setMaxLoadCapacity(vehicle.getMaxLoadCapacity());
+
+            brief.setCurrentVolume(vehicle.getCurrentVolumn());
+            brief.setMaxVolumeCapacity(vehicle.getCargoVolume());
 
             // 关键：获取车辆当前位置信息
             if (vehicle.getCurrentPOI() != null) {
