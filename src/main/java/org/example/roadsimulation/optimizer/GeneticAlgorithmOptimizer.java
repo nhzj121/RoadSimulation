@@ -117,6 +117,7 @@ public class GeneticAlgorithmOptimizer {
     private List<MatchingSolution> initPopulation(int S, int V, Random rng) {
         List<MatchingSolution> pop = new ArrayList<>(POPULATION_SIZE);
 
+        // ToDo 这里是进行按序号进行的直接分配？ 有考虑过超载问题吗？还是在后续处理？
         // 前20%使用轮询初始化（启发式，提升初代质量）
         int hCount = Math.max(1, POPULATION_SIZE / 5);
         for (int k = 0; k < hCount; k++) {
