@@ -2249,12 +2249,14 @@ public class DataInitializer implements CommandLineRunner {
         brief.setStartPOIName(startPOI.getName());
         brief.setStartLng(startPOI.getLongitude());
         brief.setStartLat(startPOI.getLatitude());
+        brief.setStartPOIType(startPOI.getPoiType().toString());
 
         // 终点信息
         brief.setEndPOIId(endPOI.getId());
         brief.setEndPOIName(endPOI.getName());
         brief.setEndLng(endPOI.getLongitude());
         brief.setEndLat(endPOI.getLatitude());
+        brief.setEndPOIType(endPOI.getPoiType().toString());
 
         // 货物信息
         Set<ShipmentItem> items = assignment.getShipmentItems();

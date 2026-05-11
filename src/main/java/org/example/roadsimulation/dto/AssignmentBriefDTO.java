@@ -3,6 +3,7 @@ package org.example.roadsimulation.dto;
 import lombok.Data;
 import lombok.Getter;
 import lombok.Setter;
+import org.example.roadsimulation.entity.POI;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -54,6 +55,8 @@ public class AssignmentBriefDTO {
     private BigDecimal startLng;
     @Setter @Getter
     private BigDecimal startLat;
+    @Setter @Getter
+    private String startPOIType;
 
     // 终点信息
     @Setter @Getter
@@ -64,6 +67,8 @@ public class AssignmentBriefDTO {
     private BigDecimal endLng;
     @Setter @Getter
     private BigDecimal endLat;
+    @Setter @Getter
+    private String endPOIType;
 
     // 载重信息
     @Setter @Getter

@@ -30,7 +30,7 @@
                   <ElSlider
                       v-model="speedFactor"
                       :min="1"
-                      :max="50"
+                      :max="100"
                       :step="1"
                       :format-tooltip="formatSpeedTooltip"
                       @change="onSpeedChange"
@@ -1395,7 +1395,7 @@ class VehicleAnimationManager {
 
   // 设置全局速度因子
   setGlobalSpeedFactor(factor) {
-    this.globalSpeedFactor = Math.max(1, Math.min(50, factor));
+    this.globalSpeedFactor = Math.max(1, Math.min(100, factor));
     this.animations.forEach(animation => {
       animation.updateSpeedFactor(this.globalSpeedFactor);
     });
@@ -1421,6 +1421,8 @@ class VehicleAnimationManager {
       console.log(`[VehicleAnimationManager] 更新车辆状态: ${vehicleId} -> ${status}`);
     }
   }
+
+
 
   // 获取活动动画数量
   getActiveCount() {
@@ -2253,7 +2255,7 @@ const drawTwoStageRouteForAssignment = async (assignment) => {
       position: [assignment.endLng, assignment.endLat],
       title: `卸货点: ${assignment.endPOIName || '未知'}`,
       icon: new AMapLib.Icon({
-        image: getPOIIcon(assignment.startPOIType),
+        image: getPOIIcon(assignment.endPOIType),
         size: new AMapLib.Size(24, 24),
         imageSize: new AMapLib.Size(24, 24)
       })
