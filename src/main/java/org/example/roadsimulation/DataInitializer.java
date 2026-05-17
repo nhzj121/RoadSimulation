@@ -848,6 +848,8 @@ public class DataInitializer implements CommandLineRunner {
 
     }
 
+    // ToDo 纯距离判断，需要修改
+
     /**
      * 智能选择车辆 - 基于距离和载重优化
      */
@@ -1067,6 +1069,7 @@ public class DataInitializer implements CommandLineRunner {
         while (remainingQuantity > 0 && !candidateVehicles.isEmpty()) {
             // 从候选车辆中选择最优车辆
             Double remainingWeight = goods.getWeightPerUnit() * remainingQuantity;
+            // ToDo 这个逻辑目前还不清楚有什么用，应该是要换成启发式或者Cost函数为基准，或者两个一起
             Vehicle selectedVehicle = selectOptimalVehicle(candidateVehicles, startPOI,
                     remainingWeight, remainingQuantity);
 
@@ -1144,7 +1147,6 @@ public class DataInitializer implements CommandLineRunner {
 
                 try {
                     try {
-                        // 加上 250 毫秒的延迟，完美避开高德的 5 QPS 限制
                         Thread.sleep(500);
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();

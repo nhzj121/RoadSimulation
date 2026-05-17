@@ -61,7 +61,7 @@ public class OptimizerBridge {
      *
      * @param shipment         运单（已保存到数据库）
      * @param goods            货物信息
-     * @param totalQuantity    本次需要运输的总件数
+     * @param totalQuantity    本次需要运输的总件数 -- 代码实现中就是一个运单的货物总件数
      * @param candidateVehicles 候选车辆列表（调用方已按 suitableGoods 和 IDLE 状态筛选）
      * @param startPOI         起点POI（用于日志）
      * @return Map<Vehicle, ShipmentItem>，可直接传入 initalizeAssignment()
@@ -84,13 +84,16 @@ public class OptimizerBridge {
         // ── Step1：筛选适配车辆 ──────────────────────────────────────
         List<Vehicle> compatibleVehicles = new ArrayList<>();
         for (Vehicle v : candidateVehicles) {
-            if (evaluator.isCompatible(v, goods)) { // ToDo 这个对应的逻辑要改，应该是货物对车
+            // ToDo 这个判断逻辑可能需要删除，看具体效果决定
+            //  （车辆的总数目可能不一定足够，所以可能只要是空车就可以装货）
+            if (evaluator.isCompatible(v, goods)) {
                 compatibleVehicles.add(v);
             }
         }
 
         if (compatibleVehicles.isEmpty()) {
             log.warn("[Optimizer] 无适配车辆（suitableGoods不匹配），降级到贪心策略");
+            // ToDo 具体代码逻辑要改
             return greedyFallback(shipment, goods, totalQuantity, candidateVehicles);
         }
 
@@ -110,10 +113,14 @@ public class OptimizerBridge {
             } else if (!gaSol.isFeasible() && saSol.isFeasible()) {
                 best = saSol;
                 log.info("[Optimizer] 选择 SA 方案（feasible）");
-            } else {
+            } else if (gaSol.isFeasible() && saSol.isFeasible()) {
+                // 两个都行，选便宜的
                 best = gaSol.getCost() <= saSol.getCost() ? gaSol : saSol;
-                log.info("[Optimizer] 选择 {} 方案 cost={:.1f} vs {:.1f}",
+                log.info("[Optimizer] 两个方案均可行，选择 {} cost={:.1f} vs {:.1f}",
                         best == gaSol ? "GA" : "SA", gaSol.getCost(), saSol.getCost());
+            } else {
+                // 两个都不行
+                return greedyFallback(shipment, goods, totalQuantity, compatibleVehicles);
             }
 
         } catch (Exception e) {
@@ -171,6 +178,7 @@ public class OptimizerBridge {
             }
         }
 
+        // ToDo 逻辑太旧了，新的需要加入运单池
         // 如果有未分配的货物，创建一条 null→ShipmentItem 的记录（与原贪心行为一致）
         int remaining = totalQuantity - assignedTotal;
         if (remaining > 0) {
@@ -190,6 +198,7 @@ public class OptimizerBridge {
      * 降级策略：贪心分配（当优化器失败时使用，保证系统不中断）
      * 逻辑与原 DataInitializer 中的贪心一致
      */
+    // ToDo 逻辑有问题，需要替换回DataInitializer里面的逻辑
     private Map<Vehicle, ShipmentItem> greedyFallback(
             Shipment shipment, Goods goods, int totalQuantity, List<Vehicle> vehicles) {
 
@@ -206,7 +215,7 @@ public class OptimizerBridge {
             if (remaining <= 0) break;
             Double maxLoad = vehicle.getMaxLoadCapacity();
             if (maxLoad == null || maxLoad <= 0) continue;
-            int cap = (int) Math.floor(maxLoad / goods.getWeightPerUnit()) - 2;
+            int cap = (int) Math.floor(maxLoad / goods.getWeightPerUnit());
             if (cap <= 0) continue;
             int assign = Math.min(cap, remaining);
             try {

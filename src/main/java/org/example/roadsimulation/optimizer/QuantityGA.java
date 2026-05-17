@@ -133,7 +133,9 @@ public class QuantityGA {
             if (!evaluator.isCompatible(v, goods)) continue;
             Double maxLoad = v.getMaxLoadCapacity();
             if (maxLoad == null || maxLoad <= 0) continue;
+            // 最大可以装的货物个数
             int cap = (int) Math.floor(maxLoad / goods.getWeightPerUnit());
+            // 实际装载的货物个数
             int assign = Math.min(cap, remaining);
             if (assign > 0) {
                 sol.setQuantity(j, assign);
@@ -150,7 +152,7 @@ public class QuantityGA {
         // 随机打乱车辆顺序，防止前几辆总是被优先分配
         List<Integer> order = new ArrayList<>();
         for (int j = 0; j < V; j++) order.add(j);
-        Collections.shuffle(order, rng);
+        Collections.shuffle(order, rng); // 打乱顺序
 
         for (int i = 0; i < order.size() - 1 && remaining > 0; i++) {
             int give = rng.nextInt(remaining + 1);

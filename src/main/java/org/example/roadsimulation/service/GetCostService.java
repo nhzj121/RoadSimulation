@@ -117,6 +117,7 @@ public class GetCostService {
 
         // 6. 计算总预测代价（你可以根据业务侧重点给 A、B、C、D 赋予不同的外层权重）
         // 这里默认它们权重为 1:1:1:1
+        // ToDo 权重之间绝对值差距过大，需要调整
         return simCostA + simCostB + simCostC + simCostD;
     }
 }
