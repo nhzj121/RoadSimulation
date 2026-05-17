@@ -174,7 +174,10 @@
                       <span class="cost-title">直接成本 (A)</span>
                       <span class="cost-value">{{ simulationCosts.costA.toFixed(2) }}</span>
                     </div>
-                    <span class="cost-desc">等待时间与空驶里程</span>
+                    <div class="cost-footer-row">
+                      <span class="cost-desc">等待时间与空驶里程</span>
+                      <ElButton link type="primary" size="small" @click="showChart('A')">趋势图</ElButton>
+                    </div>
                   </div>
 
                   <div class="cost-item">
@@ -182,7 +185,10 @@
                       <span class="cost-title">效率成本 (B)</span>
                       <span class="cost-value">{{ simulationCosts.costB.toFixed(2) }}</span>
                     </div>
-                    <span class="cost-desc">空驶率与等待率</span>
+                    <div class="cost-footer-row">
+                      <span class="cost-desc">空驶率与等待率</span>
+                      <ElButton link type="primary" size="small" @click="showChart('B')">趋势图</ElButton>
+                    </div>
                   </div>
 
                   <div class="cost-item">
@@ -190,7 +196,10 @@
                       <span class="cost-title">运能损耗 (C)</span>
                       <span class="cost-value">{{ simulationCosts.costC.toFixed(2) }}</span>
                     </div>
-                    <span class="cost-desc">理论与实际运能差</span>
+                    <div class="cost-footer-row">
+                      <span class="cost-desc">理论与实际运能差</span>
+                      <ElButton link type="primary" size="small" @click="showChart('C')">趋势图</ElButton>
+                    </div>
                   </div>
 
                   <div class="cost-item total-cost">
@@ -198,7 +207,10 @@
                       <span class="cost-title">经济损耗 (D)</span>
                       <span class="cost-value highlight-value">{{ simulationCosts.costD.toFixed(2) }}</span>
                     </div>
-                    <span class="cost-desc">油耗与固定损耗</span>
+                    <div class="cost-footer-row">
+                      <span class="cost-desc">油耗与固定损耗</span>
+                      <ElButton link type="primary" size="small" @click="showChart('D')">趋势图</ElButton>
+                    </div>
                   </div>
                 </div>
 
@@ -209,6 +221,19 @@
       </transition>
 
     </ElContainer>
+
+    <!-- 成本趋势图对话框 -->
+    <ElDialog
+      v-model="chartVisible"
+      :title="chartTitle"
+      width="600px"
+      @opened="initChart"
+      @closed="disposeChart"
+      destroy-on-close
+    >
+      <div ref="chartRef" style="width: 100%; height: 400px;"></div>
+    </ElDialog>
+
   </ElContainer>
 </template>
 
@@ -246,7 +271,8 @@ import {
   ElCheckTag,
   ElMessage,
   ElMessageBox,
-  ElSlider
+  ElSlider,
+  ElDialog
 } from "element-plus";
 import { InfoFilled } from '@element-plus/icons-vue'
 
@@ -421,6 +447,112 @@ const simulationCosts = reactive({
 });
 
 // 获取实时成本的接口请求
+const costHistory = reactive({
+  times: [],
+  costA: [],
+  costB: [],
+  costC: [],
+  costD: []
+});
+
+const chartVisible = ref(false);
+const chartTitle = ref('成本趋势');
+const chartRef = ref(null);
+const currentChartType = ref('A');
+let chartInstance = null;
+
+const costTitles = {
+  'A': '直接成本 (A) 趋势',
+  'B': '效率成本 (B) 趋势',
+  'C': '运能损耗 (C) 趋势',
+  'D': '经济损耗 (D) 趋势'
+};
+
+const showChart = (type) => {
+  currentChartType.value = type;
+  chartTitle.value = costTitles[type];
+  chartVisible.value = true;
+  
+  // 确保在对话框显示并且数据存在时更新图表
+  nextTick(() => {
+    if (chartInstance) {
+      updateChart();
+    }
+  });
+};
+
+const initChart = () => {
+  if (!chartRef.value) return;
+  // 先销毁旧的实例
+  if (chartInstance) {
+    chartInstance.dispose();
+  }
+  chartInstance = window.echarts.init(chartRef.value);
+  updateChart();
+};
+
+const disposeChart = () => {
+  if (chartInstance) {
+    chartInstance.dispose();
+    chartInstance = null;
+  }
+};
+
+const updateChart = () => {
+  if (!chartInstance) return;
+  
+  const typeMap = {
+    'A': costHistory.costA,
+    'B': costHistory.costB,
+    'C': costHistory.costC,
+    'D': costHistory.costD
+  };
+  
+  const data = typeMap[currentChartType.value] || [];
+  
+  const option = {
+    tooltip: {
+      trigger: 'axis',
+      formatter: '{b}<br/>{a}: {c}'
+    },
+    xAxis: {
+      type: 'category',
+      data: costHistory.times,
+      name: '时间'
+    },
+    yAxis: {
+      type: 'value',
+      name: '数值'
+    },
+    series: [
+      {
+        name: chartTitle.value,
+        type: 'line',
+        data: data,
+        smooth: true,
+        itemStyle: {
+          color: '#409eff'
+        },
+        areaStyle: {
+          color: new window.echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            { offset: 0, color: 'rgba(64,158,255,0.3)' },
+            { offset: 1, color: 'rgba(64,158,255,0.05)' }
+          ])
+        }
+      }
+    ]
+  };
+  
+  chartInstance.setOption(option);
+  
+  // 必须调用 resize 确保图表正常显示
+  setTimeout(() => {
+    if (chartInstance) {
+      chartInstance.resize();
+    }
+  }, 100);
+};
+
 const fetchSimulationCosts = async () => {
   try {
     const response = await request.get('/api/simulation/costs');
@@ -429,6 +561,29 @@ const fetchSimulationCosts = async () => {
       simulationCosts.costB = response.data.costB || 0;
       simulationCosts.costC = response.data.costC || 0;
       simulationCosts.costD = response.data.costD || 0;
+      
+      // 记录历史数据用于折线图
+      const now = new Date();
+      const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
+      
+      costHistory.times.push(timeStr);
+      costHistory.costA.push(simulationCosts.costA.toFixed(2));
+      costHistory.costB.push(simulationCosts.costB.toFixed(2));
+      costHistory.costC.push(simulationCosts.costC.toFixed(2));
+      costHistory.costD.push(simulationCosts.costD.toFixed(2));
+      
+      // 保持最多 60 个数据点 (比如8秒更新一次，即8分钟的数据)
+      if (costHistory.times.length > 60) {
+        costHistory.times.shift();
+        costHistory.costA.shift();
+        costHistory.costB.shift();
+        costHistory.costC.shift();
+        costHistory.costD.shift();
+      }
+      
+      if (chartVisible.value && chartInstance) {
+        updateChart();
+      }
     }
   } catch (error) {
     console.error('获取成本数据失败:', error);
@@ -3680,6 +3835,13 @@ onUnmounted(() => {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 6px;
+}
+
+.cost-footer-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 4px;
 }
 
 .cost-title {
