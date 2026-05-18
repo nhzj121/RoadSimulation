@@ -70,8 +70,8 @@ public class POI {
         AUTO_ASSEMBLY_PLANT        // 汽车总装厂
     }
 
-    @Enumerated(EnumType.STRING)
-    @Column(name = "poi_type", length = 20)
+    @Convert(converter = org.example.roadsimulation.converter.POITypeConverter.class)
+    @Column(name = "poi_type", length = 30)
     private POIType poiType; // POI 类型
 
     /**

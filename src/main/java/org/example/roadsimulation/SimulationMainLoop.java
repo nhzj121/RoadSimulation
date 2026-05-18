@@ -1,6 +1,7 @@
 package org.example.roadsimulation;
 
 import org.example.roadsimulation.core.SimulationContext;
+import org.example.roadsimulation.service.POIShipmentManager;
 import org.example.roadsimulation.service.ProcessingChainServiceV2;
 import org.example.roadsimulation.service.VehicleInitializationService;
 import org.example.roadsimulation.service.impl.StateUpdateService;
@@ -28,6 +29,9 @@ public class SimulationMainLoop {
 
     @Autowired
     private SimulationContext simulationContext;
+
+    @Autowired
+    private POIShipmentManager poiShipmentManager;
 
     @Autowired
     SimulationMainLoop(DataInitializer dataInitializer,
@@ -66,6 +70,15 @@ public class SimulationMainLoop {
 
         if (simulationContext.getLoopCount() % 10 == 0) {
             dataInitializer.printSimulationStatus(simulationContext.getLoopCount());
+            // 周期性超时检测：清理长时间未完成的运单，防止POI永久阻塞
+            try {
+                int expiredCount = poiShipmentManager.sweepExpiredShipments(120).size();
+                if (expiredCount > 0) {
+                    System.out.println("周期性超时清理: 释放了 " + expiredCount + " 个卡住的POI");
+                }
+            } catch (Exception e) {
+                System.err.println("超时清理执行异常: " + e.getMessage());
+            }
         }
 
         if (simulationContext.getLoopCount() != 0 && simulationContext.getLoopCount() % 3 == 0){
