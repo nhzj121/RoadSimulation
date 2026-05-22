@@ -23,6 +23,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.text.SimpleDateFormat;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
@@ -1039,7 +1040,7 @@ public class DataInitializer implements CommandLineRunner {
             BigDecimal weightPerUnitBD = new BigDecimal(goods.getWeightPerUnit().toString());
             BigDecimal quantityBD = new BigDecimal(quantity);
             BigDecimal totalWeightBD = weightPerUnitBD.multiply(quantityBD).setScale(2, RoundingMode.HALF_UP);
-            BigDecimal volumePerUnitBD = new BigDecimal(goods.getWeightPerUnit().toString());
+            BigDecimal volumePerUnitBD = new BigDecimal(goods.getVolumePerUnit().toString());
             BigDecimal totalVolumeBD = volumePerUnitBD.multiply(quantityBD).setScale(2, RoundingMode.HALF_UP);
             ShipmentItem shipmentItem = new ShipmentItem(
                     shipment,
@@ -1068,7 +1069,7 @@ public class DataInitializer implements CommandLineRunner {
 
     private String generateUniqueRefNo(String sku) {
         // 生成唯一refNo，例如: CEMENT_20240101_123456
-        String timestamp = new SimpleDateFormat("yyyyMMddHHmmss").format(new Date());
+        String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"));
         String random = String.format("%06d", new Random().nextInt(1000000));
         return sku + "_" + timestamp + "_" + random;
     }
@@ -1107,6 +1108,10 @@ public class DataInitializer implements CommandLineRunner {
         System.out.println("开始智能拆分货物，总数量: " + totalQuantity);
         System.out.println("候选车辆数量: " + candidateVehicles.size());
         System.out.println("货物总重量: " + (goods.getWeightPerUnit() * totalQuantity) + "吨");
+
+        double weightPerUnit = goods.getWeightPerUnit() != null ? goods.getWeightPerUnit() : 0.0;
+        double volumePerUnit = goods.getVolumePerUnit() != null ? goods.getVolumePerUnit() : 0.0;
+        System.out.println("货物总重量: " + (weightPerUnit * totalQuantity) + " 吨 | 总体积: " + (volumePerUnit * totalQuantity) + " m³");
 
         // ========== 1. 使用 CargoChunkService 预先拆分为标准块 ==========
         List<CargoChunk> chunks;
@@ -1148,14 +1153,33 @@ public class DataInitializer implements CommandLineRunner {
             Vehicle selectedVehicle = selectVehicleByCapacity(candidateVehicles, requiredWeight, requiredVolume);
 
             if (selectedVehicle == null) {
-                // 2b. 没找到车 → NOT_ASSIGNED，进 VRP 池
-                ShipmentItem item = shipmentItemService.initalizeShipmentItem(
-                        shipment, goods, chunkQty);
-                item.setStatus(ShipmentItem.ShipmentItemStatus.NOT_ASSIGNED);
-                shipmentItemRepository.save(item);
-                vehicleShipmentItemMap.put(null, item);
-                unassignedCount++;
-                System.out.println("块 " + chunk + " → VRP池（无匹配车辆）");
+                // 无法找到合适车辆 → 粉碎后进入 VRP 池
+                List<ShipmentItem> fragments = shipmentItemService.shatterChunkToVrpPool(shipment, goods, chunkQty);
+                if (fragments.isEmpty()) {
+                    // 货物数据异常，跳过本次块
+                    System.out.println("块 " + chunk + " 因货物数据异常，跳过生成");
+                    continue;
+                }
+                for (ShipmentItem frag : fragments) {
+                    vehicleShipmentItemMap.put(null, frag);
+                }
+                unassignedCount += fragments.size();
+                continue;
+            }
+
+            double loadFactor = Math.max(requiredWeight / selectedVehicle.getMaxLoadCapacity(),
+                    requiredVolume / selectedVehicle.getCargoVolume());
+            // 装载率过低 → 也粉碎
+            if (loadFactor < 0.6) {
+                List<ShipmentItem> fragments = shipmentItemService.shatterChunkToVrpPool(shipment, goods, chunkQty);
+                if (fragments.isEmpty()) {
+                    System.out.println("块 " + chunk + " 因货物数据异常，跳过生成");
+                    continue;
+                }
+                for (ShipmentItem frag : fragments) {
+                    vehicleShipmentItemMap.put(null, frag);
+                }
+                unassignedCount += fragments.size();
                 continue;
             }
 
@@ -1247,8 +1271,6 @@ public class DataInitializer implements CommandLineRunner {
             // 2g. 从候选列表移除已分配车辆
             candidateVehicles.remove(selectedVehicle);
 
-            double loadFactor = Math.max(requiredWeight / selectedVehicle.getMaxLoadCapacity(),
-                    requiredVolume / selectedVehicle.getCargoVolume());
             System.out.printf("车辆 %s (载重%.2ft) ← %s, 装载率=%.0f%%, 距离=%.2fkm%n",
                     selectedVehicle.getLicensePlate(), selectedVehicle.getMaxLoadCapacity(),
                     chunk, loadFactor * 100, mileage);
@@ -1284,6 +1306,38 @@ public class DataInitializer implements CommandLineRunner {
             }
         }
         return best;
+    }
+
+    /**
+     * 【核心粉碎引擎】辅助方法：将指定数量的大宗货块进行微粒度粉碎，无条件注入全局 VRP 待接单池
+     * * @param quantityToFragment 需要被打碎的总件数
+     * @param fragmentIdealQty 单个碎块容纳的最大标准件数（对应 <=1.4t 且 <=14m³）
+     * @return 最终粉碎生成的微运单块总数
+     */
+    private int fragmentAndAddToVrpPool(Shipment shipment, Goods goods, int quantityToFragment,
+                                        int fragmentIdealQty, Map<Vehicle, ShipmentItem> vehicleShipmentItemMap) {
+        int remaining = quantityToFragment;
+        int fragmentCount = 0;
+
+        while (remaining > 0) {
+            int currentFragmentQty = Math.min(fragmentIdealQty, remaining);
+
+            // 1. 独立实例化一个精细微颗粒度运单明细 (ShipmentItem)
+            ShipmentItem fragmentItem = shipmentItemService.initalizeShipmentItem(shipment, goods, currentFragmentQty);
+
+            // 2. 核心标记：状态洗白为 NOT_ASSIGNED，代表该碎片暴露在全局待拼载池中
+            fragmentItem.setStatus(ShipmentItem.ShipmentItemStatus.NOT_ASSIGNED);
+            shipmentItemRepository.save(fragmentItem);
+
+            // 3. 关键纽带：车辆绑定置为 null，推入待接单的大脑共享池
+            vehicleShipmentItemMap.put(null, fragmentItem);
+
+            remaining -= currentFragmentQty;
+            fragmentCount++;
+        }
+
+        System.out.println("   └─> 物理推演：已成功将大单粉碎为 " + fragmentCount + " 个微标准碎块（每块独立上限: " + fragmentIdealQty + " 件），无缝兼容极小车型。");
+        return fragmentCount;
     }
 
     @Transactional

@@ -2,6 +2,7 @@ package org.example.roadsimulation.service.impl;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.common.util.concurrent.RateLimiter;
 import org.example.roadsimulation.dto.GaodeRouteRequest;
 import org.example.roadsimulation.dto.GaodeRouteResponse;
 import org.example.roadsimulation.service.GaodeMapService;
@@ -9,6 +10,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.web.client.RestTemplateBuilder;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
@@ -23,6 +25,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
@@ -107,6 +110,8 @@ public class GaodeMapServiceImpl implements GaodeMapService {
         this.objectMapper = objectMapper;
     }
 
+    private final RateLimiter rateLimiter = RateLimiter.create(3.0);
+
     /**
      * 驾车路径规划
      *
@@ -116,7 +121,14 @@ public class GaodeMapServiceImpl implements GaodeMapService {
      * @return 路径规划响应
      */
     @Override
+    @Cacheable(value = "gaodeRoute", key = "#request.origin + '_' + #request.destination + '_' + #request.strategy", unless = "#result == null || !#result.success")
     public GaodeRouteResponse planDrivingRoute(GaodeRouteRequest request) {
+        // 1. 限流：尝试获取令牌，如果 500ms 内拿不到则快速失败
+        if (!rateLimiter.tryAcquire(1000, TimeUnit.MILLISECONDS)) {
+            logger.warn("高德 API 请求被限流，超过 QPS 限制 (3 req/s)");
+            return GaodeRouteResponse.error("请求过于频繁，请稍后重试");
+        }
+
         try {
             // 1. 构建高德请求 URL
             String url = buildDrivingRequestUrl(request);
