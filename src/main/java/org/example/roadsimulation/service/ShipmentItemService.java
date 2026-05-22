@@ -43,4 +43,7 @@ public interface ShipmentItemService {
     void deleteShipmentItem(Long shipmentItemId);
 
     ShipmentItem initalizeShipmentItem(Shipment shipment, Goods goods, Integer quantity);
+
+    // ShipmentItemService.java
+    List<ShipmentItem> shatterChunkToVrpPool(Shipment shipment, Goods goods, int totalQty);
 }

@@ -1,5 +1,6 @@
 package org.example.roadsimulation.service.impl;
 
+import lombok.extern.slf4j.Slf4j;
 import org.example.roadsimulation.dto.BatchOperationResult;
 import org.example.roadsimulation.dto.BatchError;
 import org.example.roadsimulation.entity.Assignment;
@@ -21,6 +22,7 @@ import java.util.stream.Collectors;
 
 @Service
 @Transactional
+@Slf4j
 public class ShipmentItemServiceImpl implements ShipmentItemService {
     private final ShipmentItemRepository shipmentItemRepository;
     private final ShipmentRepository shipmentRepository;
@@ -335,5 +337,41 @@ public class ShipmentItemServiceImpl implements ShipmentItemService {
             System.out.println("生成运单明细失败 - 运单: " + shipment.getRefNo() + ", 货物: " + goods.getName());
             throw new RuntimeException("生成运单明细失败", e);
         }
+    }
+
+    @Override
+    public List<ShipmentItem> shatterChunkToVrpPool(Shipment shipment, Goods goods, int totalQty) {
+        List<ShipmentItem> fragments = new ArrayList<>();
+
+        // 货物单位属性校验，若缺失则跳过（直接返回空列表，不生成任何碎片）
+        if (goods.getWeightPerUnit() == null || goods.getVolumePerUnit() == null) {
+            log.warn("货物 {} 缺少重量或体积信息，无法粉碎，跳过生成", goods.getSku());
+            return fragments;
+        }
+
+        // 硬编码粉碎上限：1.4 吨（小于最小车辆载重 1.475 吨，且留有余量）
+        final double MAX_FRAGMENT_WEIGHT = 1.4;
+        double weightPerUnit = goods.getWeightPerUnit();
+
+        // 计算每个碎片最多能装多少件
+        int maxQtyPerFragment = (int) Math.floor(MAX_FRAGMENT_WEIGHT / weightPerUnit);
+        if (maxQtyPerFragment <= 0) {
+            // 单件货物已经超过上限，只能一件作为一个碎片
+            maxQtyPerFragment = 1;
+        }
+
+        int remaining = totalQty;
+        while (remaining > 0) {
+            int qty = Math.min(maxQtyPerFragment, remaining);
+            ShipmentItem item = initalizeShipmentItem(shipment, goods, qty);
+            item.setStatus(ShipmentItem.ShipmentItemStatus.NOT_ASSIGNED);
+            shipmentItemRepository.save(item);
+            fragments.add(item);
+            remaining -= qty;
+        }
+
+        log.info("将 {} 件货物 {} 粉碎为 {} 个碎片（每碎片最多 {} 件，上限 {} 吨）",
+                totalQty, goods.getSku(), fragments.size(), maxQtyPerFragment, MAX_FRAGMENT_WEIGHT);
+        return fragments;
     }
 }
