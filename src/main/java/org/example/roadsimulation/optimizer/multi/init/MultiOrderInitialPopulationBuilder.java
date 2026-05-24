@@ -6,6 +6,8 @@ import org.example.roadsimulation.entity.Vehicle;
 import org.example.roadsimulation.optimizer.multi.MultiOrderSolution;
 import org.example.roadsimulation.optimizer.multi.NodeGene;
 import org.example.roadsimulation.optimizer.multi.VehicleRouteGene;
+import org.example.roadsimulation.optimizer.multi.ga.InsertionThresholdPolicy;
+import org.example.roadsimulation.optimizer.multi.ga.MutationConfig;
 import org.example.roadsimulation.optimizer.multi.insertion.FeasibleInsertionService;
 import org.example.roadsimulation.optimizer.multi.insertion.InsertionCandidate;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -35,10 +37,14 @@ public class MultiOrderInitialPopulationBuilder {
             List<ShipmentItem> pendingItems,
             List<Vehicle> vehicles,
             InitialPopulationConfig config,
+            MutationConfig mutationConfig,
             long seed
     ) {
         if (config == null) {
             config = new InitialPopulationConfig();
+        }
+        if (mutationConfig == null) {
+            mutationConfig = new MutationConfig();
         }
 
         validateInput(pendingItems, vehicles);
@@ -62,6 +68,7 @@ public class MultiOrderInitialPopulationBuilder {
                     vehicleOrder,
                     false,
                     config.getTopKInsertionChoice(),
+                    mutationConfig,
                     random
             );
 
@@ -83,6 +90,7 @@ public class MultiOrderInitialPopulationBuilder {
                     vehicleOrder,
                     true,
                     config.getTopKInsertionChoice(),
+                    mutationConfig,
                     random
             );
 
@@ -104,6 +112,7 @@ public class MultiOrderInitialPopulationBuilder {
                     vehicleOrder,
                     true,
                     config.getTopKInsertionChoice(),
+                    mutationConfig,
                     random
             );
 
@@ -123,6 +132,7 @@ public class MultiOrderInitialPopulationBuilder {
                     vehicleOrder,
                     true,
                     config.getTopKInsertionChoice(),
+                    mutationConfig,
                     random
             );
 
@@ -142,6 +152,7 @@ public class MultiOrderInitialPopulationBuilder {
             List<Vehicle> vehicles,
             boolean useTopKRandomChoice,
             int topK,
+            MutationConfig mutationConfig,
             Random random
     ) {
         Map<Long, Vehicle> vehicleMap = new LinkedHashMap<>();
@@ -172,6 +183,17 @@ public class MultiOrderInitialPopulationBuilder {
 
                 allCandidates.addAll(candidates);
             }
+
+            if (allCandidates.isEmpty()) {
+                unassigned.add(item.getId());
+                continue;
+            }
+
+            allCandidates = InsertionThresholdPolicy.filterAcceptable(
+                    allCandidates,
+                    item,
+                    mutationConfig
+            );
 
             if (allCandidates.isEmpty()) {
                 unassigned.add(item.getId());

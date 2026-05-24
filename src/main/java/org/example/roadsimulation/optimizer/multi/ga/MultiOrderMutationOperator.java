@@ -229,6 +229,17 @@ public class MultiOrderMutationOperator {
                 continue;
             }
 
+            allCandidates = InsertionThresholdPolicy.filterAcceptable(
+                    allCandidates,
+                    item,
+                    config
+            );
+
+            if (allCandidates.isEmpty()) {
+                working.unassignedItemIds.add(itemId);
+                continue;
+            }
+
             allCandidates.sort(Comparator.comparingDouble(InsertionCandidate::getScore));
 
             InsertionCandidate selected = chooseCandidate(allCandidates, config, random);
