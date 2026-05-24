@@ -37,6 +37,18 @@ public class MutationConfig {
     private int topKInsertionChoice = 3;
 
     /**
+     * Highest allowed added-distance-per-ton score for repair insertion.
+     * Non-positive or infinite values disable this threshold.
+     */
+    private double maxInsertionScore = 50.0;
+
+    /**
+     * Per waiting hour relaxation for maxInsertionScore.
+     * Example: 0.10 means the threshold grows by 10% per waiting hour.
+     */
+    private double insertionWaitingRelaxFactor = 0.10;
+
+    /**
      * 重插时选择最优位置的概率。
      * 其余概率从 Top-K 中随机选择。
      */
@@ -88,6 +100,22 @@ public class MutationConfig {
 
     public void setTopKInsertionChoice(int topKInsertionChoice) {
         this.topKInsertionChoice = topKInsertionChoice;
+    }
+
+    public double getMaxInsertionScore() {
+        return maxInsertionScore;
+    }
+
+    public void setMaxInsertionScore(double maxInsertionScore) {
+        this.maxInsertionScore = maxInsertionScore;
+    }
+
+    public double getInsertionWaitingRelaxFactor() {
+        return insertionWaitingRelaxFactor;
+    }
+
+    public void setInsertionWaitingRelaxFactor(double insertionWaitingRelaxFactor) {
+        this.insertionWaitingRelaxFactor = insertionWaitingRelaxFactor;
     }
 
     public double getBestInsertionProbability() {

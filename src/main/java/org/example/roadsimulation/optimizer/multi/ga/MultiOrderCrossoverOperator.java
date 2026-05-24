@@ -6,6 +6,7 @@ import org.example.roadsimulation.entity.Vehicle;
 import org.example.roadsimulation.optimizer.multi.MultiOrderSolution;
 import org.example.roadsimulation.optimizer.multi.NodeGene;
 import org.example.roadsimulation.optimizer.multi.VehicleRouteGene;
+import org.example.roadsimulation.optimizer.multi.cost.CostNormalizationConfig;
 import org.example.roadsimulation.optimizer.multi.insertion.FeasibleInsertionService;
 import org.example.roadsimulation.optimizer.multi.insertion.InsertionCandidate;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -41,10 +42,18 @@ public class MultiOrderCrossoverOperator {
             MultiOrderSolution parentB,
             List<ShipmentItem> allItems,
             List<Vehicle> vehicles,
+            CostNormalizationConfig costConfig,
+            MutationConfig mutationConfig,
             Random random
     ) {
         if (random == null) {
             random = new Random();
+        }
+        if (costConfig == null) {
+            costConfig = new CostNormalizationConfig();
+        }
+        if (mutationConfig == null) {
+            mutationConfig = new MutationConfig();
         }
 
         Map<Long, Vehicle> vehicleMap = toVehicleMap(vehicles);
@@ -59,7 +68,7 @@ public class MultiOrderCrossoverOperator {
 
         // 2. 从 parentA 继承一条优秀路线
         Optional<VehicleRouteGene> inheritedRouteOpt =
-                routeGeneSelector.selectBestNonEmptyRoute(parentA, vehicles, allItems);
+                routeGeneSelector.selectBestNonEmptyRoute(parentA, vehicles, allItems, costConfig);
 
         if (inheritedRouteOpt.isPresent()) {
             VehicleRouteGene inheritedRoute = inheritedRouteOpt.get();
@@ -111,6 +120,17 @@ public class MultiOrderCrossoverOperator {
                 continue;
             }
 
+            allCandidates = InsertionThresholdPolicy.filterAcceptable(
+                    allCandidates,
+                    item,
+                    mutationConfig
+            );
+
+            if (allCandidates.isEmpty()) {
+                unassigned.add(itemId);
+                continue;
+            }
+
             allCandidates.sort(Comparator.comparingDouble(InsertionCandidate::getScore));
 
             // 交叉修复阶段建议多数时候选最优，少量随机增强多样性
@@ -149,6 +169,8 @@ public class MultiOrderCrossoverOperator {
             MultiOrderSolution p2,
             List<ShipmentItem> allItems,
             List<Vehicle> vehicles,
+            CostNormalizationConfig costConfig,
+            MutationConfig mutationConfig,
             Random random
     ) {
         if (random == null) {
@@ -156,9 +178,9 @@ public class MultiOrderCrossoverOperator {
         }
 
         if (random.nextBoolean()) {
-            return crossover(p1, p2, allItems, vehicles, random);
+            return crossover(p1, p2, allItems, vehicles, costConfig, mutationConfig, random);
         } else {
-            return crossover(p2, p1, allItems, vehicles, random);
+            return crossover(p2, p1, allItems, vehicles, costConfig, mutationConfig, random);
         }
     }
 

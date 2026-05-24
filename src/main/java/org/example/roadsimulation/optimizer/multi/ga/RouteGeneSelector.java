@@ -7,6 +7,7 @@ import org.example.roadsimulation.entity.Vehicle;
 import org.example.roadsimulation.optimizer.multi.MultiOrderSolution;
 import org.example.roadsimulation.optimizer.multi.NodeGene;
 import org.example.roadsimulation.optimizer.multi.VehicleRouteGene;
+import org.example.roadsimulation.optimizer.multi.cost.CostNormalizationConfig;
 import org.example.roadsimulation.optimizer.multi.insertion.RouteSequenceCostEstimator;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -28,10 +29,15 @@ public class RouteGeneSelector {
     public Optional<VehicleRouteGene> selectBestNonEmptyRoute(
             MultiOrderSolution parent,
             List<Vehicle> vehicles,
-            List<ShipmentItem> items
+            List<ShipmentItem> items,
+            CostNormalizationConfig costConfig
     ) {
         if (parent == null || parent.getVehicleRoutes() == null) {
             return Optional.empty();
+        }
+
+        if (costConfig == null) {
+            costConfig = new CostNormalizationConfig();
         }
 
         Map<Long, Vehicle> vehicleMap = toVehicleMap(vehicles);
@@ -57,9 +63,8 @@ public class RouteGeneSelector {
             }
 
             List<AssignmentNode> nodes = toTempNodes(route, itemMap);
-            double distance = routeEstimator.estimateTotalDistanceKm(vehicle, nodes);
-
-            double score = distance / Math.max(servedCount, EPS);
+            double routeCost = computeRouteTransportCost(vehicle, nodes, costConfig);
+            double score = routeCost / Math.max(servedCount, EPS);
 
             if (score < bestScore) {
                 bestScore = score;
@@ -72,6 +77,72 @@ public class RouteGeneSelector {
                 : Optional.of(new VehicleRouteGene(bestRoute));
     }
 
+    private double computeRouteTransportCost(
+            Vehicle vehicle,
+            List<AssignmentNode> nodes,
+            CostNormalizationConfig config
+    ) {
+        if (vehicle == null || nodes == null || nodes.isEmpty()) {
+            return 0.0;
+        }
+
+        List<AssignmentNode> ordered = new ArrayList<>(nodes);
+        ordered.sort(Comparator.comparing(
+                AssignmentNode::getSequenceIndex,
+                Comparator.nullsLast(Integer::compareTo)
+        ));
+
+        double totalDistance = routeEstimator.estimateTotalDistanceKm(vehicle, ordered);
+
+        double emptyDistance = 0.0;
+        if (!ordered.isEmpty() && ordered.get(0).getPoi() != null) {
+            emptyDistance = routeEstimator.distanceFromVehicleToPoi(
+                    vehicle,
+                    ordered.get(0).getPoi()
+            );
+        }
+
+        double maxLoad = safe(vehicle.getMaxLoadCapacity());
+        double maxVolume = safe(vehicle.getCargoVolume());
+
+        double currentWeight = 0.0;
+        double currentVolume = 0.0;
+        double maxWeightOnRoute = 0.0;
+        double maxVolumeOnRoute = 0.0;
+        double loadedTonKm = 0.0;
+
+        for (int i = 0; i < ordered.size(); i++) {
+            AssignmentNode node = ordered.get(i);
+
+            currentWeight += safe(node.getWeightDelta());
+            currentVolume += safe(node.getVolumeDelta());
+
+            maxWeightOnRoute = Math.max(maxWeightOnRoute, currentWeight);
+            maxVolumeOnRoute = Math.max(maxVolumeOnRoute, currentVolume);
+
+            if (i < ordered.size() - 1) {
+                double segmentKm = routeEstimator.distanceBetweenPois(
+                        ordered.get(i).getPoi(),
+                        ordered.get(i + 1).getPoi()
+                );
+                loadedTonKm += Math.max(0.0, currentWeight) * segmentKm;
+            }
+        }
+
+        double theoreticalTonKm = maxLoad * totalDistance;
+        double capacityWaste = Math.max(0.0, theoreticalTonKm - loadedTonKm);
+
+        double weightUtilization = maxLoad > EPS ? maxWeightOnRoute / maxLoad : 0.0;
+        double volumeUtilization = maxVolume > EPS ? maxVolumeOnRoute / maxVolume : 0.0;
+        double effectiveUtilization = Math.max(weightUtilization, volumeUtilization);
+        double lowUtilPenalty = Math.max(0.0, config.getIdealUtilization() - effectiveUtilization);
+
+        return config.getDistanceWeight() * normalize(totalDistance, config.getDistanceNormKm())
+                + config.getEmptyDistanceWeight() * normalize(emptyDistance, config.getEmptyDistanceNormKm())
+                + config.getCapacityWasteWeight() * normalize(capacityWaste, config.getCapacityWasteNormTonKm())
+                + config.getLowUtilizationWeight() * normalize(lowUtilPenalty, config.getLowUtilNorm());
+    }
+
     private int countServedItems(VehicleRouteGene route) {
         Set<Long> ids = new HashSet<>();
         for (NodeGene node : route.getNodes()) {
@@ -80,6 +151,17 @@ public class RouteGeneSelector {
             }
         }
         return ids.size();
+    }
+
+    private double normalize(double value, double norm) {
+        if (norm <= EPS) {
+            return value;
+        }
+        return value / norm;
+    }
+
+    private double safe(Double value) {
+        return value == null ? 0.0 : value;
     }
 
     private List<AssignmentNode> toTempNodes(

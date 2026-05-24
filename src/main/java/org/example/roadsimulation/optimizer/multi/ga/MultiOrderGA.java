@@ -75,6 +75,7 @@ public class MultiOrderGA {
                         pendingItems,
                         vehicles,
                         initConfig,
+                        mutationConfig,
                         seed
                 );
 
@@ -111,6 +112,8 @@ public class MultiOrderGA {
                             parent2,
                             pendingItems,
                             vehicles,
+                            costConfig,
+                            mutationConfig,
                             random
                     );
 
