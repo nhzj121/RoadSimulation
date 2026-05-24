@@ -343,35 +343,58 @@ public class ShipmentItemServiceImpl implements ShipmentItemService {
     public List<ShipmentItem> shatterChunkToVrpPool(Shipment shipment, Goods goods, int totalQty) {
         List<ShipmentItem> fragments = new ArrayList<>();
 
-        // 货物单位属性校验，若缺失则跳过（直接返回空列表，不生成任何碎片）
-        if (goods.getWeightPerUnit() == null || goods.getVolumePerUnit() == null) {
-            log.warn("货物 {} 缺少重量或体积信息，无法粉碎，跳过生成", goods.getSku());
+        if (shipment == null || goods == null || totalQty <= 0) {
+            log.warn("粉碎参数非法: shipment={}, goods={}, totalQty={}",
+                    shipment != null ? shipment.getId() : null,
+                    goods != null ? goods.getSku() : null,
+                    totalQty);
             return fragments;
         }
 
-        // 硬编码粉碎上限：1.4 吨（小于最小车辆载重 1.475 吨，且留有余量）
-        final double MAX_FRAGMENT_WEIGHT = 1.4;
-        double weightPerUnit = goods.getWeightPerUnit();
+        Double weightPerUnitObj = goods.getWeightPerUnit();
+        Double volumePerUnitObj = goods.getVolumePerUnit();
 
-        // 计算每个碎片最多能装多少件
-        int maxQtyPerFragment = (int) Math.floor(MAX_FRAGMENT_WEIGHT / weightPerUnit);
+        if (weightPerUnitObj == null || volumePerUnitObj == null
+                || weightPerUnitObj <= 0 || volumePerUnitObj <= 0) {
+            log.warn("货物 {} 缺少有效重量或体积信息，无法粉碎，跳过生成", goods.getSku());
+            return fragments;
+        }
+
+        final double MAX_FRAGMENT_WEIGHT = 1.4;
+        final double MAX_FRAGMENT_VOLUME = 14.0;
+
+        double weightPerUnit = weightPerUnitObj;
+        double volumePerUnit = volumePerUnitObj;
+
+        int maxQtyByWeight = (int) Math.floor(MAX_FRAGMENT_WEIGHT / weightPerUnit);
+        int maxQtyByVolume = (int) Math.floor(MAX_FRAGMENT_VOLUME / volumePerUnit);
+
+        int maxQtyPerFragment = Math.min(maxQtyByWeight, maxQtyByVolume);
+
         if (maxQtyPerFragment <= 0) {
-            // 单件货物已经超过上限，只能一件作为一个碎片
+            // 单件已经超过 VRP 安全碎片上限。
+            // 注意：这里不能再假装它是安全 VRP 碎片，只能单件进入异常池或特殊调度池。
             maxQtyPerFragment = 1;
+            log.warn("货物 {} 单件超过 VRP 安全碎片阈值: weight={}t, volume={}m³",
+                    goods.getSku(), weightPerUnit, volumePerUnit);
         }
 
         int remaining = totalQty;
         while (remaining > 0) {
             int qty = Math.min(maxQtyPerFragment, remaining);
+
             ShipmentItem item = initalizeShipmentItem(shipment, goods, qty);
             item.setStatus(ShipmentItem.ShipmentItemStatus.NOT_ASSIGNED);
             shipmentItemRepository.save(item);
+
             fragments.add(item);
             remaining -= qty;
         }
 
-        log.info("将 {} 件货物 {} 粉碎为 {} 个碎片（每碎片最多 {} 件，上限 {} 吨）",
-                totalQty, goods.getSku(), fragments.size(), maxQtyPerFragment, MAX_FRAGMENT_WEIGHT);
+        log.info("将 {} 件货物 {} 粉碎为 {} 个 VRP 碎片，每片最多 {} 件，阈值={}t/{}m³",
+                totalQty, goods.getSku(), fragments.size(), maxQtyPerFragment,
+                MAX_FRAGMENT_WEIGHT, MAX_FRAGMENT_VOLUME);
+
         return fragments;
     }
 }

@@ -2324,6 +2324,150 @@ public class DataInitializer implements CommandLineRunner {
         assignmentBriefMap.put(assignment.getId(), brief);
     }
 
+    public void registerAssignmentForFrontend(Assignment assignment) {
+        if (assignment == null || assignment.getId() == null) {
+            System.err.println("[FrontendAssignment] skip register: assignment is null or has no id");
+            return;
+        }
+
+        try {
+            AssignmentBriefDTO brief = new AssignmentBriefDTO();
+            brief.setAssignmentId(assignment.getId());
+            brief.setStatus(assignment.getStatus() != null ? assignment.getStatus().toString() : "WAITING");
+            brief.setCreatedTime(assignment.getCreatedTime());
+            brief.setStartTime(assignment.getStartTime());
+            brief.setDrawn(false);
+
+            boolean hasNodes = assignment.getNodes() != null && !assignment.getNodes().isEmpty();
+            brief.setVrp(hasNodes);
+
+            Vehicle vehicle = assignment.getAssignedVehicle();
+            if (vehicle != null) {
+                brief.setVehicleId(vehicle.getId());
+                brief.setLicensePlate(vehicle.getLicensePlate());
+                brief.setVehicleStatus(vehicle.getCurrentStatus() != null
+                        ? vehicle.getCurrentStatus().toString()
+                        : "IDLE");
+                brief.setCurrentLoad(vehicle.getCurrentLoad());
+                brief.setMaxLoadCapacity(vehicle.getMaxLoadCapacity());
+                brief.setCurrentVolume(vehicle.getCurrentVolumn());
+                brief.setMaxVolumeCapacity(vehicle.getCargoVolume());
+
+                if (vehicle.getCurrentPOI() != null) {
+                    brief.setVehicleStartLng(vehicle.getCurrentPOI().getLongitude().doubleValue());
+                    brief.setVehicleStartLat(vehicle.getCurrentPOI().getLatitude().doubleValue());
+                } else if (vehicle.getCurrentLongitude() != null && vehicle.getCurrentLatitude() != null) {
+                    brief.setVehicleStartLng(vehicle.getCurrentLongitude().doubleValue());
+                    brief.setVehicleStartLat(vehicle.getCurrentLatitude().doubleValue());
+                }
+            }
+
+            POI startPOI = assignment.getOriginPOI();
+            POI endPOI = assignment.getDestPOI();
+
+            if (startPOI == null || endPOI == null) {
+                List<AssignmentNode> orderedNodes = assignment.getNodes() != null
+                        ? new ArrayList<>(assignment.getNodes())
+                        : new ArrayList<>();
+                orderedNodes.sort(Comparator.comparing(
+                        AssignmentNode::getSequenceIndex,
+                        Comparator.nullsLast(Integer::compareTo)
+                ));
+
+                if (startPOI == null && !orderedNodes.isEmpty()) {
+                    startPOI = orderedNodes.get(0).getPoi();
+                }
+                if (endPOI == null && !orderedNodes.isEmpty()) {
+                    endPOI = orderedNodes.get(orderedNodes.size() - 1).getPoi();
+                }
+            }
+
+            if (startPOI != null) {
+                brief.setStartPOIId(startPOI.getId());
+                brief.setStartPOIName(startPOI.getName());
+                brief.setStartLng(startPOI.getLongitude());
+                brief.setStartLat(startPOI.getLatitude());
+                brief.setStartPOIType(startPOI.getPoiType() != null ? startPOI.getPoiType().toString() : null);
+            }
+
+            if (endPOI != null) {
+                brief.setEndPOIId(endPOI.getId());
+                brief.setEndPOIName(endPOI.getName());
+                brief.setEndLng(endPOI.getLongitude());
+                brief.setEndLat(endPOI.getLatitude());
+                brief.setEndPOIType(endPOI.getPoiType() != null ? endPOI.getPoiType().toString() : null);
+            }
+
+            Set<ShipmentItem> items = assignment.getShipmentItems();
+            if (items != null && !items.isEmpty()) {
+                ShipmentItem firstItem = items.iterator().next();
+                brief.setGoodsName(firstItem.getName());
+                brief.setQuantity(firstItem.getQty());
+
+                if (firstItem.getGoods() != null) {
+                    Goods goods = firstItem.getGoods();
+                    brief.setGoodsWeightPerUnit(goods.getWeightPerUnit());
+                    brief.setGoodsVolumePerUnit(goods.getVolumePerUnit());
+                }
+
+                if (firstItem.getShipment() != null) {
+                    brief.setShipmentRefNo(firstItem.getShipment().getRefNo());
+                }
+            }
+
+            if (hasNodes) {
+                List<AssignmentNode> orderedNodes = new ArrayList<>(assignment.getNodes());
+                orderedNodes.sort(Comparator.comparing(
+                        AssignmentNode::getSequenceIndex,
+                        Comparator.nullsLast(Integer::compareTo)
+                ));
+
+                List<AssignmentBriefDTO.NodeDTO> nodeDTOs = new ArrayList<>();
+                for (AssignmentNode node : orderedNodes) {
+                    if (node == null || node.getPoi() == null || node.getActionType() == null) {
+                        continue;
+                    }
+
+                    AssignmentBriefDTO.NodeDTO nodeDTO = new AssignmentBriefDTO.NodeDTO();
+                    nodeDTO.setSequenceIndex(node.getSequenceIndex());
+                    nodeDTO.setPoiId(node.getPoi().getId());
+                    nodeDTO.setPoiName(node.getPoi().getName());
+                    nodeDTO.setPoiType(node.getPoi().getPoiType() != null ? node.getPoi().getPoiType().name() : null);
+                    nodeDTO.setLng(node.getPoi().getLongitude());
+                    nodeDTO.setLat(node.getPoi().getLatitude());
+                    nodeDTO.setActionType(node.getActionType().name());
+                    nodeDTO.setWeightDelta(node.getWeightDelta());
+                    nodeDTO.setVolumeDelta(node.getVolumeDelta());
+                    nodeDTOs.add(nodeDTO);
+                }
+                brief.setNodes(nodeDTOs);
+            }
+
+            if (startPOI != null && endPOI != null) {
+                brief.setPairId(generatePairKey(startPOI, endPOI));
+            } else {
+                brief.setPairId("ASSIGNMENT_" + assignment.getId());
+            }
+
+            assignmentBriefMap.put(assignment.getId(), brief);
+
+            AssignmentStatusDTO status = new AssignmentStatusDTO(
+                    assignment.getId(),
+                    brief.getPairId(),
+                    vehicle != null ? vehicle.getId() : null,
+                    null
+            );
+            assignmentStatusMap.put("ASSIGNMENT_" + assignment.getId(), status);
+
+            System.out.println("[FrontendAssignment] registered assignment " + assignment.getId()
+                    + ", vrp=" + hasNodes
+                    + ", nodes=" + (brief.getNodes() != null ? brief.getNodes().size() : 0));
+        } catch (Exception e) {
+            System.err.println("[FrontendAssignment] register failed for assignment "
+                    + assignment.getId() + ": " + e.getMessage());
+        }
+    }
+
     // 创建 AssignmentBriefDTO
     private AssignmentBriefDTO createAssignmentBriefDTO(Assignment assignment, POI startPOI, POI endPOI, Shipment shipment) {
         AssignmentBriefDTO brief = new AssignmentBriefDTO();

@@ -4,6 +4,7 @@ import org.example.roadsimulation.core.SimulationContext;
 import org.example.roadsimulation.service.POIShipmentManager;
 import org.example.roadsimulation.service.ProcessingChainServiceV2;
 import org.example.roadsimulation.service.VehicleInitializationService;
+import org.example.roadsimulation.service.impl.SimulationDispatchRouter;
 import org.example.roadsimulation.service.impl.StateUpdateService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -32,6 +33,9 @@ public class SimulationMainLoop {
 
     @Autowired
     private POIShipmentManager poiShipmentManager;
+
+    @Autowired
+    private SimulationDispatchRouter simulationDispatchRouter;
 
     @Autowired
     SimulationMainLoop(DataInitializer dataInitializer,
@@ -82,7 +86,7 @@ public class SimulationMainLoop {
         }
 
         if (simulationContext.getLoopCount() != 0 && simulationContext.getLoopCount() % 3 == 0){
-            dataInitializer.vrpDispatchingCycle();
+            simulationDispatchRouter.dispatch();
         }
 
         // 加工链进度更新
