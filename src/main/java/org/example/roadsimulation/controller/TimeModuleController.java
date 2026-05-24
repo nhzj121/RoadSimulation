@@ -1,6 +1,7 @@
 package org.example.roadsimulation.controller;
 
 import org.example.roadsimulation.SimulationMainLoop;
+import org.example.roadsimulation.service.GaodeRoutePlanningQueueService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
@@ -19,10 +20,15 @@ import java.util.Map;
 public class TimeModuleController {
 
     private final SimulationMainLoop simulationMainLoop;
+    private final GaodeRoutePlanningQueueService gaodeRoutePlanningQueueService;
 
     @Autowired
-    public TimeModuleController(SimulationMainLoop simulationMainLoop) {
+    public TimeModuleController(
+            SimulationMainLoop simulationMainLoop,
+            GaodeRoutePlanningQueueService gaodeRoutePlanningQueueService
+    ) {
         this.simulationMainLoop = simulationMainLoop;
+        this.gaodeRoutePlanningQueueService = gaodeRoutePlanningQueueService;
     }
 
     /**
@@ -30,6 +36,7 @@ public class TimeModuleController {
      */
     @PostMapping("/start")
     public Map<String, Object> startSimulation() {
+        gaodeRoutePlanningQueueService.resume();
         simulationMainLoop.start();
         return createResponse("模拟已启动");
     }
@@ -40,6 +47,7 @@ public class TimeModuleController {
     @PostMapping("/pause")
     public Map<String, Object> pauseSimulation() {
         simulationMainLoop.stop();
+        gaodeRoutePlanningQueueService.pause();
         return createResponse("模拟已暂停");
     }
 
@@ -49,6 +57,7 @@ public class TimeModuleController {
      */
     @PostMapping("/resume")
     public Map<String, Object> resumeSimulation() {
+        gaodeRoutePlanningQueueService.resume();
         simulationMainLoop.start();
         return createResponse("模拟已恢复");
     }
@@ -115,6 +124,9 @@ public class TimeModuleController {
         status.put("loopCount", simulationMainLoop.getLoopCount());
         status.put("minutesPerLoop", simulationMainLoop.getMinutesPerLoop());
         status.put("isRunning", simulationMainLoop.isRunning());
+        status.put("routeQueueSize", gaodeRoutePlanningQueueService.getQueueSize());
+        status.put("routeQueuePaused", gaodeRoutePlanningQueueService.isPaused());
+        status.put("routeQueueGeneration", gaodeRoutePlanningQueueService.getGeneration());
         return status;
     }
 
@@ -128,6 +140,9 @@ public class TimeModuleController {
         response.put("loopCount", simulationMainLoop.getLoopCount());
         response.put("minutesPerLoop", simulationMainLoop.getMinutesPerLoop());
         response.put("isRunning", simulationMainLoop.isRunning());
+        response.put("routeQueueSize", gaodeRoutePlanningQueueService.getQueueSize());
+        response.put("routeQueuePaused", gaodeRoutePlanningQueueService.isPaused());
+        response.put("routeQueueGeneration", gaodeRoutePlanningQueueService.getGeneration());
         return response;
     }
 }

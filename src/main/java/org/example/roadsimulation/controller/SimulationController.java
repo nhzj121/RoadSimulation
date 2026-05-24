@@ -11,6 +11,7 @@ import org.example.roadsimulation.entity.Route;
 import org.example.roadsimulation.entity.Vehicle;
 import org.example.roadsimulation.repository.AssignmentRepository;
 import org.example.roadsimulation.repository.POIRepository;
+import org.example.roadsimulation.service.GaodeRoutePlanningQueueService;
 import org.example.roadsimulation.service.GetCostService;
 import org.example.roadsimulation.service.impl.VehicleInitializationServiceImpl;
 import org.slf4j.Logger;
@@ -47,12 +48,16 @@ public class SimulationController {
     @Autowired
     private GetCostService getCostService;
 
+    @Autowired
+    private GaodeRoutePlanningQueueService gaodeRoutePlanningQueueService;
+
     @PostMapping("/start")
     public ApiResponse<Map<String, Object>> startSimulation(
             @RequestBody(required = false) StartSimulationRequest request
     ) {
         DispatchStrategy dispatchStrategy = resolveDispatchStrategy(request);
         simulationRuntimeConfig.setDispatchStrategy(dispatchStrategy);
+        gaodeRoutePlanningQueueService.resume();
         simulationMainLoop.start();
         return ApiResponse.success("simulation started", buildRuntimeConfigResponse());
     }
@@ -60,12 +65,14 @@ public class SimulationController {
     @PostMapping("/stop")
     public ApiResponse<String> stopSimulation() {
         simulationMainLoop.stop();
+        gaodeRoutePlanningQueueService.pause();
         return ApiResponse.success("simulation stopped");
     }
 
     @PostMapping("/reset")
     public ApiResponse<String> resetSimulation() {
         simulationMainLoop.reset();
+        gaodeRoutePlanningQueueService.reset();
         return ApiResponse.success("simulation reset");
     }
 
@@ -152,6 +159,9 @@ public class SimulationController {
         response.put("running", simulationMainLoop.isRunning());
         response.put("loopCount", simulationMainLoop.getLoopCount());
         response.put("simNow", simulationMainLoop.getCurrentSimTime());
+        response.put("routeQueueSize", gaodeRoutePlanningQueueService.getQueueSize());
+        response.put("routeQueuePaused", gaodeRoutePlanningQueueService.isPaused());
+        response.put("routeQueueGeneration", gaodeRoutePlanningQueueService.getGeneration());
         return response;
     }
 
