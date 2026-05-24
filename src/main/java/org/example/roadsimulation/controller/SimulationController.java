@@ -1,9 +1,9 @@
 package org.example.roadsimulation.controller;
 
-import lombok.Getter;
-import lombok.Setter;
 import org.example.roadsimulation.DataInitializer;
 import org.example.roadsimulation.SimulationMainLoop;
+import org.example.roadsimulation.config.DispatchStrategy;
+import org.example.roadsimulation.config.SimulationRuntimeConfig;
 import org.example.roadsimulation.dto.ApiResponse;
 import org.example.roadsimulation.entity.Assignment;
 import org.example.roadsimulation.entity.POI;
@@ -11,10 +11,7 @@ import org.example.roadsimulation.entity.Route;
 import org.example.roadsimulation.entity.Vehicle;
 import org.example.roadsimulation.repository.AssignmentRepository;
 import org.example.roadsimulation.repository.POIRepository;
-import org.example.roadsimulation.repository.VehicleRepository;
 import org.example.roadsimulation.service.GetCostService;
-import org.example.roadsimulation.service.POIService;
-import org.example.roadsimulation.service.VehicleService;
 import org.example.roadsimulation.service.impl.VehicleInitializationServiceImpl;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,19 +20,17 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/simulation")
 public class SimulationController {
-    @Autowired
-    private SimulationMainLoop simulationMainLoop;
+
+    private static final Logger logger = LoggerFactory.getLogger(VehicleInitializationServiceImpl.class);
 
     @Autowired
-    private VehicleRepository vehicleRepository;
+    private SimulationMainLoop simulationMainLoop;
 
     @Autowired
     private AssignmentRepository assignmentRepository;
@@ -46,94 +41,78 @@ public class SimulationController {
     @Autowired
     private DataInitializer dataInitializer;
 
-    private static final Logger logger = LoggerFactory.getLogger(VehicleInitializationServiceImpl.class);
+    @Autowired
+    private SimulationRuntimeConfig simulationRuntimeConfig;
 
-    /*
-    启动仿真
-     */
+    @Autowired
+    private GetCostService getCostService;
+
     @PostMapping("/start")
-    public ApiResponse<String> startSimulation(){
+    public ApiResponse<Map<String, Object>> startSimulation(
+            @RequestBody(required = false) StartSimulationRequest request
+    ) {
+        DispatchStrategy dispatchStrategy = resolveDispatchStrategy(request);
+        simulationRuntimeConfig.setDispatchStrategy(dispatchStrategy);
         simulationMainLoop.start();
-        return ApiResponse.success("仿真循环已开始");
+        return ApiResponse.success("simulation started", buildRuntimeConfigResponse());
     }
 
-    /*
-    暂停仿真
-     */
     @PostMapping("/stop")
-    public ApiResponse<String> stopSimulation(){
+    public ApiResponse<String> stopSimulation() {
         simulationMainLoop.stop();
-        return ApiResponse.success("仿真循环已暂停");
+        return ApiResponse.success("simulation stopped");
     }
 
-    /*
-    重置仿真循环
-     */
     @PostMapping("/reset")
-    public ApiResponse<String> resetSimulation(){
+    public ApiResponse<String> resetSimulation() {
         simulationMainLoop.reset();
-        return ApiResponse.success("仿真已重置");
+        return ApiResponse.success("simulation reset");
     }
 
-    /**
-     * 前端通知车辆到达终点
-     */
+    @GetMapping("/config")
+    public ApiResponse<Map<String, Object>> getSimulationConfig() {
+        return ApiResponse.success(buildRuntimeConfigResponse());
+    }
+
+    @PostMapping("/config/dispatch-strategy")
+    public ApiResponse<Map<String, Object>> updateDispatchStrategy(
+            @RequestBody(required = false) StartSimulationRequest request
+    ) {
+        DispatchStrategy dispatchStrategy = resolveDispatchStrategy(request);
+        simulationRuntimeConfig.setDispatchStrategy(dispatchStrategy);
+        return ApiResponse.success("dispatch strategy updated", buildRuntimeConfigResponse());
+    }
+
     @PostMapping("/vehicle-arrived")
     public ResponseEntity<Void> handleVehicleArrived(@RequestBody VehicleArrivedRequest request) {
         try {
-            // 1. 获取Assignment
             Assignment assignment = assignmentRepository.findById(request.getAssignmentId())
                     .orElseThrow(() -> new RuntimeException("Assignment not found: " + request.getAssignmentId()));
 
-            // 2. 获取车辆
             Vehicle vehicle = assignment.getAssignedVehicle();
             if (vehicle == null) {
                 throw new RuntimeException("No vehicle assigned to assignment: " + request.getAssignmentId());
             }
 
-            // 3. 获取到达点POI
             POI endPOI = poiRepository.findById(request.getEndPOIId())
                     .orElseThrow(() -> new RuntimeException("End POI not found: " + request.getEndPOIId()));
 
-            // ================= 🌟 核心分流逻辑：双轨并行结算 =================
             if (assignment.getNodes() != null && !assignment.getNodes().isEmpty()) {
-                // 轨道 B：如果是 VRP 多点任务，走 VRP 专属结算池
                 dataInitializer.processVrpVehicleDelivery(assignment, vehicle, endPOI);
-                logger.info("🚚 VRP 车辆到达处理完成: 车辆 {}", vehicle.getLicensePlate());
+                logger.info("VRP vehicle delivery processed: vehicle={}", vehicle.getLicensePlate());
             } else {
-                // 轨道 A：如果是传统的 FTL 单线任务，走老结算池
                 Route route = assignment.getRoute();
-                POI startPOI = route.getStartPOI(); // 现在 route 肯定不为 null 了
+                POI startPOI = route.getStartPOI();
                 dataInitializer.processVehicleDelivery(startPOI, vehicle, endPOI);
-                logger.info("🚗 普通车辆到达处理完成: 车辆 {}", vehicle.getLicensePlate());
+                logger.info("Single-route vehicle delivery processed: vehicle={}", vehicle.getLicensePlate());
             }
-            // ===============================================================
 
             return ResponseEntity.ok().build();
-
         } catch (Exception e) {
-            logger.error("车辆到达处理失败", e);
+            logger.error("Vehicle arrival processing failed", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }
-
-    // 请求体类
-    public static class VehicleArrivedRequest {
-        // getters and setters
-        @Setter
-        @Getter
-        private Long assignmentId;
-        @Setter
-        @Getter
-        private Long vehicleId;
-        @Getter
-        @Setter
-        private Long endPOIId;
-
-    }
-
-    @Autowired
-    private GetCostService getCostService;
 
     @GetMapping("/costs")
     public Map<String, Double> getCurrentCosts() {
@@ -145,4 +124,85 @@ public class SimulationController {
         return costs;
     }
 
+    private DispatchStrategy resolveDispatchStrategy(StartSimulationRequest request) {
+        if (request == null) {
+            return DispatchStrategy.ORIGINAL;
+        }
+
+        if (Boolean.TRUE.equals(request.getUseHeuristic())) {
+            return DispatchStrategy.HEURISTIC;
+        }
+
+        String strategy = request.getStrategy();
+        if (strategy == null || strategy.isBlank()) {
+            return DispatchStrategy.ORIGINAL;
+        }
+
+        try {
+            return DispatchStrategy.valueOf(strategy.trim().toUpperCase());
+        } catch (IllegalArgumentException ignored) {
+            return DispatchStrategy.ORIGINAL;
+        }
+    }
+
+    private Map<String, Object> buildRuntimeConfigResponse() {
+        Map<String, Object> response = new HashMap<>();
+        response.put("dispatchStrategy", simulationRuntimeConfig.getDispatchStrategy().name());
+        response.put("useHeuristic", simulationRuntimeConfig.useHeuristic());
+        response.put("running", simulationMainLoop.isRunning());
+        response.put("loopCount", simulationMainLoop.getLoopCount());
+        response.put("simNow", simulationMainLoop.getCurrentSimTime());
+        return response;
+    }
+
+    public static class StartSimulationRequest {
+        private Boolean useHeuristic;
+        private String strategy;
+
+        public Boolean getUseHeuristic() {
+            return useHeuristic;
+        }
+
+        public void setUseHeuristic(Boolean useHeuristic) {
+            this.useHeuristic = useHeuristic;
+        }
+
+        public String getStrategy() {
+            return strategy;
+        }
+
+        public void setStrategy(String strategy) {
+            this.strategy = strategy;
+        }
+    }
+
+    public static class VehicleArrivedRequest {
+        private Long assignmentId;
+        private Long vehicleId;
+        private Long endPOIId;
+
+        public Long getAssignmentId() {
+            return assignmentId;
+        }
+
+        public void setAssignmentId(Long assignmentId) {
+            this.assignmentId = assignmentId;
+        }
+
+        public Long getVehicleId() {
+            return vehicleId;
+        }
+
+        public void setVehicleId(Long vehicleId) {
+            this.vehicleId = vehicleId;
+        }
+
+        public Long getEndPOIId() {
+            return endPOIId;
+        }
+
+        public void setEndPOIId(Long endPOIId) {
+            this.endPOIId = endPOIId;
+        }
+    }
 }

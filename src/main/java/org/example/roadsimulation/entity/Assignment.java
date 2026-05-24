@@ -359,6 +359,37 @@ public class Assignment {
         }
         return null; // 全部完成
     }
+
+    public void normalizeNodeSequence() {
+        if (this.nodes == null || this.nodes.isEmpty()) {
+            return;
+        }
+
+        this.nodes.sort(Comparator.comparing(
+                AssignmentNode::getSequenceIndex,
+                Comparator.nullsLast(Integer::compareTo)
+        ));
+
+        for (int i = 0; i < this.nodes.size(); i++) {
+            AssignmentNode node = this.nodes.get(i);
+            node.setSequenceIndex(i);
+            node.setAssignment(this);
+        }
+    }
+
+    public void replaceNodes(List<AssignmentNode> newNodes) {
+        this.nodes.clear();
+
+        if (newNodes == null || newNodes.isEmpty()) {
+            return;
+        }
+
+        for (int i = 0; i < newNodes.size(); i++) {
+            AssignmentNode node = newNodes.get(i);
+            node.setSequenceIndex(i);
+            this.addNode(node);
+        }
+    }
     ///  ===============================================
 
     public boolean isAssigned() {

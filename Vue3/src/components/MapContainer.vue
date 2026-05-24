@@ -39,6 +39,16 @@
                 </div>
               </div>
               <div class="control-group" style="margin-top: 15px;">
+                <span class="control-label">启发式:</span>
+                <ElSwitch
+                    v-model="useHeuristicDispatch"
+                    :disabled="isSimulationRunning"
+                    active-text="启用"
+                    inactive-text="关闭"
+                    inline-prompt
+                />
+              </div>
+              <div class="control-group" style="margin-top: 15px;">
                 <ElButton type="primary" @click="startSimulation">▶ 开始</ElButton>
                 <ElButton type="primary" @click="pauseSimulation">⏸ 暂停</ElButton>
                 <ElButton @click="resetSimulation">↻ 重置</ElButton>
@@ -272,7 +282,8 @@ import {
   ElMessage,
   ElMessageBox,
   ElSlider,
-  ElDialog
+  ElDialog,
+  ElSwitch
 } from "element-plus";
 import { InfoFilled } from '@element-plus/icons-vue'
 
@@ -633,6 +644,7 @@ const simulationInterval = ref(8000); // 8秒更新一次
 const poiMarkers = ref([]); // 存储POI标记
 const currentPOIs = ref([]); // 当前显示的POI数据
 const isSimulationRunning = ref(false); // 仿真运行状态
+const useHeuristicDispatch = ref(false); // 是否启用启发式调度
 
 // 响应式数据
 const drawnPairIds = ref(new Set()); // 已绘制的配对ID (可以删除)
@@ -1658,7 +1670,10 @@ const startSimulation = async () => {
     console.log("开始仿真");
 
     // 启动后端仿真
-    await simulationController.startSimulation();
+    await simulationController.startSimulation({
+      useHeuristic: useHeuristicDispatch.value,
+      strategy: useHeuristicDispatch.value ? 'HEURISTIC' : 'ORIGINAL'
+    });
     isSimulationRunning.value = true;
 
     // 启动动画管理器
