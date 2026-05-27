@@ -5,12 +5,15 @@ import lombok.Setter;
 import org.example.roadsimulation.DataInitializer;
 import org.example.roadsimulation.SimulationMainLoop;
 import org.example.roadsimulation.dto.ApiResponse;
+import org.example.roadsimulation.dto.VehicleCostSummaryDTO;
 import org.example.roadsimulation.entity.Assignment;
 import org.example.roadsimulation.entity.POI;
 import org.example.roadsimulation.entity.Route;
+import org.example.roadsimulation.entity.ShipmentItem;
 import org.example.roadsimulation.entity.Vehicle;
 import org.example.roadsimulation.repository.AssignmentRepository;
 import org.example.roadsimulation.repository.POIRepository;
+import org.example.roadsimulation.repository.ShipmentItemRepository;
 import org.example.roadsimulation.repository.VehicleRepository;
 import org.example.roadsimulation.service.GetCostService;
 import org.example.roadsimulation.service.POIService;
@@ -39,6 +42,9 @@ public class SimulationController {
 
     @Autowired
     private AssignmentRepository assignmentRepository;
+
+    @Autowired
+    private ShipmentItemRepository shipmentItemRepository;
 
     @Autowired
     private POIRepository poiRepository;
@@ -143,6 +149,18 @@ public class SimulationController {
         costs.put("costC", getCostService.getCostByAllEffectiveTransportCapacityWithWorst());
         costs.put("costD", getCostService.getCostByALlOilAndFixedConsumptionWithWorst());
         return costs;
+    }
+
+    @GetMapping("/vehicle-costs")
+    public VehicleCostSummaryDTO getVehicleCosts() {
+        long totalTaskCount = shipmentItemRepository.count();
+        long unassignedTaskCount = shipmentItemRepository.findByStatus(ShipmentItem.ShipmentItemStatus.NOT_ASSIGNED).size();
+        return getCostService.calculateVehicleCostSummary(
+                vehicleRepository.findAll(),
+                assignmentRepository.findAll(),
+                totalTaskCount,
+                unassignedTaskCount
+        );
     }
 
 }
