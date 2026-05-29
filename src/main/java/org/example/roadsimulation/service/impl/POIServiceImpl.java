@@ -247,7 +247,16 @@ public class POIServiceImpl implements POIService {
             case "橡胶加工厂" -> POI.POIType.RUBBER_PROCESSING_PLANT;
             case "轮胎制造厂" -> POI.POIType.TIRE_MANUFACTURING_PLANT;
             case "汽车总装厂" -> POI.POIType.AUTO_ASSEMBLY_PLANT;
-            default -> throw new IllegalArgumentException("未知的POI类型: " + frontendType);
+            default -> {
+                try {
+                    yield POI.POIType.valueOf(frontendType);
+                } catch (IllegalArgumentException e) {
+                    throw new IllegalArgumentException(
+                        "未知的POI类型: '" + frontendType
+                        + "'，合法值(中文): 仓库/加油站/维修中心/休息区/运输中心/测试/原木厂/锯木厂/板材厂/铁矿厂/冶钢厂/钢材加工厂/家具制造厂/橡胶加工厂/轮胎制造厂/汽车总装厂"
+                        + "，合法值(英文): " + java.util.Arrays.toString(POI.POIType.values()));
+                }
+            }
         };
     }
 

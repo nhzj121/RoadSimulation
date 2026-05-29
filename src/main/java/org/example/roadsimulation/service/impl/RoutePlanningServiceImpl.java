@@ -4,6 +4,7 @@ import org.example.roadsimulation.dto.GaodeRouteRequest;
 import org.example.roadsimulation.dto.GaodeRouteResponse;
 import org.example.roadsimulation.entity.POI;
 import org.example.roadsimulation.service.GaodeMapService;
+import org.example.roadsimulation.service.GaodeRoutePlanningQueueService;
 import org.example.roadsimulation.service.POIService;
 import org.example.roadsimulation.service.RoutePlanningService;
 import org.slf4j.Logger;
@@ -24,10 +25,16 @@ public class RoutePlanningServiceImpl implements RoutePlanningService {
 
     private final POIService poiService;
     private final GaodeMapService gaodeMapService;
+    private final GaodeRoutePlanningQueueService routePlanningQueueService;
 
-    public RoutePlanningServiceImpl(POIService poiService, GaodeMapService gaodeMapService) {
+    public RoutePlanningServiceImpl(
+            POIService poiService,
+            GaodeMapService gaodeMapService,
+            GaodeRoutePlanningQueueService routePlanningQueueService
+    ) {
         this.poiService = poiService;
         this.gaodeMapService = gaodeMapService;
+        this.routePlanningQueueService = routePlanningQueueService;
     }
 
     @Override
@@ -254,7 +261,7 @@ public class RoutePlanningServiceImpl implements RoutePlanningService {
         }
 
         System.out.println("高德路线规划: " + request.getOrigin() + " -> " + request.getDestination());
-        return gaodeMapService.planDrivingRoute(request);
+        return routePlanningQueueService.submitAndWait(request);
     }
 
     @Override

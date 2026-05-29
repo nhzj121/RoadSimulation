@@ -46,6 +46,10 @@ public class AssignmentNode {
     @Column(name = "is_completed", nullable = false)
     private boolean completed = false;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "shipment_item_id")
+    private ShipmentItem shipmentItem;
+
     // 实际到达/完成时间
     private LocalDateTime actualArrivalTime;
 
@@ -59,12 +63,37 @@ public class AssignmentNode {
     public AssignmentNode() {
     }
 
-    public AssignmentNode(Assignment assignment, Integer sequenceIndex, POI poi, NodeActionType actionType, Double weightDelta, Double volumeDelta) {
+    public AssignmentNode(
+            Assignment assignment,
+            Integer sequenceIndex,
+            POI poi,
+            NodeActionType actionType,
+            Double weightDelta,
+            Double volumeDelta
+    ) {
         this.assignment = assignment;
         this.sequenceIndex = sequenceIndex;
         this.poi = poi;
         this.actionType = actionType;
         this.weightDelta = weightDelta;
         this.volumeDelta = volumeDelta;
+    }
+
+    public AssignmentNode(
+            Assignment assignment,
+            Integer sequenceIndex,
+            POI poi,
+            NodeActionType actionType,
+            ShipmentItem shipmentItem,
+            Double weightDelta,
+            Double volumeDelta
+    ) {
+        this.assignment = assignment;
+        this.sequenceIndex = sequenceIndex;
+        this.poi = poi;
+        this.actionType = actionType;
+        this.shipmentItem = shipmentItem;
+        this.weightDelta = weightDelta != null ? weightDelta : 0.0;
+        this.volumeDelta = volumeDelta != null ? volumeDelta : 0.0;
     }
 }

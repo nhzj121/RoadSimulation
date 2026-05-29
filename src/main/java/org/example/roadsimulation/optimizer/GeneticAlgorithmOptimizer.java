@@ -23,6 +23,7 @@ import java.util.*;
  *   变异率    MUTATION_RATE    = 0.12
  *   精英比例  ELITE_RATIO      = 0.10
  */
+
 @Component
 public class GeneticAlgorithmOptimizer {
 

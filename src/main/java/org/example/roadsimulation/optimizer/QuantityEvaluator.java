@@ -104,13 +104,15 @@ public class QuantityEvaluator {
      * 判断逻辑：vehicle.suitableGoods 包含货物的 SKU 或 名称（忽略大小写）
      */
     public boolean isCompatible(Vehicle vehicle, Goods goods) {
-        String sg = vehicle.getSuitableGoods();
-        if (sg == null || sg.isBlank()) return false;
-        String sgLower = sg.toLowerCase();
-        // 匹配 SKU
-        if (goods.getSku() != null && sgLower.contains(goods.getSku().toLowerCase())) return true;
-        // 匹配名称（如"水泥"）
-        if (goods.getName() != null && sgLower.contains(goods.getName().toLowerCase())) return true;
-        return false;
+        if (vehicle == null || goods == null) {
+            return false;
+        }
+
+        String suitableVehicle = goods.getVehicleFit();
+        String vehicleType = vehicle.getVehicleType();
+        if(suitableVehicle == null || suitableVehicle.isBlank()) return false;
+        if(vehicleType == null || vehicleType.isBlank()) return false;
+
+        return suitableVehicle.strip().equals(vehicleType.strip());
     }
 }

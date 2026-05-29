@@ -7,11 +7,16 @@ interface BackendResponse<T = any> {
     data?: T;
 }
 
+interface StartSimulationOptions {
+    useHeuristic?: boolean;
+    strategy?: 'ORIGINAL' | 'HEURISTIC';
+}
+
 export const simulationController = {
     // 启动仿真
-    async startSimulation(): Promise<BackendResponse<string>> {
+    async startSimulation(options: StartSimulationOptions = {}): Promise<BackendResponse> {
         try{
-            const response = await request.post('/api/simulation/start');
+            const response = await request.post('/api/simulation/start', options);
             return response.data;
         } catch (error : any){
             console.log('启动仿真失败:', error);
@@ -22,10 +27,23 @@ export const simulationController = {
         }
     },
 
+    async getConfig(): Promise<BackendResponse> {
+        try {
+            const response = await request.get('/api/simulation/config');
+            return response.data;
+        } catch (error: any) {
+            console.log('get simulation config failed:', error);
+            return {
+                success: false,
+                message: error.response?.data?.message || error.message || 'get simulation config failed'
+            };
+        }
+    },
+
     // 暂停仿真
     async stopSimulation(): Promise<BackendResponse<string>> {
         try{
-            const response = await request.post('api/simulation/stop');
+            const response = await request.post('/api/simulation/stop');
             return response.data;
         } catch (error : any){
             console.log('暂停仿真失败:', error);
