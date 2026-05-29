@@ -47,7 +47,7 @@ public class TimeModuleController {
     @PostMapping("/pause")
     public Map<String, Object> pauseSimulation() {
         simulationMainLoop.stop();
-        gaodeRoutePlanningQueueService.pause();
+        gaodeRoutePlanningQueueService.pauseAndCancelPending();
         return createResponse("模拟已暂停");
     }
 

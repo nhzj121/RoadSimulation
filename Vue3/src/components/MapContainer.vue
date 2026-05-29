@@ -446,8 +446,12 @@ const scrollToVehicle = (vehicleId) => {
 
 // --- 成本监控面板相关状态 ---
 const isCostPanelVisible = ref(false); // 默认关闭，点击后再打开
-const toggleCostPanel = () => {
+const toggleCostPanel = async () => {
   isCostPanelVisible.value = !isCostPanelVisible.value;
+  await nextTick();
+  setTimeout(() => {
+    map?.resize?.();
+  }, 80);
 };
 
 const simulationCosts = reactive({
@@ -597,6 +601,9 @@ const fetchSimulationCosts = async () => {
       }
     }
   } catch (error) {
+    if (error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError') {
+      return null;
+    }
     console.error('获取成本数据失败:', error);
   }
 };
@@ -645,6 +652,8 @@ const poiMarkers = ref([]); // 存储POI标记
 const currentPOIs = ref([]); // 当前显示的POI数据
 const isSimulationRunning = ref(false); // 仿真运行状态
 const useHeuristicDispatch = ref(false); // 是否启用启发式调度
+const simulationGeneration = ref(0);
+let routePlanningAbortController = null;
 
 // 响应式数据
 const drawnPairIds = ref(new Set()); // 已绘制的配对ID (可以删除)
@@ -653,6 +662,29 @@ const activeRoutes = ref(new Map()); // 当前活动的路线映射，key为assi
 
 // 路线规划缓存
 const routePlanningCache = new Map();
+
+const abortRoutePlanningRequests = () => {
+  if (routePlanningAbortController) {
+    routePlanningAbortController.abort();
+    routePlanningAbortController = null;
+  }
+};
+
+const beginSimulationGeneration = () => {
+  simulationGeneration.value += 1;
+  abortRoutePlanningRequests();
+  routePlanningAbortController = new AbortController();
+  return simulationGeneration.value;
+};
+
+const invalidateSimulationGeneration = () => {
+  simulationGeneration.value += 1;
+  abortRoutePlanningRequests();
+};
+
+const isActiveSimulationGeneration = (generation) => {
+  return isSimulationRunning.value && generation === simulationGeneration.value;
+};
 
 // Assignment状态跟踪
 const assignmentStates = new Map();
@@ -1667,6 +1699,7 @@ const handleVehicleArrived = async (assignmentId, vehicleId, endPOIId, licensePl
  */
 const startSimulation = async () => {
   try {
+    const runGeneration = beginSimulationGeneration();
     console.log("开始仿真");
 
     // 启动后端仿真
@@ -1689,7 +1722,7 @@ const startSimulation = async () => {
       animationManager.startAll();
 
       // 初始加载当前活跃的Assignment
-      await fetchCurrentAssignments();
+      await fetchCurrentAssignments(runGeneration);
     }
 
     // 启动定时更新
@@ -1704,6 +1737,7 @@ const startSimulation = async () => {
     console.error("启动仿真模拟失败：", error);
     ElMessage.error('启动仿真失败：' + error.message);
     isSimulationRunning.value = false;
+    invalidateSimulationGeneration();
   }
   arrivalMonitor.startMonitoring(getVehiclePositions, getPOIList);
 };
@@ -1716,11 +1750,13 @@ const pauseSimulation = async () => {
     console.log("已暂停仿真");
 
     // 暂停动画管理器
+    isSimulationRunning.value = false;
+    stopSimulationTimer();
+    invalidateSimulationGeneration();
     animationManager.pauseAll();
 
     // 暂停后端仿真
     await simulationController.stopSimulation();
-    isSimulationRunning.value = false;
 
     ElMessage.success('仿真已暂停');
   } catch (error) {
@@ -1749,8 +1785,9 @@ const resetSimulation = async () => {
       console.log("重置仿真");
 
       // 停止后端仿真
-      await simulationController.resetSimulation();
       isSimulationRunning.value = false;
+      invalidateSimulationGeneration();
+      await simulationController.resetSimulation();
 
       // 停止定时器
       stopSimulationTimer();
@@ -1809,8 +1846,11 @@ const startSimulationTimer = () => {
 
   simulationTimer.value = setInterval(async () => {
     if (isSimulationRunning.value) {
+      const runGeneration = simulationGeneration.value;
+      await fetchSimulationCosts();
+
       // 增量获取并绘制新配对
-      await fetchAndDrawNewAssignments();
+      await fetchAndDrawNewAssignments(runGeneration);
 
       // 定期检查并清理已完成的Assignment
       await checkAndCleanupCompletedAssignments();
@@ -1818,7 +1858,6 @@ const startSimulationTimer = () => {
       // 更新车辆信息
       await updateVehicleInfo();
 
-      await fetchSimulationCosts();
     }
   }, simulationInterval.value);
 };
@@ -2271,9 +2310,11 @@ const clearRouteByAssignmentId = (assignmentId) => {
 };
 
 // 获取当前活跃的Assignment（用于初始加载）
-const fetchCurrentAssignments = async () => {
+const fetchCurrentAssignments = async (runGeneration = simulationGeneration.value) => {
   try {
+    if (!isActiveSimulationGeneration(runGeneration)) return;
     const response = await request.get('/api/assignments/active');
+    if (!isActiveSimulationGeneration(runGeneration)) return;
     const assignments = response.data;
 
     if (assignments && assignments.length > 0) {
@@ -2283,10 +2324,11 @@ const fetchCurrentAssignments = async () => {
           // 检查是否已有动画
           if (!animationManager.animations.has(assignment.assignmentId)) {
             if (assignment.vrp === true) {
-              await drawMultiStageRouteForVrpAssignment(assignment);
+              await drawMultiStageRouteForVrpAssignment(assignment, runGeneration);
             } else {
-              await drawTwoStageRouteForAssignment(assignment);
+              await drawTwoStageRouteForAssignment(assignment, runGeneration);
             }
+            if (!isActiveSimulationGeneration(runGeneration)) return;
             drawnAssignmentIds.value.add(assignment.assignmentId);
           }
         }
@@ -2302,9 +2344,11 @@ const fetchCurrentAssignments = async () => {
 };
 
 // 增量获取并绘制新Assignment
-const fetchAndDrawNewAssignments = async () => {
+const fetchAndDrawNewAssignments = async (runGeneration = simulationGeneration.value) => {
   try {
+    if (!isActiveSimulationGeneration(runGeneration)) return;
     const response = await request.get('/api/assignments/new');
+    if (!isActiveSimulationGeneration(runGeneration)) return;
     const newAssignments = response.data;
 
     if (!newAssignments || newAssignments.length === 0) {
@@ -2316,14 +2360,16 @@ const fetchAndDrawNewAssignments = async () => {
 
     // 绘制新路线
     for (const assignment of newAssignments) {
+      if (!isActiveSimulationGeneration(runGeneration)) return;
       if (assignment && assignment.assignmentId) {
         if (!drawnAssignmentIds.value.has(assignment.assignmentId)) {
           if (assignment.vrp === true) {
-            await drawMultiStageRouteForVrpAssignment(assignment);
+            await drawMultiStageRouteForVrpAssignment(assignment, runGeneration);
           } else {
-            await drawTwoStageRouteForAssignment(assignment);
+            await drawTwoStageRouteForAssignment(assignment, runGeneration);
           }
 
+          if (!isActiveSimulationGeneration(runGeneration)) return;
           drawnAssignmentIds.value.add(assignment.assignmentId);
 
           try {
@@ -2345,8 +2391,9 @@ const fetchAndDrawNewAssignments = async () => {
 };
 
 // 为Assignment绘制两段路线（修复版）
-const drawTwoStageRouteForAssignment = async (assignment) => {
+const drawTwoStageRouteForAssignment = async (assignment, runGeneration = simulationGeneration.value) => {
   if (!AMapLib || !map) return null;
+  if (!isActiveSimulationGeneration(runGeneration)) return null;
 
   try {
     // 检查是否已有该Assignment的路线数据
@@ -2367,14 +2414,18 @@ const drawTwoStageRouteForAssignment = async (assignment) => {
     const stage1Route = await computeSingleRouteWithCache(
         [assignment.vehicleStartLng, assignment.vehicleStartLat],
         [assignment.startLng, assignment.startLat],
-        assignment.assignmentId + '_stage1'
+        assignment.assignmentId + '_stage1',
+        runGeneration
     );
 
     const stage2Route = await computeSingleRouteWithCache(
         [assignment.startLng, assignment.startLat],
         [assignment.endLng, assignment.endLat],
-        assignment.assignmentId + '_stage2'
+        assignment.assignmentId + '_stage2',
+        runGeneration
     );
+
+    if (!isActiveSimulationGeneration(runGeneration)) return null;
 
     if (!stage1Route || !stage2Route) {
       console.error(`Assignment ${assignment.assignmentId} 路线规划失败`);
@@ -2554,8 +2605,9 @@ const drawTwoStageRouteForAssignment = async (assignment) => {
 };
 
 // ==================== VRP 专线：绘制多节点复杂路线 ====================
-const drawMultiStageRouteForVrpAssignment = async (assignment) => {
+const drawMultiStageRouteForVrpAssignment = async (assignment, runGeneration = simulationGeneration.value) => {
   if (!AMapLib || !map) return null;
+  if (!isActiveSimulationGeneration(runGeneration)) return null;
 
   try {
     if (activeRoutes.value.has(assignment.assignmentId)) {
@@ -2575,10 +2627,12 @@ const drawMultiStageRouteForVrpAssignment = async (assignment) => {
 
     // 1. 逐段请求高德路线，把多点串联起来
     for (let i = 0; i < nodes.length; i++) {
+      if (!isActiveSimulationGeneration(runGeneration)) return null;
       const targetNode = nodes[i];
 
       // 防并发限流缓冲
       await new Promise(resolve => setTimeout(resolve, 500));
+      if (!isActiveSimulationGeneration(runGeneration)) return null;
 
       let path = [];
       let distance = 0;
@@ -2587,7 +2641,8 @@ const drawMultiStageRouteForVrpAssignment = async (assignment) => {
         const routeResult = await computeSingleRouteWithCache(
             [currentLng, currentLat],
             [targetNode.lng, targetNode.lat],
-            `${assignment.assignmentId}_vrp_stage_${i}`
+            `${assignment.assignmentId}_vrp_stage_${i}`,
+            runGeneration
         );
         if (routeResult && routeResult.path && routeResult.path.length > 0) {
           path = routeResult.path;
@@ -2598,6 +2653,8 @@ const drawMultiStageRouteForVrpAssignment = async (assignment) => {
       }
 
       // 【修复】：直线兜底，绝不瞬移
+      if (!isActiveSimulationGeneration(runGeneration)) return null;
+
       if (path.length === 0) {
         path = [
           [currentLng, currentLat],
@@ -2722,7 +2779,8 @@ const isValidCoordinate = (lng, lat) => {
 };
 
 // 带缓存的路线规划
-const computeSingleRouteWithCache = async (start, end, cacheKey) => {
+const computeSingleRouteWithCache = async (start, end, cacheKey, runGeneration = simulationGeneration.value) => {
+  if (!isActiveSimulationGeneration(runGeneration)) return null;
   // 检查缓存
   if (routePlanningCache.has(cacheKey)) {
     console.log(`使用缓存的路线: ${cacheKey}`);
@@ -2730,9 +2788,9 @@ const computeSingleRouteWithCache = async (start, end, cacheKey) => {
   }
 
   // 规划新路线
-  const route = await computeSingleRoute(start, end, '0');
+  const route = await computeSingleRoute(start, end, '0', runGeneration);
 
-  if (route) {
+  if (route && isActiveSimulationGeneration(runGeneration)) {
     // 缓存结果
     routePlanningCache.set(cacheKey, route);
   }
@@ -2942,7 +3000,8 @@ const fetchTasks = async () => {
 };
 
 // 计算单段路线
-const computeSingleRoute = async (start, end, strategy = '0') => {
+const computeSingleRoute = async (start, end, strategy = '0', runGeneration = simulationGeneration.value) => {
+  if (!isActiveSimulationGeneration(runGeneration)) return null;
   try {
     const params = {
       startLon: String(start[0]),
@@ -2954,8 +3013,10 @@ const computeSingleRoute = async (start, end, strategy = '0') => {
 
     const res = await request.get(
         '/api/route-planning/gaode/plan-by-coordinates',
-        { params }
+        { params, signal: routePlanningAbortController?.signal }
     );
+
+    if (!isActiveSimulationGeneration(runGeneration)) return null;
 
     const response = res.data;
 
@@ -3002,6 +3063,9 @@ const computeSingleRoute = async (start, end, strategy = '0') => {
       speedMps: pathInfo.distance / pathInfo.duration
     };
   } catch (error) {
+    if (error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError') {
+      return null;
+    }
     console.error('路线规划出错:', error);
     ElMessage.error('路线规划出错');
     return null;
@@ -3101,6 +3165,7 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  invalidateSimulationGeneration();
   stopSimulationTimer();
 
   // 清理动画管理器
@@ -3634,10 +3699,14 @@ onUnmounted(() => {
 #container {
   width: 100%;
   height: 100%;
+  position: relative;
 }
 
 .el-main {
   padding: 0;
+  min-width: 0;
+  overflow: hidden;
+  position: relative;
 }
 
 /* 响应式调整 */
@@ -3809,12 +3878,20 @@ onUnmounted(() => {
 
 /* ==================== 右侧成本监控面板美化 ==================== */
 .right-side-panel {
+  flex: 0 0 300px;
+  width: 300px;
+  min-width: 300px;
+  height: calc(100vh - 60px);
+  position: fixed;
+  top: 60px;
+  right: 0;
+  bottom: 0;
   background-color: #f7f8fa; /* 覆盖黑底色，统一侧边栏背景 */
   border-left: 1px solid #e6e6e6;
   display: flex;
   flex-direction: column;
   box-shadow: -2px 0 8px rgba(0, 0, 0, 0.05); /* 左侧加一点阴影区分层次 */
-  z-index: 10;
+  z-index: 3000;
 }
 
 .cost-card {
