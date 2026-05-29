@@ -19,7 +19,7 @@ class GetCostServiceVehicleCostTest {
     private final GetCostService getCostService = new GetCostService();
 
     @Test
-    void calculatesVehicleCostsWithDynamicMinMaxAndNewCostItems() {
+    void calculatesVehicleAndSchemeCostsWithoutVehicleInternalNormalization() {
         Vehicle vehicleA = vehicle(1L, "TEST-A", 10.0, 50.0, 5.0, 120.0, 20.0, 12);
         Vehicle vehicleB = vehicle(2L, "TEST-B", 10.0, 50.0, 10.0, 100.0, 0.0, 8);
 
@@ -45,6 +45,7 @@ class GetCostServiceVehicleCostTest {
         assertEquals(0.10, summary.getWeightG(), 1e-9);
         assertEquals(0.08, summary.getWeightH(), 1e-9);
         assertEquals(0.10, summary.getWeightI(), 1e-9);
+        assertEquals("SINGLE_SCHEME_NO_CROSS_NORMALIZATION_BASELINE", summary.getNormalizationScope());
 
         VehicleCostDTO costA = findByPlate(summary, "TEST-A");
         VehicleCostDTO costB = findByPlate(summary, "TEST-B");
@@ -53,72 +54,73 @@ class GetCostServiceVehicleCostTest {
         assertEquals(0.0, costB.getCostA(), 1e-9);
         assertEquals(0.0, summary.getCostAMin(), 1e-9);
         assertEquals(10.0, summary.getCostAMax(), 1e-9);
-        assertEquals(1.0, costA.getNormalizedCostA(), 1e-9);
-        assertEquals(0.0, costB.getNormalizedCostA(), 1e-9);
 
         assertEquals(1.0 / 15.0, costA.getCostB(), 1e-9);
         assertEquals(0.0, costB.getCostB(), 1e-9);
         assertEquals(0.0, summary.getCostBMin(), 1e-9);
         assertEquals(1.0 / 15.0, summary.getCostBMax(), 1e-9);
-        assertEquals(1.0, costA.getNormalizedCostB(), 1e-9);
-        assertEquals(0.0, costB.getNormalizedCostB(), 1e-9);
 
         assertEquals(0.5, costA.getCostC(), 1e-9);
         assertEquals(0.0, costB.getCostC(), 1e-9);
         assertEquals(0.0, summary.getCostCMin(), 1e-9);
         assertEquals(0.5, summary.getCostCMax(), 1e-9);
-        assertEquals(1.0, costA.getNormalizedCostC(), 1e-9);
-        assertEquals(0.0, costB.getNormalizedCostC(), 1e-9);
 
         assertEquals(5.1, costA.getCostD(), 1e-9);
         assertEquals(3.2, costB.getCostD(), 1e-9);
         assertEquals(3.2, summary.getCostDMin(), 1e-9);
         assertEquals(5.1, summary.getCostDMax(), 1e-9);
-        assertEquals(1.0, costA.getNormalizedCostD(), 1e-9);
-        assertEquals(0.0, costB.getNormalizedCostD(), 1e-9);
 
         assertEquals(0.2, costA.getCostE(), 1e-9);
         assertEquals(0.2, costB.getCostE(), 1e-9);
         assertEquals(0.2, summary.getCostEMin(), 1e-9);
         assertEquals(0.2, summary.getCostEMax(), 1e-9);
-        assertEquals(0.0, costA.getNormalizedCostE(), 1e-9);
-        assertEquals(0.0, costB.getNormalizedCostE(), 1e-9);
 
         assertEquals(0.2, costA.getCostG(), 1e-9);
         assertEquals(0.0, costB.getCostG(), 1e-9);
         assertEquals(0.0, summary.getCostGMin(), 1e-9);
         assertEquals(0.2, summary.getCostGMax(), 1e-9);
-        assertEquals(1.0, costA.getNormalizedCostG(), 1e-9);
-        assertEquals(0.0, costB.getNormalizedCostG(), 1e-9);
 
         assertEquals(0.4, costA.getCostH(), 1e-9);
         assertEquals(0.0, costB.getCostH(), 1e-9);
         assertEquals(0.0, summary.getCostHMin(), 1e-9);
         assertEquals(0.4, summary.getCostHMax(), 1e-9);
-        assertEquals(1.0, costA.getNormalizedCostH(), 1e-9);
-        assertEquals(0.0, costB.getNormalizedCostH(), 1e-9);
 
         assertEquals(0.2, costA.getCostI(), 1e-9);
         assertEquals(0.0, costB.getCostI(), 1e-9);
         assertEquals(0.0, summary.getCostIMin(), 1e-9);
         assertEquals(0.2, summary.getCostIMax(), 1e-9);
-        assertEquals(1.0, costA.getNormalizedCostI(), 1e-9);
-        assertEquals(0.0, costB.getNormalizedCostI(), 1e-9);
 
-        assertEquals(0.88, costA.getTotalCost(), 1e-9);
-        assertEquals(0.0, costB.getTotalCost(), 1e-9);
-        assertEquals(0.44, summary.getAverageTotalCost(), 1e-9);
-        assertEquals(0.38, summary.getGlobalCost(), 1e-9);
-        assertEquals(
-                0.75 * summary.getAverageTotalCost() + 0.25 * summary.getUnassignedTaskCost(),
-                summary.getGlobalCost(),
-                1e-9
-        );
+        assertEquals(10.0, summary.getSchemeCostA(), 1e-9);
+        assertEquals(1.0 / 27.5, summary.getSchemeCostB(), 1e-9);
+        assertEquals(500.0, summary.getSchemeCostC(), 1e-9);
+        assertEquals(7.195, summary.getSchemeCostD(), 1e-9);
+        assertEquals(0.2, summary.getSchemeCostE(), 1e-9);
+        assertEquals(0.1, summary.getSchemeCostG(), 1e-9);
+        assertEquals(0.2, summary.getSchemeCostH(), 1e-9);
+        assertEquals(0.0, summary.getSchemeCostI(), 1e-9);
+
+        assertEquals(0.0, summary.getAllCost(), 1e-9);
+        assertEquals(0.05, summary.getGlobalCost(), 1e-9);
     }
 
     @Test
     void minMaxNormalizeReturnsZeroWhenRangeHasNoSpread() {
         assertEquals(0.0, getCostService.minMaxNormalize(10.0, 10.0, 10.0), 1e-9);
+    }
+
+    @Test
+    void normalizesAllCostAcrossSchemes() {
+        VehicleCostSummaryDTO schemeA = scheme(10.0, 2.0, 100.0, 1.0, 0.1);
+        VehicleCostSummaryDTO schemeB = scheme(20.0, 4.0, 200.0, 3.0, 0.3);
+
+        getCostService.normalizeSchemeCosts(List.of(schemeA, schemeB));
+
+        assertEquals("CROSS_SCHEME_MIN_MAX", schemeA.getNormalizationScope());
+        assertEquals("CROSS_SCHEME_MIN_MAX", schemeB.getNormalizationScope());
+        assertEquals(0.0, schemeA.getAllCost(), 1e-9);
+        assertEquals(1.0, schemeB.getAllCost(), 1e-9);
+        assertEquals(0.0, schemeA.getNormalizedSchemeCostA(), 1e-9);
+        assertEquals(1.0, schemeB.getNormalizedSchemeCostA(), 1e-9);
     }
 
     private Vehicle vehicle(Long id,
@@ -179,5 +181,16 @@ class GetCostServiceVehicleCostTest {
                 .orElse(null);
         assertNotNull(dto);
         return dto;
+    }
+
+    private VehicleCostSummaryDTO scheme(double costA, double costB, double costC, double costD, double costE) {
+        VehicleCostSummaryDTO summary = new VehicleCostSummaryDTO();
+        summary.setSchemeCostA(costA);
+        summary.setSchemeCostB(costB);
+        summary.setSchemeCostC(costC);
+        summary.setSchemeCostD(costD);
+        summary.setSchemeCostE(costE);
+        summary.setUnassignedTaskCost(0.0);
+        return summary;
     }
 }

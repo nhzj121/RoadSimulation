@@ -1,14 +1,19 @@
 package org.example.roadsimulation.service;
 
+import org.example.roadsimulation.core.SimulationContext;
+import org.example.roadsimulation.dto.RuntimeCostDTO;
 import org.example.roadsimulation.dto.VehicleCostDTO;
 import org.example.roadsimulation.dto.VehicleCostSummaryDTO;
 import org.example.roadsimulation.entity.Assignment;
 import org.example.roadsimulation.entity.CostEntity;
 import org.example.roadsimulation.entity.ShipmentItem;
 import org.example.roadsimulation.entity.Vehicle;
+import org.example.roadsimulation.entity.Vehicle.VehicleStatus;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -25,6 +30,9 @@ public class GetCostService {
 
     private Double VehicleType = 1.0;
 
+    @Autowired
+    private SimulationContext simulationContext;
+
     private static final double WEIGHT_A = 0.15;
     private static final double WEIGHT_B = 0.15;
     private static final double WEIGHT_C = 0.18;
@@ -33,6 +41,7 @@ public class GetCostService {
     private static final double WEIGHT_G = 0.10;
     private static final double WEIGHT_H = 0.08;
     private static final double WEIGHT_I = 0.10;
+    private static final double ALL_COST_WEIGHT_SUM = WEIGHT_A + WEIGHT_B + WEIGHT_C + WEIGHT_D + WEIGHT_E;
 
     private static final double GLOBAL_WEIGHT_VEHICLE_COST = 0.75;
     private static final double GLOBAL_WEIGHT_UNASSIGNED_COST = 0.25;
@@ -79,6 +88,40 @@ public class GetCostService {
                 + 0.2 * CostEntity.WorstLoss;
     }
 
+    public RuntimeCostDTO calculateRuntimeCosts(List<Vehicle> vehicles) {
+        double costA = getCostByAllWaitingTimeAndMileageWithoutGoods();
+        double costB = getCostByAllEffectiveTimeAndEffectiveMileageWithWorst();
+        double costC = getCostByAllEffectiveTransportCapacityWithWorst();
+        double costD = getCostByALlOilAndFixedConsumptionWithWorst();
+        double costE = getCostByVehicleWorkloadBalance(vehicles);
+        double allCost = calculateAllCost(costA, costB, costC, costD, costE);
+
+        return new RuntimeCostDTO(costA, costB, costC, costD, costE, allCost);
+    }
+
+    /**
+     * 车队负载均衡成本。
+     * E = 工作量标准差 / 平均工作量，工作量 = 总行驶时间 + 0.5 * 总等待时间。
+     */
+    public Double getCostByVehicleWorkloadBalance(List<Vehicle> vehicles) {
+        List<Vehicle> safeVehicles = vehicles == null ? List.of() : vehicles;
+        if (safeVehicles.isEmpty()) {
+            return 0.0;
+        }
+        if (simulationContext != null
+                && !simulationContext.isRunning()
+                && simulationContext.getLoopCount() == 0) {
+            return 0.0;
+        }
+
+        List<Double> workloads = new ArrayList<>();
+        LocalDateTime simNow = simulationContext == null ? null : simulationContext.getCurrentSimTime();
+        for (Vehicle vehicle : safeVehicles) {
+            workloads.add(getVehicleRuntimeWorkload(vehicle, simNow));
+        }
+        return calculateVariationCoefficient(workloads);
+    }
+
     /**
      * =========================================================================
      * 新增：边际成本预估器 (Cost Estimator) —— 专供 VRP 启发式算法使用
@@ -120,7 +163,7 @@ public class GetCostService {
         double simWorstLoss = Math.max(CostEntity.WorstLoss, worstLoss);
 
         // 2. 预估 Cost A (直接成本)
-        double simCostA = 0.5 * simTotalWaitingTime + 0.5 * simTotalMileage;
+        double simCostA = 0.5 * simTotalWaitingTime + 0.5 * simTotalMileageWithoutThings;
 
         // 3. 预估 Cost B (效率)
         double simMileageRatio = simTotalMileage == 0.0 ? 0.0 : (simTotalMileageWithoutThings / simTotalMileage);
@@ -172,12 +215,11 @@ public class GetCostService {
             costRange.accept(dto);
         }
 
-        double totalCostSum = 0.0;
-
         for (VehicleCostDTO dto : vehicleCosts) {
-            applyNormalizedCosts(dto, costRange);
-            totalCostSum += safe(dto.getTotalCost());
+            applyRawVehicleCost(dto);
         }
+
+        SchemeCostSnapshot schemeCost = calculateSchemeCost(vehicleCosts);
 
         VehicleCostSummaryDTO summary = new VehicleCostSummaryDTO();
         summary.setWeightA(WEIGHT_A);
@@ -211,20 +253,66 @@ public class GetCostService {
         summary.setUnassignedTaskCount(unassignedTaskCount == null ? 0L : unassignedTaskCount);
         double unassignedTaskCost = safeDivide(summary.getUnassignedTaskCount(), summary.getTotalTaskCount());
         summary.setUnassignedTaskCost(clamp01(unassignedTaskCost));
+        double totalCostSum = 0.0;
+        for (VehicleCostDTO dto : vehicleCosts) {
+            totalCostSum += safe(dto.getTotalCost());
+        }
         double averageTotalCost = vehicleCosts.isEmpty() ? 0.0 : totalCostSum / vehicleCosts.size();
         summary.setAverageTotalCost(averageTotalCost);
-        summary.setGlobalCost(GLOBAL_WEIGHT_VEHICLE_COST * averageTotalCost
-                + GLOBAL_WEIGHT_UNASSIGNED_COST * summary.getUnassignedTaskCost());
+        applySchemeCosts(summary, schemeCost);
         summary.setVehicleCosts(vehicleCosts);
+        normalizeSchemeCosts(List.of(summary));
         return summary;
     }
 
     public VehicleCostDTO calculateVehicleCost(Vehicle vehicle, double averageWorkload) {
         VehicleCostDTO dto = calculateRawVehicleCost(vehicle, averageWorkload, List.of());
-        CostRange singleVehicleRange = new CostRange();
-        singleVehicleRange.accept(dto);
-        applyNormalizedCosts(dto, singleVehicleRange);
+        applyRawVehicleCost(dto);
         return dto;
+    }
+
+    public List<VehicleCostSummaryDTO> normalizeSchemeCosts(List<VehicleCostSummaryDTO> summaries) {
+        List<VehicleCostSummaryDTO> safeSummaries = summaries == null ? List.of() : summaries;
+        SchemeCostRange range = new SchemeCostRange();
+        for (VehicleCostSummaryDTO summary : safeSummaries) {
+            range.accept(summary);
+        }
+
+        String scope = safeSummaries.size() <= 1
+                ? "SINGLE_SCHEME_NO_CROSS_NORMALIZATION_BASELINE"
+                : "CROSS_SCHEME_MIN_MAX";
+
+        for (VehicleCostSummaryDTO summary : safeSummaries) {
+            double normalizedA = minMaxNormalize(safe(summary.getSchemeCostA()), range.minA(), range.maxA());
+            double normalizedB = minMaxNormalize(safe(summary.getSchemeCostB()), range.minB(), range.maxB());
+            double normalizedC = minMaxNormalize(safe(summary.getSchemeCostC()), range.minC(), range.maxC());
+            double normalizedD = minMaxNormalize(safe(summary.getSchemeCostD()), range.minD(), range.maxD());
+            double normalizedE = minMaxNormalize(safe(summary.getSchemeCostE()), range.minE(), range.maxE());
+            double normalizedG = minMaxNormalize(safe(summary.getSchemeCostG()), range.minG(), range.maxG());
+            double normalizedH = minMaxNormalize(safe(summary.getSchemeCostH()), range.minH(), range.maxH());
+            double normalizedI = minMaxNormalize(safe(summary.getSchemeCostI()), range.minI(), range.maxI());
+
+            double allCost = (WEIGHT_A * normalizedA
+                    + WEIGHT_B * normalizedB
+                    + WEIGHT_C * normalizedC
+                    + WEIGHT_D * normalizedD
+                    + WEIGHT_E * normalizedE) / ALL_COST_WEIGHT_SUM;
+
+            summary.setNormalizedSchemeCostA(normalizedA);
+            summary.setNormalizedSchemeCostB(normalizedB);
+            summary.setNormalizedSchemeCostC(normalizedC);
+            summary.setNormalizedSchemeCostD(normalizedD);
+            summary.setNormalizedSchemeCostE(normalizedE);
+            summary.setNormalizedSchemeCostG(normalizedG);
+            summary.setNormalizedSchemeCostH(normalizedH);
+            summary.setNormalizedSchemeCostI(normalizedI);
+            summary.setAllCost(allCost);
+            summary.setGlobalCost(GLOBAL_WEIGHT_VEHICLE_COST * allCost
+                    + GLOBAL_WEIGHT_UNASSIGNED_COST * safe(summary.getUnassignedTaskCost()));
+            summary.setNormalizationScope(scope);
+        }
+
+        return safeSummaries;
     }
 
     private VehicleCostDTO calculateRawVehicleCost(Vehicle vehicle,
@@ -296,6 +384,96 @@ public class GetCostService {
         dto.setActualAssignmentHours(timeOverrun.actualHours);
         dto.setEstimatedAssignmentHours(timeOverrun.estimatedHours);
         return dto;
+    }
+
+    private void applyRawVehicleCost(VehicleCostDTO dto) {
+        double rawTotalCost = (WEIGHT_A * safe(dto.getCostA())
+                + WEIGHT_B * safe(dto.getCostB())
+                + WEIGHT_C * safe(dto.getCostC())
+                + WEIGHT_D * safe(dto.getCostD())
+                + WEIGHT_E * safe(dto.getCostE())) / ALL_COST_WEIGHT_SUM;
+        dto.setTotalCost(rawTotalCost);
+    }
+
+    private SchemeCostSnapshot calculateSchemeCost(List<VehicleCostDTO> vehicleCosts) {
+        SchemeCostSnapshot snapshot = new SchemeCostSnapshot();
+        if (vehicleCosts == null || vehicleCosts.isEmpty()) {
+            return snapshot;
+        }
+
+        List<Double> workloads = new ArrayList<>();
+
+        for (VehicleCostDTO dto : vehicleCosts) {
+            double waitingHours = safe(dto.getTotalWaitingHours());
+            double transportHours = safe(dto.getTotalTransportHours());
+            double emptyDistance = safe(dto.getEmptyDistanceKm());
+            double totalDistance = safe(dto.getTotalDistanceKm());
+            double theoryCapacity = safe(dto.getTheoryCapacity());
+            double actualCapacity = safe(dto.getActualCapacity());
+            double capacityWaste = Math.max(0.0, theoryCapacity - actualCapacity);
+
+            snapshot.totalWaitingHours += waitingHours;
+            snapshot.totalTransportHours += transportHours;
+            snapshot.totalEmptyDistanceKm += emptyDistance;
+            snapshot.totalDistanceKm += totalDistance;
+            snapshot.totalTheoryCapacity += theoryCapacity;
+            snapshot.totalActualCapacity += actualCapacity;
+            snapshot.worstWaitingTransportRatio = Math.max(
+                    snapshot.worstWaitingTransportRatio,
+                    safeDivide(waitingHours, transportHours)
+            );
+            snapshot.worstCapacityWaste = Math.max(snapshot.worstCapacityWaste, capacityWaste);
+
+            double oilLoss = calculateOilLoss(actualCapacity, theoryCapacity);
+            double fixedLoss = waitingHours + transportHours;
+            double loss = 0.5 * oilLoss + 0.3 * fixedLoss;
+            snapshot.worstLoss = Math.max(snapshot.worstLoss, loss);
+
+            snapshot.totalActualRouteDistanceKm += safe(dto.getActualRouteDistanceKm());
+            snapshot.totalBaseRouteDistanceKm += safe(dto.getBaseRouteDistanceKm());
+            snapshot.totalActualVolume += safe(dto.getActualVolume());
+            snapshot.totalCargoVolume += safe(dto.getCargoVolume());
+            snapshot.totalActualAssignmentHours += safe(dto.getActualAssignmentHours());
+            snapshot.totalEstimatedAssignmentHours += safe(dto.getEstimatedAssignmentHours());
+            workloads.add(safe(dto.getWorkload()));
+        }
+
+        double capacityRatio = safeDivide(snapshot.totalActualCapacity, snapshot.totalTheoryCapacity);
+
+        snapshot.costA = 0.5 * snapshot.totalWaitingHours + 0.5 * snapshot.totalEmptyDistanceKm;
+        snapshot.costB = 0.4 * safeDivide(snapshot.totalEmptyDistanceKm, snapshot.totalDistanceKm)
+                + 0.5 * safeDivide(snapshot.totalWaitingHours, snapshot.totalTransportHours)
+                + 0.1 * snapshot.worstWaitingTransportRatio;
+        snapshot.costC = 0.9 * Math.max(0.0, snapshot.totalTheoryCapacity - snapshot.totalActualCapacity)
+                + 0.1 * snapshot.worstCapacityWaste;
+        snapshot.costD = 0.5 * VehicleType * capacityRatio
+                + 0.3 * (VehicleType * snapshot.totalWaitingHours + VehicleType * snapshot.totalTransportHours)
+                + 0.2 * snapshot.worstLoss;
+        snapshot.costE = calculateVariationCoefficient(workloads);
+        snapshot.costG = snapshot.totalBaseRouteDistanceKm <= 0.0
+                ? 0.0
+                : Math.max(0.0, snapshot.totalActualRouteDistanceKm - snapshot.totalBaseRouteDistanceKm)
+                / snapshot.totalBaseRouteDistanceKm;
+        snapshot.costH = snapshot.totalCargoVolume <= 0.0
+                ? 0.0
+                : clamp01(1.0 - safeDivide(snapshot.totalActualVolume, snapshot.totalCargoVolume));
+        snapshot.costI = snapshot.totalEstimatedAssignmentHours <= 0.0
+                ? 0.0
+                : Math.max(0.0, snapshot.totalActualAssignmentHours - snapshot.totalEstimatedAssignmentHours)
+                / snapshot.totalEstimatedAssignmentHours;
+
+        return snapshot;
+    }
+
+    private void applySchemeCosts(VehicleCostSummaryDTO summary, SchemeCostSnapshot schemeCost) {
+        summary.setSchemeCostA(schemeCost.costA);
+        summary.setSchemeCostB(schemeCost.costB);
+        summary.setSchemeCostC(schemeCost.costC);
+        summary.setSchemeCostD(schemeCost.costD);
+        summary.setSchemeCostE(schemeCost.costE);
+        summary.setSchemeCostG(schemeCost.costG);
+        summary.setSchemeCostH(schemeCost.costH);
+        summary.setSchemeCostI(schemeCost.costI);
     }
 
     private void applyNormalizedCosts(VehicleCostDTO dto, CostRange range) {
@@ -455,6 +633,83 @@ public class GetCostService {
         return totalWorkload / vehicles.size();
     }
 
+    private double calculateVariationCoefficient(List<Double> values) {
+        if (values == null || values.isEmpty()) {
+            return 0.0;
+        }
+
+        double sum = 0.0;
+        for (Double value : values) {
+            sum += safe(value);
+        }
+
+        double average = sum / values.size();
+        if (average <= 0.0) {
+            return 0.0;
+        }
+
+        double variance = 0.0;
+        for (Double value : values) {
+            double diff = safe(value) - average;
+            variance += diff * diff;
+        }
+
+        double standardDeviation = Math.sqrt(variance / values.size());
+        return standardDeviation / average;
+    }
+
+    private double calculateAllCost(double costA, double costB, double costC, double costD, double costE) {
+        return (WEIGHT_A * safe(costA)
+                + WEIGHT_B * safe(costB)
+                + WEIGHT_C * safe(costC)
+                + WEIGHT_D * safe(costD)
+                + WEIGHT_E * safe(costE)) / ALL_COST_WEIGHT_SUM;
+    }
+
+    private double getVehicleRuntimeWorkload(Vehicle vehicle, LocalDateTime simNow) {
+        double baseWorkload = getVehicleWorkload(vehicle);
+        VehicleStatus status = vehicle == null ? null : vehicle.getCurrentStatus();
+        double statusWeight = getStatusWorkloadWeight(status);
+        if (statusWeight <= 0.0) {
+            return baseWorkload;
+        }
+
+        double statusHours = getCurrentStatusHours(vehicle, simNow);
+        if (statusHours <= 0.0) {
+            statusHours = simulationContext == null
+                    ? 0.5
+                    : simulationContext.getMinutesPerLoop() / 60.0;
+        }
+
+        return baseWorkload + statusWeight * statusHours;
+    }
+
+    private double getStatusWorkloadWeight(VehicleStatus status) {
+        if (status == null) {
+            return 0.0;
+        }
+
+        return switch (status) {
+            case ORDER_DRIVING, TRANSPORT_DRIVING -> 1.0;
+            case LOADING, UNLOADING, WAITING, BREAKDOWN -> 0.5;
+            case IDLE -> 0.0;
+        };
+    }
+
+    private double getCurrentStatusHours(Vehicle vehicle, LocalDateTime simNow) {
+        if (vehicle == null) {
+            return 0.0;
+        }
+
+        LocalDateTime statusStartTime = vehicle.getStatusStartTime();
+        if (simNow != null && statusStartTime != null && !statusStartTime.isAfter(simNow)) {
+            long seconds = Duration.between(statusStartTime, simNow).toSeconds();
+            return Math.max(0.0, seconds / 3600.0);
+        }
+
+        return safe(vehicle.getStatusDurationSeconds()) / 3600.0;
+    }
+
     private double getVehicleWorkload(Vehicle vehicle) {
         double drivingHours = safe(vehicle == null ? null : vehicle.getTotalDrivingTime()) / 3600.0;
         return drivingHours + 0.5 * getVehicleWaitingHours(vehicle);
@@ -487,6 +742,18 @@ public class GetCostService {
             return 0.0;
         }
         return numerator / denominator;
+    }
+
+    private double calculateOilLoss(double actualCapacity, double theoryCapacity) {
+        if (theoryCapacity <= 0.0) {
+            return 0.0;
+        }
+
+        double oilLoss = actualCapacity / theoryCapacity;
+        if (!Double.isFinite(oilLoss)) {
+            return 0.0;
+        }
+        return Math.max(0.0, oilLoss);
     }
 
     private static class CostRange {
@@ -572,6 +839,102 @@ public class GetCostService {
         private TimeOverrun(double actualHours, double estimatedHours) {
             this.actualHours = actualHours;
             this.estimatedHours = estimatedHours;
+        }
+    }
+
+    private static class SchemeCostSnapshot {
+        private double totalWaitingHours;
+        private double totalTransportHours;
+        private double totalEmptyDistanceKm;
+        private double totalDistanceKm;
+        private double totalTheoryCapacity;
+        private double totalActualCapacity;
+        private double worstWaitingTransportRatio;
+        private double worstCapacityWaste;
+        private double worstLoss;
+        private double totalActualRouteDistanceKm;
+        private double totalBaseRouteDistanceKm;
+        private double totalActualVolume;
+        private double totalCargoVolume;
+        private double totalActualAssignmentHours;
+        private double totalEstimatedAssignmentHours;
+
+        private double costA;
+        private double costB;
+        private double costC;
+        private double costD;
+        private double costE;
+        private double costG;
+        private double costH;
+        private double costI;
+    }
+
+    private static class SchemeCostRange {
+        private double minA = Double.POSITIVE_INFINITY;
+        private double maxA = Double.NEGATIVE_INFINITY;
+        private double minB = Double.POSITIVE_INFINITY;
+        private double maxB = Double.NEGATIVE_INFINITY;
+        private double minC = Double.POSITIVE_INFINITY;
+        private double maxC = Double.NEGATIVE_INFINITY;
+        private double minD = Double.POSITIVE_INFINITY;
+        private double maxD = Double.NEGATIVE_INFINITY;
+        private double minE = Double.POSITIVE_INFINITY;
+        private double maxE = Double.NEGATIVE_INFINITY;
+        private double minG = Double.POSITIVE_INFINITY;
+        private double maxG = Double.NEGATIVE_INFINITY;
+        private double minH = Double.POSITIVE_INFINITY;
+        private double maxH = Double.NEGATIVE_INFINITY;
+        private double minI = Double.POSITIVE_INFINITY;
+        private double maxI = Double.NEGATIVE_INFINITY;
+
+        void accept(VehicleCostSummaryDTO summary) {
+            if (summary == null) {
+                return;
+            }
+            minA = Math.min(minA, safeRangeValue(summary.getSchemeCostA()));
+            maxA = Math.max(maxA, safeRangeValue(summary.getSchemeCostA()));
+            minB = Math.min(minB, safeRangeValue(summary.getSchemeCostB()));
+            maxB = Math.max(maxB, safeRangeValue(summary.getSchemeCostB()));
+            minC = Math.min(minC, safeRangeValue(summary.getSchemeCostC()));
+            maxC = Math.max(maxC, safeRangeValue(summary.getSchemeCostC()));
+            minD = Math.min(minD, safeRangeValue(summary.getSchemeCostD()));
+            maxD = Math.max(maxD, safeRangeValue(summary.getSchemeCostD()));
+            minE = Math.min(minE, safeRangeValue(summary.getSchemeCostE()));
+            maxE = Math.max(maxE, safeRangeValue(summary.getSchemeCostE()));
+            minG = Math.min(minG, safeRangeValue(summary.getSchemeCostG()));
+            maxG = Math.max(maxG, safeRangeValue(summary.getSchemeCostG()));
+            minH = Math.min(minH, safeRangeValue(summary.getSchemeCostH()));
+            maxH = Math.max(maxH, safeRangeValue(summary.getSchemeCostH()));
+            minI = Math.min(minI, safeRangeValue(summary.getSchemeCostI()));
+            maxI = Math.max(maxI, safeRangeValue(summary.getSchemeCostI()));
+        }
+
+        double minA() { return finiteOrZero(minA); }
+        double maxA() { return finiteOrZero(maxA); }
+        double minB() { return finiteOrZero(minB); }
+        double maxB() { return finiteOrZero(maxB); }
+        double minC() { return finiteOrZero(minC); }
+        double maxC() { return finiteOrZero(maxC); }
+        double minD() { return finiteOrZero(minD); }
+        double maxD() { return finiteOrZero(maxD); }
+        double minE() { return finiteOrZero(minE); }
+        double maxE() { return finiteOrZero(maxE); }
+        double minG() { return finiteOrZero(minG); }
+        double maxG() { return finiteOrZero(maxG); }
+        double minH() { return finiteOrZero(minH); }
+        double maxH() { return finiteOrZero(maxH); }
+        double minI() { return finiteOrZero(minI); }
+        double maxI() { return finiteOrZero(maxI); }
+
+        private static double safeRangeValue(Double value) {
+            if (value == null || Double.isNaN(value) || Double.isInfinite(value)) {
+                return 0.0;
+            }
+            return value;
+        }
+
+        private static double finiteOrZero(double value) {
+            return Double.isFinite(value) ? value : 0.0;
         }
     }
 }

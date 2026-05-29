@@ -222,6 +222,28 @@
                       <ElButton link type="primary" size="small" @click="showChart('D')">趋势图</ElButton>
                     </div>
                   </div>
+
+                  <div class="cost-item">
+                    <div class="cost-header-row">
+                      <span class="cost-title">负载均衡 (E)</span>
+                      <span class="cost-value">{{ simulationCosts.costE.toFixed(4) }}</span>
+                    </div>
+                    <div class="cost-footer-row">
+                      <span class="cost-desc">车队工作量离散度</span>
+                      <ElButton link type="primary" size="small" @click="showChart('E')">趋势图</ElButton>
+                    </div>
+                  </div>
+
+                  <div class="cost-item total-cost">
+                    <div class="cost-header-row">
+                      <span class="cost-title">综合成本 (All)</span>
+                      <span class="cost-value highlight-value">{{ simulationCosts.allCost.toFixed(4) }}</span>
+                    </div>
+                    <div class="cost-footer-row">
+                      <span class="cost-desc">后端A-E加权计算</span>
+                      <ElButton link type="primary" size="small" @click="showChart('ALL')">趋势图</ElButton>
+                    </div>
+                  </div>
                 </div>
 
               </ElCard>
@@ -458,7 +480,9 @@ const simulationCosts = reactive({
   costA: 0.0,
   costB: 0.0,
   costC: 0.0,
-  costD: 0.0
+  costD: 0.0,
+  costE: 0.0,
+  allCost: 0.0
 });
 
 // 获取实时成本的接口请求
@@ -467,8 +491,31 @@ const costHistory = reactive({
   costA: [],
   costB: [],
   costC: [],
-  costD: []
+  costD: [],
+  costE: [],
+  allCost: []
 });
+
+const resetSimulationCostDisplay = () => {
+  simulationCosts.costA = 0.0;
+  simulationCosts.costB = 0.0;
+  simulationCosts.costC = 0.0;
+  simulationCosts.costD = 0.0;
+  simulationCosts.costE = 0.0;
+  simulationCosts.allCost = 0.0;
+
+  costHistory.times.splice(0);
+  costHistory.costA.splice(0);
+  costHistory.costB.splice(0);
+  costHistory.costC.splice(0);
+  costHistory.costD.splice(0);
+  costHistory.costE.splice(0);
+  costHistory.allCost.splice(0);
+
+  if (chartVisible.value && chartInstance) {
+    updateChart();
+  }
+};
 
 const chartVisible = ref(false);
 const chartTitle = ref('成本趋势');
@@ -482,6 +529,9 @@ const costTitles = {
   'C': '运能损耗 (C) 趋势',
   'D': '经济损耗 (D) 趋势'
 };
+
+costTitles.E = '负载均衡 (E) 趋势';
+costTitles.ALL = '综合成本 (All) 趋势';
 
 const showChart = (type) => {
   currentChartType.value = type;
@@ -520,7 +570,9 @@ const updateChart = () => {
     'A': costHistory.costA,
     'B': costHistory.costB,
     'C': costHistory.costC,
-    'D': costHistory.costD
+    'D': costHistory.costD,
+    'E': costHistory.costE,
+    'ALL': costHistory.allCost
   };
   
   const data = typeMap[currentChartType.value] || [];
@@ -576,6 +628,8 @@ const fetchSimulationCosts = async () => {
       simulationCosts.costB = response.data.costB || 0;
       simulationCosts.costC = response.data.costC || 0;
       simulationCosts.costD = response.data.costD || 0;
+      simulationCosts.costE = response.data.costE || 0;
+      simulationCosts.allCost = response.data.allCost || 0;
       
       // 记录历史数据用于折线图
       const now = new Date();
@@ -586,6 +640,8 @@ const fetchSimulationCosts = async () => {
       costHistory.costB.push(simulationCosts.costB.toFixed(2));
       costHistory.costC.push(simulationCosts.costC.toFixed(2));
       costHistory.costD.push(simulationCosts.costD.toFixed(2));
+      costHistory.costE.push(simulationCosts.costE.toFixed(4));
+      costHistory.allCost.push(simulationCosts.allCost.toFixed(4));
       
       // 保持最多 60 个数据点 (比如8秒更新一次，即8分钟的数据)
       if (costHistory.times.length > 60) {
@@ -594,6 +650,8 @@ const fetchSimulationCosts = async () => {
         costHistory.costB.shift();
         costHistory.costC.shift();
         costHistory.costD.shift();
+        costHistory.costE.shift();
+        costHistory.allCost.shift();
       }
       
       if (chartVisible.value && chartInstance) {
@@ -1791,6 +1849,7 @@ const resetSimulation = async () => {
 
       // 停止定时器
       stopSimulationTimer();
+      resetSimulationCostDisplay();
 
       // 停止并清理所有动画
       animationManager.stopAll();
@@ -3947,6 +4006,9 @@ onUnmounted(() => {
   font-weight: 700;
   color: #409eff; /* 蓝色数值 */
   font-family: 'Helvetica Neue', Helvetica, 'PingFang SC', sans-serif;
+  max-width: 140px;
+  overflow-wrap: anywhere;
+  text-align: right;
 }
 
 .cost-desc {

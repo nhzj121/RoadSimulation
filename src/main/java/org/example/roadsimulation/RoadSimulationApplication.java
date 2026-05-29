@@ -1,8 +1,6 @@
 package org.example.roadsimulation;
 
-import org.example.roadsimulation.service.GoodsPOIGenerateService;
 import org.springframework.boot.SpringApplication;
-import org.example.roadsimulation.DataInitializer;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.cache.annotation.EnableCaching;
 import org.springframework.scheduling.annotation.EnableScheduling;

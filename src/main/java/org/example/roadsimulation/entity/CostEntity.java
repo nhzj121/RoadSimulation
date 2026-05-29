@@ -19,4 +19,16 @@ public class CostEntity {
     public static Double WorstWaitingTransportTime = 0.0; // 最差等待时间
     public static Double WorstLoss = 0.0;
 
+    public static void reset() {
+        totalTransportTime = 0.0;
+        totalMileage = 0.0;
+        totalMileageWithoutThings = 0.0;
+        totalWaitingTime = 0.0;
+        totalTheoryCapacity = 0.0;
+        totalRealityCapacity = 0.0;
+        WorstTheoryRealityCapacity = 0.0;
+        WorstWaitingTransportTime = 0.0;
+        WorstLoss = 0.0;
+    }
+
 }
