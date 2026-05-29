@@ -1,6 +1,7 @@
 package org.example.roadsimulation;
 
 import org.example.roadsimulation.core.SimulationContext;
+import org.example.roadsimulation.entity.CostEntity;
 import org.example.roadsimulation.service.POIShipmentManager;
 import org.example.roadsimulation.service.ProcessingChainServiceV2;
 import org.example.roadsimulation.service.VehicleInitializationService;
@@ -127,6 +128,7 @@ public class SimulationMainLoop {
 
     public void reset() {
         simulationContext.reset();
+        CostEntity.reset();
         System.out.println("仿真已重置");
     }
 

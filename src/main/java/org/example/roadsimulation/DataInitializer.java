@@ -50,7 +50,6 @@ import java.util.stream.Collectors;
 public class DataInitializer implements CommandLineRunner {
 
     private static final Logger logger = LoggerFactory.getLogger(DataInitializer.class);
-
     private final ShipmentProgressService shipmentProgressService;
     private final EnrollmentRepository enrollmentRepository;
     private final GoodsRepository goodsRepository;
@@ -978,6 +977,18 @@ public class DataInitializer implements CommandLineRunner {
         return R * c;
     }
 
+    private double calculateOilLoss(double realityCapacity, double theoryCapacity) {
+        if (theoryCapacity <= 0.0) {
+            return 0.0;
+        }
+
+        double oilLoss = realityCapacity / theoryCapacity;
+        if (!Double.isFinite(oilLoss)) {
+            return 0.0;
+        }
+        return Math.max(0.0, oilLoss);
+    }
+
     // 基于经纬度的 Haversine 公式计算两点之间的直线距离（公里）
     private Double calculateDistance(POI startPOI, POI endPOI) {
         if (startPOI == null || endPOI == null
@@ -1241,8 +1252,8 @@ public class DataInitializer implements CommandLineRunner {
             Double waitingTime = (currentLoopCount - selectedVehicle.getLoopCount()) * 0.5;
             Double transportTime = (mileage + mileageWithoutThings) / 20.0;
             Double theoryRealityCapacity = theoryCapacity - realityCapacity;
-            Double waitingTransportTime = waitingTime / transportTime;
-            Double oilLoss = realityCapacity / theoryRealityCapacity;
+            Double waitingTransportTime = transportTime > 0.0 ? waitingTime / transportTime : 0.0;
+            Double oilLoss = calculateOilLoss(realityCapacity, theoryCapacity);
             Double fixedLoss = waitingTime + transportTime;
             Double loss = 0.5 * oilLoss + 0.3 * fixedLoss;
 
@@ -1646,8 +1657,7 @@ public class DataInitializer implements CommandLineRunner {
             double theoryRealityCapacity = theoryCapacity - realityCapacity;
             double waitingTransportTime = transportTime > 0 ? waitingTime / transportTime : 0.0;
 
-            // 防御性计算，防止满载时 theoryRealityCapacity 为 0 导致除数为 0 异常
-            double oilLoss = theoryRealityCapacity > 0.1 ? realityCapacity / theoryRealityCapacity : 0.0;
+            double oilLoss = calculateOilLoss(realityCapacity, theoryCapacity);
             double fixedLoss = waitingTime + transportTime;
             double loss = 0.5 * oilLoss + 0.3 * fixedLoss;
 

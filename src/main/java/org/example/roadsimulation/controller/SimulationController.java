@@ -5,6 +5,7 @@ import org.example.roadsimulation.SimulationMainLoop;
 import org.example.roadsimulation.config.DispatchStrategy;
 import org.example.roadsimulation.config.SimulationRuntimeConfig;
 import org.example.roadsimulation.dto.ApiResponse;
+import org.example.roadsimulation.dto.RuntimeCostDTO;
 import org.example.roadsimulation.dto.VehicleCostSummaryDTO;
 import org.example.roadsimulation.entity.Assignment;
 import org.example.roadsimulation.entity.POI;
@@ -57,6 +58,9 @@ public class SimulationController {
 
     @Autowired
     private GaodeRoutePlanningQueueService gaodeRoutePlanningQueueService;
+
+    @Autowired
+    private VehicleRepository vehicleRepository;
 
     @PostMapping("/start")
     public ApiResponse<Map<String, Object>> startSimulation(
@@ -129,13 +133,8 @@ public class SimulationController {
     }
 
     @GetMapping("/costs")
-    public Map<String, Double> getCurrentCosts() {
-        Map<String, Double> costs = new HashMap<>();
-        costs.put("costA", getCostService.getCostByAllWaitingTimeAndMileageWithoutGoods());
-        costs.put("costB", getCostService.getCostByAllEffectiveTimeAndEffectiveMileageWithWorst());
-        costs.put("costC", getCostService.getCostByAllEffectiveTransportCapacityWithWorst());
-        costs.put("costD", getCostService.getCostByALlOilAndFixedConsumptionWithWorst());
-        return costs;
+    public RuntimeCostDTO getCurrentCosts() {
+        return getCostService.calculateRuntimeCosts(vehicleRepository.findAll());
     }
 
     @GetMapping("/vehicle-costs")

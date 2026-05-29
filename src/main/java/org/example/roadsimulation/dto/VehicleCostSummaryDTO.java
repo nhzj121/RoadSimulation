@@ -38,6 +38,27 @@ public class VehicleCostSummaryDTO {
     private Double unassignedTaskCost;
     private Double averageTotalCost;
     private Double globalCost;
+    private Double allCost;
+    private String normalizationScope;
+
+    private Double schemeCostA;
+    private Double schemeCostB;
+    private Double schemeCostC;
+    private Double schemeCostD;
+    private Double schemeCostE;
+    private Double schemeCostG;
+    private Double schemeCostH;
+    private Double schemeCostI;
+
+    private Double normalizedSchemeCostA;
+    private Double normalizedSchemeCostB;
+    private Double normalizedSchemeCostC;
+    private Double normalizedSchemeCostD;
+    private Double normalizedSchemeCostE;
+    private Double normalizedSchemeCostG;
+    private Double normalizedSchemeCostH;
+    private Double normalizedSchemeCostI;
+
     private List<VehicleCostDTO> vehicleCosts = new ArrayList<>();
 
     public Double getWeightA() { return weightA; }
@@ -135,6 +156,60 @@ public class VehicleCostSummaryDTO {
 
     public Double getGlobalCost() { return globalCost; }
     public void setGlobalCost(Double globalCost) { this.globalCost = globalCost; }
+
+    public Double getAllCost() { return allCost; }
+    public void setAllCost(Double allCost) { this.allCost = allCost; }
+
+    public String getNormalizationScope() { return normalizationScope; }
+    public void setNormalizationScope(String normalizationScope) { this.normalizationScope = normalizationScope; }
+
+    public Double getSchemeCostA() { return schemeCostA; }
+    public void setSchemeCostA(Double schemeCostA) { this.schemeCostA = schemeCostA; }
+
+    public Double getSchemeCostB() { return schemeCostB; }
+    public void setSchemeCostB(Double schemeCostB) { this.schemeCostB = schemeCostB; }
+
+    public Double getSchemeCostC() { return schemeCostC; }
+    public void setSchemeCostC(Double schemeCostC) { this.schemeCostC = schemeCostC; }
+
+    public Double getSchemeCostD() { return schemeCostD; }
+    public void setSchemeCostD(Double schemeCostD) { this.schemeCostD = schemeCostD; }
+
+    public Double getSchemeCostE() { return schemeCostE; }
+    public void setSchemeCostE(Double schemeCostE) { this.schemeCostE = schemeCostE; }
+
+    public Double getSchemeCostG() { return schemeCostG; }
+    public void setSchemeCostG(Double schemeCostG) { this.schemeCostG = schemeCostG; }
+
+    public Double getSchemeCostH() { return schemeCostH; }
+    public void setSchemeCostH(Double schemeCostH) { this.schemeCostH = schemeCostH; }
+
+    public Double getSchemeCostI() { return schemeCostI; }
+    public void setSchemeCostI(Double schemeCostI) { this.schemeCostI = schemeCostI; }
+
+    public Double getNormalizedSchemeCostA() { return normalizedSchemeCostA; }
+    public void setNormalizedSchemeCostA(Double normalizedSchemeCostA) { this.normalizedSchemeCostA = normalizedSchemeCostA; }
+
+    public Double getNormalizedSchemeCostB() { return normalizedSchemeCostB; }
+    public void setNormalizedSchemeCostB(Double normalizedSchemeCostB) { this.normalizedSchemeCostB = normalizedSchemeCostB; }
+
+    public Double getNormalizedSchemeCostC() { return normalizedSchemeCostC; }
+    public void setNormalizedSchemeCostC(Double normalizedSchemeCostC) { this.normalizedSchemeCostC = normalizedSchemeCostC; }
+
+    public Double getNormalizedSchemeCostD() { return normalizedSchemeCostD; }
+    public void setNormalizedSchemeCostD(Double normalizedSchemeCostD) { this.normalizedSchemeCostD = normalizedSchemeCostD; }
+
+    public Double getNormalizedSchemeCostE() { return normalizedSchemeCostE; }
+    public void setNormalizedSchemeCostE(Double normalizedSchemeCostE) { this.normalizedSchemeCostE = normalizedSchemeCostE; }
+
+    public Double getNormalizedSchemeCostG() { return normalizedSchemeCostG; }
+    public void setNormalizedSchemeCostG(Double normalizedSchemeCostG) { this.normalizedSchemeCostG = normalizedSchemeCostG; }
+
+    public Double getNormalizedSchemeCostH() { return normalizedSchemeCostH; }
+    public void setNormalizedSchemeCostH(Double normalizedSchemeCostH) { this.normalizedSchemeCostH = normalizedSchemeCostH; }
+
+    public Double getNormalizedSchemeCostI() { return normalizedSchemeCostI; }
+    public void setNormalizedSchemeCostI(Double normalizedSchemeCostI) { this.normalizedSchemeCostI = normalizedSchemeCostI; }
 
     public List<VehicleCostDTO> getVehicleCosts() { return vehicleCosts; }
     public void setVehicleCosts(List<VehicleCostDTO> vehicleCosts) { this.vehicleCosts = vehicleCosts; }
