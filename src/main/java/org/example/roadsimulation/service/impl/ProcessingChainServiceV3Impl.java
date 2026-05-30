@@ -7,6 +7,7 @@ import org.example.roadsimulation.dto.ProcessingOrderStatusDTO;
 import org.example.roadsimulation.entity.*;
 import org.example.roadsimulation.repository.*;
 import org.example.roadsimulation.service.ProcessingChainServiceV2;
+import org.example.roadsimulation.service.TransportMetricsService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -58,6 +59,9 @@ public class ProcessingChainServiceV3Impl implements ProcessingChainServiceV2 {
 
     @Autowired
     private RouteServiceImpl routeServiceImpl;
+
+    @Autowired
+    private TransportMetricsService transportMetricsService;
 
     // ================= 加工链管理 =================
 
@@ -645,7 +649,9 @@ public class ProcessingChainServiceV3Impl implements ProcessingChainServiceV2 {
         actionIds.add(toPOI.getId());
         assignment.setActionLine(actionIds);
 
-        return assignmentRepository.save(assignment);
+        Assignment saved = assignmentRepository.save(assignment);
+        transportMetricsService.rebuildMetricsForAssignment(saved.getId());
+        return saved;
     }
 
     private Route convertToEntity(org.example.roadsimulation.dto.RouteResponseDTO dto) {

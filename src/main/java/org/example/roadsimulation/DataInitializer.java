@@ -66,6 +66,7 @@ public class DataInitializer implements CommandLineRunner {
     private final GetCostService getCostService;
     private final CargoChunkService cargoChunkService;
     private final POIShipmentManager poiShipmentManager;
+    private final TransportMetricsService transportMetricsService;
 
     private final Map<POI, POI> startToEndMapping = new ConcurrentHashMap<>(); // 起点到终点的映射关系
     // 修改成员变量，使用起点-终点对作为键
@@ -149,7 +150,8 @@ public class DataInitializer implements CommandLineRunner {
                            RoutePlanningService routePlanningService,
                            GetCostService getCostService,
                            CargoChunkService cargoChunkService,
-                           POIShipmentManager poiShipmentManager) {
+                           POIShipmentManager poiShipmentManager,
+                           TransportMetricsService transportMetricsService) {
         this.enrollmentRepository = enrollmentRepository;
         this.goodsRepository = goodsRepository;
         this.poiRepository = poiRepository;
@@ -166,6 +168,7 @@ public class DataInitializer implements CommandLineRunner {
         this.getCostService = getCostService;
         this.cargoChunkService = cargoChunkService;
         this.poiShipmentManager = poiShipmentManager;
+        this.transportMetricsService = transportMetricsService;
     }
 
     /**
@@ -1700,6 +1703,8 @@ public class DataInitializer implements CommandLineRunner {
                 vehicle.getLicensePlate(), packedItems.size(), totalAssignedWeight);
 
         // ==================== 新增：将 VRP 任务组装为 DTO 并推入前端广播缓存 ====================
+        rebuildTransportMetricsSafely(assignment);
+
         try {
             AssignmentBriefDTO brief = new AssignmentBriefDTO();
             brief.setAssignmentId(assignment.getId());
@@ -1828,6 +1833,7 @@ public class DataInitializer implements CommandLineRunner {
                 // 8. 保存所有更改
                 vehicleRepository.save(managedVehicle);
                 assignmentRepository.save(assignment);
+                rebuildTransportMetricsSafely(assignment);
 
                 System.out.println("成功分配车辆 " + managedVehicle.getLicensePlate() +
                         " 给任务，从 " + managedStartPOI.getName() + " 到 " + managedEndPOI.getName());
@@ -2341,6 +2347,8 @@ public class DataInitializer implements CommandLineRunner {
         }
 
         try {
+            rebuildTransportMetricsSafely(assignment);
+
             AssignmentBriefDTO brief = new AssignmentBriefDTO();
             brief.setAssignmentId(assignment.getId());
             brief.setStatus(assignment.getStatus() != null ? assignment.getStatus().toString() : "WAITING");
@@ -2475,6 +2483,18 @@ public class DataInitializer implements CommandLineRunner {
         } catch (Exception e) {
             System.err.println("[FrontendAssignment] register failed for assignment "
                     + assignment.getId() + ": " + e.getMessage());
+        }
+    }
+
+    private void rebuildTransportMetricsSafely(Assignment assignment) {
+        try {
+            if (assignment != null && assignment.getId() != null) {
+                transportMetricsService.rebuildMetricsForAssignment(assignment.getId());
+            }
+        } catch (Exception e) {
+            logger.warn("Transport metrics rebuild failed for assignment {}: {}",
+                    assignment != null ? assignment.getId() : null,
+                    e.getMessage());
         }
     }
 

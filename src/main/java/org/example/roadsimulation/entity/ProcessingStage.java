@@ -71,6 +71,21 @@ public class ProcessingStage {
     @Column(name = "updated_at")
     private LocalDateTime updatedAt = LocalDateTime.now();
     
+    @Column(name = "transport_distance_meters")
+    private Double transportDistanceMeters;
+
+    @Column(name = "transport_driving_seconds")
+    private Long transportDrivingSeconds;
+
+    @Column(name = "processing_seconds")
+    private Long processingSeconds;
+
+    @Column(name = "waiting_seconds")
+    private Long waitingSeconds;
+
+    @Column(name = "total_elapsed_seconds")
+    private Long totalElapsedSeconds;
+
     public ProcessingStage() {}
     
     // Getters & Setters
@@ -108,6 +123,21 @@ public class ProcessingStage {
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
     public LocalDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
+
+    public Double getTransportDistanceMeters() { return transportDistanceMeters; }
+    public void setTransportDistanceMeters(Double transportDistanceMeters) { this.transportDistanceMeters = transportDistanceMeters; }
+
+    public Long getTransportDrivingSeconds() { return transportDrivingSeconds; }
+    public void setTransportDrivingSeconds(Long transportDrivingSeconds) { this.transportDrivingSeconds = transportDrivingSeconds; }
+
+    public Long getProcessingSeconds() { return processingSeconds; }
+    public void setProcessingSeconds(Long processingSeconds) { this.processingSeconds = processingSeconds; }
+
+    public Long getWaitingSeconds() { return waitingSeconds; }
+    public void setWaitingSeconds(Long waitingSeconds) { this.waitingSeconds = waitingSeconds; }
+
+    public Long getTotalElapsedSeconds() { return totalElapsedSeconds; }
+    public void setTotalElapsedSeconds(Long totalElapsedSeconds) { this.totalElapsedSeconds = totalElapsedSeconds; }
     
     @PreUpdate
     public void touchUpdateTime() {

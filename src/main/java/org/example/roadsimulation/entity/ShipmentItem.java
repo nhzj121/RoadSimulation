@@ -133,6 +133,21 @@ public class ShipmentItem {
     @Column(name = "updated_time")
     private LocalDateTime updatedTime = LocalDateTime.now();
 
+    @Column(name = "allocated_distance_meters")
+    private Double allocatedDistanceMeters;
+
+    @Column(name = "allocated_driving_seconds")
+    private Long allocatedDrivingSeconds;
+
+    @Column(name = "loading_wait_seconds")
+    private Long loadingWaitSeconds;
+
+    @Column(name = "unloading_wait_seconds")
+    private Long unloadingWaitSeconds;
+
+    @Column(name = "waiting_assignment_seconds")
+    private Long waitingAssignmentSeconds;
+
     public ShipmentItem() {}
 
     public ShipmentItem(@NotNull Shipment shipment, String name, Integer qty, String sku, Double weight, Double volume) {
@@ -239,6 +254,21 @@ public class ShipmentItem {
 
     public LocalDateTime getUpdatedTime() { return updatedTime; }
     public void setUpdatedTime(LocalDateTime updatedTime) { this.updatedTime = updatedTime; }
+
+    public Double getAllocatedDistanceMeters() { return allocatedDistanceMeters; }
+    public void setAllocatedDistanceMeters(Double allocatedDistanceMeters) { this.allocatedDistanceMeters = allocatedDistanceMeters; }
+
+    public Long getAllocatedDrivingSeconds() { return allocatedDrivingSeconds; }
+    public void setAllocatedDrivingSeconds(Long allocatedDrivingSeconds) { this.allocatedDrivingSeconds = allocatedDrivingSeconds; }
+
+    public Long getLoadingWaitSeconds() { return loadingWaitSeconds; }
+    public void setLoadingWaitSeconds(Long loadingWaitSeconds) { this.loadingWaitSeconds = loadingWaitSeconds; }
+
+    public Long getUnloadingWaitSeconds() { return unloadingWaitSeconds; }
+    public void setUnloadingWaitSeconds(Long unloadingWaitSeconds) { this.unloadingWaitSeconds = unloadingWaitSeconds; }
+
+    public Long getWaitingAssignmentSeconds() { return waitingAssignmentSeconds; }
+    public void setWaitingAssignmentSeconds(Long waitingAssignmentSeconds) { this.waitingAssignmentSeconds = waitingAssignmentSeconds; }
 
     @Override
     public String toString() {
