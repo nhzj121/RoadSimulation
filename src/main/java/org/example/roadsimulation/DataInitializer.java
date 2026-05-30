@@ -130,6 +130,7 @@ public class DataInitializer implements CommandLineRunner {
     // 当前轮次
     private int currentLoopCount;
     private final Random random = new Random();
+    private boolean startupProcessingShipmentsGenerated = false;
 
     @Autowired
     private org.example.roadsimulation.optimizer.OptimizerBridge optimizerBridge;
@@ -722,6 +723,266 @@ public class DataInitializer implements CommandLineRunner {
         }
 
         return successCount;
+    }
+
+    @Transactional
+    public synchronized int generateStartupProcessingShipments(int targetCount) {
+        if (targetCount <= 0) {
+            return 0;
+        }
+        if (startupProcessingShipmentsGenerated) {
+            logger.info("[StartupShipments] Already generated for this simulation lifecycle, skip.");
+            return 0;
+        }
+
+        List<StartupShipmentPlan> viablePlans = buildStartupShipmentPlans();
+        if (viablePlans.isEmpty()) {
+            startupProcessingShipmentsGenerated = true;
+            logger.warn("[StartupShipments] No viable processing chain segment found.");
+            return 0;
+        }
+
+        Collections.shuffle(viablePlans, random);
+        List<StartupShipmentPlan> selectedPlans = new ArrayList<>();
+        int firstPassCount = Math.min(targetCount, viablePlans.size());
+        selectedPlans.addAll(viablePlans.subList(0, firstPassCount));
+
+        if (viablePlans.size() > targetCount) {
+            logger.info("[StartupShipments] Active segment count {} exceeds target {}, covering random {} segments.",
+                    viablePlans.size(), targetCount, targetCount);
+        }
+
+        while (selectedPlans.size() < targetCount) {
+            selectedPlans.add(viablePlans.get(random.nextInt(viablePlans.size())));
+        }
+
+        int successCount = 0;
+        for (StartupShipmentPlan plan : selectedPlans) {
+            try {
+                createStartupShipment(plan);
+                successCount++;
+            } catch (Exception e) {
+                logger.warn("[StartupShipments] Failed to create shipment for chain={}, {} -> {}: {}",
+                        plan.chain.getChainCode(),
+                        plan.fromStage.getStageName(),
+                        plan.toStage.getStageName(),
+                        e.getMessage());
+            }
+        }
+
+        startupProcessingShipmentsGenerated = true;
+        logger.info("[StartupShipments] Generated {} startup shipments, target={}, viableSegments={}.",
+                successCount, targetCount, viablePlans.size());
+        return successCount;
+    }
+
+    public synchronized void resetStartupProcessingShipmentsFlag() {
+        startupProcessingShipmentsGenerated = false;
+    }
+
+    public synchronized boolean isStartupProcessingShipmentsGenerated() {
+        return startupProcessingShipmentsGenerated;
+    }
+
+    private List<StartupShipmentPlan> buildStartupShipmentPlans() {
+        List<StartupShipmentPlan> plans = new ArrayList<>();
+        List<Vehicle> allVehicles = vehicleRepository.findAll().stream()
+                .filter(vehicle -> vehicle.getMaxLoadCapacity() != null && vehicle.getMaxLoadCapacity() > 0)
+                .filter(vehicle -> vehicle.getCargoVolume() != null && vehicle.getCargoVolume() > 0)
+                .collect(Collectors.toList());
+
+        if (allVehicles.isEmpty()) {
+            logger.warn("[StartupShipments] No vehicles with valid capacity.");
+            return plans;
+        }
+
+        List<ProcessingChain> activeChains = processingChainRepository.findByStatus(ProcessingChain.ChainStatus.ACTIVE);
+        for (ProcessingChain chain : activeChains) {
+            List<ProcessingStage> stages = chain.getStages() == null
+                    ? Collections.emptyList()
+                    : chain.getStages().stream()
+                    .filter(Objects::nonNull)
+                    .sorted(Comparator.comparing(ProcessingStage::getStageOrder,
+                            Comparator.nullsLast(Integer::compareTo)))
+                    .collect(Collectors.toList());
+
+            if (stages.size() < 2) {
+                continue;
+            }
+
+            for (int i = 0; i < stages.size() - 1; i++) {
+                ProcessingStage fromStage = stages.get(i);
+                ProcessingStage toStage = stages.get(i + 1);
+                Optional<StartupShipmentPlan> plan = buildStartupShipmentPlan(
+                        chain, fromStage, toStage, allVehicles);
+                plan.ifPresent(plans::add);
+            }
+        }
+        return plans;
+    }
+
+    private Optional<StartupShipmentPlan> buildStartupShipmentPlan(
+            ProcessingChain chain,
+            ProcessingStage fromStage,
+            ProcessingStage toStage,
+            List<Vehicle> allVehicles
+    ) {
+        if (fromStage.getProcessingPOI() == null || toStage.getProcessingPOI() == null) {
+            logger.warn("[StartupShipments] Skip segment with missing POI: chain={}, {} -> {}",
+                    chain.getChainCode(), fromStage.getStageName(), toStage.getStageName());
+            return Optional.empty();
+        }
+
+        Goods goods = resolveSegmentGoods(fromStage, toStage);
+        if (goods == null) {
+            logger.warn("[StartupShipments] Skip segment with missing goods: chain={}, {} -> {}",
+                    chain.getChainCode(), fromStage.getStageName(), toStage.getStageName());
+            return Optional.empty();
+        }
+
+        if (goods.getWeightPerUnit() == null || goods.getWeightPerUnit() <= 0
+                || goods.getVolumePerUnit() == null || goods.getVolumePerUnit() <= 0) {
+            logger.warn("[StartupShipments] Skip goods {} because unit weight/volume is missing or invalid.",
+                    goods.getSku());
+            return Optional.empty();
+        }
+
+        Optional<VehicleCapacityChoice> capacityChoice = chooseStartupCapacity(goods, allVehicles);
+        if (capacityChoice.isEmpty()) {
+            logger.warn("[StartupShipments] Skip goods {} because no vehicle can carry one unit.",
+                    goods.getSku());
+            return Optional.empty();
+        }
+
+        VehicleCapacityChoice choice = capacityChoice.get();
+        int minQty = Math.max(1, (int) Math.floor(choice.maxQuantity * 0.25));
+        int maxQty = Math.max(minQty, (int) Math.floor(choice.maxQuantity * 0.50));
+        return Optional.of(new StartupShipmentPlan(chain, fromStage, toStage, goods, minQty, maxQty));
+    }
+
+    private Optional<VehicleCapacityChoice> chooseStartupCapacity(Goods goods, List<Vehicle> allVehicles) {
+        String vehicleFit = goods.getVehicleFit();
+        if (vehicleFit != null && !vehicleFit.isBlank()) {
+            List<Vehicle> typedCandidates = allVehicles.stream()
+                    .filter(vehicle -> vehicleFit.equals(vehicle.getVehicleType()))
+                    .collect(Collectors.toList());
+            if (!typedCandidates.isEmpty()) {
+                Optional<VehicleCapacityChoice> typedChoice = chooseSmallestCapableVehicle(goods, typedCandidates);
+                if (typedChoice.isPresent()) {
+                    return typedChoice;
+                }
+            }
+        }
+        return chooseSmallestCapableVehicle(goods, allVehicles);
+    }
+
+    private Optional<VehicleCapacityChoice> chooseSmallestCapableVehicle(Goods goods, List<Vehicle> vehicles) {
+        return vehicles.stream()
+                .filter(vehicle -> vehicle.getMaxLoadCapacity() >= goods.getWeightPerUnit())
+                .filter(vehicle -> vehicle.getCargoVolume() >= goods.getVolumePerUnit())
+                .sorted(Comparator.comparing(Vehicle::getMaxLoadCapacity)
+                        .thenComparing(Vehicle::getCargoVolume))
+                .findFirst()
+                .map(vehicle -> {
+                    int maxByWeight = (int) Math.floor(vehicle.getMaxLoadCapacity() / goods.getWeightPerUnit());
+                    int maxByVolume = (int) Math.floor(vehicle.getCargoVolume() / goods.getVolumePerUnit());
+                    return new VehicleCapacityChoice(Math.min(maxByWeight, maxByVolume));
+                })
+                .filter(choice -> choice.maxQuantity > 0);
+    }
+
+    private void createStartupShipment(StartupShipmentPlan plan) {
+        int quantity = randomQuantityInRange(plan.minQuantity, plan.maxQuantity);
+
+        POI managedStartPOI = poiRepository.findById(plan.fromStage.getProcessingPOI().getId())
+                .orElseThrow(() -> new RuntimeException("Start POI not found: "
+                        + plan.fromStage.getProcessingPOI().getId()));
+        POI managedEndPOI = poiRepository.findById(plan.toStage.getProcessingPOI().getId())
+                .orElseThrow(() -> new RuntimeException("End POI not found: "
+                        + plan.toStage.getProcessingPOI().getId()));
+
+        upsertStartupEnrollment(managedStartPOI, plan.goods, quantity);
+
+        Shipment shipment = initalizeShipment(managedStartPOI, managedEndPOI, plan.goods, quantity);
+        ShipmentItem item = shipmentItemService.initalizeShipmentItem(shipment, plan.goods, quantity);
+        item.setStatus(ShipmentItem.ShipmentItemStatus.NOT_ASSIGNED);
+        item.setStage(plan.toStage);
+        item.setStageOrder(plan.toStage.getStageOrder());
+        item.setStageName(plan.toStage.getStageName());
+        item.setProcessingPOI(managedEndPOI);
+        item.setProcessingStatus(ShipmentItem.ProcessingItemStatus.WAITING);
+        item.setProgressPercent(0);
+        shipmentItemRepository.save(item);
+
+        startToEndMapping.put(managedStartPOI, managedEndPOI);
+        String key = generatePoiPairKey(managedStartPOI, managedEndPOI);
+        poiPairShipmentMapping.put(key, shipment);
+        createPairStatus(managedStartPOI, managedEndPOI, shipment);
+        poiShipmentManager.registerShipment(managedStartPOI, managedEndPOI, shipment);
+
+        logger.info("[StartupShipments] Created shipment refNo={}, chain={}, segment={} -> {}, goods={}, qty={}",
+                shipment.getRefNo(),
+                plan.chain.getChainCode(),
+                plan.fromStage.getStageName(),
+                plan.toStage.getStageName(),
+                plan.goods.getSku(),
+                quantity);
+    }
+
+    private void upsertStartupEnrollment(POI poi, Goods goods, int quantity) {
+        Optional<Enrollment> existingEnrollment = enrollmentRepository.findByPoiAndGoods(poi, goods);
+        if (existingEnrollment.isPresent()) {
+            Enrollment enrollment = existingEnrollment.get();
+            int currentQuantity = enrollment.getQuantity() == null ? 0 : enrollment.getQuantity();
+            enrollment.setQuantity(currentQuantity + quantity);
+            enrollmentRepository.save(enrollment);
+            return;
+        }
+
+        Enrollment enrollment = new Enrollment(poi, goods, quantity);
+        enrollmentRepository.save(enrollment);
+        poi.addGoodsEnrollment(enrollment);
+        goods.addPOIEnrollment(enrollment);
+    }
+
+    private int randomQuantityInRange(int minQuantity, int maxQuantity) {
+        if (maxQuantity <= minQuantity) {
+            return Math.max(1, minQuantity);
+        }
+        return random.nextInt(maxQuantity - minQuantity + 1) + minQuantity;
+    }
+
+    private static class StartupShipmentPlan {
+        private final ProcessingChain chain;
+        private final ProcessingStage fromStage;
+        private final ProcessingStage toStage;
+        private final Goods goods;
+        private final int minQuantity;
+        private final int maxQuantity;
+
+        private StartupShipmentPlan(
+                ProcessingChain chain,
+                ProcessingStage fromStage,
+                ProcessingStage toStage,
+                Goods goods,
+                int minQuantity,
+                int maxQuantity
+        ) {
+            this.chain = chain;
+            this.fromStage = fromStage;
+            this.toStage = toStage;
+            this.goods = goods;
+            this.minQuantity = minQuantity;
+            this.maxQuantity = maxQuantity;
+        }
+    }
+
+    private static class VehicleCapacityChoice {
+        private final int maxQuantity;
+
+        private VehicleCapacityChoice(int maxQuantity) {
+            this.maxQuantity = maxQuantity;
+        }
     }
 
     /**
