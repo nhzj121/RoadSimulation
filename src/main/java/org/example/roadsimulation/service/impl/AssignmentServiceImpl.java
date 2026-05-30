@@ -6,6 +6,7 @@ import org.example.roadsimulation.entity.*;
 import org.example.roadsimulation.entity.Assignment.AssignmentStatus;
 import org.example.roadsimulation.repository.AssignmentRepository;
 import org.example.roadsimulation.service.AssignmentService;
+import org.example.roadsimulation.service.TransportMetricsService;
 import org.example.roadsimulation.service.VehicleService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
@@ -31,6 +32,9 @@ public class AssignmentServiceImpl implements AssignmentService {
 
     @Autowired
     private DataInitializer dataInitializer;
+
+    @Autowired
+    private TransportMetricsService transportMetricsService;
 
     // ==================== CRUD ====================
 
@@ -348,31 +352,9 @@ public class AssignmentServiceImpl implements AssignmentService {
 
     // ==================== 核心：车辆指标计算 ====================
     private void calculateVehicleMetrics(Assignment assignment){
-        Vehicle vehicle = assignment.getAssignedVehicle();
-        Route route = assignment.getRoute();
-        if(vehicle == null || route == null) return;
-
-        // 空驶距离/时间
-        double emptyDistance = 0; // TODO: 高德API或直线距离
-        long emptyTime = (long)((emptyDistance / 40.0) * 3600); // 秒
-        vehicle.setEmptyDrivingDistance(emptyDistance);
-        vehicle.setEmptyDrivingTime(emptyTime);
-
-        // 装货等待时间
-        long waitTime = 0;
-        if(assignment.getStartTime()!=null && vehicle.getStatusStartTime()!=null){
-            waitTime = Duration.between(vehicle.getStatusStartTime(), assignment.getStartTime()).getSeconds();
-            if(waitTime<0) waitTime =0;
+        if (assignment == null || assignment.getId() == null) {
+            return;
         }
-        vehicle.setLoadingWaitTime(waitTime);
-
-        // 总行驶距离/时间
-        double routeDistance = route.getDistance()!=null?route.getDistance():0;
-        long routeTime = route.getEstimatedTime()!=null?(long)(route.getEstimatedTime()*3600):0;
-        vehicle.setTotalDrivingDistance(emptyDistance+routeDistance);
-        vehicle.setTotalDrivingTime(emptyTime+routeTime);
-
-        // 保存车辆指标
-        vehicleService.updateVehicleMetrics(vehicle);
+        transportMetricsService.rebuildMetricsForAssignment(assignment.getId());
     }
 }

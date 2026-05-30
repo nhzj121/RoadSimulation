@@ -11,6 +11,7 @@ import org.example.roadsimulation.optimizer.multi.VehicleRouteGene;
 import org.example.roadsimulation.repository.AssignmentRepository;
 import org.example.roadsimulation.repository.ShipmentItemRepository;
 import org.example.roadsimulation.repository.VehicleRepository;
+import org.example.roadsimulation.service.TransportMetricsService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -24,16 +25,19 @@ public class MultiOrderAssignmentMaterializer {
     private final AssignmentRepository assignmentRepository;
     private final ShipmentItemRepository shipmentItemRepository;
     private final VehicleRepository vehicleRepository;
+    private final TransportMetricsService transportMetricsService;
 
     @Autowired
     public MultiOrderAssignmentMaterializer(
             AssignmentRepository assignmentRepository,
             ShipmentItemRepository shipmentItemRepository,
-            VehicleRepository vehicleRepository
+            VehicleRepository vehicleRepository,
+            TransportMetricsService transportMetricsService
     ) {
         this.assignmentRepository = assignmentRepository;
         this.shipmentItemRepository = shipmentItemRepository;
         this.vehicleRepository = vehicleRepository;
+        this.transportMetricsService = transportMetricsService;
     }
 
     /**
@@ -132,6 +136,8 @@ public class MultiOrderAssignmentMaterializer {
             for (ShipmentItem item : saved.getShipmentItems()) {
                 shipmentItemRepository.save(item);
             }
+
+            transportMetricsService.rebuildMetricsForAssignment(saved.getId());
 
             createdAssignments.add(saved);
         }

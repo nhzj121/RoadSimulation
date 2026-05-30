@@ -179,6 +179,33 @@ public class Assignment {
     @Column(name = "waiting_assignment_time")
     private Long waitingAssignmentTime;      // 等待分配任务时间（秒）
     // ================= 新增：支持一车多装的节点集合 =================
+    @Column(name = "empty_distance_meters")
+    private Double emptyDistanceMeters;
+
+    @Column(name = "loaded_distance_meters")
+    private Double loadedDistanceMeters;
+
+    @Column(name = "total_distance_meters")
+    private Double totalDistanceMeters;
+
+    @Column(name = "empty_driving_seconds")
+    private Long emptyDrivingSeconds;
+
+    @Column(name = "loaded_driving_seconds")
+    private Long loadedDrivingSeconds;
+
+    @Column(name = "total_driving_seconds")
+    private Long totalDrivingSeconds;
+
+    @Column(name = "loading_wait_seconds")
+    private Long loadingWaitSeconds;
+
+    @Column(name = "unloading_wait_seconds")
+    private Long unloadingWaitSeconds;
+
+    @Column(name = "waiting_assignment_seconds")
+    private Long waitingAssignmentSeconds;
+
     @OneToMany(mappedBy = "assignment", cascade = CascadeType.ALL, orphanRemoval = true)
     @OrderBy("sequenceIndex ASC") // 确保从数据库查出来时是有序的
     private List<AssignmentNode> nodes = new ArrayList<>();
@@ -289,6 +316,33 @@ public class Assignment {
 
     public Long getWaitingAssignmentTime() { return waitingAssignmentTime; }
     public void setWaitingAssignmentTime(Long waitingAssignmentTime) { this.waitingAssignmentTime = waitingAssignmentTime; }
+    public Double getEmptyDistanceMeters() { return emptyDistanceMeters; }
+    public void setEmptyDistanceMeters(Double emptyDistanceMeters) { this.emptyDistanceMeters = emptyDistanceMeters; }
+
+    public Double getLoadedDistanceMeters() { return loadedDistanceMeters; }
+    public void setLoadedDistanceMeters(Double loadedDistanceMeters) { this.loadedDistanceMeters = loadedDistanceMeters; }
+
+    public Double getTotalDistanceMeters() { return totalDistanceMeters; }
+    public void setTotalDistanceMeters(Double totalDistanceMeters) { this.totalDistanceMeters = totalDistanceMeters; }
+
+    public Long getEmptyDrivingSeconds() { return emptyDrivingSeconds; }
+    public void setEmptyDrivingSeconds(Long emptyDrivingSeconds) { this.emptyDrivingSeconds = emptyDrivingSeconds; }
+
+    public Long getLoadedDrivingSeconds() { return loadedDrivingSeconds; }
+    public void setLoadedDrivingSeconds(Long loadedDrivingSeconds) { this.loadedDrivingSeconds = loadedDrivingSeconds; }
+
+    public Long getTotalDrivingSeconds() { return totalDrivingSeconds; }
+    public void setTotalDrivingSeconds(Long totalDrivingSeconds) { this.totalDrivingSeconds = totalDrivingSeconds; }
+
+    public Long getLoadingWaitSeconds() { return loadingWaitSeconds; }
+    public void setLoadingWaitSeconds(Long loadingWaitSeconds) { this.loadingWaitSeconds = loadingWaitSeconds; }
+
+    public Long getUnloadingWaitSeconds() { return unloadingWaitSeconds; }
+    public void setUnloadingWaitSeconds(Long unloadingWaitSeconds) { this.unloadingWaitSeconds = unloadingWaitSeconds; }
+
+    public Long getWaitingAssignmentSeconds() { return waitingAssignmentSeconds; }
+    public void setWaitingAssignmentSeconds(Long waitingAssignmentSeconds) { this.waitingAssignmentSeconds = waitingAssignmentSeconds; }
+
     public List<AssignmentNode> getNodes() {
         return nodes;
     }

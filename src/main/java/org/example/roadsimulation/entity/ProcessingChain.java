@@ -77,6 +77,21 @@ public class ProcessingChain {
     @OrderBy("stageOrder ASC")
     private List<ProcessingStage> stages = new ArrayList<>();
     
+    @Column(name = "transport_distance_meters")
+    private Double transportDistanceMeters;
+
+    @Column(name = "transport_driving_seconds")
+    private Long transportDrivingSeconds;
+
+    @Column(name = "processing_seconds")
+    private Long processingSeconds;
+
+    @Column(name = "waiting_seconds")
+    private Long waitingSeconds;
+
+    @Column(name = "total_elapsed_seconds")
+    private Long totalElapsedSeconds;
+
     public ProcessingChain() {}
     
     // Getters & Setters
@@ -104,6 +119,21 @@ public class ProcessingChain {
     public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
     public List<ProcessingStage> getStages() { return stages; }
     public void setStages(List<ProcessingStage> stages) { this.stages = stages; }
+
+    public Double getTransportDistanceMeters() { return transportDistanceMeters; }
+    public void setTransportDistanceMeters(Double transportDistanceMeters) { this.transportDistanceMeters = transportDistanceMeters; }
+
+    public Long getTransportDrivingSeconds() { return transportDrivingSeconds; }
+    public void setTransportDrivingSeconds(Long transportDrivingSeconds) { this.transportDrivingSeconds = transportDrivingSeconds; }
+
+    public Long getProcessingSeconds() { return processingSeconds; }
+    public void setProcessingSeconds(Long processingSeconds) { this.processingSeconds = processingSeconds; }
+
+    public Long getWaitingSeconds() { return waitingSeconds; }
+    public void setWaitingSeconds(Long waitingSeconds) { this.waitingSeconds = waitingSeconds; }
+
+    public Long getTotalElapsedSeconds() { return totalElapsedSeconds; }
+    public void setTotalElapsedSeconds(Long totalElapsedSeconds) { this.totalElapsedSeconds = totalElapsedSeconds; }
 
     public Set<Long> getPredecessorChainIds() { return predecessorChainIds; }
     public void setPredecessorChainIds(Set<Long> predecessorChainIds) { this.predecessorChainIds = predecessorChainIds; }

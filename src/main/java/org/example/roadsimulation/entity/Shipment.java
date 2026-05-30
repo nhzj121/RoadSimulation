@@ -175,6 +175,27 @@ public class Shipment {
     @Column(name = "waiting_assignment_time")
     private Long waitingAssignmentTime;      // 等待分配任务时间（秒）
 
+    @Column(name = "allocated_distance_meters")
+    private Double allocatedDistanceMeters;
+
+    @Column(name = "allocated_driving_seconds")
+    private Long allocatedDrivingSeconds;
+
+    @Column(name = "loaded_distance_meters")
+    private Double loadedDistanceMeters;
+
+    @Column(name = "loaded_driving_seconds")
+    private Long loadedDrivingSeconds;
+
+    @Column(name = "loading_wait_seconds")
+    private Long loadingWaitSeconds;
+
+    @Column(name = "unloading_wait_seconds")
+    private Long unloadingWaitSeconds;
+
+    @Column(name = "waiting_assignment_seconds")
+    private Long waitingAssignmentSeconds;
+
     public Shipment() {}
 
     public Shipment(String refNo, POI startPOI, POI endPOI, Double totalWeight, Double totalVolume) {
@@ -377,6 +398,27 @@ public class Shipment {
 
     public Long getWaitingAssignmentTime() { return waitingAssignmentTime; }
     public void setWaitingAssignmentTime(Long waitingAssignmentTime) { this.waitingAssignmentTime = waitingAssignmentTime; }
+
+    public Double getAllocatedDistanceMeters() { return allocatedDistanceMeters; }
+    public void setAllocatedDistanceMeters(Double allocatedDistanceMeters) { this.allocatedDistanceMeters = allocatedDistanceMeters; }
+
+    public Long getAllocatedDrivingSeconds() { return allocatedDrivingSeconds; }
+    public void setAllocatedDrivingSeconds(Long allocatedDrivingSeconds) { this.allocatedDrivingSeconds = allocatedDrivingSeconds; }
+
+    public Double getLoadedDistanceMeters() { return loadedDistanceMeters; }
+    public void setLoadedDistanceMeters(Double loadedDistanceMeters) { this.loadedDistanceMeters = loadedDistanceMeters; }
+
+    public Long getLoadedDrivingSeconds() { return loadedDrivingSeconds; }
+    public void setLoadedDrivingSeconds(Long loadedDrivingSeconds) { this.loadedDrivingSeconds = loadedDrivingSeconds; }
+
+    public Long getLoadingWaitSeconds() { return loadingWaitSeconds; }
+    public void setLoadingWaitSeconds(Long loadingWaitSeconds) { this.loadingWaitSeconds = loadingWaitSeconds; }
+
+    public Long getUnloadingWaitSeconds() { return unloadingWaitSeconds; }
+    public void setUnloadingWaitSeconds(Long unloadingWaitSeconds) { this.unloadingWaitSeconds = unloadingWaitSeconds; }
+
+    public Long getWaitingAssignmentSeconds() { return waitingAssignmentSeconds; }
+    public void setWaitingAssignmentSeconds(Long waitingAssignmentSeconds) { this.waitingAssignmentSeconds = waitingAssignmentSeconds; }
 
     /**
      * 添加上游运单 ID
