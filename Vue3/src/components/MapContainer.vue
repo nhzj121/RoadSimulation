@@ -2382,13 +2382,16 @@ const fetchCurrentAssignments = async (runGeneration = simulationGeneration.valu
         if (assignment && assignment.assignmentId) {
           // 检查是否已有动画
           if (!animationManager.animations.has(assignment.assignmentId)) {
+            let routeData = null;
             if (assignment.vrp === true) {
-              await drawMultiStageRouteForVrpAssignment(assignment, runGeneration);
+              routeData = await drawMultiStageRouteForVrpAssignment(assignment, runGeneration);
             } else {
-              await drawTwoStageRouteForAssignment(assignment, runGeneration);
+              routeData = await drawTwoStageRouteForAssignment(assignment, runGeneration);
             }
             if (!isActiveSimulationGeneration(runGeneration)) return;
-            drawnAssignmentIds.value.add(assignment.assignmentId);
+            if (routeData) {
+              drawnAssignmentIds.value.add(assignment.assignmentId);
+            }
           }
         }
       }
@@ -2422,13 +2425,17 @@ const fetchAndDrawNewAssignments = async (runGeneration = simulationGeneration.v
       if (!isActiveSimulationGeneration(runGeneration)) return;
       if (assignment && assignment.assignmentId) {
         if (!drawnAssignmentIds.value.has(assignment.assignmentId)) {
+          let routeData = null;
           if (assignment.vrp === true) {
-            await drawMultiStageRouteForVrpAssignment(assignment, runGeneration);
+            routeData = await drawMultiStageRouteForVrpAssignment(assignment, runGeneration);
           } else {
-            await drawTwoStageRouteForAssignment(assignment, runGeneration);
+            routeData = await drawTwoStageRouteForAssignment(assignment, runGeneration);
           }
 
           if (!isActiveSimulationGeneration(runGeneration)) return;
+          if (!routeData) {
+            continue;
+          }
           drawnAssignmentIds.value.add(assignment.assignmentId);
 
           try {
@@ -2715,11 +2722,12 @@ const drawMultiStageRouteForVrpAssignment = async (assignment, runGeneration = s
       if (!isActiveSimulationGeneration(runGeneration)) return null;
 
       if (path.length === 0) {
-        path = [
-          [currentLng, currentLat],
-          [targetNode.lng, targetNode.lat]
-        ];
-        distance = AMap.GeometryUtil.distance(path[0], path[1]);
+        elements.forEach(el => {
+          try {
+            el.setMap && el.setMap(null);
+          } catch (_) {}
+        });
+        return null;
       }
 
       stages.push({

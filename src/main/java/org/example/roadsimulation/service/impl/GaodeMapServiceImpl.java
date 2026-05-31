@@ -155,10 +155,20 @@ public class GaodeMapServiceImpl implements GaodeMapService {
             return parseDrivingResponse(body);
 
         } catch (RestClientException e) {
+            if (containsInterruptedException(e) || Thread.currentThread().isInterrupted()) {
+                logger.warn("Gaode route request cancelled or interrupted: {}", e.getMessage());
+                Thread.currentThread().interrupt();
+                return GaodeRouteResponse.error("Gaode route planning request cancelled");
+            }
             // HTTP 调用异常
             logger.error("调用高德接口失败", e);
             return GaodeRouteResponse.error("调用高德接口失败: " + e.getMessage());
         } catch (Exception e) {
+            if (containsInterruptedException(e) || Thread.currentThread().isInterrupted()) {
+                logger.warn("Gaode route planning cancelled or interrupted: {}", e.getMessage());
+                Thread.currentThread().interrupt();
+                return GaodeRouteResponse.error("Gaode route planning request cancelled");
+            }
             // 兜底异常
             logger.error("高德驾车路径规划异常", e);
             return GaodeRouteResponse.error("路线规划失败: " + e.getMessage());
@@ -177,6 +187,17 @@ public class GaodeMapServiceImpl implements GaodeMapService {
      * 2. 在这里 addIfPresent 一行
      * 就够了
      */
+    private boolean containsInterruptedException(Throwable throwable) {
+        Throwable current = throwable;
+        while (current != null) {
+            if (current instanceof InterruptedException) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
+    }
+
     private String buildDrivingRequestUrl(GaodeRouteRequest request) {
         Map<String, String> params = new LinkedHashMap<>();
 

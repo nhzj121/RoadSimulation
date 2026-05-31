@@ -34,6 +34,9 @@ public class SimulationDataCleanupService {
     private AssignmentRepository assignmentRepository;
 
     @Autowired
+    private AssignmentLegRepository assignmentLegRepository;
+
+    @Autowired
     private VehicleRepository vehicleRepository;
 
     @Autowired
@@ -53,6 +56,11 @@ public class SimulationDataCleanupService {
 
         try {
             // 删除顺序：子表 -> 父表
+            long assignmentLegCount = assignmentLegRepository.count();
+            assignmentLegRepository.deleteAllInBatch();
+            assignmentLegRepository.flush();
+            System.out.println("Deleted " + assignmentLegCount + " assignment_leg records");
+
             long assignmentCount = assignmentRepository.count();
             List<Assignment> assignments = assignmentRepository.findAll();
             for (Assignment assignment : assignments) {
@@ -88,6 +96,7 @@ public class SimulationDataCleanupService {
 
             }
             // 最后删除所有Assignment
+            assignmentRepository.flush();
             assignmentRepository.deleteAll();
             System.out.println("已删除 " + assignmentCount + " 条Assignment记录");
 

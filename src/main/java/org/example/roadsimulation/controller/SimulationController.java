@@ -69,14 +69,29 @@ public class SimulationController {
         DispatchStrategy dispatchStrategy = resolveDispatchStrategy(request);
         simulationRuntimeConfig.setDispatchStrategy(dispatchStrategy);
         gaodeRoutePlanningQueueService.resume();
+
         simulationMainLoop.start();
-        return ApiResponse.success("simulation started", buildRuntimeConfigResponse());
+        DataInitializer.StartupAssignmentGenerationResult startupAssignmentResult =
+                dataInitializer.generateStartupProcessingAssignments(15);
+
+        Map<String, Object> response = buildRuntimeConfigResponse();
+
+        logger.info("Startup processing assignments generated: shipments={}, assignments={}, frontendRegistered={}, dispatchStrategy={}",
+                startupAssignmentResult.getShipmentGeneratedCount(),
+                startupAssignmentResult.getAssignmentGeneratedCount(),
+                startupAssignmentResult.getFrontendRegisteredCount(),
+                dispatchStrategy);
+        response.put("startupProcessingAssignments", startupAssignmentResult);
+        response.put("startupProcessingAssignmentsGenerated",
+                startupAssignmentResult.getAssignmentGeneratedCount() > 0);
+        return ApiResponse.success("simulation started", response);
     }
 
     @PostMapping("/stop")
     public ApiResponse<String> stopSimulation() {
         simulationMainLoop.stop();
         gaodeRoutePlanningQueueService.pauseAndCancelPending();
+        dataInitializer.clearFrontendRuntimeAssignments();
         return ApiResponse.success("simulation stopped");
     }
 
@@ -84,6 +99,7 @@ public class SimulationController {
     public ApiResponse<String> resetSimulation() {
         simulationMainLoop.reset();
         gaodeRoutePlanningQueueService.reset();
+        dataInitializer.resetSimulationRuntimeData();
         return ApiResponse.success("simulation reset");
     }
 
@@ -180,6 +196,7 @@ public class SimulationController {
         response.put("routeQueueSize", gaodeRoutePlanningQueueService.getQueueSize());
         response.put("routeQueuePaused", gaodeRoutePlanningQueueService.isPaused());
         response.put("routeQueueGeneration", gaodeRoutePlanningQueueService.getGeneration());
+        response.put("startupProcessingShipmentsGenerated", dataInitializer.isStartupProcessingShipmentsGenerated());
         return response;
     }
 

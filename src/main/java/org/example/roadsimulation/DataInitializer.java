@@ -6,6 +6,7 @@ import jakarta.annotation.PreDestroy;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.Getter;
 import lombok.Setter;
+import org.example.roadsimulation.core.SimulationContext;
 import org.example.roadsimulation.dto.*;
 import org.example.roadsimulation.dto.AssignmentStatusDTO;
 import org.example.roadsimulation.entity.*;
@@ -28,7 +29,7 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
-/*
+ /*
  * 数据库相关工厂类的POI点数据获取，具体货物的对应实现，货物生成函数的实现
  * 目前实现程度：
  * 1. 基于 玻璃生产厂 和 家具制造厂 之间的运输路线
@@ -67,6 +68,7 @@ public class DataInitializer implements CommandLineRunner {
     private final CargoChunkService cargoChunkService;
     private final POIShipmentManager poiShipmentManager;
     private final TransportMetricsService transportMetricsService;
+    private final SimulationContext simulationContext;
 
     private final Map<POI, POI> startToEndMapping = new ConcurrentHashMap<>(); // 起点到终点的映射关系
     // 修改成员变量，使用起点-终点对作为键
@@ -130,6 +132,7 @@ public class DataInitializer implements CommandLineRunner {
     // 当前轮次
     private int currentLoopCount;
     private final Random random = new Random();
+    private boolean startupProcessingShipmentsGenerated = false;
 
     @Autowired
     private org.example.roadsimulation.optimizer.OptimizerBridge optimizerBridge;
@@ -148,10 +151,11 @@ public class DataInitializer implements CommandLineRunner {
                            ShipmentItemService shipmentItemService,
                            @Lazy ShipmentProgressService shipmentProgressService,
                            RoutePlanningService routePlanningService,
-                           GetCostService getCostService,
-                           CargoChunkService cargoChunkService,
-                           POIShipmentManager poiShipmentManager,
-                           TransportMetricsService transportMetricsService) {
+                            GetCostService getCostService,
+                            CargoChunkService cargoChunkService,
+                            POIShipmentManager poiShipmentManager,
+                            TransportMetricsService transportMetricsService,
+                            SimulationContext simulationContext) {
         this.enrollmentRepository = enrollmentRepository;
         this.goodsRepository = goodsRepository;
         this.poiRepository = poiRepository;
@@ -169,6 +173,7 @@ public class DataInitializer implements CommandLineRunner {
         this.cargoChunkService = cargoChunkService;
         this.poiShipmentManager = poiShipmentManager;
         this.transportMetricsService = transportMetricsService;
+        this.simulationContext = simulationContext;
     }
 
     /**
@@ -722,6 +727,683 @@ public class DataInitializer implements CommandLineRunner {
         }
 
         return successCount;
+    }
+
+    @Transactional
+    public synchronized StartupShipmentGenerationResult generateStartupProcessingShipments(int targetCount) {
+        StartupShipmentGenerationResult result = new StartupShipmentGenerationResult(targetCount);
+        if (targetCount <= 0) {
+            result.addFailureReason("targetCount must be greater than 0");
+            return result;
+        }
+        if (startupProcessingShipmentsGenerated) {
+            logger.info("[StartupShipments] Already generated for this simulation lifecycle, skip.");
+            result.setAlreadyGenerated(true);
+            result.addFailureReason("startup processing shipments were already generated for this simulation lifecycle");
+            return result;
+        }
+
+        List<StartupShipmentPlan> viablePlans = buildStartupShipmentPlans(result.getFailureReasons());
+        result.setViableSegmentCount(viablePlans.size());
+        if (viablePlans.isEmpty()) {
+            startupProcessingShipmentsGenerated = true;
+            logger.warn("[StartupShipments] No viable processing chain segment found.");
+            result.addFailureReason("no viable processing chain segment found");
+            return result;
+        }
+
+        Collections.shuffle(viablePlans, random);
+        List<StartupShipmentPlan> selectedPlans = new ArrayList<>();
+        int firstPassCount = Math.min(targetCount, viablePlans.size());
+        selectedPlans.addAll(viablePlans.subList(0, firstPassCount));
+
+        if (viablePlans.size() > targetCount) {
+            logger.info("[StartupShipments] Active segment count {} exceeds target {}, covering random {} segments.",
+                    viablePlans.size(), targetCount, targetCount);
+        }
+
+        while (selectedPlans.size() < targetCount) {
+            selectedPlans.add(viablePlans.get(random.nextInt(viablePlans.size())));
+        }
+
+        int successCount = 0;
+        for (StartupShipmentPlan plan : selectedPlans) {
+            try {
+                createStartupShipment(plan);
+                successCount++;
+            } catch (Exception e) {
+                logger.warn("[StartupShipments] Failed to create shipment for chain={}, {} -> {}: {}",
+                        plan.chain.getChainCode(),
+                        plan.fromStage.getStageName(),
+                        plan.toStage.getStageName(),
+                        e.getMessage());
+                result.addFailureReason("failed to create shipment for chain=" + plan.chain.getChainCode()
+                        + ", segment=" + plan.fromStage.getStageName() + " -> " + plan.toStage.getStageName()
+                        + ": " + e.getMessage());
+            }
+        }
+
+        startupProcessingShipmentsGenerated = true;
+        result.setGeneratedCount(successCount);
+        result.setSelectedSegmentCount(selectedPlans.size());
+        logger.info("[StartupShipments] Generated {} startup shipments, target={}, viableSegments={}.",
+                successCount, targetCount, viablePlans.size());
+        if (successCount == 0) {
+            result.addFailureReason("all selected startup shipment plans failed during creation");
+        }
+        return result;
+    }
+
+    @Transactional
+    public synchronized StartupAssignmentGenerationResult generateStartupProcessingAssignments(int targetCount) {
+        StartupAssignmentGenerationResult result = new StartupAssignmentGenerationResult(targetCount);
+        if (targetCount <= 0) {
+            result.addFailureReason("targetCount must be greater than 0");
+            return result;
+        }
+        if (startupProcessingShipmentsGenerated) {
+            logger.info("[StartupAssignments] Already generated for this simulation lifecycle, skip.");
+            result.setAlreadyGenerated(true);
+            result.addFailureReason("startup processing assignments were already generated for this simulation lifecycle");
+            return result;
+        }
+        if (!canRegisterFrontendAssignment()) {
+            result.addFailureReason("simulation is not running, startup assignments were not generated");
+            return result;
+        }
+
+        List<StartupShipmentPlan> viablePlans = buildStartupShipmentPlans(result.getFailureReasons());
+        result.setViableSegmentCount(viablePlans.size());
+        if (viablePlans.isEmpty()) {
+            startupProcessingShipmentsGenerated = true;
+            result.addFailureReason("no viable processing chain segment found");
+            return result;
+        }
+
+        Collections.shuffle(viablePlans, random);
+        List<StartupShipmentPlan> selectedPlans = new ArrayList<>();
+        int firstPassCount = Math.min(targetCount, viablePlans.size());
+        selectedPlans.addAll(viablePlans.subList(0, firstPassCount));
+        while (selectedPlans.size() < targetCount) {
+            selectedPlans.add(viablePlans.get(random.nextInt(viablePlans.size())));
+        }
+
+        for (StartupShipmentPlan plan : selectedPlans) {
+            if (!canRegisterFrontendAssignment()) {
+                result.addFailureReason("simulation stopped while generating startup assignments");
+                break;
+            }
+
+            try {
+                ShipmentItem item = createStartupShipment(plan);
+                result.incrementShipmentGeneratedCount();
+
+                List<Vehicle> idleVehicles = vehicleRepository.findByCurrentStatus(Vehicle.VehicleStatus.IDLE);
+                Optional<Vehicle> vehicle = selectOriginalDispatchVehicleForItem(item, idleVehicles);
+                if (vehicle.isEmpty()) {
+                    result.addFailureReason("no IDLE vehicle can carry startup item id=" + item.getId());
+                    continue;
+                }
+
+                Assignment assignment = dispatchSingleItemWithOriginalStrategy(item, vehicle.get(), "startup-processing");
+                if (assignment != null && assignment.getId() != null) {
+                    result.incrementAssignmentGeneratedCount();
+                    if (assignmentBriefMap.containsKey(assignment.getId())) {
+                        result.incrementFrontendRegisteredCount();
+                    }
+                }
+            } catch (Exception e) {
+                logger.warn("[StartupAssignments] Failed to create assignment for chain={}, {} -> {}: {}",
+                        plan.chain.getChainCode(),
+                        plan.fromStage.getStageName(),
+                        plan.toStage.getStageName(),
+                        e.getMessage());
+                result.addFailureReason("failed to create startup assignment for chain=" + plan.chain.getChainCode()
+                        + ", segment=" + plan.fromStage.getStageName() + " -> " + plan.toStage.getStageName()
+                        + ": " + e.getMessage());
+            }
+        }
+
+        startupProcessingShipmentsGenerated = true;
+        result.setSelectedSegmentCount(selectedPlans.size());
+        if (result.getAssignmentGeneratedCount() == 0) {
+            result.addFailureReason("all selected startup assignment plans failed during creation");
+        }
+        logger.info("[StartupAssignments] Generated {} shipments, {} assignments, {} frontend registrations, target={}.",
+                result.getShipmentGeneratedCount(),
+                result.getAssignmentGeneratedCount(),
+                result.getFrontendRegisteredCount(),
+                targetCount);
+        return result;
+    }
+
+    public synchronized void resetStartupProcessingShipmentsFlag() {
+        startupProcessingShipmentsGenerated = false;
+    }
+
+    public synchronized boolean isStartupProcessingShipmentsGenerated() {
+        return startupProcessingShipmentsGenerated;
+    }
+
+    public void clearFrontendRuntimeAssignments() {
+        assignmentBriefMap.clear();
+        assignmentStatusMap.clear();
+    }
+
+    private boolean canRegisterFrontendAssignment() {
+        return simulationContext != null && simulationContext.isRunning();
+    }
+
+    public synchronized void resetSimulationRuntimeData() {
+        startupProcessingShipmentsGenerated = false;
+        startToEndMapping.clear();
+        poiPairShipmentMapping.clear();
+        assignmentStatusMap.clear();
+        assignmentBriefMap.clear();
+        pairStatusMap.clear();
+        poiIsWithGoods.clear();
+        poiTrueCount.clear();
+        currentProcessingSegmentSelection = null;
+        if (poiShipmentManager != null) {
+            poiShipmentManager.reset();
+        }
+        cleanupService.resetAllVehiclesToChengduCenter();
+        cleanupService.cleanupAllSimulationData();
+    }
+
+    private List<StartupShipmentPlan> buildStartupShipmentPlans(List<String> failureReasons) {
+        List<StartupShipmentPlan> plans = new ArrayList<>();
+        List<Vehicle> allVehicles = vehicleRepository.findAll().stream()
+                .filter(vehicle -> vehicle.getMaxLoadCapacity() != null && vehicle.getMaxLoadCapacity() > 0)
+                .filter(vehicle -> vehicle.getCargoVolume() != null && vehicle.getCargoVolume() > 0)
+                .collect(Collectors.toList());
+
+        if (allVehicles.isEmpty()) {
+            logger.warn("[StartupShipments] No vehicles with valid capacity.");
+            addStartupFailureReason(failureReasons, "no vehicles with valid maxLoadCapacity and cargoVolume");
+            return plans;
+        }
+
+        List<ProcessingChain> activeChains = processingChainRepository.findByStatus(ProcessingChain.ChainStatus.ACTIVE);
+        if (activeChains.isEmpty()) {
+            addStartupFailureReason(failureReasons, "no ACTIVE processing chains");
+        }
+        for (ProcessingChain chain : activeChains) {
+            List<ProcessingStage> stages = chain.getStages() == null
+                    ? Collections.emptyList()
+                    : chain.getStages().stream()
+                    .filter(Objects::nonNull)
+                    .sorted(Comparator.comparing(ProcessingStage::getStageOrder,
+                            Comparator.nullsLast(Integer::compareTo)))
+                    .collect(Collectors.toList());
+
+            if (stages.size() < 2) {
+                addStartupFailureReason(failureReasons, "chain=" + chain.getChainCode()
+                        + " has fewer than 2 processing stages");
+                continue;
+            }
+
+            for (int i = 0; i < stages.size() - 1; i++) {
+                ProcessingStage fromStage = stages.get(i);
+                ProcessingStage toStage = stages.get(i + 1);
+                Optional<StartupShipmentPlan> plan = buildStartupShipmentPlan(
+                        chain, fromStage, toStage, allVehicles, failureReasons);
+                plan.ifPresent(plans::add);
+            }
+        }
+        return plans;
+    }
+
+    private Optional<StartupShipmentPlan> buildStartupShipmentPlan(
+            ProcessingChain chain,
+            ProcessingStage fromStage,
+            ProcessingStage toStage,
+            List<Vehicle> allVehicles,
+            List<String> failureReasons
+    ) {
+        if (fromStage.getProcessingPOI() == null || toStage.getProcessingPOI() == null) {
+            logger.warn("[StartupShipments] Skip segment with missing POI: chain={}, {} -> {}",
+                    chain.getChainCode(), fromStage.getStageName(), toStage.getStageName());
+            addStartupFailureReason(failureReasons, "chain=" + chain.getChainCode()
+                    + ", segment=" + fromStage.getStageName() + " -> " + toStage.getStageName()
+                    + " skipped because stage POI is missing");
+            return Optional.empty();
+        }
+
+        Goods goods = resolveSegmentGoods(fromStage, toStage);
+        if (goods == null) {
+            logger.warn("[StartupShipments] Skip segment with missing goods: chain={}, {} -> {}",
+                    chain.getChainCode(), fromStage.getStageName(), toStage.getStageName());
+            addStartupFailureReason(failureReasons, "chain=" + chain.getChainCode()
+                    + ", segment=" + fromStage.getStageName() + " -> " + toStage.getStageName()
+                    + " skipped because segment goods is missing");
+            return Optional.empty();
+        }
+
+        if (goods.getWeightPerUnit() == null || goods.getWeightPerUnit() <= 0
+                || goods.getVolumePerUnit() == null || goods.getVolumePerUnit() <= 0) {
+            logger.warn("[StartupShipments] Skip goods {} because unit weight/volume is missing or invalid.",
+                    goods.getSku());
+            addStartupFailureReason(failureReasons, "goods=" + goods.getSku()
+                    + " skipped because weightPerUnit or volumePerUnit is missing/invalid");
+            return Optional.empty();
+        }
+
+        Optional<VehicleCapacityChoice> capacityChoice = chooseStartupCapacity(goods, allVehicles);
+        if (capacityChoice.isEmpty()) {
+            logger.warn("[StartupShipments] Skip goods {} because no vehicle can carry one unit.",
+                    goods.getSku());
+            addStartupFailureReason(failureReasons, "goods=" + goods.getSku()
+                    + " skipped because no vehicle can carry one unit by weight and volume");
+            return Optional.empty();
+        }
+
+        VehicleCapacityChoice choice = capacityChoice.get();
+        int minQty = Math.max(1, choice.maxQuantity);
+        int maxQty = minQty;
+        return Optional.of(new StartupShipmentPlan(chain, fromStage, toStage, goods, minQty, maxQty));
+    }
+
+    private void addStartupFailureReason(List<String> failureReasons, String reason) {
+        if (failureReasons == null || reason == null || reason.isBlank()) {
+            return;
+        }
+        if (failureReasons.size() < 50) {
+            failureReasons.add(reason);
+        }
+    }
+
+    public static class StartupShipmentGenerationResult {
+        private final int targetCount;
+        private int generatedCount;
+        private int viableSegmentCount;
+        private int selectedSegmentCount;
+        private boolean alreadyGenerated;
+        private final List<String> failureReasons = new ArrayList<>();
+
+        public StartupShipmentGenerationResult(int targetCount) {
+            this.targetCount = targetCount;
+        }
+
+        public int getTargetCount() {
+            return targetCount;
+        }
+
+        public int getGeneratedCount() {
+            return generatedCount;
+        }
+
+        public void setGeneratedCount(int generatedCount) {
+            this.generatedCount = generatedCount;
+        }
+
+        public int getViableSegmentCount() {
+            return viableSegmentCount;
+        }
+
+        public void setViableSegmentCount(int viableSegmentCount) {
+            this.viableSegmentCount = viableSegmentCount;
+        }
+
+        public int getSelectedSegmentCount() {
+            return selectedSegmentCount;
+        }
+
+        public void setSelectedSegmentCount(int selectedSegmentCount) {
+            this.selectedSegmentCount = selectedSegmentCount;
+        }
+
+        public boolean isAlreadyGenerated() {
+            return alreadyGenerated;
+        }
+
+        public void setAlreadyGenerated(boolean alreadyGenerated) {
+            this.alreadyGenerated = alreadyGenerated;
+        }
+
+        public List<String> getFailureReasons() {
+            return failureReasons;
+        }
+
+        public void addFailureReason(String reason) {
+            if (failureReasons.size() < 50 && reason != null && !reason.isBlank()) {
+                failureReasons.add(reason);
+            }
+        }
+
+        public static StartupShipmentGenerationResult skipped(int targetCount, String reason) {
+            StartupShipmentGenerationResult result = new StartupShipmentGenerationResult(targetCount);
+            result.addFailureReason(reason);
+            return result;
+        }
+    }
+
+    public static class StartupAssignmentGenerationResult {
+        private final int targetCount;
+        private int shipmentGeneratedCount;
+        private int assignmentGeneratedCount;
+        private int frontendRegisteredCount;
+        private int viableSegmentCount;
+        private int selectedSegmentCount;
+        private boolean alreadyGenerated;
+        private final List<String> failureReasons = new ArrayList<>();
+
+        public StartupAssignmentGenerationResult(int targetCount) {
+            this.targetCount = targetCount;
+        }
+
+        public int getTargetCount() {
+            return targetCount;
+        }
+
+        public int getShipmentGeneratedCount() {
+            return shipmentGeneratedCount;
+        }
+
+        public void incrementShipmentGeneratedCount() {
+            this.shipmentGeneratedCount++;
+        }
+
+        public int getAssignmentGeneratedCount() {
+            return assignmentGeneratedCount;
+        }
+
+        public void incrementAssignmentGeneratedCount() {
+            this.assignmentGeneratedCount++;
+        }
+
+        public int getFrontendRegisteredCount() {
+            return frontendRegisteredCount;
+        }
+
+        public void incrementFrontendRegisteredCount() {
+            this.frontendRegisteredCount++;
+        }
+
+        public int getViableSegmentCount() {
+            return viableSegmentCount;
+        }
+
+        public void setViableSegmentCount(int viableSegmentCount) {
+            this.viableSegmentCount = viableSegmentCount;
+        }
+
+        public int getSelectedSegmentCount() {
+            return selectedSegmentCount;
+        }
+
+        public void setSelectedSegmentCount(int selectedSegmentCount) {
+            this.selectedSegmentCount = selectedSegmentCount;
+        }
+
+        public boolean isAlreadyGenerated() {
+            return alreadyGenerated;
+        }
+
+        public void setAlreadyGenerated(boolean alreadyGenerated) {
+            this.alreadyGenerated = alreadyGenerated;
+        }
+
+        public List<String> getFailureReasons() {
+            return failureReasons;
+        }
+
+        public void addFailureReason(String reason) {
+            if (failureReasons.size() < 50 && reason != null && !reason.isBlank()) {
+                failureReasons.add(reason);
+            }
+        }
+    }
+
+    private Optional<VehicleCapacityChoice> chooseStartupCapacity(Goods goods, List<Vehicle> allVehicles) {
+        String vehicleFit = goods.getVehicleFit();
+        if (vehicleFit != null && !vehicleFit.isBlank()) {
+            List<Vehicle> typedCandidates = allVehicles.stream()
+                    .filter(vehicle -> vehicleFit.equals(vehicle.getVehicleType()))
+                    .collect(Collectors.toList());
+            if (!typedCandidates.isEmpty()) {
+                Optional<VehicleCapacityChoice> typedChoice = chooseSmallestCapableVehicle(goods, typedCandidates);
+                if (typedChoice.isPresent()) {
+                    return typedChoice;
+                }
+            }
+        }
+        return chooseSmallestCapableVehicle(goods, allVehicles);
+    }
+
+    private Optional<VehicleCapacityChoice> chooseSmallestCapableVehicle(Goods goods, List<Vehicle> vehicles) {
+        return vehicles.stream()
+                .filter(vehicle -> vehicle.getMaxLoadCapacity() >= goods.getWeightPerUnit())
+                .filter(vehicle -> vehicle.getCargoVolume() >= goods.getVolumePerUnit())
+                .sorted(Comparator.comparing(Vehicle::getMaxLoadCapacity)
+                        .thenComparing(Vehicle::getCargoVolume))
+                .findFirst()
+                .map(vehicle -> {
+                    int maxByWeight = (int) Math.floor(vehicle.getMaxLoadCapacity() / goods.getWeightPerUnit());
+                    int maxByVolume = (int) Math.floor(vehicle.getCargoVolume() / goods.getVolumePerUnit());
+                    return new VehicleCapacityChoice(Math.min(maxByWeight, maxByVolume));
+                })
+                .filter(choice -> choice.maxQuantity > 0);
+    }
+
+    private ShipmentItem createStartupShipment(StartupShipmentPlan plan) {
+        int quantity = randomQuantityInRange(plan.minQuantity, plan.maxQuantity);
+
+        POI managedStartPOI = poiRepository.findById(plan.fromStage.getProcessingPOI().getId())
+                .orElseThrow(() -> new RuntimeException("Start POI not found: "
+                        + plan.fromStage.getProcessingPOI().getId()));
+        POI managedEndPOI = poiRepository.findById(plan.toStage.getProcessingPOI().getId())
+                .orElseThrow(() -> new RuntimeException("End POI not found: "
+                        + plan.toStage.getProcessingPOI().getId()));
+
+        upsertStartupEnrollment(managedStartPOI, plan.goods, quantity);
+
+        Shipment shipment = initalizeShipment(managedStartPOI, managedEndPOI, plan.goods, quantity);
+        ShipmentItem item = shipmentItemService.initalizeShipmentItem(shipment, plan.goods, quantity);
+        item.setStatus(ShipmentItem.ShipmentItemStatus.NOT_ASSIGNED);
+        item.setStage(plan.toStage);
+        item.setStageOrder(plan.toStage.getStageOrder());
+        item.setStageName(plan.toStage.getStageName());
+        item.setProcessingPOI(managedEndPOI);
+        item.setProcessingStatus(ShipmentItem.ProcessingItemStatus.WAITING);
+        item.setProgressPercent(0);
+        shipmentItemRepository.save(item);
+
+        startToEndMapping.put(managedStartPOI, managedEndPOI);
+        String key = generatePoiPairKey(managedStartPOI, managedEndPOI);
+        poiPairShipmentMapping.put(key, shipment);
+        createPairStatus(managedStartPOI, managedEndPOI, shipment);
+        poiShipmentManager.registerShipment(managedStartPOI, managedEndPOI, shipment);
+
+        logger.info("[StartupShipments] Created shipment refNo={}, chain={}, segment={} -> {}, goods={}, qty={}",
+                shipment.getRefNo(),
+                plan.chain.getChainCode(),
+                plan.fromStage.getStageName(),
+                plan.toStage.getStageName(),
+                plan.goods.getSku(),
+                quantity);
+        return item;
+    }
+
+    private Optional<Vehicle> selectOriginalDispatchVehicleForItem(
+            ShipmentItem item,
+            List<Vehicle> candidateVehicles
+    ) {
+        if (item == null || item.getShipment() == null || item.getShipment().getOriginPOI() == null
+                || candidateVehicles == null || candidateVehicles.isEmpty()) {
+            return Optional.empty();
+        }
+
+        double itemWeight = safeDouble(item.getWeight());
+        double itemVolume = safeDouble(item.getVolume());
+        POI origin = item.getShipment().getOriginPOI();
+
+        return candidateVehicles.stream()
+                .filter(Objects::nonNull)
+                .filter(vehicle -> Vehicle.VehicleStatus.IDLE.equals(vehicle.getCurrentStatus()))
+                .filter(vehicle -> safeDouble(vehicle.getMaxLoadCapacity()) >= itemWeight)
+                .filter(vehicle -> safeDouble(vehicle.getCargoVolume()) >= itemVolume)
+                .sorted(Comparator.comparingDouble(vehicle -> estimateVehicleToPoiDistanceKm(vehicle, origin)))
+                .findFirst();
+    }
+
+    private Assignment dispatchSingleItemWithOriginalStrategy(
+            ShipmentItem item,
+            Vehicle vehicle,
+            String source
+    ) {
+        if (item == null || item.getShipment() == null) {
+            throw new IllegalArgumentException("shipment item is missing shipment");
+        }
+        if (vehicle == null || vehicle.getId() == null) {
+            throw new IllegalArgumentException("vehicle is required");
+        }
+
+        Shipment shipment = item.getShipment();
+        POI origin = shipment.getOriginPOI();
+        POI destination = shipment.getDestPOI();
+        if (origin == null || destination == null) {
+            throw new IllegalArgumentException("shipment origin or destination POI is missing");
+        }
+
+        Route route = initializeRoute(origin, destination);
+        Assignment assignment = new Assignment(item, route);
+        assignment.setAssignedVehicle(vehicle);
+        assignment.setStatus(Assignment.AssignmentStatus.ASSIGNED);
+        assignment.setCreatedTime(simulationContext != null ? simulationContext.getCurrentSimTime() : LocalDateTime.now());
+        assignment.setStartTime(assignment.getCreatedTime());
+        assignment.setCurrentActionIndex(0);
+        assignment.setOriginPOI(origin);
+        assignment.setDestPOI(destination);
+        assignment.setUpdatedBy(source);
+        assignment.setUpdatedTime(LocalDateTime.now());
+
+        AssignmentNode loadNode = new AssignmentNode(
+                assignment,
+                0,
+                origin,
+                AssignmentNode.NodeActionType.LOAD,
+                item,
+                item.getWeight(),
+                item.getVolume()
+        );
+        assignment.addNode(loadNode);
+
+        AssignmentNode unloadNode = new AssignmentNode(
+                assignment,
+                1,
+                destination,
+                AssignmentNode.NodeActionType.UNLOAD,
+                item,
+                -safeDouble(item.getWeight()),
+                -safeDouble(item.getVolume())
+        );
+        assignment.addNode(unloadNode);
+
+        Assignment saved = assignmentRepository.save(assignment);
+
+        item.setStatus(ShipmentItem.ShipmentItemStatus.ASSIGNED);
+        item.setAssignment(saved);
+        item.setUpdatedBy(source);
+        item.setUpdatedTime(LocalDateTime.now());
+        shipmentItemRepository.save(item);
+
+        vehicle.setCurrentStatus(Vehicle.VehicleStatus.ORDER_DRIVING);
+        vehicle.setPreviousStatus(Vehicle.VehicleStatus.IDLE);
+        vehicle.setStatusStartTime(LocalDateTime.now());
+        vehicle.setStatusDurationSeconds(0L);
+        vehicle.setCurrentLoad(0.0);
+        vehicle.setCurrentVolumn(0.0);
+        vehicle.addAssignment(saved);
+        vehicle.setUpdatedBy(source);
+        vehicle.setUpdatedTime(LocalDateTime.now());
+        vehicleRepository.save(vehicle);
+
+        registerAssignmentForFrontend(saved);
+        return saved;
+    }
+
+    private double estimateVehicleToPoiDistanceKm(Vehicle vehicle, POI poi) {
+        if (vehicle == null || poi == null || poi.getLatitude() == null || poi.getLongitude() == null) {
+            return Double.MAX_VALUE;
+        }
+
+        BigDecimal vehicleLat = vehicle.getCurrentLatitude();
+        BigDecimal vehicleLng = vehicle.getCurrentLongitude();
+        if (vehicle.getCurrentPOI() != null) {
+            vehicleLat = vehicle.getCurrentPOI().getLatitude();
+            vehicleLng = vehicle.getCurrentPOI().getLongitude();
+        }
+
+        if (vehicleLat == null || vehicleLng == null) {
+            return Double.MAX_VALUE;
+        }
+
+        try {
+            return calculateHaversineDistance(vehicleLat, vehicleLng, poi.getLatitude(), poi.getLongitude());
+        } catch (Exception ignored) {
+            return Double.MAX_VALUE;
+        }
+    }
+
+    private double safeDouble(Double value) {
+        return value == null || value.isNaN() || value.isInfinite() ? 0.0 : value;
+    }
+
+    private void upsertStartupEnrollment(POI poi, Goods goods, int quantity) {
+        Optional<Enrollment> existingEnrollment = enrollmentRepository.findByPoiAndGoods(poi, goods);
+        if (existingEnrollment.isPresent()) {
+            Enrollment enrollment = existingEnrollment.get();
+            int currentQuantity = enrollment.getQuantity() == null ? 0 : enrollment.getQuantity();
+            enrollment.setQuantity(currentQuantity + quantity);
+            enrollmentRepository.save(enrollment);
+            return;
+        }
+
+        Enrollment enrollment = new Enrollment(poi, goods, quantity);
+        enrollmentRepository.save(enrollment);
+        poi.addGoodsEnrollment(enrollment);
+        goods.addPOIEnrollment(enrollment);
+    }
+
+    private int randomQuantityInRange(int minQuantity, int maxQuantity) {
+        if (maxQuantity <= minQuantity) {
+            return Math.max(1, minQuantity);
+        }
+        return random.nextInt(maxQuantity - minQuantity + 1) + minQuantity;
+    }
+
+    private static class StartupShipmentPlan {
+        private final ProcessingChain chain;
+        private final ProcessingStage fromStage;
+        private final ProcessingStage toStage;
+        private final Goods goods;
+        private final int minQuantity;
+        private final int maxQuantity;
+
+        private StartupShipmentPlan(
+                ProcessingChain chain,
+                ProcessingStage fromStage,
+                ProcessingStage toStage,
+                Goods goods,
+                int minQuantity,
+                int maxQuantity
+        ) {
+            this.chain = chain;
+            this.fromStage = fromStage;
+            this.toStage = toStage;
+            this.goods = goods;
+            this.minQuantity = minQuantity;
+            this.maxQuantity = maxQuantity;
+        }
+    }
+
+    private static class VehicleCapacityChoice {
+        private final int maxQuantity;
+
+        private VehicleCapacityChoice(int maxQuantity) {
+            this.maxQuantity = maxQuantity;
+        }
     }
 
     /**
@@ -1580,6 +2262,7 @@ public class DataInitializer implements CommandLineRunner {
             AssignmentNode loadNode = new AssignmentNode(assignment, sequence++,
                     item.getShipment().getOriginPOI(),
                     AssignmentNode.NodeActionType.LOAD,
+                    item,
                     item.getWeight(), item.getVolume());
             assignment.addNode(loadNode);
         }
@@ -1590,6 +2273,7 @@ public class DataInitializer implements CommandLineRunner {
             AssignmentNode unloadNode = new AssignmentNode(assignment, sequence++,
                     item.getShipment().getDestPOI(),
                     AssignmentNode.NodeActionType.UNLOAD,
+                    item,
                     -item.getWeight(), -item.getVolume()); // 卸货为负数
             assignment.addNode(unloadNode);
         }
@@ -1703,7 +2387,16 @@ public class DataInitializer implements CommandLineRunner {
                 vehicle.getLicensePlate(), packedItems.size(), totalAssignedWeight);
 
         // ==================== 新增：将 VRP 任务组装为 DTO 并推入前端广播缓存 ====================
-        rebuildTransportMetricsSafely(assignment);
+        if (!rebuildTransportMetricsStrict(assignment)) {
+            rollbackAssignmentAllocation(assignment, vehicle, packedItems,
+                    "Strict route planning failed before frontend registration");
+            return;
+        }
+        if (!canRegisterFrontendAssignment()) {
+            rollbackAssignmentAllocation(assignment, vehicle, packedItems,
+                    "Simulation stopped before frontend registration");
+            return;
+        }
 
         try {
             AssignmentBriefDTO brief = new AssignmentBriefDTO();
@@ -1833,7 +2526,12 @@ public class DataInitializer implements CommandLineRunner {
                 // 8. 保存所有更改
                 vehicleRepository.save(managedVehicle);
                 assignmentRepository.save(assignment);
-                rebuildTransportMetricsSafely(assignment);
+                if (!rebuildTransportMetricsStrict(assignment)) {
+                    rollbackAssignmentAllocation(assignment, managedVehicle,
+                            new ArrayList<>(assignment.getShipmentItems()),
+                            "Strict route planning failed during assignment binding");
+                    continue;
+                }
 
                 System.out.println("成功分配车辆 " + managedVehicle.getLicensePlate() +
                         " 给任务，从 " + managedStartPOI.getName() + " 到 " + managedEndPOI.getName());
@@ -2347,7 +3045,19 @@ public class DataInitializer implements CommandLineRunner {
         }
 
         try {
-            rebuildTransportMetricsSafely(assignment);
+            assignment = assignmentRepository.findById(assignment.getId()).orElse(assignment);
+            if (!hasTransportMetrics(assignment) && !rebuildTransportMetricsStrict(assignment)) {
+                rollbackAssignmentAllocation(assignment, assignment.getAssignedVehicle(),
+                        new ArrayList<>(assignment.getShipmentItems()),
+                        "Strict route planning failed before frontend registration");
+                return;
+            }
+            if (!canRegisterFrontendAssignment()) {
+                rollbackAssignmentAllocation(assignment, assignment.getAssignedVehicle(),
+                        new ArrayList<>(assignment.getShipmentItems()),
+                        "Simulation stopped before frontend registration");
+                return;
+            }
 
             AssignmentBriefDTO brief = new AssignmentBriefDTO();
             brief.setAssignmentId(assignment.getId());
@@ -2499,6 +3209,77 @@ public class DataInitializer implements CommandLineRunner {
     }
 
     // 创建 AssignmentBriefDTO
+    private boolean rebuildTransportMetricsStrict(Assignment assignment) {
+        if (assignment == null || assignment.getId() == null) {
+            return false;
+        }
+        return transportMetricsService.rebuildMetricsForAssignmentStrict(assignment.getId());
+    }
+
+    private boolean hasTransportMetrics(Assignment assignment) {
+        return assignment != null
+                && assignment.getTotalDistanceMeters() != null
+                && assignment.getTotalDrivingSeconds() != null;
+    }
+
+    private void rollbackAssignmentAllocation(
+            Assignment assignment,
+            Vehicle vehicle,
+            Collection<ShipmentItem> items,
+            String reason
+    ) {
+        Long assignmentId = assignment != null ? assignment.getId() : null;
+        try {
+            if (items != null) {
+                for (ShipmentItem item : items) {
+                    if (item == null) {
+                        continue;
+                    }
+                    item.setAssignment(null);
+                    item.setStatus(ShipmentItem.ShipmentItemStatus.NOT_ASSIGNED);
+                    item.setUpdatedBy("Route planning rollback");
+                    item.setUpdatedTime(LocalDateTime.now());
+                    shipmentItemRepository.save(item);
+                }
+            }
+
+            if (vehicle != null && vehicle.getId() != null) {
+                Vehicle managedVehicle = vehicleRepository.findById(vehicle.getId()).orElse(vehicle);
+                if (assignment != null) {
+                    managedVehicle.removeAssignment(assignment);
+                }
+                managedVehicle.setCurrentStatus(Vehicle.VehicleStatus.IDLE);
+                managedVehicle.setPreviousStatus(Vehicle.VehicleStatus.ORDER_DRIVING);
+                managedVehicle.setStatusStartTime(LocalDateTime.now());
+                managedVehicle.setStatusDurationSeconds(0L);
+                managedVehicle.setCurrentLoad(0.0);
+                managedVehicle.setCurrentVolumn(0.0);
+                managedVehicle.setUpdatedBy("Route planning rollback");
+                managedVehicle.setUpdatedTime(LocalDateTime.now());
+                vehicleRepository.save(managedVehicle);
+            }
+
+            if (assignment != null) {
+                assignment.setAssignedVehicle(null);
+                assignment.setStatus(Assignment.AssignmentStatus.FAILED);
+                assignment.setUpdatedBy(reason);
+                assignment.setUpdatedTime(LocalDateTime.now());
+                assignmentRepository.save(assignment);
+            }
+
+            if (assignmentId != null) {
+                assignmentBriefMap.remove(assignmentId);
+                assignmentStatusMap.entrySet().removeIf(entry ->
+                        entry.getValue() != null && assignmentId.equals(entry.getValue().getAssignmentId()));
+            }
+
+            logger.warn("Rolled back assignment allocation. assignmentId={}, reason={}", assignmentId, reason);
+        } catch (Exception e) {
+            logger.error("Failed to rollback assignment allocation. assignmentId={}, reason={}",
+                    assignmentId, reason, e);
+        }
+    }
+
     private AssignmentBriefDTO createAssignmentBriefDTO(Assignment assignment, POI startPOI, POI endPOI, Shipment shipment) {
         AssignmentBriefDTO brief = new AssignmentBriefDTO();
         brief.setAssignmentId(assignment.getId());
@@ -2965,25 +3746,7 @@ public class DataInitializer implements CommandLineRunner {
      * 获取新增的 Assignment（用于前端绘制）
      */
     public List<AssignmentBriefDTO> getNewAssignmentsForDrawing() {
-        List<AssignmentBriefDTO> newAssignments = getNewAssignments();
-
-        // 标记为已绘制
-        newAssignments.forEach(dto -> {
-            dto.setDrawn(true);
-            dto.setLastDrawnTime(LocalDateTime.now());
-            assignmentBriefMap.put(dto.getAssignmentId(), dto);
-
-            // 同时更新 status map
-            if (dto.getPairId() != null) {
-                AssignmentStatusDTO status = assignmentStatusMap.get(dto.getPairId());
-                if (status != null) {
-                    status.setDrawn(true);
-                    status.setLastUpdated(LocalDateTime.now());
-                }
-            }
-        });
-
-        return newAssignments;
+        return getNewAssignments();
     }
 
     /**
