@@ -137,7 +137,19 @@ public class MultiOrderAssignmentMaterializer {
                 shipmentItemRepository.save(item);
             }
 
-            transportMetricsService.rebuildMetricsForAssignment(saved.getId());
+            boolean routeReady = transportMetricsService.rebuildMetricsForAssignmentStrict(saved.getId());
+            if (!routeReady) {
+                rollbackAssignmentAllocation(saved, "Gaode route planning failed during materialization");
+                continue;
+            }
+
+            vehicle.setCurrentStatus(Vehicle.VehicleStatus.ORDER_DRIVING);
+            vehicle.setPreviousStatus(Vehicle.VehicleStatus.IDLE);
+            vehicle.setStatusStartTime(LocalDateTime.now());
+            vehicle.setStatusDurationSeconds(0L);
+            vehicle.setUpdatedBy("MultiOrderGA");
+            vehicle.setUpdatedTime(LocalDateTime.now());
+            vehicleRepository.save(vehicle);
 
             createdAssignments.add(saved);
         }
@@ -154,6 +166,27 @@ public class MultiOrderAssignmentMaterializer {
         }
 
         return createdAssignments;
+    }
+
+    private void rollbackAssignmentAllocation(Assignment assignment, String reason) {
+        if (assignment == null) {
+            return;
+        }
+
+        Set<ShipmentItem> items = assignment.getShipmentItems() == null
+                ? Collections.emptySet()
+                : new LinkedHashSet<>(assignment.getShipmentItems());
+        for (ShipmentItem item : items) {
+            item.setAssignment(null);
+            item.setStatus(ShipmentItem.ShipmentItemStatus.NOT_ASSIGNED);
+            shipmentItemRepository.save(item);
+        }
+
+        assignment.setStatus(Assignment.AssignmentStatus.FAILED);
+        assignment.setAssignedVehicle(null);
+        assignment.setUpdatedTime(LocalDateTime.now());
+        assignment.setUpdatedBy(reason);
+        assignmentRepository.save(assignment);
     }
 
     private List<AssignmentNode> buildAssignmentNodes(

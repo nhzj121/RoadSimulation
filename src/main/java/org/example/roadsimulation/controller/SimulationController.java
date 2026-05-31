@@ -18,7 +18,6 @@ import org.example.roadsimulation.repository.ShipmentItemRepository;
 import org.example.roadsimulation.repository.VehicleRepository;
 import org.example.roadsimulation.service.GaodeRoutePlanningQueueService;
 import org.example.roadsimulation.service.GetCostService;
-import org.example.roadsimulation.service.impl.SimulationDispatchRouter;
 import org.example.roadsimulation.service.impl.VehicleInitializationServiceImpl;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -63,9 +62,6 @@ public class SimulationController {
     @Autowired
     private VehicleRepository vehicleRepository;
 
-    @Autowired
-    private SimulationDispatchRouter simulationDispatchRouter;
-
     @PostMapping("/start")
     public ApiResponse<Map<String, Object>> startSimulation(
             @RequestBody(required = false) StartSimulationRequest request
@@ -74,15 +70,29 @@ public class SimulationController {
         simulationRuntimeConfig.setDispatchStrategy(dispatchStrategy);
         gaodeRoutePlanningQueueService.resume();
 
-        int startupShipmentCount = dataInitializer.generateStartupProcessingShipments(15);
-        if (startupShipmentCount > 0) {
-            logger.info("Generated {} startup processing shipments, dispatchStrategy={}",
-                    startupShipmentCount, dispatchStrategy);
-            simulationDispatchRouter.dispatch();
-        }
+//        DataInitializer.StartupShipmentGenerationResult startupShipmentResult =
+//                dataInitializer.generateStartupProcessingShipments(15);
+//        if (startupShipmentResult.getGeneratedCount() > 0) {
+//            logger.info("Generated {} startup processing shipments, dispatchStrategy={}, dispatch will run in main loop",
+//                    startupShipmentResult.getGeneratedCount(), dispatchStrategy);
+//        }
+        DataInitializer.StartupShipmentGenerationResult startupShipmentResult =
+                DataInitializer.StartupShipmentGenerationResult.skipped(
+                        15,
+                        "Startup processing shipments disabled for route planning capacity verification"
+                );
 
         simulationMainLoop.start();
-        return ApiResponse.success("simulation started", buildRuntimeConfigResponse());
+        Map<String, Object> response = buildRuntimeConfigResponse();
+
+        logger.info("Startup processing shipments skipped for route planning capacity verification");
+        response.put("startupProcessingShipments", startupShipmentResult);
+        response.put("startupProcessingShipmentsGenerated", false);
+        response.put("startupProcessingShipmentsSkipped", true);
+
+
+        response.put("startupProcessingShipments", startupShipmentResult);
+        return ApiResponse.success("simulation started", response);
     }
 
     @PostMapping("/stop")
@@ -96,7 +106,7 @@ public class SimulationController {
     public ApiResponse<String> resetSimulation() {
         simulationMainLoop.reset();
         gaodeRoutePlanningQueueService.reset();
-        dataInitializer.resetStartupProcessingShipmentsFlag();
+        dataInitializer.resetSimulationRuntimeData();
         return ApiResponse.success("simulation reset");
     }
 

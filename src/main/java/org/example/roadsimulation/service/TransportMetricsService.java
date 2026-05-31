@@ -52,6 +52,21 @@ public class TransportMetricsService {
 
     @Transactional
     public void rebuildMetricsForAssignment(Long assignmentId) {
+        rebuildMetricsForAssignment(assignmentId, true);
+    }
+
+    @Transactional
+    public boolean rebuildMetricsForAssignmentStrict(Long assignmentId) {
+        try {
+            rebuildMetricsForAssignment(assignmentId, false);
+            return true;
+        } catch (RouteMetricPlanningException e) {
+            log.warn("Strict route metric rebuild failed. assignmentId={}, reason={}", assignmentId, e.getMessage());
+            return false;
+        }
+    }
+
+    private void rebuildMetricsForAssignment(Long assignmentId, boolean allowFallback) {
         if (assignmentId == null) {
             return;
         }
@@ -78,8 +93,8 @@ public class TransportMetricsService {
                 .filter(Objects::nonNull)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
 
+        List<AssignmentLeg> legs = buildLegs(assignment, allowFallback);
         assignmentLegRepository.deleteByAssignmentId(assignmentId);
-        List<AssignmentLeg> legs = buildLegs(assignment);
         assignmentLegRepository.saveAll(legs);
 
         aggregateAssignment(assignment, legs);
@@ -112,14 +127,14 @@ public class TransportMetricsService {
         }
     }
 
-    private List<AssignmentLeg> buildLegs(Assignment assignment) {
+    private List<AssignmentLeg> buildLegs(Assignment assignment, boolean allowFallback) {
         if (assignment.getNodes() != null && !assignment.getNodes().isEmpty()) {
-            return buildNodeBasedLegs(assignment);
+            return buildNodeBasedLegs(assignment, allowFallback);
         }
-        return buildRouteBasedLegs(assignment);
+        return buildRouteBasedLegs(assignment, allowFallback);
     }
 
-    private List<AssignmentLeg> buildNodeBasedLegs(Assignment assignment) {
+    private List<AssignmentLeg> buildNodeBasedLegs(Assignment assignment, boolean allowFallback) {
         List<AssignmentNode> ordered = new ArrayList<>(assignment.getNodes());
         ordered.sort(Comparator.comparing(
                 AssignmentNode::getSequenceIndex,
@@ -146,7 +161,8 @@ public class TransportMetricsService {
                     previousNode,
                     node,
                     sequence++,
-                    carriedItems
+                    carriedItems,
+                    allowFallback
             );
             legs.add(leg);
 
@@ -158,7 +174,7 @@ public class TransportMetricsService {
         return legs;
     }
 
-    private List<AssignmentLeg> buildRouteBasedLegs(Assignment assignment) {
+    private List<AssignmentLeg> buildRouteBasedLegs(Assignment assignment, boolean allowFallback) {
         List<AssignmentLeg> legs = new ArrayList<>();
         Vehicle vehicle = assignment.getAssignedVehicle();
         Route route = assignment.getRoute();
@@ -187,7 +203,8 @@ public class TransportMetricsService {
                 null,
                 null,
                 0,
-                emptyItems
+                emptyItems,
+                allowFallback
         ));
 
         LinkedHashMap<Long, ShipmentItem> loadedItems = new LinkedHashMap<>();
@@ -205,7 +222,8 @@ public class TransportMetricsService {
                 null,
                 null,
                 1,
-                loadedItems
+                loadedItems,
+                allowFallback
         ));
 
         return legs;
@@ -219,9 +237,10 @@ public class TransportMetricsService {
             AssignmentNode fromNode,
             AssignmentNode toNode,
             int sequenceIndex,
-            LinkedHashMap<Long, ShipmentItem> carriedItems
+            LinkedHashMap<Long, ShipmentItem> carriedItems,
+            boolean allowFallback
     ) {
-        RouteMetric routeMetric = calculateRouteMetric(from, to);
+        RouteMetric routeMetric = calculateRouteMetric(from, to, allowFallback);
 
         AssignmentLeg leg = new AssignmentLeg();
         leg.setAssignment(assignment);
@@ -255,8 +274,11 @@ public class TransportMetricsService {
         }
     }
 
-    private RouteMetric calculateRouteMetric(RoutePoint from, RoutePoint to) {
+    private RouteMetric calculateRouteMetric(RoutePoint from, RoutePoint to, boolean allowFallback) {
         if (from == null || to == null || !from.hasCoordinates() || !to.hasCoordinates()) {
+            if (!allowFallback) {
+                throw new RouteMetricPlanningException("Route point coordinates are missing");
+            }
             return new RouteMetric(0.0, 0L);
         }
 
@@ -274,7 +296,17 @@ public class TransportMetricsService {
                     return new RouteMetric(Math.max(0.0, distance), Math.max(0L, Math.round(duration)));
                 }
             }
+            if (!allowFallback) {
+                String message = response == null ? "empty response" : response.getMessage();
+                throw new RouteMetricPlanningException("Gaode route metric failed: " + message);
+            }
         } catch (Exception e) {
+            if (!allowFallback) {
+                if (e instanceof RouteMetricPlanningException) {
+                    throw (RouteMetricPlanningException) e;
+                }
+                throw new RouteMetricPlanningException("Gaode route metric failed: " + e.getMessage(), e);
+            }
             log.warn("Gaode route metric failed, fallback to haversine. from={}, to={}, error={}",
                     from.toLocation(), to.toLocation(), e.getMessage());
         }
@@ -571,6 +603,16 @@ public class TransportMetricsService {
                 * Math.sin(dLon / 2);
         double c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
         return EARTH_RADIUS_METERS * c;
+    }
+
+    private static class RouteMetricPlanningException extends RuntimeException {
+        private RouteMetricPlanningException(String message) {
+            super(message);
+        }
+
+        private RouteMetricPlanningException(String message, Throwable cause) {
+            super(message, cause);
+        }
     }
 
     private double safe(Double value) {
