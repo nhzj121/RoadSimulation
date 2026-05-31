@@ -70,28 +70,20 @@ public class SimulationController {
         simulationRuntimeConfig.setDispatchStrategy(dispatchStrategy);
         gaodeRoutePlanningQueueService.resume();
 
-//        DataInitializer.StartupShipmentGenerationResult startupShipmentResult =
-//                dataInitializer.generateStartupProcessingShipments(15);
-//        if (startupShipmentResult.getGeneratedCount() > 0) {
-//            logger.info("Generated {} startup processing shipments, dispatchStrategy={}, dispatch will run in main loop",
-//                    startupShipmentResult.getGeneratedCount(), dispatchStrategy);
-//        }
-        DataInitializer.StartupShipmentGenerationResult startupShipmentResult =
-                DataInitializer.StartupShipmentGenerationResult.skipped(
-                        15,
-                        "Startup processing shipments disabled for route planning capacity verification"
-                );
-
         simulationMainLoop.start();
+        DataInitializer.StartupAssignmentGenerationResult startupAssignmentResult =
+                dataInitializer.generateStartupProcessingAssignments(15);
+
         Map<String, Object> response = buildRuntimeConfigResponse();
 
-        logger.info("Startup processing shipments skipped for route planning capacity verification");
-        response.put("startupProcessingShipments", startupShipmentResult);
-        response.put("startupProcessingShipmentsGenerated", false);
-        response.put("startupProcessingShipmentsSkipped", true);
-
-
-        response.put("startupProcessingShipments", startupShipmentResult);
+        logger.info("Startup processing assignments generated: shipments={}, assignments={}, frontendRegistered={}, dispatchStrategy={}",
+                startupAssignmentResult.getShipmentGeneratedCount(),
+                startupAssignmentResult.getAssignmentGeneratedCount(),
+                startupAssignmentResult.getFrontendRegisteredCount(),
+                dispatchStrategy);
+        response.put("startupProcessingAssignments", startupAssignmentResult);
+        response.put("startupProcessingAssignmentsGenerated",
+                startupAssignmentResult.getAssignmentGeneratedCount() > 0);
         return ApiResponse.success("simulation started", response);
     }
 
@@ -99,6 +91,7 @@ public class SimulationController {
     public ApiResponse<String> stopSimulation() {
         simulationMainLoop.stop();
         gaodeRoutePlanningQueueService.pauseAndCancelPending();
+        dataInitializer.clearFrontendRuntimeAssignments();
         return ApiResponse.success("simulation stopped");
     }
 

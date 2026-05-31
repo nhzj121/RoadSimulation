@@ -20,6 +20,8 @@ public class TransportMetricsService {
     private static final Logger log = LoggerFactory.getLogger(TransportMetricsService.class);
     private static final double EARTH_RADIUS_METERS = 6371000.0;
     private static final double FALLBACK_SPEED_METERS_PER_SECOND = 40_000.0 / 3600.0;
+    private static final int STRICT_ROUTE_METRIC_MAX_ATTEMPTS = 3;
+    private static final long STRICT_ROUTE_METRIC_RETRY_DELAY_MS = 300L;
 
     private final AssignmentLegRepository assignmentLegRepository;
     private final AssignmentRepository assignmentRepository;
@@ -28,7 +30,7 @@ public class TransportMetricsService {
     private final VehicleRepository vehicleRepository;
     private final ProcessingStageRepository processingStageRepository;
     private final ProcessingChainRepository processingChainRepository;
-    private final GaodeMapService gaodeMapService;
+    private final GaodeRoutePlanningQueueService routePlanningQueueService;
 
     public TransportMetricsService(
             AssignmentLegRepository assignmentLegRepository,
@@ -38,7 +40,7 @@ public class TransportMetricsService {
             VehicleRepository vehicleRepository,
             ProcessingStageRepository processingStageRepository,
             ProcessingChainRepository processingChainRepository,
-            GaodeMapService gaodeMapService
+            GaodeRoutePlanningQueueService routePlanningQueueService
     ) {
         this.assignmentLegRepository = assignmentLegRepository;
         this.assignmentRepository = assignmentRepository;
@@ -47,7 +49,7 @@ public class TransportMetricsService {
         this.vehicleRepository = vehicleRepository;
         this.processingStageRepository = processingStageRepository;
         this.processingChainRepository = processingChainRepository;
-        this.gaodeMapService = gaodeMapService;
+        this.routePlanningQueueService = routePlanningQueueService;
     }
 
     @Transactional
@@ -58,7 +60,7 @@ public class TransportMetricsService {
     @Transactional
     public boolean rebuildMetricsForAssignmentStrict(Long assignmentId) {
         try {
-            rebuildMetricsForAssignment(assignmentId, false);
+            rebuildMetricsForAssignment(assignmentId, true);
             return true;
         } catch (RouteMetricPlanningException e) {
             log.warn("Strict route metric rebuild failed. assignmentId={}, reason={}", assignmentId, e.getMessage());
@@ -288,19 +290,43 @@ public class TransportMetricsService {
 
         try {
             GaodeRouteRequest request = new GaodeRouteRequest(from.toLocation(), to.toLocation());
-            GaodeRouteResponse response = gaodeMapService.planDrivingRoute(request);
-            if (response != null && response.isSuccess() && response.getData() != null) {
-                Double distance = response.getData().getTotalDistance();
-                Double duration = response.getData().getTotalDuration();
-                if (distance != null && duration != null) {
-                    return new RouteMetric(Math.max(0.0, distance), Math.max(0L, Math.round(duration)));
+            int maxAttempts = allowFallback ? 1 : STRICT_ROUTE_METRIC_MAX_ATTEMPTS;
+            String lastMessage = "unknown error";
+
+            for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+                GaodeRouteResponse response = routePlanningQueueService.submitAndWait(request);
+                if (response != null && response.isSuccess() && response.getData() != null) {
+                    Double distance = response.getData().getTotalDistance();
+                    Double duration = response.getData().getTotalDuration();
+                    if (distance != null && duration != null) {
+                        return new RouteMetric(Math.max(0.0, distance), Math.max(0L, Math.round(duration)));
+                    }
+                    lastMessage = "missing distance or duration";
+                } else {
+                    lastMessage = response == null ? "empty response" : response.getMessage();
+                }
+
+                if (isSimulationLifecycleRouteFailure(lastMessage)) {
+                    throw new RouteMetricPlanningException(
+                            "Route planning cancelled by simulation lifecycle: " + lastMessage
+                    );
+                }
+
+                if (!allowFallback && attempt < maxAttempts) {
+                    sleepBeforeStrictRetry(attempt);
                 }
             }
+
             if (!allowFallback) {
-                String message = response == null ? "empty response" : response.getMessage();
-                throw new RouteMetricPlanningException("Gaode route metric failed: " + message);
+                throw new RouteMetricPlanningException(
+                        "Gaode route metric failed after " + maxAttempts + " attempts: " + lastMessage
+                );
             }
         } catch (Exception e) {
+            if (e instanceof RouteMetricPlanningException
+                    && isSimulationLifecycleRouteFailure(e.getMessage())) {
+                throw (RouteMetricPlanningException) e;
+            }
             if (!allowFallback) {
                 if (e instanceof RouteMetricPlanningException) {
                     throw (RouteMetricPlanningException) e;
@@ -314,6 +340,30 @@ public class TransportMetricsService {
         double fallbackDistance = haversineMeters(from.lat, from.lon, to.lat, to.lon);
         long fallbackSeconds = Math.round(fallbackDistance / FALLBACK_SPEED_METERS_PER_SECOND);
         return new RouteMetric(fallbackDistance, fallbackSeconds);
+    }
+
+    private boolean isSimulationLifecycleRouteFailure(String message) {
+        if (message == null) {
+            return false;
+        }
+        String normalized = message.toLowerCase(Locale.ROOT);
+        return normalized.contains("simulation pause")
+                || normalized.contains("simulation reset")
+                || normalized.contains("simulation stopped")
+                || normalized.contains("interrupted")
+                || normalized.contains("cancelled")
+                || normalized.contains("stale")
+                || normalized.contains("not accepting requests")
+                || normalized.contains("discarded");
+    }
+
+    private void sleepBeforeStrictRetry(int attempt) {
+        try {
+            Thread.sleep(STRICT_ROUTE_METRIC_RETRY_DELAY_MS * attempt);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RouteMetricPlanningException("Gaode route metric retry interrupted", e);
+        }
     }
 
     private void aggregateAssignment(Assignment assignment, List<AssignmentLeg> legs) {
