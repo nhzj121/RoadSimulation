@@ -907,8 +907,8 @@ public class DataInitializer implements CommandLineRunner {
         if (poiShipmentManager != null) {
             poiShipmentManager.reset();
         }
-        cleanupService.resetAllVehiclesToChengduCenter();
         cleanupService.cleanupAllSimulationData();
+        cleanupService.resetAllVehiclesToChengduCenter();
     }
 
     private List<StartupShipmentPlan> buildStartupShipmentPlans(List<String> failureReasons) {
@@ -3007,10 +3007,10 @@ public class DataInitializer implements CommandLineRunner {
     public void cleanupOnShutdown() {
         System.out.println("项目关闭，清理模拟数据...");
         try {
-            // 重置所有车辆到成都市中心
-            cleanupService.resetAllVehiclesToChengduCenter();
-            // 清理模拟数据（Enrollment，Assignment，ShipmentItem，Shipment）
+            // 先清理运行期仿真数据，避免车辆重置时触发Assignment级联删除
             cleanupService.cleanupAllSimulationData();
+            // 再重置所有车辆到成都市中心
+            cleanupService.resetAllVehiclesToChengduCenter();
             System.out.println("模拟数据清理完成");
         } catch (Exception e) {
             System.err.println("清理数据时出错: " + e.getMessage());
