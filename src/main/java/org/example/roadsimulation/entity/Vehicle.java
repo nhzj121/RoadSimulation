@@ -128,7 +128,7 @@ public class Vehicle {
     private Set<Driver> drivers = new HashSet<>();
 
     // 与任务一对多
-    @OneToMany(mappedBy = "assignedVehicle", fetch = FetchType.LAZY, cascade = CascadeType.ALL, orphanRemoval = true)
+    @OneToMany(mappedBy = "assignedVehicle", fetch = FetchType.LAZY)
     @JsonIgnore
     private Set<Assignment> assignments = new HashSet<>();
 

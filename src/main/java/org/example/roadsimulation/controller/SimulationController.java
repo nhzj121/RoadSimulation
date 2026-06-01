@@ -22,6 +22,7 @@ import org.example.roadsimulation.service.impl.VehicleInitializationServiceImpl;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -62,6 +63,9 @@ public class SimulationController {
     @Autowired
     private VehicleRepository vehicleRepository;
 
+    @Value("${app.simulation.startup-pre-generation.enabled:false}")
+    private boolean startupPreGenerationEnabled;
+
     @PostMapping("/start")
     public ApiResponse<Map<String, Object>> startSimulation(
             @RequestBody(required = false) StartSimulationRequest request
@@ -71,8 +75,15 @@ public class SimulationController {
         gaodeRoutePlanningQueueService.resume();
 
         simulationMainLoop.start();
+
         DataInitializer.StartupAssignmentGenerationResult startupAssignmentResult =
-                dataInitializer.generateStartupProcessingAssignments(15);
+                new DataInitializer.StartupAssignmentGenerationResult(15);
+        if (startupPreGenerationEnabled) {
+            startupAssignmentResult = dataInitializer.generateStartupProcessingAssignments(15);
+        } else {
+            startupAssignmentResult.addFailureReason("startup processing pre-generation is disabled by configuration");
+            logger.info("Startup processing pre-generation is disabled. dispatchStrategy={}", dispatchStrategy);
+        }
 
         Map<String, Object> response = buildRuntimeConfigResponse();
 
@@ -81,6 +92,7 @@ public class SimulationController {
                 startupAssignmentResult.getAssignmentGeneratedCount(),
                 startupAssignmentResult.getFrontendRegisteredCount(),
                 dispatchStrategy);
+        response.put("startupPreGenerationEnabled", startupPreGenerationEnabled);
         response.put("startupProcessingAssignments", startupAssignmentResult);
         response.put("startupProcessingAssignmentsGenerated",
                 startupAssignmentResult.getAssignmentGeneratedCount() > 0);
@@ -196,6 +208,7 @@ public class SimulationController {
         response.put("routeQueueSize", gaodeRoutePlanningQueueService.getQueueSize());
         response.put("routeQueuePaused", gaodeRoutePlanningQueueService.isPaused());
         response.put("routeQueueGeneration", gaodeRoutePlanningQueueService.getGeneration());
+        response.put("startupPreGenerationEnabled", startupPreGenerationEnabled);
         response.put("startupProcessingShipmentsGenerated", dataInitializer.isStartupProcessingShipmentsGenerated());
         return response;
     }

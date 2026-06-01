@@ -2,6 +2,7 @@ package org.example.roadsimulation;
 
 import org.example.roadsimulation.entity.*;
 import org.example.roadsimulation.repository.*;
+import jakarta.persistence.EntityManager;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -34,6 +35,9 @@ public class SimulationDataCleanupService {
     private AssignmentRepository assignmentRepository;
 
     @Autowired
+    private AssignmentNodeRepository assignmentNodeRepository;
+
+    @Autowired
     private AssignmentLegRepository assignmentLegRepository;
 
     @Autowired
@@ -45,6 +49,9 @@ public class SimulationDataCleanupService {
     @Autowired
     private PlatformTransactionManager transactionManager;
 
+    @Autowired
+    private EntityManager entityManager;
+
     /**
      * 清理所有模拟数据
      */
@@ -55,75 +62,45 @@ public class SimulationDataCleanupService {
         long startTime = System.currentTimeMillis();
 
         try {
-            // 删除顺序：子表 -> 父表
+            // 删除顺序按实际外键依赖从叶子节点向业务主数据回退：
+            // assignment_leg -> assignment_nodes -> shipment_item -> assignment -> shipment -> enrollment
             long assignmentLegCount = assignmentLegRepository.count();
             assignmentLegRepository.deleteAllInBatch();
             assignmentLegRepository.flush();
             System.out.println("Deleted " + assignmentLegCount + " assignment_leg records");
+            clearPersistenceContext();
+
+            long assignmentNodeCount = assignmentNodeRepository.count();
+            assignmentNodeRepository.deleteAllInBatch();
+            assignmentNodeRepository.flush();
+            System.out.println("已删除 " + assignmentNodeCount + " 条AssignmentNode记录");
+            clearPersistenceContext();
+
+            long itemCount = shipmentItemRepository.count();
+            shipmentItemRepository.deleteAllInBatch();
+            shipmentItemRepository.flush();
+            System.out.println("已删除 " + itemCount + " 条ShipmentItem记录");
+            clearPersistenceContext();
 
             long assignmentCount = assignmentRepository.count();
-            List<Assignment> assignments = assignmentRepository.findAll();
-            for (Assignment assignment : assignments) {
-                try{
-                    if(assignment.getAssignedVehicle() != null){
-                        Vehicle vehicle = assignment.getAssignedVehicle();
-                        if(vehicle.getAssignments() != null){
-                            vehicle.getAssignments().remove(assignment);
-                            vehicleRepository.save(vehicle);
-                        }
-                        assignment.setAssignedVehicle(null);
-                    }
-                    if(assignment.getAssignedDriver() != null){
-                        Driver driver = assignment.getAssignedDriver();
-                        if(driver.getAssignments() != null){
-                            driver.getAssignments().remove(assignment);
-                            driverRepository.save(driver);
-                        }
-                        assignment.setAssignedDriver(null);
-                    }
-
-                    // 解除与ShipmentItem的关联
-                    if (assignment.getShipmentItems() != null && !assignment.getShipmentItems().isEmpty()) {
-                        for (ShipmentItem item : assignment.getShipmentItems()) {
-                            item.setAssignment(null);
-                            shipmentItemRepository.save(item);
-                        }
-                    }
-                    assignmentRepository.save(assignment);
-                } catch (Exception e) {
-                    System.err.println("清理Assignment " + assignment.getId() + " 时出错: " + e.getMessage());
-                }
-
-            }
-            // 最后删除所有Assignment
+            assignmentRepository.deleteAllInBatch();
             assignmentRepository.flush();
-            assignmentRepository.deleteAll();
             System.out.println("已删除 " + assignmentCount + " 条Assignment记录");
+            clearPersistenceContext();
 
-            // 1. ShipmentItem（最底层）
-            long itemCount = shipmentItemRepository.count();
-            shipmentItemRepository.deleteAll();
-            System.out.println("已删除 " + itemCount + " 条ShipmentItem记录");
+            clearShipmentUpstreamRelationsIfPresent();
 
-            // 2. Shipment
             long shipmentCount = shipmentRepository.count();
-            shipmentRepository.deleteAll();
+            shipmentRepository.deleteAllInBatch();
+            shipmentRepository.flush();
             System.out.println("已删除 " + shipmentCount + " 条Shipment记录");
+            clearPersistenceContext();
 
-            // 3. Enrollment
-            List<Enrollment> existingEnrollments = enrollmentRepository.findAll();
-            int size = existingEnrollments.size();
-            for (Enrollment enrollment : existingEnrollments) {
-                if (enrollment.getPoi() != null) {
-                    enrollment.getPoi().getEnrollments().remove(enrollment);
-                }
-                if (enrollment.getGoods() != null) {
-                    enrollment.getGoods().getEnrollments().remove(enrollment);
-                }
-                enrollmentRepository.delete(enrollment);
-                System.out.println("删除关系[" + enrollment.getGoods().getName()+","+ enrollment.getPoi().getName() + "]");
-            }
-            System.out.println("清理完成，共删除 " + size + " 条旧记录");
+            long enrollmentCount = enrollmentRepository.count();
+            enrollmentRepository.deleteAllInBatch();
+            enrollmentRepository.flush();
+            System.out.println("已删除 " + enrollmentCount + " 条Enrollment记录");
+            clearPersistenceContext();
 
             long endTime = System.currentTimeMillis();
             System.out.println("模拟数据清理完成，耗时 " + (endTime - startTime) + "ms");
@@ -131,6 +108,24 @@ public class SimulationDataCleanupService {
         } catch (Exception e) {
             System.err.println("清理模拟数据时出错: " + e.getMessage());
             throw new RuntimeException("清理模拟数据失败", e);
+        }
+    }
+
+    private void clearPersistenceContext() {
+        entityManager.flush();
+        entityManager.clear();
+    }
+
+    private void clearShipmentUpstreamRelationsIfPresent() {
+        try {
+            int deleted = entityManager
+                    .createNativeQuery("DELETE FROM shipment_upstream_relations")
+                    .executeUpdate();
+            System.out.println("已删除 " + deleted + " 条shipment_upstream_relations记录");
+            clearPersistenceContext();
+        } catch (Exception e) {
+            System.out.println("shipment_upstream_relations无需清理或不存在: " + e.getMessage());
+            entityManager.clear();
         }
     }
 

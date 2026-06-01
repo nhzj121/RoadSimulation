@@ -78,14 +78,14 @@ public class Assignment {
     @JoinColumn(name = "driver_id")
     private Driver assignedDriver;
 
-    @OneToMany(mappedBy = "assignment", cascade = CascadeType.ALL, orphanRemoval = true)
+    @OneToMany(mappedBy = "assignment")
     private Set<ShipmentItem> shipmentItems = new HashSet<>();
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "route_id")
     private Route route;
 
-    @Column(name = "updated_by", length = 50)
+    @Column(name = "updated_by", length = 75)
     private String updatedBy;
 
     @Column(name = "updated_time")
