@@ -76,26 +76,25 @@ public class SimulationController {
 
         simulationMainLoop.start();
 
-        DataInitializer.StartupAssignmentGenerationResult startupAssignmentResult =
-                new DataInitializer.StartupAssignmentGenerationResult(15);
+        DataInitializer.StartupShipmentGenerationResult startupShipmentResult =
+                new DataInitializer.StartupShipmentGenerationResult(15);
         if (startupPreGenerationEnabled) {
-            startupAssignmentResult = dataInitializer.generateStartupProcessingAssignments(15);
+            startupShipmentResult = dataInitializer.generateStartupProcessingShipments(15);
         } else {
-            startupAssignmentResult.addFailureReason("startup processing pre-generation is disabled by configuration");
+            startupShipmentResult.addFailureReason("startup processing pre-generation is disabled by configuration");
             logger.info("Startup processing pre-generation is disabled. dispatchStrategy={}", dispatchStrategy);
         }
 
         Map<String, Object> response = buildRuntimeConfigResponse();
 
-        logger.info("Startup processing assignments generated: shipments={}, assignments={}, frontendRegistered={}, dispatchStrategy={}",
-                startupAssignmentResult.getShipmentGeneratedCount(),
-                startupAssignmentResult.getAssignmentGeneratedCount(),
-                startupAssignmentResult.getFrontendRegisteredCount(),
+        logger.info("Startup processing shipments generated: shipments={}, dispatchStrategy={}",
+                startupShipmentResult.getGeneratedCount(),
                 dispatchStrategy);
         response.put("startupPreGenerationEnabled", startupPreGenerationEnabled);
-        response.put("startupProcessingAssignments", startupAssignmentResult);
-        response.put("startupProcessingAssignmentsGenerated",
-                startupAssignmentResult.getAssignmentGeneratedCount() > 0);
+        response.put("startupProcessingShipments", startupShipmentResult);
+        response.put("startupProcessingShipmentsGenerated",
+                startupShipmentResult.getGeneratedCount() > 0);
+        response.put("startupProcessingAssignmentsGenerated", false);
         return ApiResponse.success("simulation started", response);
     }
 

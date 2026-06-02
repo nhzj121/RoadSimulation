@@ -51,6 +51,8 @@ import java.util.stream.Collectors;
 public class DataInitializer implements CommandLineRunner {
 
     private static final Logger logger = LoggerFactory.getLogger(DataInitializer.class);
+    private static final int STARTUP_SHIPMENT_MIN_QUANTITY = 25;
+    private static final int STARTUP_SHIPMENT_MAX_QUANTITY = 35;
     private final ShipmentProgressService shipmentProgressService;
     private final EnrollmentRepository enrollmentRepository;
     private final GoodsRepository goodsRepository;
@@ -835,10 +837,15 @@ public class DataInitializer implements CommandLineRunner {
             }
 
             try {
-                ShipmentItem item = createStartupShipment(plan);
+                StartupShipmentCreation creation = createStartupShipment(plan);
                 result.incrementShipmentGeneratedCount();
+                if (creation.getItems().isEmpty()) {
+                    result.addFailureReason("startup shipment created no items for chain=" + plan.chain.getChainCode());
+                    continue;
+                }
 
                 List<Vehicle> idleVehicles = vehicleRepository.findByCurrentStatus(Vehicle.VehicleStatus.IDLE);
+                ShipmentItem item = creation.getItems().get(0);
                 Optional<Vehicle> vehicle = selectOriginalDispatchVehicleForItem(item, idleVehicles);
                 if (vehicle.isEmpty()) {
                     result.addFailureReason("no IDLE vehicle can carry startup item id=" + item.getId());
@@ -913,17 +920,6 @@ public class DataInitializer implements CommandLineRunner {
 
     private List<StartupShipmentPlan> buildStartupShipmentPlans(List<String> failureReasons) {
         List<StartupShipmentPlan> plans = new ArrayList<>();
-        List<Vehicle> allVehicles = vehicleRepository.findAll().stream()
-                .filter(vehicle -> vehicle.getMaxLoadCapacity() != null && vehicle.getMaxLoadCapacity() > 0)
-                .filter(vehicle -> vehicle.getCargoVolume() != null && vehicle.getCargoVolume() > 0)
-                .collect(Collectors.toList());
-
-        if (allVehicles.isEmpty()) {
-            logger.warn("[StartupShipments] No vehicles with valid capacity.");
-            addStartupFailureReason(failureReasons, "no vehicles with valid maxLoadCapacity and cargoVolume");
-            return plans;
-        }
-
         List<ProcessingChain> activeChains = processingChainRepository.findByStatus(ProcessingChain.ChainStatus.ACTIVE);
         if (activeChains.isEmpty()) {
             addStartupFailureReason(failureReasons, "no ACTIVE processing chains");
@@ -947,7 +943,7 @@ public class DataInitializer implements CommandLineRunner {
                 ProcessingStage fromStage = stages.get(i);
                 ProcessingStage toStage = stages.get(i + 1);
                 Optional<StartupShipmentPlan> plan = buildStartupShipmentPlan(
-                        chain, fromStage, toStage, allVehicles, failureReasons);
+                        chain, fromStage, toStage, failureReasons);
                 plan.ifPresent(plans::add);
             }
         }
@@ -958,7 +954,6 @@ public class DataInitializer implements CommandLineRunner {
             ProcessingChain chain,
             ProcessingStage fromStage,
             ProcessingStage toStage,
-            List<Vehicle> allVehicles,
             List<String> failureReasons
     ) {
         if (fromStage.getProcessingPOI() == null || toStage.getProcessingPOI() == null) {
@@ -989,19 +984,14 @@ public class DataInitializer implements CommandLineRunner {
             return Optional.empty();
         }
 
-        Optional<VehicleCapacityChoice> capacityChoice = chooseStartupCapacity(goods, allVehicles);
-        if (capacityChoice.isEmpty()) {
-            logger.warn("[StartupShipments] Skip goods {} because no vehicle can carry one unit.",
-                    goods.getSku());
-            addStartupFailureReason(failureReasons, "goods=" + goods.getSku()
-                    + " skipped because no vehicle can carry one unit by weight and volume");
-            return Optional.empty();
-        }
-
-        VehicleCapacityChoice choice = capacityChoice.get();
-        int minQty = Math.max(1, choice.maxQuantity);
-        int maxQty = minQty;
-        return Optional.of(new StartupShipmentPlan(chain, fromStage, toStage, goods, minQty, maxQty));
+        return Optional.of(new StartupShipmentPlan(
+                chain,
+                fromStage,
+                toStage,
+                goods,
+                STARTUP_SHIPMENT_MIN_QUANTITY,
+                STARTUP_SHIPMENT_MAX_QUANTITY
+        ));
     }
 
     private void addStartupFailureReason(List<String> failureReasons, String reason) {
@@ -1186,7 +1176,7 @@ public class DataInitializer implements CommandLineRunner {
                 .filter(choice -> choice.maxQuantity > 0);
     }
 
-    private ShipmentItem createStartupShipment(StartupShipmentPlan plan) {
+    private StartupShipmentCreation createStartupShipment(StartupShipmentPlan plan) {
         int quantity = randomQuantityInRange(plan.minQuantity, plan.maxQuantity);
 
         POI managedStartPOI = poiRepository.findById(plan.fromStage.getProcessingPOI().getId())
@@ -1199,15 +1189,16 @@ public class DataInitializer implements CommandLineRunner {
         upsertStartupEnrollment(managedStartPOI, plan.goods, quantity);
 
         Shipment shipment = initalizeShipment(managedStartPOI, managedEndPOI, plan.goods, quantity);
-        ShipmentItem item = shipmentItemService.initalizeShipmentItem(shipment, plan.goods, quantity);
-        item.setStatus(ShipmentItem.ShipmentItemStatus.NOT_ASSIGNED);
-        item.setStage(plan.toStage);
-        item.setStageOrder(plan.toStage.getStageOrder());
-        item.setStageName(plan.toStage.getStageName());
-        item.setProcessingPOI(managedEndPOI);
-        item.setProcessingStatus(ShipmentItem.ProcessingItemStatus.WAITING);
-        item.setProgressPercent(0);
-        shipmentItemRepository.save(item);
+        List<ShipmentItem> items = createStartupShipmentItems(
+                shipment,
+                plan.goods,
+                quantity,
+                plan.toStage,
+                managedEndPOI
+        );
+        if (items.isEmpty()) {
+            throw new RuntimeException("No startup shipment items were created");
+        }
 
         startToEndMapping.put(managedStartPOI, managedEndPOI);
         String key = generatePoiPairKey(managedStartPOI, managedEndPOI);
@@ -1222,7 +1213,75 @@ public class DataInitializer implements CommandLineRunner {
                 plan.toStage.getStageName(),
                 plan.goods.getSku(),
                 quantity);
-        return item;
+        return new StartupShipmentCreation(shipment, items);
+    }
+
+    private List<ShipmentItem> createStartupShipmentItems(
+            Shipment shipment,
+            Goods goods,
+            int quantity,
+            ProcessingStage targetStage,
+            POI processingPOI
+    ) {
+        List<CargoChunk> chunks = createStartupCargoChunks(goods, quantity);
+        List<ShipmentItem> items = new ArrayList<>();
+
+        for (CargoChunk chunk : chunks) {
+            if (chunk == null || chunk.getQuantity() <= 0) {
+                continue;
+            }
+
+            if (chunk.isExceptional()) {
+                List<ShipmentItem> fragments = shipmentItemService.shatterChunkToVrpPool(
+                        shipment,
+                        goods,
+                        chunk.getQuantity()
+                );
+                for (ShipmentItem fragment : fragments) {
+                    applyStartupProcessingFields(fragment, targetStage, processingPOI);
+                    items.add(fragment);
+                }
+                continue;
+            }
+
+            ShipmentItem item = shipmentItemService.initalizeShipmentItem(shipment, goods, chunk.getQuantity());
+            applyStartupProcessingFields(item, targetStage, processingPOI);
+            items.add(item);
+        }
+
+        return items;
+    }
+
+    private List<CargoChunk> createStartupCargoChunks(Goods goods, int quantity) {
+        try {
+            List<CargoChunk> chunks = cargoChunkService.chunkCargo(goods, quantity);
+            if (chunks != null && !chunks.isEmpty()) {
+                return chunks;
+            }
+        } catch (Exception e) {
+            logger.warn("[StartupShipments] Cargo chunk split failed for goods={}, quantity={}: {}",
+                    goods != null ? goods.getSku() : null,
+                    quantity,
+                    e.getMessage());
+        }
+
+        return Collections.singletonList(new CargoChunk(quantity, null, null, null, 0.0, true));
+    }
+
+    private void applyStartupProcessingFields(
+            ShipmentItem item,
+            ProcessingStage targetStage,
+            POI processingPOI
+    ) {
+        item.setStatus(ShipmentItem.ShipmentItemStatus.NOT_ASSIGNED);
+        item.setAssignment(null);
+        item.setStage(targetStage);
+        item.setStageOrder(targetStage != null ? targetStage.getStageOrder() : null);
+        item.setStageName(targetStage != null ? targetStage.getStageName() : null);
+        item.setProcessingPOI(processingPOI);
+        item.setProcessingStatus(ShipmentItem.ProcessingItemStatus.WAITING);
+        item.setProgressPercent(0);
+        shipmentItemRepository.save(item);
     }
 
     private Optional<Vehicle> selectOriginalDispatchVehicleForItem(
@@ -1406,6 +1465,24 @@ public class DataInitializer implements CommandLineRunner {
         }
     }
 
+    private static class StartupShipmentCreation {
+        private final Shipment shipment;
+        private final List<ShipmentItem> items;
+
+        private StartupShipmentCreation(Shipment shipment, List<ShipmentItem> items) {
+            this.shipment = shipment;
+            this.items = items == null ? Collections.emptyList() : items;
+        }
+
+        public Shipment getShipment() {
+            return shipment;
+        }
+
+        public List<ShipmentItem> getItems() {
+            return items;
+        }
+    }
+
     /**
      * 伪随机判断逻辑
      */
@@ -1525,7 +1602,7 @@ public class DataInitializer implements CommandLineRunner {
      */
     private Integer generateRandomQuantity() {
         Random random = new Random();
-        return random.nextInt(50) + 50; // 100-600之间的随机数
+        return random.nextInt(25) + 10; // 100-600之间的随机数
     }
 
     // 起点与终点之间通过 route 实现的关系建立
