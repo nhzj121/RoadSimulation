@@ -2,6 +2,7 @@ package org.example.roadsimulation.service.impl;
 
 import org.example.roadsimulation.dto.GaodeRouteRequest;
 import org.example.roadsimulation.dto.GaodeRouteResponse;
+import org.example.roadsimulation.core.SimulationContext;
 import org.example.roadsimulation.entity.POI;
 import org.example.roadsimulation.service.GaodeMapService;
 import org.example.roadsimulation.service.GaodeRoutePlanningQueueService;
@@ -26,19 +27,25 @@ public class RoutePlanningServiceImpl implements RoutePlanningService {
     private final POIService poiService;
     private final GaodeMapService gaodeMapService;
     private final GaodeRoutePlanningQueueService routePlanningQueueService;
+    private final SimulationContext simulationContext;
 
     public RoutePlanningServiceImpl(
             POIService poiService,
             GaodeMapService gaodeMapService,
-            GaodeRoutePlanningQueueService routePlanningQueueService
+            GaodeRoutePlanningQueueService routePlanningQueueService,
+            SimulationContext simulationContext
     ) {
         this.poiService = poiService;
         this.gaodeMapService = gaodeMapService;
         this.routePlanningQueueService = routePlanningQueueService;
+        this.simulationContext = simulationContext;
     }
 
     @Override
     public GaodeRouteResponse planDrivingRoute(GaodeRouteRequest request) {
+        if (isResetting()) {
+            return GaodeRouteResponse.error("Route planning skipped during simulation reset");
+        }
         // 校验起点是否为空
         if (request.getOrigin() == null || request.getOrigin().trim().isEmpty()) {
             return GaodeRouteResponse.error("起点坐标不能为空");
@@ -62,6 +69,9 @@ public class RoutePlanningServiceImpl implements RoutePlanningService {
 
     @Override
     public GaodeRouteResponse planDrivingRouteByPois(Long startPoiId, Long endPoiId, String strategy) {
+        if (isResetting()) {
+            return GaodeRouteResponse.error("Route planning skipped during simulation reset");
+        }
         // 校验 POI 是否存在
         validatePOIExists(startPoiId, "起点POI");
         validatePOIExists(endPoiId, "终点POI");
@@ -247,6 +257,9 @@ public class RoutePlanningServiceImpl implements RoutePlanningService {
 
     @Override
     public GaodeRouteResponse planRouteWithGaode(GaodeRouteRequest request) {
+        if (isResetting()) {
+            return GaodeRouteResponse.error("Route planning skipped during simulation reset");
+        }
         // 简单的参数验证
         if (request.getOrigin() == null || request.getOrigin().trim().isEmpty()) {
             return GaodeRouteResponse.error("起点坐标不能为空");
@@ -266,6 +279,9 @@ public class RoutePlanningServiceImpl implements RoutePlanningService {
 
     @Override
     public GaodeRouteResponse planMultiPointRoute(List<Long> poiIds, String strategy) {
+        if (isResetting()) {
+            return GaodeRouteResponse.error("Route planning skipped during simulation reset");
+        }
         if (poiIds == null || poiIds.size() < 2) {
             return GaodeRouteResponse.error("规划多点路线至少需要2个POI点");
         }
@@ -316,5 +332,9 @@ public class RoutePlanningServiceImpl implements RoutePlanningService {
         }
 
         return response;
+    }
+
+    private boolean isResetting() {
+        return simulationContext != null && simulationContext.isResetting();
     }
 }

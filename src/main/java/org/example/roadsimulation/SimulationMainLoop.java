@@ -12,6 +12,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * 仿真主循环 - 控制中心
@@ -19,6 +20,7 @@ import java.time.LocalDateTime;
 @Component
 public class SimulationMainLoop {
 
+    private final ReentrantLock lifecycleLock = new ReentrantLock(true);
 
     private final DataInitializer dataInitializer;
     private final StateUpdateService stateUpdateService;
@@ -53,49 +55,86 @@ public class SimulationMainLoop {
      */
     @Scheduled(fixedRate = 4000)
     public void executeMainLoop() {
-        if (!simulationContext.isRunning()) {
+        if (shouldAbortLoop()) {
             return;
         }
 
-        LocalDateTime simNow = simulationContext.getCurrentSimTime();
-        int simMinutes = (int) java.time.Duration.between(
-                simulationContext.getSimStart(), simNow).toMinutes();
-
-        System.out.println("=== 主循环第 " + simulationContext.getLoopCount() + " 次 ===");
-        System.out.println("模拟时间：" + (simMinutes / 60.0) + " 小时 | simNow=" + simNow);
-
-        if (simulationContext.getLoopCount() == 0) {
-            stateUpdateService.resetWindowsOnce(simNow, 30);
-            vehicleInitializationService.initializeAllVehicleStatus();
+        if (!lifecycleLock.tryLock()) {
+            System.out.println("仿真主循环上一轮尚未结束或正在重置，本轮调度跳过");
+            return;
         }
 
-        if (simulationContext.getLoopCount() % 2 == 0) {
-            dataInitializer.generateGoods(simulationContext.getLoopCount());
-        }
-
-        if (simulationContext.getLoopCount() % 10 == 0) {
-            dataInitializer.printSimulationStatus(simulationContext.getLoopCount());
-            // 周期性超时检测：清理长时间未完成的运单，防止POI永久阻塞
-            try {
-                int expiredCount = poiShipmentManager.sweepExpiredShipments(120).size();
-                if (expiredCount > 0) {
-                    System.out.println("周期性超时清理: 释放了 " + expiredCount + " 个卡住的POI");
-                }
-            } catch (Exception e) {
-                System.err.println("超时清理执行异常: " + e.getMessage());
+        try {
+            if (shouldAbortLoop()) {
+                return;
             }
-        }
 
-        if (simulationContext.getLoopCount() != 0 && simulationContext.getLoopCount() % 3 == 0){
-            simulationDispatchRouter.dispatch();
-        }
+            LocalDateTime simNow = simulationContext.getCurrentSimTime();
+            int simMinutes = (int) java.time.Duration.between(
+                    simulationContext.getSimStart(), simNow).toMinutes();
 
-        // 加工链进度更新
-        if (processingChainServiceV2 != null) {
-            processingChainServiceV2.updateProcessingProgress(simNow, 30);
-        }
+            System.out.println("=== 主循环第 " + simulationContext.getLoopCount() + " 次 ===");
+            System.out.println("模拟时间：" + (simMinutes / 60.0) + " 小时 | simNow=" + simNow);
 
-        simulationContext.incrementLoop();
+            if (simulationContext.getLoopCount() == 0) {
+                stateUpdateService.resetWindowsOnce(simNow, 30);
+                if (shouldAbortLoop()) {
+                    return;
+                }
+                vehicleInitializationService.initializeAllVehicleStatus();
+                if (shouldAbortLoop()) {
+                    return;
+                }
+            }
+
+            if (simulationContext.getLoopCount() % 2 == 0) {
+                dataInitializer.generateGoods(simulationContext.getLoopCount());
+                if (shouldAbortLoop()) {
+                    return;
+                }
+            }
+
+            if (simulationContext.getLoopCount() % 10 == 0) {
+                dataInitializer.printSimulationStatus(simulationContext.getLoopCount());
+                // 周期性超时检测：清理长时间未完成的运单，防止POI永久阻塞
+                try {
+                    if (shouldAbortLoop()) {
+                        return;
+                    }
+                    int expiredCount = poiShipmentManager.sweepExpiredShipments(120).size();
+                    if (expiredCount > 0) {
+                        System.out.println("周期性超时清理: 释放了 " + expiredCount + " 个卡住的POI");
+                    }
+                } catch (Exception e) {
+                    System.err.println("超时清理执行异常: " + e.getMessage());
+                }
+            }
+
+            if (simulationContext.getLoopCount() != 0 && simulationContext.getLoopCount() % 3 == 0){
+                if (shouldAbortLoop()) {
+                    return;
+                }
+                simulationDispatchRouter.dispatch();
+                if (shouldAbortLoop()) {
+                    return;
+                }
+            }
+
+            // 加工链进度更新
+            if (processingChainServiceV2 != null) {
+                if (shouldAbortLoop()) {
+                    return;
+                }
+                processingChainServiceV2.updateProcessingProgress(simNow, 30);
+                if (shouldAbortLoop()) {
+                    return;
+                }
+            }
+
+            simulationContext.incrementLoop();
+        } finally {
+            lifecycleLock.unlock();
+        }
     }
 
     public LocalDateTime getCurrentSimTime() {
@@ -107,6 +146,7 @@ public class SimulationMainLoop {
     }
 
     public void start() {
+        simulationContext.finishReset();
         simulationContext.setRunning(true);
         System.out.println("仿真主循环已启动");
     }
@@ -114,6 +154,15 @@ public class SimulationMainLoop {
     public void stop() {
         simulationContext.setRunning(false);
         System.out.println("仿真主循环已停止");
+    }
+
+    public void stopForReset() {
+        simulationContext.beginReset();
+        System.out.println("仿真主循环正在为重置停止");
+    }
+
+    public void completeResetLifecycle() {
+        simulationContext.finishReset();
     }
 
     public void step() {
@@ -127,9 +176,19 @@ public class SimulationMainLoop {
     }
 
     public void reset() {
-        simulationContext.reset();
-        CostEntity.reset();
-        System.out.println("仿真已重置");
+        stopForReset();
+        awaitLoopIdleAndResetContext();
+    }
+
+    public void awaitLoopIdleAndResetContext() {
+        lifecycleLock.lock();
+        try {
+            simulationContext.reset();
+            CostEntity.reset();
+            System.out.println("仿真已重置");
+        } finally {
+            lifecycleLock.unlock();
+        }
     }
 
     public int getLoopCount() {
@@ -138,5 +197,9 @@ public class SimulationMainLoop {
 
     public boolean isRunning() {
         return simulationContext.isRunning();
+    }
+
+    private boolean shouldAbortLoop() {
+        return simulationContext.shouldAbortSimulationWork();
     }
 }

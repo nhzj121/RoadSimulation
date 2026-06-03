@@ -61,10 +61,19 @@ public class GaodeRoutePlanningQueueService {
         if (!accepting.get()) {
             return GaodeRouteResponse.error("Gaode route planning queue is not accepting requests");
         }
+        if (paused.get()) {
+            return GaodeRouteResponse.error("Gaode route planning queue is paused by simulation lifecycle");
+        }
 
-        RouteTask task = new RouteTask(copyRequest(request), generation.get());
+        long taskGeneration = generation.get();
+        RouteTask task = new RouteTask(copyRequest(request), taskGeneration);
         if (!queue.offer(task)) {
             return GaodeRouteResponse.error("Gaode route planning queue is full");
+        }
+        if (paused.get() || taskGeneration != generation.get()) {
+            queue.remove(task);
+            task.future.complete(GaodeRouteResponse.error("Gaode route planning task discarded by simulation lifecycle"));
+            return task.future.join();
         }
 
         try {

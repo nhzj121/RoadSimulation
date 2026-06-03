@@ -108,10 +108,15 @@ public class SimulationController {
 
     @PostMapping("/reset")
     public ApiResponse<String> resetSimulation() {
-        simulationMainLoop.reset();
-        gaodeRoutePlanningQueueService.reset();
-        dataInitializer.resetSimulationRuntimeData();
-        return ApiResponse.success("simulation reset");
+        simulationMainLoop.stopForReset();
+        try {
+            gaodeRoutePlanningQueueService.reset();
+            simulationMainLoop.awaitLoopIdleAndResetContext();
+            dataInitializer.resetSimulationRuntimeData();
+            return ApiResponse.success("simulation reset");
+        } finally {
+            simulationMainLoop.completeResetLifecycle();
+        }
     }
 
     @GetMapping("/config")

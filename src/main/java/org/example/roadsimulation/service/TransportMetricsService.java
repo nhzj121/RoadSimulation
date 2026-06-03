@@ -352,6 +352,8 @@ public class TransportMetricsService {
                 || normalized.contains("simulation stopped")
                 || normalized.contains("interrupted")
                 || normalized.contains("cancelled")
+                || normalized.contains("paused")
+                || normalized.contains("lifecycle")
                 || normalized.contains("stale")
                 || normalized.contains("not accepting requests")
                 || normalized.contains("discarded");

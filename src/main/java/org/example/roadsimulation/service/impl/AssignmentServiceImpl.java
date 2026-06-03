@@ -323,11 +323,13 @@ public class AssignmentServiceImpl implements AssignmentService {
     }
 
     @Override
-    public void markAssignmentAsDrawn(Long assignmentId) {}
+    public void markAssignmentAsDrawn(Long assignmentId) {
+        dataInitializer.markAssignmentAsDrawn(assignmentId);
+    }
 
     @Override
     public List<Long> getCompletedAssignments() {
-        return new ArrayList<>();
+        return dataInitializer.getCompletedAssignments();
     }
 
     @Override
