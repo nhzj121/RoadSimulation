@@ -33,7 +33,7 @@ public class SimulationContext {
     /**
      * 仿真循环计数器
      */
-    private int loopCount = 0;
+    private volatile int loopCount = 0;
 
     /**
      * 每个循环代表的仿真分钟数
@@ -43,7 +43,13 @@ public class SimulationContext {
     /**
      * 仿真运行状态
      */
-    private boolean isRunning = false;
+    private volatile boolean isRunning = false;
+
+    /**
+     * Reset lifecycle flag. When true, already-entered simulation work should
+     * stop creating new runtime data as soon as it reaches a safe checkpoint.
+     */
+    private volatile boolean resetting = false;
 
     /**
      * 获取当前仿真时间
@@ -76,6 +82,23 @@ public class SimulationContext {
     public void reset() {
         loopCount = 0;
         isRunning = false;
+    }
+
+    public void beginReset() {
+        isRunning = false;
+        resetting = true;
+    }
+
+    public void finishReset() {
+        resetting = false;
+    }
+
+    public boolean isResetting() {
+        return resetting;
+    }
+
+    public boolean shouldAbortSimulationWork() {
+        return resetting || !isRunning;
     }
 
     /**
@@ -111,6 +134,9 @@ public class SimulationContext {
      * @param running 运行状态
      */
     public void setRunning(boolean running) {
+        if (running) {
+            resetting = false;
+        }
         isRunning = running;
     }
 

@@ -183,6 +183,9 @@ public class DataInitializer implements CommandLineRunner {
      */
     @Transactional
     public void generateGoods(int loopCount) {
+        if (shouldAbortSimulationWork()) {
+            return;
+        }
         if (sourcePoiList.isEmpty() || targetPoiList.isEmpty()) {
             System.out.println("生成工厂为空");
             return;
@@ -191,6 +194,9 @@ public class DataInitializer implements CommandLineRunner {
 
         System.out.println("开始货物生成检查（循环 " + loopCount + "）");
 
+        if (shouldAbortSimulationWork()) {
+            return;
+        }
         periodicJudgement();
     }
 
@@ -482,6 +488,9 @@ public class DataInitializer implements CommandLineRunner {
     //@Scheduled(fixedRate = 10000)
     @Transactional
     public void periodicJudgement(){
+        if (shouldAbortSimulationWork()) {
+            return;
+        }
         System.out.println("开始新一轮的POI判断周期...");
         // 对所有POI进行判断
 
@@ -545,6 +554,9 @@ public class DataInitializer implements CommandLineRunner {
 
         // 3. 为每个POI批量处理货物生成
         for (POI poi : poisToGenerateGoods) {
+            if (shouldAbortSimulationWork()) {
+                return;
+            }
             try {
                 System.out.println("为POI [" + poi.getName() + "] 生成货物");
                 // 使用POIShipmentManager统一管理POI阻塞状态
@@ -567,15 +579,27 @@ public class DataInitializer implements CommandLineRunner {
                 // 从总空闲车辆列表中创建一个副本用于本次POI
                 List<Vehicle> availableVehicles = new ArrayList<>(allIdleVehicles);
 
+                if (shouldAbortSimulationWork()) {
+                    return;
+                }
                 Route route = initializeRoute(managedStartPOI, managedEndPOI);
 
                 // 批量创建货物运输
+                if (shouldAbortSimulationWork()) {
+                    return;
+                }
                 Map<Vehicle, ShipmentItem> vehicleShipmentItemMap = createCompleteGoodsTransport(
                         managedStartPOI, managedEndPOI, dynamicGoods, generateQuantity, availableVehicles);
 
+                if (shouldAbortSimulationWork()) {
+                    return;
+                }
                 List<Assignment> goalAssignments = initalizeAssignment(vehicleShipmentItemMap, route);
 
                 // 建立车辆分配关系
+                if (shouldAbortSimulationWork()) {
+                    return;
+                }
                 establishVehicleAssignmentRelationship(goalAssignments, managedStartPOI, managedEndPOI);
 
                 // 从总列表中移除已分配的车辆
@@ -587,6 +611,9 @@ public class DataInitializer implements CommandLineRunner {
 
                 // 记录状态信息
                 for (Assignment assignment : goalAssignments) {
+                    if (shouldAbortSimulationWork()) {
+                        return;
+                    }
                     Vehicle assignedVehicle = assignment.getAssignedVehicle();
                     if (assignedVehicle != null) {
                         Shipment shipment = null;
@@ -899,6 +926,10 @@ public class DataInitializer implements CommandLineRunner {
 
     private boolean canRegisterFrontendAssignment() {
         return simulationContext != null && simulationContext.isRunning();
+    }
+
+    private boolean shouldAbortSimulationWork() {
+        return simulationContext != null && simulationContext.shouldAbortSimulationWork();
     }
 
     public synchronized void resetSimulationRuntimeData() {
@@ -1849,17 +1880,29 @@ public class DataInitializer implements CommandLineRunner {
 
     @Transactional(rollbackFor = Exception.class)
     public Map<Vehicle, ShipmentItem> createCompleteGoodsTransport(POI startPOI, POI endPOI, Goods goods, Integer quantity, List<Vehicle> vehicles) {
+        if (shouldAbortSimulationWork()) {
+            return new HashMap<>();
+        }
         // 1. 创建Shipment
         Shipment shipment = initalizeShipment(startPOI, endPOI, goods, quantity);
 
         // 2. 智能拆分 + 车辆匹配 + 高德API + 成本计算（全部在方法内部完成）
+        if (shouldAbortSimulationWork()) {
+            return new HashMap<>();
+        }
         Map<Vehicle, ShipmentItem> vehicleShipmentItemMap = splitAndCreateShipmentItemsWithSmartMatching(
                 shipment, goods, quantity, vehicles, startPOI);
 
         // 3. 建立POI与Goods的Enrollment关系
+        if (shouldAbortSimulationWork()) {
+            return vehicleShipmentItemMap;
+        }
         initRelationBetweenPOIAndGoods(startPOI, goods, quantity);
 
         // 4. 注册到POI运单管理器
+        if (shouldAbortSimulationWork()) {
+            return vehicleShipmentItemMap;
+        }
         poiShipmentManager.registerShipment(startPOI, endPOI, shipment);
 
         return vehicleShipmentItemMap;
@@ -1976,6 +2019,9 @@ public class DataInitializer implements CommandLineRunner {
 
             try {
                 Thread.sleep(500); // 避开高德 5 QPS 限制
+                if (shouldAbortSimulationWork()) {
+                    return vehicleShipmentItemMap;
+                }
                 GaodeRouteResponse response_1 = routePlanningService.planDrivingRouteByPois(
                         startPOI.getId(), endPOI.getId(), "0");
                 if (response_1 != null && response_1.getData() != null
@@ -1988,6 +2034,9 @@ public class DataInitializer implements CommandLineRunner {
 
                 Thread.sleep(500);
                 if (vehiclePOI != null) {
+                    if (shouldAbortSimulationWork()) {
+                        return vehicleShipmentItemMap;
+                    }
                     GaodeRouteResponse response_2 = routePlanningService.planDrivingRouteByPois(
                             vehiclePOI.getId(), startPOI.getId(), "0");
                     if (response_2 != null && response_2.getData() != null
@@ -2315,6 +2364,9 @@ public class DataInitializer implements CommandLineRunner {
      * VRP 专用的派车方法：将拼好的货物打包成多节点路线，并派发车辆
      */
     private void dispatchVrpVehicle(Vehicle vehicle, List<ShipmentItem> packedItems, List<POI> pickupPois, List<POI> dropoffPois) {
+        if (shouldAbortSimulationWork()) {
+            return;
+        }
         // 为了避免 LIFO(后进先出) 的倒厢问题，VRP 调度通常采用 "先集中装，后集中卸" 的策略
         List<POI> fullRoutePois = new ArrayList<>();
         fullRoutePois.addAll(pickupPois);
@@ -2379,6 +2431,9 @@ public class DataInitializer implements CommandLineRunner {
             }
 
             if (vehicle.getCurrentPOI() != null) {
+                if (shouldAbortSimulationWork()) {
+                    return;
+                }
                 GaodeRouteResponse response_2 = routePlanningService.planDrivingRouteByPois(vehicle.getCurrentPOI().getId(), firstPickup.getId(), "0");
                 if (response_2 != null && response_2.getData() != null && response_2.getData().getTotalDistance() != null) {
                     mileageWithoutThings = response_2.getData().getTotalDistance() / 1000.0;
@@ -2464,6 +2519,11 @@ public class DataInitializer implements CommandLineRunner {
                 vehicle.getLicensePlate(), packedItems.size(), totalAssignedWeight);
 
         // ==================== 新增：将 VRP 任务组装为 DTO 并推入前端广播缓存 ====================
+        if (shouldAbortSimulationWork()) {
+            rollbackAssignmentAllocation(assignment, vehicle, packedItems,
+                    "Simulation reset before frontend registration");
+            return;
+        }
         if (!rebuildTransportMetricsStrict(assignment)) {
             rollbackAssignmentAllocation(assignment, vehicle, packedItems,
                     "Strict route planning failed before frontend registration");
@@ -2544,6 +2604,9 @@ public class DataInitializer implements CommandLineRunner {
      */
     // ToDO 这里的逻辑是基于车辆在起点来实现的，具体的车辆匹配函数需要后续再完善。
     private void establishVehicleAssignmentRelationship(List<Assignment> assignments, POI startPOI, POI endPOI) {
+        if (shouldAbortSimulationWork()) {
+            return;
+        }
         try {
             // 1. 重新从数据库加载POI实体
             POI managedStartPOI = poiRepository.findById(startPOI.getId())
@@ -2552,6 +2615,9 @@ public class DataInitializer implements CommandLineRunner {
                     .orElseThrow(() -> new RuntimeException("终点POI不存在: " + endPOI.getId()));
 
             for (Assignment assignment : assignments) {
+                if (shouldAbortSimulationWork()) {
+                    return;
+                }
                 Vehicle vehicle = assignment.getAssignedVehicle();
 
                 // 检查是否有分配的车辆
@@ -2603,6 +2669,12 @@ public class DataInitializer implements CommandLineRunner {
                 // 8. 保存所有更改
                 vehicleRepository.save(managedVehicle);
                 assignmentRepository.save(assignment);
+                if (shouldAbortSimulationWork()) {
+                    rollbackAssignmentAllocation(assignment, managedVehicle,
+                            new ArrayList<>(assignment.getShipmentItems()),
+                            "Simulation reset during assignment binding");
+                    continue;
+                }
                 if (!rebuildTransportMetricsStrict(assignment)) {
                     rollbackAssignmentAllocation(assignment, managedVehicle,
                             new ArrayList<>(assignment.getShipmentItems()),
@@ -3123,6 +3195,12 @@ public class DataInitializer implements CommandLineRunner {
 
         try {
             assignment = assignmentRepository.findById(assignment.getId()).orElse(assignment);
+            if (!canRegisterFrontendAssignment()) {
+                rollbackAssignmentAllocation(assignment, assignment.getAssignedVehicle(),
+                        new ArrayList<>(assignment.getShipmentItems()),
+                        "Simulation stopped before frontend registration");
+                return;
+            }
             if (!hasTransportMetrics(assignment) && !rebuildTransportMetricsStrict(assignment)) {
                 rollbackAssignmentAllocation(assignment, assignment.getAssignedVehicle(),
                         new ArrayList<>(assignment.getShipmentItems()),
@@ -3287,6 +3365,9 @@ public class DataInitializer implements CommandLineRunner {
 
     // 创建 AssignmentBriefDTO
     private boolean rebuildTransportMetricsStrict(Assignment assignment) {
+        if (shouldAbortSimulationWork()) {
+            return false;
+        }
         if (assignment == null || assignment.getId() == null) {
             return false;
         }
