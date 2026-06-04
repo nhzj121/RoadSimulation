@@ -13,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.stream.Collectors;
 
 @Service
@@ -43,14 +44,14 @@ public class VehicleInitializationServiceImpl implements VehicleInitializationSe
         List<Vehicle> allVehicles = vehicleRepository.findAll();
         logger.info("需要初始化的车辆总数: {}", allVehicles.size());
 
-        // 2. 获取默认POI（如果没有设置，则使用第一个仓库）
-        POI defaultPOI = getDefaultPOI();
-        if (defaultPOI == null) {
-            logger.error("无法找到默认POI，初始化失败");
-            throw new IllegalStateException("没有可用的默认POI，无法初始化车辆状态");
+        // 2. 获取车辆初始化候选POI，每辆车独立随机分配到仓库或配送中心
+        List<POI> initializationPOIs = getVehicleInitializationPOIs();
+        if (initializationPOIs.isEmpty()) {
+            logger.error("无法找到带坐标的仓库或配送中心POI，初始化失败");
+            throw new IllegalStateException("没有可用的仓库或配送中心POI，无法初始化车辆状态");
         }
 
-        logger.info("使用默认POI进行初始化: {} (ID: {})", defaultPOI.getName(), defaultPOI.getId());
+        logger.info("使用 {} 个仓库/配送中心POI作为车辆随机初始化候选点", initializationPOIs.size());
 
         // 3. 初始化每辆车
         int successCount = 0;
@@ -68,11 +69,12 @@ public class VehicleInitializationServiceImpl implements VehicleInitializationSe
                 }
 
                 // 执行初始化
-                initializeSingleVehicle(vehicle, defaultPOI);
+                POI targetPOI = selectRandomPOI(initializationPOIs);
+                initializeSingleVehicle(vehicle, targetPOI);
                 successCount++;
 
-                logger.debug("车辆 {} (车牌: {}) 初始化成功",
-                        vehicle.getId(), vehicle.getLicensePlate());
+                logger.debug("车辆 {} (车牌: {}) 初始化成功，随机位置: {} (ID: {})",
+                        vehicle.getId(), vehicle.getLicensePlate(), targetPOI.getName(), targetPOI.getId());
 
             } catch (Exception e) {
                 logger.error("车辆 {} (车牌: {}) 初始化失败: {}",
@@ -326,16 +328,7 @@ public class VehicleInitializationServiceImpl implements VehicleInitializationSe
 
     @Override
     public List<Long> getAvailableDefaultPOIs() {
-        // 获取所有仓库类型的POI作为候选
-        List<POI> warehouses = poiRepository.findByPoiType(POI.POIType.WAREHOUSE);
-
-        // 如果没有仓库，获取配送中心
-        if (warehouses.isEmpty()) {
-            warehouses = poiRepository.findByPoiType(POI.POIType.DISTRIBUTION_CENTER);
-        }
-
-        // 返回ID列表
-        return warehouses.stream()
+        return getVehicleInitializationPOIs().stream()
                 .map(POI::getId)
                 .collect(Collectors.toList());
     }
@@ -459,6 +452,24 @@ public class VehicleInitializationServiceImpl implements VehicleInitializationSe
 
         // 如果没有合适的POI，返回null
         return null;
+    }
+
+    private List<POI> getVehicleInitializationPOIs() {
+        List<POI> candidates = new ArrayList<>();
+        candidates.addAll(poiRepository.findByPoiType(POI.POIType.WAREHOUSE));
+        candidates.addAll(poiRepository.findByPoiType(POI.POIType.DISTRIBUTION_CENTER));
+
+        return candidates.stream()
+                .filter(Objects::nonNull)
+                .filter(poi -> poi.getLongitude() != null && poi.getLatitude() != null)
+                .collect(Collectors.toList());
+    }
+
+    private POI selectRandomPOI(List<POI> candidates) {
+        if (candidates == null || candidates.isEmpty()) {
+            throw new IllegalStateException("没有可用的仓库或配送中心POI");
+        }
+        return candidates.get(ThreadLocalRandom.current().nextInt(candidates.size()));
     }
 
     /**

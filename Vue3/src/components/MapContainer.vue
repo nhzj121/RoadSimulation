@@ -1106,7 +1106,6 @@ class VehicleAnimation {
     // 标记引用
     this.movingMarker = routeData.movingMarker;
     this.startMarker = routeData.startMarker;
-    this.vehicleStartMarker = routeData.vehicleMarker;
 
     // 动画帧ID
     this.animationFrameId = null;
@@ -1468,15 +1467,6 @@ class VehicleAnimation {
     if (this.movingMarker && map) {
       try {
         map.remove(this.movingMarker);
-      } catch (error) {
-        // 忽略清理错误
-      }
-    }
-
-    // 清理起点标记
-    if (this.vehicleStartMarker && map) {
-      try {
-        map.remove(this.vehicleStartMarker);
       } catch (error) {
         // 忽略清理错误
       }
@@ -2744,7 +2734,6 @@ const drawTwoStageRouteForAssignment = async (assignment, runGeneration = simula
       stage2Path: [],
       movingMarker: null,
       startMarker: null,
-      vehicleMarker: null,
       elements,
       animations: [],
       manager: animationManager,
@@ -2877,44 +2866,6 @@ const drawTwoStageRouteForAssignment = async (assignment, runGeneration = simula
       });
     });
 
-    // 车辆在起点的标记（静态标记）
-    let vehicleMarker = null;
-    if (assignment.vehicleStartLng && assignment.vehicleStartLat) {
-      // 使用初始状态 ORDER_DRIVING 创建图标
-      const vanEl = createVehicleIcon(32, 'ORDER_DRIVING', '#ff7f50');
-      vehicleMarker = new AMapLib.Marker({
-        position: [assignment.vehicleStartLng, assignment.vehicleStartLat],
-        content: vanEl,
-        offset: new AMapLib.Pixel(-16, -16),
-        title: `${assignment.licensePlate} - 前往装货点`,
-        extData: {
-          type: 'vehicle',
-          vehicleId: assignment.vehicleId,
-          assignmentId: assignment.assignmentId,
-          licensePlate: assignment.licensePlate,
-          status: 'ORDER_DRIVING'
-        }
-      });
-      vehicleMarker.on('click', () => {
-        // 直接调用滚动函数
-        scrollToVehicle(assignment.vehicleId);
-        handleVehicleMarkerClick(assignment, vehicleMarker.getPosition());
-      });
-
-      elements.push(vehicleMarker);
-      vehicleMarker.setMap(map);
-
-      // 注册到状态管理器
-      if (vehicleStatusManager.value) {
-        vehicleStatusManager.value.registerVehicleMarker(
-            assignment.vehicleId,
-            vehicleMarker,
-            assignment
-        );
-      }
-
-    }
-
     // 创建车辆移动标记
     const movingEl = createVehicleIcon(32, 'ORDER_DRIVING', '#ff7f50');
     const movingMarker = new AMapLib.Marker({
@@ -2949,7 +2900,6 @@ const drawTwoStageRouteForAssignment = async (assignment, runGeneration = simula
 
     routeData.movingMarker = movingMarker;
     routeData.startMarker = startMarker;
-    routeData.vehicleMarker = vehicleMarker;
 
     // 添加到动画管理器
     if (animationManager) {
