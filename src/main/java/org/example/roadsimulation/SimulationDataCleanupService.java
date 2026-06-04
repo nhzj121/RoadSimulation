@@ -11,6 +11,8 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
+import java.util.concurrent.ThreadLocalRandom;
 
 // SimulationDataCleanupService.java
 @Component
@@ -184,67 +186,35 @@ public class SimulationDataCleanupService {
     }
 
     /**
-     * 重置所有车辆到指定POI（成都市中心）
+     * 重置所有车辆到指定POI
      */
     @Transactional
     public void resetAllVehiclesToPOI(Long poiId) {
-        System.out.println("开始重置所有车辆到POI ID: " + poiId + " (成都市中心)...");
+        System.out.println("开始重置所有车辆到POI ID: " + poiId + "...");
 
         try {
-            // 获取目标POI（成都市中心）
-            POI chengduCenter = poiRepository.findById(poiId)
-                    .orElseThrow(() -> new RuntimeException("未找到POI ID为 " + poiId + " 的POI（成都市中心）"));
+            POI targetPOI = poiRepository.findById(poiId)
+                    .orElseThrow(() -> new RuntimeException("未找到POI ID为 " + poiId + " 的POI"));
 
-            // 获取所有车辆
             List<Vehicle> allVehicles = vehicleRepository.findAll();
             int resetCount = 0;
 
             for (Vehicle vehicle : allVehicles) {
                 try {
-                    // 1. 解除所有任务的关联
-                    List<Assignment> vehicleAssignments = new ArrayList<>(vehicle.getAssignments());
-                    for (Assignment assignment : vehicleAssignments) {
-                        vehicle.removeAssignment(assignment);
-                        assignment.setAssignedVehicle(null);
-                        assignmentRepository.save(assignment);
-                    }
-
-                    // 2. 重置车辆状态
-                    vehicle.setCurrentStatus(Vehicle.VehicleStatus.IDLE);
-                    vehicle.setPreviousStatus(null);
-                    vehicle.setStatusStartTime(LocalDateTime.now());
-                    vehicle.setStatusDurationSeconds(0L);
-                    vehicle.setLoopCount(0);
-
-                    // 3. 重置位置到成都市中心
-                    vehicle.setCurrentPOI(chengduCenter);
-                    if (chengduCenter.getLongitude() != null && chengduCenter.getLatitude() != null) {
-                        vehicle.setCurrentLongitude(chengduCenter.getLongitude());
-                        vehicle.setCurrentLatitude(chengduCenter.getLatitude());
-                    }
-
-                    // 4. 重置当前负载
-                    vehicle.setCurrentLoad(0.0);
-
-                    // 5. 清除司机关联（如果需要）
-                    // vehicle.getDrivers().clear(); // 根据业务需求决定是否清除司机关联
-
-                    // 6. 更新四元组信息
-                    vehicle.setUpdatedBy("System - Vehicle Reset");
-                    vehicle.setUpdatedTime(LocalDateTime.now());
+                    resetSingleVehicleToPOI(vehicle, targetPOI);
 
                     vehicleRepository.save(vehicle);
                     resetCount++;
 
                     System.out.println("已重置车辆: " + vehicle.getLicensePlate() +
-                            " 到POI: " + chengduCenter.getName());
+                            " 到POI: " + targetPOI.getName());
 
                 } catch (Exception e) {
                     System.err.println("重置车辆 " + vehicle.getLicensePlate() + " 时出错: " + e.getMessage());
                 }
             }
 
-            System.out.println("车辆重置完成，共重置 " + resetCount + " 辆车辆到成都市中心");
+            System.out.println("车辆重置完成，共重置 " + resetCount + " 辆车辆到POI ID: " + poiId);
 
         } catch (Exception e) {
             System.err.println("重置车辆到POI时出错: " + e.getMessage());
@@ -253,10 +223,85 @@ public class SimulationDataCleanupService {
     }
 
     /**
-     * 重置所有车辆到成都市中心（POI ID: 3466）
+     * 重置所有车辆到随机仓库或配送中心。
      */
     @Transactional
-    public void resetAllVehiclesToChengduCenter() {
-        resetAllVehiclesToPOI(3466L);
+    public void resetAllVehiclesToRandomInitializationPOIs() {
+        System.out.println("开始随机重置所有车辆到仓库或配送中心...");
+
+        try {
+            List<POI> initializationPOIs = getVehicleInitializationPOIs();
+            if (initializationPOIs.isEmpty()) {
+                throw new IllegalStateException("没有可用的仓库或配送中心POI，无法重置车辆位置");
+            }
+
+            List<Vehicle> allVehicles = vehicleRepository.findAll();
+            int resetCount = 0;
+
+            for (Vehicle vehicle : allVehicles) {
+                try {
+                    POI targetPOI = selectRandomPOI(initializationPOIs);
+                    resetSingleVehicleToPOI(vehicle, targetPOI);
+
+                    vehicleRepository.save(vehicle);
+                    resetCount++;
+
+                    System.out.println("已随机重置车辆: " + vehicle.getLicensePlate() +
+                            " 到POI: " + targetPOI.getName() + " (" + targetPOI.getPoiType() + ")");
+
+                } catch (Exception e) {
+                    System.err.println("随机重置车辆 " + vehicle.getLicensePlate() + " 时出错: " + e.getMessage());
+                }
+            }
+
+            System.out.println("车辆随机重置完成，共重置 " + resetCount + " 辆车辆");
+
+        } catch (Exception e) {
+            System.err.println("随机重置车辆位置时出错: " + e.getMessage());
+            throw new RuntimeException("随机重置车辆失败", e);
+        }
+    }
+
+    private void resetSingleVehicleToPOI(Vehicle vehicle, POI targetPOI) {
+        List<Assignment> vehicleAssignments = new ArrayList<>(vehicle.getAssignments());
+        for (Assignment assignment : vehicleAssignments) {
+            vehicle.removeAssignment(assignment);
+            assignment.setAssignedVehicle(null);
+            assignmentRepository.save(assignment);
+        }
+
+        vehicle.setCurrentStatus(Vehicle.VehicleStatus.IDLE);
+        vehicle.setPreviousStatus(null);
+        vehicle.setStatusStartTime(LocalDateTime.now());
+        vehicle.setStatusDurationSeconds(0L);
+        vehicle.setLoopCount(0);
+
+        vehicle.setCurrentPOI(targetPOI);
+        if (targetPOI.getLongitude() != null && targetPOI.getLatitude() != null) {
+            vehicle.setCurrentLongitude(targetPOI.getLongitude());
+            vehicle.setCurrentLatitude(targetPOI.getLatitude());
+        }
+
+        vehicle.setCurrentLoad(0.0);
+        vehicle.setUpdatedBy("System - Vehicle Reset");
+        vehicle.setUpdatedTime(LocalDateTime.now());
+    }
+
+    private List<POI> getVehicleInitializationPOIs() {
+        List<POI> candidates = new ArrayList<>();
+        candidates.addAll(poiRepository.findByPoiType(POI.POIType.WAREHOUSE));
+        candidates.addAll(poiRepository.findByPoiType(POI.POIType.DISTRIBUTION_CENTER));
+
+        return candidates.stream()
+                .filter(Objects::nonNull)
+                .filter(poi -> poi.getLongitude() != null && poi.getLatitude() != null)
+                .toList();
+    }
+
+    private POI selectRandomPOI(List<POI> candidates) {
+        if (candidates == null || candidates.isEmpty()) {
+            throw new IllegalStateException("没有可用的仓库或配送中心POI");
+        }
+        return candidates.get(ThreadLocalRandom.current().nextInt(candidates.size()));
     }
 }
