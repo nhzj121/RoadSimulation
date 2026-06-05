@@ -12,6 +12,9 @@ import org.example.roadsimulation.dto.AssignmentStatusDTO;
 import org.example.roadsimulation.entity.*;
 import org.example.roadsimulation.repository.*;
 import org.example.roadsimulation.service.*;
+import org.example.roadsimulation.service.BatchDirectVehicleAssignmentService.BatchMatchResult;
+import org.example.roadsimulation.service.BatchDirectVehicleAssignmentService.DirectAssignmentRequest;
+import org.example.roadsimulation.service.BatchDirectVehicleAssignmentService.VehicleAssignment;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -71,6 +74,8 @@ public class DataInitializer implements CommandLineRunner {
     private final POIShipmentManager poiShipmentManager;
     private final TransportMetricsService transportMetricsService;
     private final SimulationContext simulationContext;
+    private final BatchDirectVehicleAssignmentService batchDirectVehicleAssignmentService;
+    private final OriginalVrpDispatchPolicy originalVrpDispatchPolicy;
 
     private final Map<POI, POI> startToEndMapping = new ConcurrentHashMap<>(); // 起点到终点的映射关系
     // 修改成员变量，使用起点-终点对作为键
@@ -157,7 +162,9 @@ public class DataInitializer implements CommandLineRunner {
                             CargoChunkService cargoChunkService,
                             POIShipmentManager poiShipmentManager,
                             TransportMetricsService transportMetricsService,
-                            SimulationContext simulationContext) {
+                            SimulationContext simulationContext,
+                            BatchDirectVehicleAssignmentService batchDirectVehicleAssignmentService,
+                            OriginalVrpDispatchPolicy originalVrpDispatchPolicy) {
         this.enrollmentRepository = enrollmentRepository;
         this.goodsRepository = goodsRepository;
         this.poiRepository = poiRepository;
@@ -176,6 +183,8 @@ public class DataInitializer implements CommandLineRunner {
         this.poiShipmentManager = poiShipmentManager;
         this.transportMetricsService = transportMetricsService;
         this.simulationContext = simulationContext;
+        this.batchDirectVehicleAssignmentService = batchDirectVehicleAssignmentService;
+        this.originalVrpDispatchPolicy = originalVrpDispatchPolicy;
     }
 
     /**
@@ -546,11 +555,12 @@ public class DataInitializer implements CommandLineRunner {
         List<Vehicle> allIdleVehicles = vehicleRepository.findByCurrentStatus(Vehicle.VehicleStatus.IDLE); // ToDo 只考虑车辆状态，暂时不考虑适配性
 
         if (allIdleVehicles.isEmpty()) {
-            System.out.println("警告：没有适配货物 " + targetGoodsSku + " 的空闲车辆，跳过此次周期");
-            return;
+            System.out.println("警告：没有适配货物 " + targetGoodsSku + " 的空闲车辆，本轮只生成待分配运单项");
+        } else {
+            System.out.println("获取到 " + allIdleVehicles.size() + " 辆适配货物 " + targetGoodsSku + " 的空闲车辆");
         }
 
-        System.out.println("获取到 " + allIdleVehicles.size() + " 辆适配货物 " + targetGoodsSku + " 的空闲车辆");
+        List<DirectAssignmentRequest> directAssignmentRequests = new ArrayList<>();
 
         // 3. 为每个POI批量处理货物生成
         for (POI poi : poisToGenerateGoods) {
@@ -576,9 +586,6 @@ public class DataInitializer implements CommandLineRunner {
                 POI managedEndPOI = poiRepository.findById(endPOI.getId())
                         .orElseThrow(() -> new RuntimeException("终点POI状态失效"));
 
-                // 从总空闲车辆列表中创建一个副本用于本次POI
-                List<Vehicle> availableVehicles = new ArrayList<>(allIdleVehicles);
-
                 if (shouldAbortSimulationWork()) {
                     return;
                 }
@@ -588,44 +595,14 @@ public class DataInitializer implements CommandLineRunner {
                 if (shouldAbortSimulationWork()) {
                     return;
                 }
-                Map<Vehicle, ShipmentItem> vehicleShipmentItemMap = createCompleteGoodsTransport(
-                        managedStartPOI, managedEndPOI, dynamicGoods, generateQuantity, availableVehicles);
-
-                if (shouldAbortSimulationWork()) {
-                    return;
-                }
-                List<Assignment> goalAssignments = initalizeAssignment(vehicleShipmentItemMap, route);
-
-                // 建立车辆分配关系
-                if (shouldAbortSimulationWork()) {
-                    return;
-                }
-                establishVehicleAssignmentRelationship(goalAssignments, managedStartPOI, managedEndPOI);
-
-                // 从总列表中移除已分配的车辆
-                for (Vehicle assignedVehicle : vehicleShipmentItemMap.keySet()) {
-                    if (assignedVehicle != null) {
-                        allIdleVehicles.removeIf(v -> v.getId().equals(assignedVehicle.getId()));
-                    }
-                }
-
-                // 记录状态信息
-                for (Assignment assignment : goalAssignments) {
-                    if (shouldAbortSimulationWork()) {
-                        return;
-                    }
-                    Vehicle assignedVehicle = assignment.getAssignedVehicle();
-                    if (assignedVehicle != null) {
-                        Shipment shipment = null;
-                        for (ShipmentItem item : assignment.getShipmentItems()) {
-                            if (item.getShipment() != null) {
-                                shipment = item.getShipment();
-                                break;
-                            }
-                        }
-                        createAssignmentStatusRecord(assignment, managedStartPOI, managedEndPOI, shipment);
-                    }
-                }
+                directAssignmentRequests.addAll(createCompleteGoodsTransport(
+                        managedStartPOI,
+                        managedEndPOI,
+                        dynamicGoods,
+                        generateQuantity,
+                        route,
+                        directAssignmentRequests.size()
+                ));
 
                 startToEndMapping.put(poi, endPOI);
 
@@ -641,6 +618,11 @@ public class DataInitializer implements CommandLineRunner {
                 poiShipmentManager.releasePOI(poi); // 同步释放新管理器状态
             }
         }
+
+        if (shouldAbortSimulationWork()) {
+            return;
+        }
+        dispatchBatchDirectAssignments(directAssignmentRequests, allIdleVehicles);
 
         printCurrentStatus();
     }
@@ -1879,33 +1861,40 @@ public class DataInitializer implements CommandLineRunner {
     }
 
     @Transactional(rollbackFor = Exception.class)
-    public Map<Vehicle, ShipmentItem> createCompleteGoodsTransport(POI startPOI, POI endPOI, Goods goods, Integer quantity, List<Vehicle> vehicles) {
+    public List<DirectAssignmentRequest> createCompleteGoodsTransport(
+            POI startPOI,
+            POI endPOI,
+            Goods goods,
+            Integer quantity,
+            Route route,
+            int originalOrderOffset
+    ) {
         if (shouldAbortSimulationWork()) {
-            return new HashMap<>();
+            return new ArrayList<>();
         }
         // 1. 创建Shipment
         Shipment shipment = initalizeShipment(startPOI, endPOI, goods, quantity);
 
-        // 2. 智能拆分 + 车辆匹配 + 高德API + 成本计算（全部在方法内部完成）
+        // 2. 智能拆分，只创建待分配运单项；车辆匹配在本轮所有需求生成后统一执行。
         if (shouldAbortSimulationWork()) {
-            return new HashMap<>();
+            return new ArrayList<>();
         }
-        Map<Vehicle, ShipmentItem> vehicleShipmentItemMap = splitAndCreateShipmentItemsWithSmartMatching(
-                shipment, goods, quantity, vehicles, startPOI);
+        List<DirectAssignmentRequest> directAssignmentRequests = splitAndCreateShipmentItemsWithSmartMatching(
+                shipment, goods, quantity, startPOI, endPOI, route, originalOrderOffset);
 
         // 3. 建立POI与Goods的Enrollment关系
         if (shouldAbortSimulationWork()) {
-            return vehicleShipmentItemMap;
+            return directAssignmentRequests;
         }
         initRelationBetweenPOIAndGoods(startPOI, goods, quantity);
 
         // 4. 注册到POI运单管理器
         if (shouldAbortSimulationWork()) {
-            return vehicleShipmentItemMap;
+            return directAssignmentRequests;
         }
         poiShipmentManager.registerShipment(startPOI, endPOI, shipment);
 
-        return vehicleShipmentItemMap;
+        return directAssignmentRequests;
     }
 
     /**
@@ -1915,14 +1904,19 @@ public class DataInitializer implements CommandLineRunner {
      * 拆成标准大小的块，然后为每块找最合适的车。这样保证了高装载率（≥60%），
      * 同时每块大小都 ≤ 最大车载重，VRP 能轻松处理剩余块。</p>
      */
-    private Map<Vehicle, ShipmentItem> splitAndCreateShipmentItemsWithSmartMatching(
-            Shipment shipment, Goods goods, Integer totalQuantity, List<Vehicle> candidateVehicles,
-            POI startPOI) {
+    private List<DirectAssignmentRequest> splitAndCreateShipmentItemsWithSmartMatching(
+            Shipment shipment,
+            Goods goods,
+            Integer totalQuantity,
+            POI startPOI,
+            POI endPOI,
+            Route route,
+            int originalOrderOffset
+    ) {
 
-        Map<Vehicle, ShipmentItem> vehicleShipmentItemMap = new LinkedHashMap<>();
+        List<DirectAssignmentRequest> directAssignmentRequests = new ArrayList<>();
 
         System.out.println("开始智能拆分货物，总数量: " + totalQuantity);
-        System.out.println("候选车辆数量: " + candidateVehicles.size());
         System.out.println("货物总重量: " + (goods.getWeightPerUnit() * totalQuantity) + "吨");
 
         double weightPerUnit = goods.getWeightPerUnit() != null ? goods.getWeightPerUnit() : 0.0;
@@ -1944,9 +1938,9 @@ public class DataInitializer implements CommandLineRunner {
             System.out.println("  " + c);
         }
 
-        // ========== 2. 为每个块匹配车辆 + 创建运单明细 + 后处理 ==========
+        // ========== 2. 为每个块创建待分配运单明细 ==========
         int unassignedCount = 0;
-        POI endPOI = shipment.getDestPOI();
+        int requestOrder = originalOrderOffset;
 
         for (CargoChunk chunk : chunks) {
             int chunkQty = chunk.getQuantity();
@@ -1957,150 +1951,174 @@ public class DataInitializer implements CommandLineRunner {
                         shipment, goods, chunkQty);
                 item.setStatus(ShipmentItem.ShipmentItemStatus.NOT_ASSIGNED);
                 shipmentItemRepository.save(item);
-                vehicleShipmentItemMap.put(null, item);
                 unassignedCount++;
                 System.out.println("异常块 " + chunk + " → VRP池（无车能装）");
                 continue;
             }
 
-            // 2a. 在空闲车辆中找最匹配的车
-            double requiredWeight = goods.getWeightPerUnit() * chunkQty;
-            double requiredVolume = goods.getVolumePerUnit() * chunkQty;
-            Vehicle selectedVehicle = selectVehicleByCapacity(candidateVehicles, requiredWeight, requiredVolume);
-
-            if (selectedVehicle == null) {
-                // 无法找到合适车辆 → 粉碎后进入 VRP 池
-                List<ShipmentItem> fragments = shipmentItemService.shatterChunkToVrpPool(shipment, goods, chunkQty);
-                if (fragments.isEmpty()) {
-                    // 货物数据异常，跳过本次块
-                    System.out.println("块 " + chunk + " 因货物数据异常，跳过生成");
-                    continue;
-                }
-                for (ShipmentItem frag : fragments) {
-                    vehicleShipmentItemMap.put(null, frag);
-                }
-                unassignedCount += fragments.size();
-                continue;
-            }
-
-            double loadFactor = Math.max(requiredWeight / selectedVehicle.getMaxLoadCapacity(),
-                    requiredVolume / selectedVehicle.getCargoVolume());
-            // 装载率过低 → 也粉碎
-            if (loadFactor < 0.6) {
-                List<ShipmentItem> fragments = shipmentItemService.shatterChunkToVrpPool(shipment, goods, chunkQty);
-                if (fragments.isEmpty()) {
-                    System.out.println("块 " + chunk + " 因货物数据异常，跳过生成");
-                    continue;
-                }
-                for (ShipmentItem frag : fragments) {
-                    vehicleShipmentItemMap.put(null, frag);
-                }
-                unassignedCount += fragments.size();
-                continue;
-            }
-
-            // 2c. 找到车了 → 创建运单明细
             ShipmentItem shipmentItem = shipmentItemService.initalizeShipmentItem(
                     shipment, goods, chunkQty);
-            vehicleShipmentItemMap.put(selectedVehicle, shipmentItem);
-
-            // 2d. 更新车辆载重状态
-            BigDecimal assignedWeight = BigDecimal.valueOf(requiredWeight)
-                    .setScale(2, RoundingMode.HALF_UP);
-            BigDecimal assignedVolume = BigDecimal.valueOf(requiredVolume)
-                    .setScale(2, RoundingMode.HALF_UP);
-            selectedVehicle.setCurrentLoad(assignedWeight.doubleValue());
-            selectedVehicle.setCurrentVolumn(assignedVolume.doubleValue());
-
-            // 2e. 高德 API 路线距离计算（保留原逻辑）
-            POI vehiclePOI = selectedVehicle.getCurrentPOI();
-            Double mileage = 0.0;
-            Double mileageWithoutThings = 0.0;
-
-            try {
-                Thread.sleep(500); // 避开高德 5 QPS 限制
-                if (shouldAbortSimulationWork()) {
-                    return vehicleShipmentItemMap;
-                }
-                GaodeRouteResponse response_1 = routePlanningService.planDrivingRouteByPois(
-                        startPOI.getId(), endPOI.getId(), "0");
-                if (response_1 != null && response_1.getData() != null
-                        && response_1.getData().getTotalDistance() != null) {
-                    mileage = response_1.getData().getTotalDistance() / 1000.0;
-                } else {
-                    mileage = calculateHaversineDistance(startPOI.getLatitude(), startPOI.getLongitude(),
-                            endPOI.getLatitude(), endPOI.getLongitude());
-                }
-
-                Thread.sleep(500);
-                if (vehiclePOI != null) {
-                    if (shouldAbortSimulationWork()) {
-                        return vehicleShipmentItemMap;
-                    }
-                    GaodeRouteResponse response_2 = routePlanningService.planDrivingRouteByPois(
-                            vehiclePOI.getId(), startPOI.getId(), "0");
-                    if (response_2 != null && response_2.getData() != null
-                            && response_2.getData().getTotalDistance() != null) {
-                        mileageWithoutThings = response_2.getData().getTotalDistance() / 1000.0;
-                    } else {
-                        mileageWithoutThings = calculateHaversineDistance(
-                                vehiclePOI.getLatitude(), vehiclePOI.getLongitude(),
-                                startPOI.getLatitude(), startPOI.getLongitude());
-                    }
-                } else if (selectedVehicle.getCurrentLatitude() != null
-                        && selectedVehicle.getCurrentLongitude() != null) {
-                    mileageWithoutThings = calculateHaversineDistance(
-                            selectedVehicle.getCurrentLatitude(), selectedVehicle.getCurrentLongitude(),
-                            startPOI.getLatitude(), startPOI.getLongitude());
-                }
-            } catch (Exception e) {
-                System.err.println("路线规划计算里程时发生异常: " + e.getMessage());
-            }
-
-            // 2f. 成本计算（保留原逻辑）
-            Double realityCapacity = requiredWeight * mileage;
-            Double theoryCapacity = selectedVehicle.getMaxLoadCapacity() * mileage;
-            Double waitingTime = (currentLoopCount - selectedVehicle.getLoopCount()) * 0.5;
-            Double transportTime = (mileage + mileageWithoutThings) / 20.0;
-            Double theoryRealityCapacity = theoryCapacity - realityCapacity;
-            Double waitingTransportTime = transportTime > 0.0 ? waitingTime / transportTime : 0.0;
-            Double oilLoss = calculateOilLoss(realityCapacity, theoryCapacity);
-            Double fixedLoss = waitingTime + transportTime;
-            Double loss = 0.5 * oilLoss + 0.3 * fixedLoss;
-
-            CostEntity.totalMileage += mileage;
-            CostEntity.totalTransportTime += transportTime;
-            CostEntity.totalWaitingTime += waitingTime;
-            CostEntity.totalMileageWithoutThings += mileageWithoutThings;
-            CostEntity.totalRealityCapacity += realityCapacity;
-            CostEntity.totalTheoryCapacity += theoryCapacity;
-
-            if (CostEntity.WorstTheoryRealityCapacity == 0.0
-                    || CostEntity.WorstTheoryRealityCapacity < theoryRealityCapacity) {
-                CostEntity.WorstTheoryRealityCapacity = theoryRealityCapacity;
-            }
-            if (CostEntity.WorstWaitingTransportTime == 0.0
-                    || CostEntity.WorstWaitingTransportTime < waitingTransportTime) {
-                CostEntity.WorstWaitingTransportTime = waitingTransportTime;
-            }
-            if (CostEntity.WorstLoss == 0.0 || CostEntity.WorstLoss < loss) {
-                CostEntity.WorstLoss = loss;
-            }
-
-            selectedVehicle.setLoopCount(currentLoopCount);
-            vehicleRepository.save(selectedVehicle);
-
-            // 2g. 从候选列表移除已分配车辆
-            candidateVehicles.remove(selectedVehicle);
-
-            System.out.printf("车辆 %s (载重%.2ft) ← %s, 装载率=%.0f%%, 距离=%.2fkm%n",
-                    selectedVehicle.getLicensePlate(), selectedVehicle.getMaxLoadCapacity(),
-                    chunk, loadFactor * 100, mileage);
+            shipmentItem.setStatus(ShipmentItem.ShipmentItemStatus.NOT_ASSIGNED);
+            shipmentItemRepository.save(shipmentItem);
+            directAssignmentRequests.add(new DirectAssignmentRequest(
+                    shipmentItem,
+                    startPOI,
+                    endPOI,
+                    route,
+                    requestOrder++
+            ));
         }
 
-        System.out.println("货物拆分完成: 共 " + vehicleShipmentItemMap.size() + " 个明细, "
-                + unassignedCount + " 个进入VRP池");
-        return vehicleShipmentItemMap;
+        System.out.println("货物拆分完成: 共 " + directAssignmentRequests.size() + " 个可直配候选明细, "
+                + unassignedCount + " 个异常块进入VRP池");
+        return directAssignmentRequests;
+    }
+
+    private void dispatchBatchDirectAssignments(
+            List<DirectAssignmentRequest> directAssignmentRequests,
+            List<Vehicle> allIdleVehicles
+    ) {
+        if (directAssignmentRequests == null || directAssignmentRequests.isEmpty()) {
+            System.out.println("[批量直配] 本轮没有可直配候选运单项");
+            return;
+        }
+
+        BatchMatchResult matchResult = batchDirectVehicleAssignmentService.match(
+                directAssignmentRequests,
+                allIdleVehicles
+        );
+
+        System.out.printf("[批量直配] 候选运单项=%d, 空闲车辆=%d, 匹配成功=%d, 未匹配=%d%n",
+                directAssignmentRequests.size(),
+                allIdleVehicles == null ? 0 : allIdleVehicles.size(),
+                matchResult.getAssignments().size(),
+                matchResult.getUnmatchedRequests().size());
+
+        for (VehicleAssignment vehicleAssignment : matchResult.getAssignments()) {
+            if (shouldAbortSimulationWork()) {
+                return;
+            }
+
+            DirectAssignmentRequest request = vehicleAssignment.getRequest();
+            Vehicle vehicle = vehicleAssignment.getVehicle();
+            ShipmentItem item = request.getShipmentItem();
+            Assignment assignment = null;
+
+            try {
+                updateDirectAssignmentRuntimeCost(vehicle, item, request.getStartPOI(), request.getEndPOI());
+
+                Map<Vehicle, ShipmentItem> vehicleShipmentItemMap = new LinkedHashMap<>();
+                vehicleShipmentItemMap.put(vehicle, item);
+
+                List<Assignment> assignments = initalizeAssignment(vehicleShipmentItemMap, request.getRoute());
+                if (assignments.isEmpty()) {
+                    item.setStatus(ShipmentItem.ShipmentItemStatus.NOT_ASSIGNED);
+                    shipmentItemRepository.save(item);
+                    continue;
+                }
+
+                assignment = assignments.get(0);
+                establishVehicleAssignmentRelationship(
+                        assignments,
+                        request.getStartPOI(),
+                        request.getEndPOI()
+                );
+
+                Vehicle assignedVehicle = assignment.getAssignedVehicle();
+                if (assignedVehicle != null) {
+                    Shipment shipment = item.getShipment();
+                    createAssignmentStatusRecord(
+                            assignment,
+                            request.getStartPOI(),
+                            request.getEndPOI(),
+                            shipment
+                    );
+                }
+
+                System.out.printf("[批量直配] 车辆 %s -> ShipmentItem %s, cost=%.3f%n",
+                        vehicle.getLicensePlate(), item.getId(), vehicleAssignment.getCost());
+            } catch (Exception e) {
+                System.err.println("[批量直配] 分配失败，ShipmentItem "
+                        + (item != null ? item.getId() : null)
+                        + " 回到待分配池: " + e.getMessage());
+                rollbackAssignmentAllocation(
+                        assignment,
+                        vehicle,
+                        item == null ? List.of() : List.of(item),
+                        "Batch direct assignment failed: " + e.getMessage()
+                );
+            }
+        }
+
+        for (DirectAssignmentRequest unmatched : matchResult.getUnmatchedRequests()) {
+            ShipmentItem item = unmatched.getShipmentItem();
+            if (item == null) {
+                continue;
+            }
+            item.setStatus(ShipmentItem.ShipmentItemStatus.NOT_ASSIGNED);
+            item.setAssignment(null);
+            shipmentItemRepository.save(item);
+        }
+    }
+
+    private void updateDirectAssignmentRuntimeCost(Vehicle vehicle, ShipmentItem item, POI startPOI, POI endPOI) {
+        if (vehicle == null || item == null || startPOI == null || endPOI == null) {
+            return;
+        }
+
+        double assignedWeight = item.getWeight() != null ? item.getWeight() : 0.0;
+        double assignedVolume = item.getVolume() != null ? item.getVolume() : 0.0;
+
+        vehicle.setCurrentLoad(BigDecimal.valueOf(assignedWeight)
+                .setScale(2, RoundingMode.HALF_UP)
+                .doubleValue());
+        vehicle.setCurrentVolumn(BigDecimal.valueOf(assignedVolume)
+                .setScale(2, RoundingMode.HALF_UP)
+                .doubleValue());
+
+        double mileage = calculateHaversineDistance(
+                startPOI.getLatitude(),
+                startPOI.getLongitude(),
+                endPOI.getLatitude(),
+                endPOI.getLongitude()
+        );
+        double mileageWithoutThings = estimateVehicleToPoiDistanceKm(vehicle, startPOI);
+        if (mileageWithoutThings == Double.MAX_VALUE) {
+            mileageWithoutThings = 0.0;
+        }
+
+        double maxLoad = vehicle.getMaxLoadCapacity() != null ? vehicle.getMaxLoadCapacity() : 0.0;
+        double realityCapacity = assignedWeight * mileage;
+        double theoryCapacity = maxLoad * mileage;
+        double waitingTime = (currentLoopCount - vehicle.getLoopCount()) * 0.5;
+        double transportTime = (mileage + mileageWithoutThings) / 20.0;
+        double theoryRealityCapacity = theoryCapacity - realityCapacity;
+        double waitingTransportTime = transportTime > 0.0 ? waitingTime / transportTime : 0.0;
+        double oilLoss = calculateOilLoss(realityCapacity, theoryCapacity);
+        double fixedLoss = waitingTime + transportTime;
+        double loss = 0.5 * oilLoss + 0.3 * fixedLoss;
+
+        CostEntity.totalMileage += mileage;
+        CostEntity.totalTransportTime += transportTime;
+        CostEntity.totalWaitingTime += waitingTime;
+        CostEntity.totalMileageWithoutThings += mileageWithoutThings;
+        CostEntity.totalRealityCapacity += realityCapacity;
+        CostEntity.totalTheoryCapacity += theoryCapacity;
+
+        if (CostEntity.WorstTheoryRealityCapacity == 0.0
+                || CostEntity.WorstTheoryRealityCapacity < theoryRealityCapacity) {
+            CostEntity.WorstTheoryRealityCapacity = theoryRealityCapacity;
+        }
+        if (CostEntity.WorstWaitingTransportTime == 0.0
+                || CostEntity.WorstWaitingTransportTime < waitingTransportTime) {
+            CostEntity.WorstWaitingTransportTime = waitingTransportTime;
+        }
+        if (CostEntity.WorstLoss == 0.0 || CostEntity.WorstLoss < loss) {
+            CostEntity.WorstLoss = loss;
+        }
+
+        vehicle.setLoopCount(currentLoopCount);
+        vehicleRepository.save(vehicle);
     }
 
     /**
@@ -2277,33 +2295,51 @@ public class DataInitializer implements CommandLineRunner {
             List<POI> dropoffPois = new ArrayList<>();
 
             double remainingCapacity = currentVehicleCapacity;
-            double remainingVolume = currentVehicleVolume; // 🌟 追踪剩余体积
+            double remainingVolume = currentVehicleVolume; // 追踪剩余体积
             double currentSimulatedCost = 0.0;
+            double acceptedMileage = 0.0;
+            double addedExtraMileage = 0.0;
+            double addedWeight = 0.0;
 
-            Iterator<ShipmentItem> iterator = pendingItems.iterator();
-            while (iterator.hasNext()) {
-                ShipmentItem item = iterator.next();
+            for (ShipmentItem item : pendingItems) {
 
                 // 【第一关】：物理容量硬约束 (装不下直接跳过)
                 double itemWeight = item.getWeight() != null ? item.getWeight() : 0.0;
                 double itemVolume = item.getVolume() != null ? item.getVolume() : 0.0;
 
                 if (itemWeight > remainingCapacity || itemVolume > remainingVolume) {
+                    logger.info("[ORIGINAL_VRP] Skip item {} for vehicle {}: capacity exceeded. itemWeight={}, itemVolume={}, remainingWeight={}, remainingVolume={}",
+                            item.getId(), vehicle.getLicensePlate(), itemWeight, itemVolume, remainingCapacity, remainingVolume);
                     continue;
                 }
 
+                if (item.getShipment() == null) {
+                    logger.info("[ORIGINAL_VRP] Skip item {} for vehicle {}: missing shipment.",
+                            item.getId(), vehicle.getLicensePlate());
+                    continue;
+                }
                 POI itemOrigin = item.getShipment().getOriginPOI();
                 POI itemDest = item.getShipment().getDestPOI();
+                if (itemOrigin == null || itemDest == null) {
+                    logger.info("[ORIGINAL_VRP] Skip item {} for vehicle {}: missing origin or destination POI.",
+                            item.getId(), vehicle.getLicensePlate());
+                    continue;
+                }
 
                 // 【第二关】：空间与绕路粗筛 (防走火入魔)
-                // 假设：如果为了装这个货，直线距离跨度超过 100km，直接拒绝
+                // 如果新增货源离首个装货点过远，直接拒绝
                 if (!pickupPois.isEmpty()) {
                     POI anchorPoi = pickupPois.get(0); // 锚点：首个装货点
                     double distToAnchor = calculateHaversineDistance(
                             anchorPoi.getLatitude(), anchorPoi.getLongitude(),
                             itemOrigin.getLatitude(), itemOrigin.getLongitude());
 
-                    if (distToAnchor > 450.0) {
+                    if (distToAnchor > originalVrpDispatchPolicy.getMaxAnchorDistanceKm()) {
+                        logger.info("[ORIGINAL_VRP] Skip item {} for vehicle {}: anchor distance {}km exceeds {}km.",
+                                item.getId(),
+                                vehicle.getLicensePlate(),
+                                String.format("%.2f", distToAnchor),
+                                originalVrpDispatchPolicy.getMaxAnchorDistanceKm());
                         continue;
                     }
                 }
@@ -2332,6 +2368,16 @@ public class DataInitializer implements CommandLineRunner {
                     if (simulatedDeltaMileage <= 0) simulatedDeltaMileage = 5.0; // 防止因为情况过于理想叠加各种情况导致负数
                 }
 
+                if (!packedItems.isEmpty()
+                        && !originalVrpDispatchPolicy.isWorthAdding(item, simulatedDeltaMileage)) {
+                    logger.info("[ORIGINAL_VRP] Skip item {} for vehicle {}: added tons per extra km {} is below threshold {}.",
+                            item.getId(),
+                            vehicle.getLicensePlate(),
+                            String.format("%.4f", originalVrpDispatchPolicy.calculateAddedTonsPerExtraKm(item, simulatedDeltaMileage)),
+                            originalVrpDispatchPolicy.getMinAddedTonsPerExtraKm());
+                    continue;
+                }
+
                 double deltaTransportTime = simulatedDeltaMileage / 60.0;
 
                 Double marginalCost = getCostService.estimateMarginalCost(
@@ -2339,21 +2385,58 @@ public class DataInitializer implements CommandLineRunner {
                         vehicle.getMaxLoadCapacity() * simulatedDeltaMileage,
                         item.getWeight() * simulatedDeltaMileage, 0.0, 0.0, 0.0);
 
-                // ToDo 判断成本是否可接受（这里设一个宽泛的阈值，比如成本增量 < 500 视为值得拼）
-                if (marginalCost < 5000.0) {
-                    packedItems.add(item);
-                    pickupPois.add(itemOrigin);
-                    dropoffPois.add(0, itemDest);
-
-                    remainingCapacity -= itemWeight;
-                    remainingVolume -= itemVolume;
-                    currentSimulatedCost += marginalCost;
-
-                    iterator.remove(); // 从全局池中移除
+                if (!originalVrpDispatchPolicy.acceptsMarginalCost(marginalCost)) {
+                    logger.info("[ORIGINAL_VRP] Skip item {} for vehicle {}: marginalCost {} exceeds threshold {}.",
+                            item.getId(),
+                            vehicle.getLicensePlate(),
+                            marginalCost,
+                            originalVrpDispatchPolicy.getMaxMarginalCost());
+                    continue;
                 }
+
+                if (!packedItems.isEmpty()) {
+                    addedExtraMileage += originalVrpDispatchPolicy.effectiveExtraMileageKm(simulatedDeltaMileage);
+                    addedWeight += itemWeight;
+                }
+                acceptedMileage += simulatedDeltaMileage;
+                packedItems.add(item);
+                pickupPois.add(itemOrigin);
+                dropoffPois.add(0, itemDest);
+
+                remainingCapacity -= itemWeight;
+                remainingVolume -= itemVolume;
+                currentSimulatedCost += marginalCost;
             }
 
             if (!packedItems.isEmpty()) {
+                double finalLoadFactor = originalVrpDispatchPolicy.calculateLoadFactor(vehicle, packedItems);
+                double totalPackedWeight = packedItems.stream()
+                        .mapToDouble(packedItem -> packedItem.getWeight() != null ? packedItem.getWeight() : 0.0)
+                        .sum();
+                double totalPackedVolume = packedItems.stream()
+                        .mapToDouble(packedItem -> packedItem.getVolume() != null ? packedItem.getVolume() : 0.0)
+                        .sum();
+                if (!originalVrpDispatchPolicy.meetsMinLoadFactor(vehicle, packedItems)) {
+                    logger.info("[ORIGINAL_VRP] Reject vehicle {} pack: final load factor {} is below threshold {}. items={}, totalWeight={}, totalVolume={}",
+                            vehicle.getLicensePlate(),
+                            String.format("%.4f", finalLoadFactor),
+                            originalVrpDispatchPolicy.getMinLoadFactor(),
+                            packedItems.size(),
+                            totalPackedWeight,
+                            totalPackedVolume);
+                    continue;
+                }
+                pendingItems.removeAll(packedItems);
+                logger.info("[ORIGINAL_VRP] Dispatch vehicle {}: items={}, loadFactor={}, totalWeight={}, totalVolume={}, acceptedMileageKm={}, addedExtraMileageKm={}, addedTonsPerKm={}, simulatedCost={}",
+                        vehicle.getLicensePlate(),
+                        packedItems.size(),
+                        String.format("%.4f", finalLoadFactor),
+                        totalPackedWeight,
+                        totalPackedVolume,
+                        String.format("%.2f", acceptedMileage),
+                        String.format("%.2f", addedExtraMileage),
+                        addedExtraMileage > 0.0 ? String.format("%.4f", addedWeight / addedExtraMileage) : "N/A",
+                        String.format("%.4f", currentSimulatedCost));
                 dispatchVrpVehicle(vehicle, packedItems, pickupPois, dropoffPois);
             }
         }
