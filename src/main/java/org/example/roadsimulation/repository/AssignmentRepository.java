@@ -64,6 +64,9 @@ public interface AssignmentRepository extends JpaRepository<Assignment, Long> {
     @Query("SELECT a FROM Assignment a WHERE a.status IN ('ASSIGNED', 'IN_PROGRESS')")
     List<Assignment> findActiveAssignments();
 
+    @Query("SELECT a FROM Assignment a WHERE a.status IN ('WAITING', 'ASSIGNED', 'IN_PROGRESS')")
+    List<Assignment> findRuntimeActiveAssignments();
+
     // 查找指定车辆的Assignment
     @Query("SELECT a FROM Assignment a WHERE a.assignedVehicle.id = :vehicleId AND a.status IN ('ASSIGNED', 'IN_PROGRESS')")
     Optional<Assignment> findActiveAssignmentByVehicle(@Param("vehicleId") Long vehicleId);

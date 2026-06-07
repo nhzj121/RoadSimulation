@@ -78,6 +78,7 @@ public class StateUpdateService {
      */
     public void resetWindowsOnce(LocalDateTime simNow, int minutesPerLoop) {
         stateTransitionService.resetVehicleStateWindows(simNow, minutesPerLoop);
+        windowsResetDone = true;
     }
 
     /**

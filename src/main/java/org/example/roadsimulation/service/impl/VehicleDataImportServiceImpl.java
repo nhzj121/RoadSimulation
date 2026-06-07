@@ -12,6 +12,7 @@ import org.springframework.context.event.EventListener;
 import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -157,7 +158,7 @@ public class VehicleDataImportServiceImpl implements VehicleDataImportService {
         }
 
         // 设置默认状态
-        vehicle.setCurrentStatus(Vehicle.VehicleStatus.IDLE);
+        vehicle.transitionToStatus(Vehicle.VehicleStatus.IDLE, null, Duration.ZERO);
 
         return vehicle;
     }

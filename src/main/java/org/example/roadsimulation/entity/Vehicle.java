@@ -207,7 +207,7 @@ public class Vehicle {
     // ==================== 任务相关便捷方法 ====================
 
     /**
-     * 获取当前进行中的任务
+     * 获取当前活跃任务。
      */
     public Assignment getCurrentAssignment() {
         if (assignments == null || assignments.isEmpty()) {
@@ -216,7 +216,9 @@ public class Vehicle {
 
         return assignments.stream()
                 .filter(Objects::nonNull)
-                .filter(Assignment::isInProgress)
+                .filter(assignment -> assignment.isWaiting()
+                        || assignment.isAssigned()
+                        || assignment.isInProgress())
                 .findFirst()
                 .orElse(null);
     }
@@ -225,7 +227,12 @@ public class Vehicle {
      * 是否存在进行中的任务
      */
     public boolean hasAssignmentInProgress() {
-        return getCurrentAssignment() != null;
+        if (assignments == null || assignments.isEmpty()) {
+            return false;
+        }
+        return assignments.stream()
+                .filter(Objects::nonNull)
+                .anyMatch(Assignment::isInProgress);
     }
 
     /**
@@ -290,6 +297,23 @@ public class Vehicle {
 
     public VehicleStatus getCurrentStatus() { return currentStatus; }
     public void setCurrentStatus(VehicleStatus currentStatus) { this.currentStatus = currentStatus; }
+
+    public void transitionToStatus(VehicleStatus nextStatus, LocalDateTime startTime, Duration duration) {
+        if (nextStatus == null) {
+            return;
+        }
+        if (this.currentStatus != nextStatus) {
+            this.previousStatus = this.currentStatus;
+        }
+        this.currentStatus = nextStatus;
+        this.statusStartTime = startTime != null ? startTime : LocalDateTime.now();
+        setStatusDuration(duration != null && !duration.isNegative() ? duration : Duration.ZERO);
+        this.updatedTime = LocalDateTime.now();
+    }
+
+    public void transitionToStatus(VehicleStatus nextStatus, LocalDateTime startTime) {
+        transitionToStatus(nextStatus, startTime, Duration.ZERO);
+    }
 
     public VehicleStatus getPreviousStatus() { return previousStatus; }
     public void setPreviousStatus(VehicleStatus previousStatus) { this.previousStatus = previousStatus; }

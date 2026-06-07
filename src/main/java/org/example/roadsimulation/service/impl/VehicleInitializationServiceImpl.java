@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.ThreadLocalRandom;
@@ -230,7 +231,7 @@ public class VehicleInitializationServiceImpl implements VehicleInitializationSe
         }
 
         // 设置为空闲状态
-        vehicle.setCurrentStatus(Vehicle.VehicleStatus.IDLE);
+        vehicle.transitionToStatus(Vehicle.VehicleStatus.IDLE, LocalDateTime.now(), Duration.ZERO);
 
         // 如果有进行中的任务，记录日志
         if (vehicle.getCurrentAssignment() != null) {
@@ -251,7 +252,7 @@ public class VehicleInitializationServiceImpl implements VehicleInitializationSe
         for (Vehicle vehicle : vehicles) {
             try {
                 if (canSetToIdle(vehicle)) {
-                    vehicle.setCurrentStatus(Vehicle.VehicleStatus.IDLE);
+                    vehicle.transitionToStatus(Vehicle.VehicleStatus.IDLE, LocalDateTime.now(), Duration.ZERO);
                     successCount++;
                     logger.debug("车辆 {} 已设置为空闲状态", vehicle.getId());
                 } else {
@@ -479,7 +480,7 @@ public class VehicleInitializationServiceImpl implements VehicleInitializationSe
         logger.debug("初始化车辆 {} (车牌: {})", vehicle.getId(), vehicle.getLicensePlate());
 
         // 1. 设置车辆状态为空闲
-        vehicle.setCurrentStatus(Vehicle.VehicleStatus.IDLE);
+        vehicle.transitionToStatus(Vehicle.VehicleStatus.IDLE, LocalDateTime.now(), Duration.ZERO);
 
         // 2. 设置车辆位置到目标POI
         vehicle.setCurrentPOI(targetPOI);
