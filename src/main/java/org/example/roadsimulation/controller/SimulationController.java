@@ -166,7 +166,10 @@ public class SimulationController {
 
     @GetMapping("/costs")
     public RuntimeCostDTO getCurrentCosts() {
-        return getCostService.calculateRuntimeCosts(vehicleRepository.findAll());
+        return getCostService.calculateRuntimeCosts(
+                vehicleRepository.findAll(),
+                assignmentRepository.findRuntimeActiveAssignments()
+        );
     }
 
     @GetMapping("/vehicle-costs")

@@ -275,8 +275,7 @@ public class StateTransitionServiceImpl implements StateTransitionService {
 
             // 1) 状态为空就初始化
             if (v.getCurrentStatus() == null) {
-                v.setCurrentStatus(Vehicle.VehicleStatus.IDLE);
-                v.setPreviousStatus(null);
+                v.transitionToStatus(Vehicle.VehicleStatus.IDLE, simNow, Duration.ZERO);
             }
 
             // 2) 强制把窗口起点挪到现在
@@ -362,10 +361,11 @@ public class StateTransitionServiceImpl implements StateTransitionService {
 
         // 0) 初始化状态
         if (vehicle.getCurrentStatus() == null) {
-            vehicle.setCurrentStatus(VehicleStatus.IDLE);
-            vehicle.setPreviousStatus(null);
-            vehicle.setStatusStartTime(simNow);
-            vehicle.setStatusDuration(calcStayDuration(VehicleStatus.IDLE, null, vehicle, minutesPerLoop));
+            vehicle.transitionToStatus(
+                    VehicleStatus.IDLE,
+                    simNow,
+                    calcStayDuration(VehicleStatus.IDLE, null, vehicle, minutesPerLoop)
+            );
             vehicleRepository.save(vehicle);
             return;
         }
@@ -421,8 +421,6 @@ public class StateTransitionServiceImpl implements StateTransitionService {
 
         // 7) 写入状态
         if (next != current) {
-            vehicle.setPreviousStatus(current);
-            vehicle.setCurrentStatus(next);
             logger.info("车辆[{}] 状态更新: {} → {} (simNow={}, until={})",
                     vehicle.getLicensePlate(),
                     current,
@@ -432,8 +430,7 @@ public class StateTransitionServiceImpl implements StateTransitionService {
         }
 
         // 即使状态没变，也刷新驻留窗口
-        vehicle.setStatusStartTime(simNow);
-        vehicle.setStatusDuration(stay);
+        vehicle.transitionToStatus(next, simNow, stay);
 
         vehicleRepository.save(vehicle);
     }

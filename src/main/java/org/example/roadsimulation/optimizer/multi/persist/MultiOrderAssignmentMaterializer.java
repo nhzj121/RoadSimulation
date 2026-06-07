@@ -16,6 +16,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.*;
 
@@ -143,10 +144,7 @@ public class MultiOrderAssignmentMaterializer {
                 continue;
             }
 
-            vehicle.setCurrentStatus(Vehicle.VehicleStatus.ORDER_DRIVING);
-            vehicle.setPreviousStatus(Vehicle.VehicleStatus.IDLE);
-            vehicle.setStatusStartTime(LocalDateTime.now());
-            vehicle.setStatusDurationSeconds(0L);
+            vehicle.transitionToStatus(Vehicle.VehicleStatus.ORDER_DRIVING, LocalDateTime.now(), Duration.ZERO);
             vehicle.setUpdatedBy("MultiOrderGA");
             vehicle.setUpdatedTime(LocalDateTime.now());
             vehicleRepository.save(vehicle);

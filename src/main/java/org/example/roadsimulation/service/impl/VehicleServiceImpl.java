@@ -68,7 +68,7 @@ public class VehicleServiceImpl implements VehicleService {
                     vehicle.setModelType(vehicleDetails.getModelType());
                     vehicle.setMaxLoadCapacity(vehicleDetails.getMaxLoadCapacity());
                     vehicle.setCargoVolume(vehicleDetails.getCargoVolume());
-                    vehicle.setCurrentStatus(vehicleDetails.getCurrentStatus());
+                    vehicle.transitionToStatus(vehicleDetails.getCurrentStatus(), LocalDateTime.now(), Duration.ZERO);
                     vehicle.setLength(vehicleDetails.getLength());
                     vehicle.setWidth(vehicleDetails.getWidth());
                     vehicle.setHeight(vehicleDetails.getHeight());
@@ -172,7 +172,7 @@ public class VehicleServiceImpl implements VehicleService {
     public Vehicle updateVehicleStatus(Long vehicleId, Vehicle.VehicleStatus status) {
         return vehicleRepository.findById(vehicleId)
                 .map(vehicle -> {
-                    vehicle.setCurrentStatus(status);
+                    vehicle.transitionToStatus(status, LocalDateTime.now(), Duration.ZERO);
                     return vehicleRepository.save(vehicle);
                 })
                 .orElseThrow(() -> new RuntimeException("车辆不存在，ID: " + vehicleId));

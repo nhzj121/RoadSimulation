@@ -8,6 +8,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -270,10 +271,8 @@ public class SimulationDataCleanupService {
             assignmentRepository.save(assignment);
         }
 
-        vehicle.setCurrentStatus(Vehicle.VehicleStatus.IDLE);
+        vehicle.transitionToStatus(Vehicle.VehicleStatus.IDLE, LocalDateTime.now(), Duration.ZERO);
         vehicle.setPreviousStatus(null);
-        vehicle.setStatusStartTime(LocalDateTime.now());
-        vehicle.setStatusDurationSeconds(0L);
         vehicle.setLoopCount(0);
 
         vehicle.setCurrentPOI(targetPOI);

@@ -15,9 +15,11 @@ import org.springframework.stereotype.Service;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 
 /**
@@ -43,8 +45,23 @@ public class GetCostService {
     private static final double WEIGHT_I = 0.10;
     private static final double ALL_COST_WEIGHT_SUM = WEIGHT_A + WEIGHT_B + WEIGHT_C + WEIGHT_D + WEIGHT_E;
 
+    // /api/simulation/costs 的实时 AllCost 使用 A-E 等权；车辆汇总口径继续使用上方 A-I 权重。
+    private static final double RUNTIME_WEIGHT_A = 0.20;
+    private static final double RUNTIME_WEIGHT_B = 0.20;
+    private static final double RUNTIME_WEIGHT_C = 0.20;
+    private static final double RUNTIME_WEIGHT_D = 0.20;
+    private static final double RUNTIME_WEIGHT_E = 0.20;
+    private static final double RUNTIME_ALL_COST_WEIGHT_SUM = RUNTIME_WEIGHT_A
+            + RUNTIME_WEIGHT_B
+            + RUNTIME_WEIGHT_C
+            + RUNTIME_WEIGHT_D
+            + RUNTIME_WEIGHT_E;
+
     private static final double GLOBAL_WEIGHT_VEHICLE_COST = 0.75;
     private static final double GLOBAL_WEIGHT_UNASSIGNED_COST = 0.25;
+    private static final double IDLE_WAIT_TARGET_HOURS = 2.0;
+    private static final double IDLE_WAIT_WORST_HOURS = 4.0;
+    private static final double IDLE_ECON_TARGET_HOURS = 2.0;
 
     /**
      * 直接成本
@@ -56,15 +73,24 @@ public class GetCostService {
 
     /**
      * 效率 + 关注最差情况
-     * B：costB = 0.4 * <总空驶里程/总里程> + 0.5 * <总等待时间/总运输时间> + 0.1 * <(最差情况)>
+     * B：costB = 0.40 * <总空驶里程/总里程>
+     *          + 0.35 * <已派单等待时间/总运输时间>
+     *          + 0.10 * <最差等待运输比>
+     *          + 0.15 * <未分配车辆空等惩罚>
      */
     public Double getCostByAllEffectiveTimeAndEffectiveMileageWithWorst(){
+        return getCostByAllEffectiveTimeAndEffectiveMileageWithWorst(new IdleVehicleCostStats());
+    }
+
+    private Double getCostByAllEffectiveTimeAndEffectiveMileageWithWorst(IdleVehicleCostStats idleStats){
+        IdleVehicleCostStats safeIdleStats = idleStats == null ? new IdleVehicleCostStats() : idleStats;
         double mileageRatio = CostEntity.totalMileage == 0.0 ? 0.0 : (CostEntity.totalMileageWithoutThings / CostEntity.totalMileage);
-        double timeRatio = CostEntity.totalTransportTime == 0.0 ? 0.0 : (CostEntity.totalWaitingTime / CostEntity.totalTransportTime);
+        double assignedWaitingTransportRatio = CostEntity.totalTransportTime == 0.0 ? 0.0 : (CostEntity.totalWaitingTime / CostEntity.totalTransportTime);
 
         return 0.4 * mileageRatio
-                + 0.5 * timeRatio
-                + 0.1 * CostEntity.WorstWaitingTransportTime;
+                + 0.35 * assignedWaitingTransportRatio
+                + 0.1 * CostEntity.WorstWaitingTransportTime
+                + 0.15 * safeIdleStats.idleWaitPenalty;
     }
 
     /**
@@ -78,21 +104,36 @@ public class GetCostService {
 
     /**
      * 经济收益 （这里需要预设油耗，固定损耗）
-     * D： costD = 0.5 * <运输油耗> + 0.3 * <固定损耗> + 0.2 * <最差情况>
+     * D： costD = 0.50 * <运输油耗代理>
+     *           + 0.20 * <已派单时间经济损耗>
+     *           + 0.10 * <未分配车辆空间经济损耗>
+     *           + 0.20 * <最差情况>
      */
     public Double getCostByALlOilAndFixedConsumptionWithWorst(){
+        return getCostByALlOilAndFixedConsumptionWithWorst(new IdleVehicleCostStats());
+    }
+
+    private Double getCostByALlOilAndFixedConsumptionWithWorst(IdleVehicleCostStats idleStats){
+        IdleVehicleCostStats safeIdleStats = idleStats == null ? new IdleVehicleCostStats() : idleStats;
         double capacityRatio = CostEntity.totalTheoryCapacity == 0.0 ? 0.0 : (CostEntity.totalRealityCapacity / CostEntity.totalTheoryCapacity);
+        double assignedTimeEconomicLoss = VehicleType * CostEntity.totalWaitingTime + VehicleType * CostEntity.totalTransportTime;
 
         return 0.5 * VehicleType * capacityRatio
-                + 0.3 * (VehicleType * CostEntity.totalWaitingTime + VehicleType * CostEntity.totalTransportTime)
+                + 0.2 * assignedTimeEconomicLoss
+                + 0.1 * safeIdleStats.idleSpaceEconomicLoss
                 + 0.2 * CostEntity.WorstLoss;
     }
 
     public RuntimeCostDTO calculateRuntimeCosts(List<Vehicle> vehicles) {
+        return calculateRuntimeCosts(vehicles, List.of());
+    }
+
+    public RuntimeCostDTO calculateRuntimeCosts(List<Vehicle> vehicles, List<Assignment> activeAssignments) {
+        IdleVehicleCostStats idleStats = calculateIdleVehicleCostStats(vehicles, activeAssignments);
         double costA = getCostByAllWaitingTimeAndMileageWithoutGoods();
-        double costB = getCostByAllEffectiveTimeAndEffectiveMileageWithWorst();
+        double costB = getCostByAllEffectiveTimeAndEffectiveMileageWithWorst(idleStats);
         double costC = getCostByAllEffectiveTransportCapacityWithWorst();
-        double costD = getCostByALlOilAndFixedConsumptionWithWorst();
+        double costD = getCostByALlOilAndFixedConsumptionWithWorst(idleStats);
         double costE = getCostByVehicleWorkloadBalance(vehicles);
         double allCost = calculateAllCost(costA, costB, costC, costD, costE);
 
@@ -168,7 +209,7 @@ public class GetCostService {
         // 3. 预估 Cost B (效率)
         double simMileageRatio = simTotalMileage == 0.0 ? 0.0 : (simTotalMileageWithoutThings / simTotalMileage);
         double simTimeRatio = simTotalTransportTime == 0.0 ? 0.0 : (simTotalWaitingTime / simTotalTransportTime);
-        double simCostB = 0.4 * simMileageRatio + 0.5 * simTimeRatio + 0.1 * simWorstWaitingTransportTime;
+        double simCostB = 0.4 * simMileageRatio + 0.35 * simTimeRatio + 0.1 * simWorstWaitingTransportTime;
 
         // 4. 预估 Cost C (运能)
         double simCostC = 0.9 * (simTotalTheoryCapacity - simTotalRealityCapacity) + 0.1 * simWorstTheoryRealityCapacity;
@@ -178,7 +219,7 @@ public class GetCostService {
         // 但为了与你现有的计算逻辑保持绝对一致，这里沿用你的公式结构。
         double simCapacityRatio = simTotalTheoryCapacity == 0.0 ? 0.0 : (simTotalRealityCapacity / simTotalTheoryCapacity);
         double simCostD = 0.5 * VehicleType * simCapacityRatio
-                + 0.3 * (VehicleType * simTotalWaitingTime + VehicleType * simTotalTransportTime)
+                + 0.2 * (VehicleType * simTotalWaitingTime + VehicleType * simTotalTransportTime)
                 + 0.2 * simWorstLoss;
 
         // 6. 计算总预测代价（你可以根据业务侧重点给 A、B、C、D 赋予不同的外层权重）
@@ -659,11 +700,11 @@ public class GetCostService {
     }
 
     private double calculateAllCost(double costA, double costB, double costC, double costD, double costE) {
-        return (WEIGHT_A * safe(costA)
-                + WEIGHT_B * safe(costB)
-                + WEIGHT_C * safe(costC)
-                + WEIGHT_D * safe(costD)
-                + WEIGHT_E * safe(costE)) / ALL_COST_WEIGHT_SUM;
+        return (RUNTIME_WEIGHT_A * safe(costA)
+                + RUNTIME_WEIGHT_B * safe(costB)
+                + RUNTIME_WEIGHT_C * safe(costC)
+                + RUNTIME_WEIGHT_D * safe(costD)
+                + RUNTIME_WEIGHT_E * safe(costE)) / RUNTIME_ALL_COST_WEIGHT_SUM;
     }
 
     private double getVehicleRuntimeWorkload(Vehicle vehicle, LocalDateTime simNow) {
@@ -724,6 +765,111 @@ public class GetCostService {
                 + safe(vehicle.getUnloadingWaitTime())
                 + safe(vehicle.getWaitingAssignmentTime());
         return waitingSeconds / 3600.0;
+    }
+
+    private IdleVehicleCostStats calculateIdleVehicleCostStats(List<Vehicle> vehicles, List<Assignment> activeAssignments) {
+        IdleVehicleCostStats stats = new IdleVehicleCostStats();
+        List<Vehicle> safeVehicles = vehicles == null ? List.of() : vehicles;
+        if (safeVehicles.isEmpty()) {
+            return stats;
+        }
+
+        Set<Long> activeVehicleIds = collectActiveVehicleIds(activeAssignments);
+        LocalDateTime simNow = simulationContext == null ? null : simulationContext.getCurrentSimTime();
+
+        for (Vehicle vehicle : safeVehicles) {
+            if (!isAvailableForIdlePenalty(vehicle)) {
+                continue;
+            }
+
+            stats.availableVehicleCount++;
+            stats.fleetLoadCapacity += safe(vehicle.getMaxLoadCapacity());
+            stats.fleetVolumeCapacity += safe(vehicle.getCargoVolume());
+
+            if (!isIdleUnassignedVehicle(vehicle, activeVehicleIds)) {
+                continue;
+            }
+
+            double idleHours = getCurrentStatusHours(vehicle, simNow);
+            if (idleHours <= 0.0) {
+                continue;
+            }
+
+            stats.idleVehicleCount++;
+            stats.totalIdleHours += idleHours;
+            stats.maxIdleHours = Math.max(stats.maxIdleHours, idleHours);
+            stats.totalIdleLoadCapacityHours += safe(vehicle.getMaxLoadCapacity()) * idleHours;
+            stats.totalIdleVolumeCapacityHours += safe(vehicle.getCargoVolume()) * idleHours;
+        }
+
+        stats.idleWaitPenalty = calculateIdleWaitPenalty(stats);
+        stats.idleSpaceEconomicLoss = calculateIdleSpaceEconomicLoss(stats);
+        return stats;
+    }
+
+    private Set<Long> collectActiveVehicleIds(List<Assignment> activeAssignments) {
+        Set<Long> activeVehicleIds = new HashSet<>();
+        if (activeAssignments == null) {
+            return activeVehicleIds;
+        }
+
+        for (Assignment assignment : activeAssignments) {
+            if (assignment == null
+                    || assignment.getAssignedVehicle() == null
+                    || assignment.getAssignedVehicle().getId() == null) {
+                continue;
+            }
+            activeVehicleIds.add(assignment.getAssignedVehicle().getId());
+        }
+        return activeVehicleIds;
+    }
+
+    private boolean isAvailableForIdlePenalty(Vehicle vehicle) {
+        if (vehicle == null) {
+            return false;
+        }
+        return vehicle.getCurrentStatus() != VehicleStatus.BREAKDOWN;
+    }
+
+    private boolean isIdleUnassignedVehicle(Vehicle vehicle, Set<Long> activeVehicleIds) {
+        if (vehicle == null || vehicle.getId() == null || activeVehicleIds.contains(vehicle.getId())) {
+            return false;
+        }
+        VehicleStatus status = vehicle.getCurrentStatus();
+        return status == VehicleStatus.IDLE || status == VehicleStatus.WAITING;
+    }
+
+    private double calculateIdleWaitPenalty(IdleVehicleCostStats stats) {
+        if (stats == null || stats.availableVehicleCount <= 0 || stats.idleVehicleCount <= 0) {
+            return 0.0;
+        }
+
+        double idleVehicleRatio = safeDivide(stats.idleVehicleCount, stats.availableVehicleCount);
+        double averageIdleHours = safeDivide(stats.totalIdleHours, stats.idleVehicleCount);
+        double avgIdleSeverity = safeDivide(averageIdleHours, IDLE_WAIT_TARGET_HOURS);
+        double maxIdleSeverity = safeDivide(stats.maxIdleHours, IDLE_WAIT_WORST_HOURS);
+
+        return 0.40 * clamp01(idleVehicleRatio)
+                + 0.40 * clamp01(avgIdleSeverity)
+                + 0.20 * clamp01(maxIdleSeverity);
+    }
+
+    private double calculateIdleSpaceEconomicLoss(IdleVehicleCostStats stats) {
+        if (stats == null || stats.idleVehicleCount <= 0) {
+            return 0.0;
+        }
+
+        double loadIdleSeverity = safeDivide(
+                stats.totalIdleLoadCapacityHours,
+                stats.fleetLoadCapacity * IDLE_ECON_TARGET_HOURS
+        );
+        double volumeIdleSeverity = safeDivide(
+                stats.totalIdleVolumeCapacityHours,
+                stats.fleetVolumeCapacity * IDLE_ECON_TARGET_HOURS
+        );
+
+        return 0.60 * clamp01(loadIdleSeverity)
+                + 0.40 * clamp01(volumeIdleSeverity);
     }
 
     private double safe(Double value) {
@@ -840,6 +986,19 @@ public class GetCostService {
             this.actualHours = actualHours;
             this.estimatedHours = estimatedHours;
         }
+    }
+
+    private static class IdleVehicleCostStats {
+        private int idleVehicleCount;
+        private int availableVehicleCount;
+        private double totalIdleHours;
+        private double maxIdleHours;
+        private double totalIdleLoadCapacityHours;
+        private double totalIdleVolumeCapacityHours;
+        private double fleetLoadCapacity;
+        private double fleetVolumeCapacity;
+        private double idleWaitPenalty;
+        private double idleSpaceEconomicLoss;
     }
 
     private static class SchemeCostSnapshot {

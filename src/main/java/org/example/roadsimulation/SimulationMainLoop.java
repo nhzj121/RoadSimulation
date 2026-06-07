@@ -77,11 +77,11 @@ public class SimulationMainLoop {
             System.out.println("模拟时间：" + (simMinutes / 60.0) + " 小时 | simNow=" + simNow);
 
             if (simulationContext.getLoopCount() == 0) {
-                stateUpdateService.resetWindowsOnce(simNow, 30);
+                vehicleInitializationService.initializeAllVehicleStatus();
                 if (shouldAbortLoop()) {
                     return;
                 }
-                vehicleInitializationService.initializeAllVehicleStatus();
+                stateUpdateService.resetWindowsOnce(simNow, 30);
                 if (shouldAbortLoop()) {
                     return;
                 }
@@ -129,6 +129,11 @@ public class SimulationMainLoop {
                 if (shouldAbortLoop()) {
                     return;
                 }
+            }
+
+            stateUpdateService.tick(simNow, 30, simulationContext.getLoopCount());
+            if (shouldAbortLoop()) {
+                return;
             }
 
             simulationContext.incrementLoop();

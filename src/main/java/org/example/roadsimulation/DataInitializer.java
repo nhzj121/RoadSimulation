@@ -26,6 +26,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.text.SimpleDateFormat;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
@@ -914,6 +915,10 @@ public class DataInitializer implements CommandLineRunner {
         return simulationContext != null && simulationContext.shouldAbortSimulationWork();
     }
 
+    private LocalDateTime currentSimTimeOrNow() {
+        return simulationContext == null ? LocalDateTime.now() : simulationContext.getCurrentSimTime();
+    }
+
     public synchronized void resetSimulationRuntimeData() {
         startupProcessingShipmentsGenerated = false;
         startToEndMapping.clear();
@@ -1380,10 +1385,7 @@ public class DataInitializer implements CommandLineRunner {
         item.setUpdatedTime(LocalDateTime.now());
         shipmentItemRepository.save(item);
 
-        vehicle.setCurrentStatus(Vehicle.VehicleStatus.ORDER_DRIVING);
-        vehicle.setPreviousStatus(Vehicle.VehicleStatus.IDLE);
-        vehicle.setStatusStartTime(LocalDateTime.now());
-        vehicle.setStatusDurationSeconds(0L);
+        vehicle.transitionToStatus(Vehicle.VehicleStatus.ORDER_DRIVING, currentSimTimeOrNow(), Duration.ZERO);
         vehicle.setCurrentLoad(0.0);
         vehicle.setCurrentVolumn(0.0);
         vehicle.addAssignment(saved);
@@ -2496,7 +2498,7 @@ public class DataInitializer implements CommandLineRunner {
         // 更新车辆状态与载重
         double totalAssignedWeight = packedItems.stream().mapToDouble(ShipmentItem::getWeight).sum();
         double totalAssignedVolume = packedItems.stream().mapToDouble(ShipmentItem::getVolume).sum();
-        vehicle.setCurrentStatus(Vehicle.VehicleStatus.ORDER_DRIVING);
+        vehicle.transitionToStatus(Vehicle.VehicleStatus.ORDER_DRIVING, currentSimTimeOrNow(), Duration.ZERO);
         vehicle.setCurrentLoad(0.0);
         vehicle.setCurrentVolumn(0.0);
         vehicle.addAssignment(assignment);
@@ -2731,10 +2733,7 @@ public class DataInitializer implements CommandLineRunner {
                 managedVehicle.addAssignment(assignment);
 
                 // 4. 更新车辆状态
-                managedVehicle.setCurrentStatus(Vehicle.VehicleStatus.ORDER_DRIVING);
-                managedVehicle.setPreviousStatus(Vehicle.VehicleStatus.IDLE);
-                managedVehicle.setStatusStartTime(LocalDateTime.now());
-                managedVehicle.setStatusDurationSeconds(0L);
+                managedVehicle.transitionToStatus(Vehicle.VehicleStatus.ORDER_DRIVING, currentSimTimeOrNow(), Duration.ZERO);
 
                 // 5. 设置当前位置
                 managedVehicle.setCurrentLongitude(originalLng);
@@ -2862,9 +2861,7 @@ public class DataInitializer implements CommandLineRunner {
 
                                         // 如果没有其他进行中的任务，重置状态
                                         if (!hasOtherActiveAssignments) {
-                                            assignedVehicle.setCurrentStatus(Vehicle.VehicleStatus.IDLE);
-                                            assignedVehicle.setPreviousStatus(Vehicle.VehicleStatus.UNLOADING);
-                                            assignedVehicle.setStatusStartTime(LocalDateTime.now());
+                                            assignedVehicle.transitionToStatus(Vehicle.VehicleStatus.IDLE, currentSimTimeOrNow(), Duration.ZERO);
                                             assignedVehicle.setCurrentPOI(endPOI);
                                             assignedVehicle.setCurrentLongitude(endPOI.getLongitude());
                                             assignedVehicle.setCurrentLatitude(endPOI.getLatitude());
@@ -3042,9 +3039,7 @@ public class DataInitializer implements CommandLineRunner {
                                 Vehicle assignedVehicle = vehicleRepository.findById(vehicle.getId())
                                         .orElseThrow(() -> new RuntimeException("Vehicle not found: " + vehicle.getId()));
 
-                                assignedVehicle.setPreviousStatus(assignedVehicle.getCurrentStatus());
-                                assignedVehicle.setCurrentStatus(Vehicle.VehicleStatus.IDLE);
-                                assignedVehicle.setStatusStartTime(LocalDateTime.now());
+                                assignedVehicle.transitionToStatus(Vehicle.VehicleStatus.IDLE, currentSimTimeOrNow(), Duration.ZERO);
                                 assignedVehicle.setCurrentPOI(endPOI);
                                 assignedVehicle.setCurrentLongitude(endPOI.getLongitude());
                                 assignedVehicle.setCurrentLatitude(endPOI.getLatitude());
@@ -3149,9 +3144,7 @@ public class DataInitializer implements CommandLineRunner {
             assignmentRepository.save(assignment);
 
             // 3. 释放 Vehicle (让它变回空车，重回全局车池)
-            vehicle.setPreviousStatus(vehicle.getCurrentStatus());
-            vehicle.setCurrentStatus(Vehicle.VehicleStatus.IDLE);
-            vehicle.setStatusStartTime(LocalDateTime.now());
+            vehicle.transitionToStatus(Vehicle.VehicleStatus.IDLE, currentSimTimeOrNow(), Duration.ZERO);
             vehicle.setCurrentPOI(endPOI); // 车辆停在最后这个卸货点
             vehicle.setCurrentLongitude(endPOI.getLongitude());
             vehicle.setCurrentLatitude(endPOI.getLatitude());
@@ -3489,10 +3482,7 @@ public class DataInitializer implements CommandLineRunner {
                 if (assignment != null) {
                     managedVehicle.removeAssignment(assignment);
                 }
-                managedVehicle.setCurrentStatus(Vehicle.VehicleStatus.IDLE);
-                managedVehicle.setPreviousStatus(Vehicle.VehicleStatus.ORDER_DRIVING);
-                managedVehicle.setStatusStartTime(LocalDateTime.now());
-                managedVehicle.setStatusDurationSeconds(0L);
+                managedVehicle.transitionToStatus(Vehicle.VehicleStatus.IDLE, currentSimTimeOrNow(), Duration.ZERO);
                 managedVehicle.setCurrentLoad(0.0);
                 managedVehicle.setCurrentVolumn(0.0);
                 managedVehicle.setUpdatedBy("Route planning rollback");
