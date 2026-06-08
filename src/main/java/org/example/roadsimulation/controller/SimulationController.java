@@ -102,7 +102,6 @@ public class SimulationController {
     public ApiResponse<String> stopSimulation() {
         simulationMainLoop.stop();
         gaodeRoutePlanningQueueService.pauseAndCancelPending();
-        dataInitializer.clearFrontendRuntimeAssignments();
         return ApiResponse.success("simulation stopped");
     }
 
