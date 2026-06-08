@@ -7,15 +7,16 @@
         </div>
         <div class="navbar-menu">
           <ElButton text @click="goToPOIManager">POI点管理</ElButton>
-          <ElButton type="primary" text @click="toggleCostPanel">
-            {{ isCostPanelVisible ? '隐藏成本监控' : '成本监控' }}
+          <ElButton text @click="openMonitorPanel('vehicles')">车辆监控</ElButton>
+          <ElButton type="primary" text @click="openMonitorPanel('costs')">
+            成本监控
           </ElButton>
         </div>
       </div>
     </ElHeader>
     <ElContainer>
       <ElAside width="320px" class="side-panel">
-        <div class="side-panel-scroll" ref="sidePanelScroll">
+        <div class="side-panel-scroll">
 
           <div class="panel-section">
             <ElCard shadow="never" class="box-card simulation-control">
@@ -85,68 +86,6 @@
           </div>
 
           <div class="panel-section">
-            <ElCard shadow="never" class="box-card vehicle-status">
-              <template #header>
-                <div class="card-header">
-                  <span>车辆状态</span>
-                </div>
-              </template>
-              <div class="vehicle-list">
-                <div
-                    v-for="v in vehicles"
-                    :key="v.id"
-                    :id="`vehicle-item-${v.id}`"
-                    class="vehicle-item"
-                    :class="{ 'vehicle-item-highlighted': highlightedVehicleId === v.id }"
-                    @click="handleVehicleClick(v)"
-                    style="cursor: pointer;"
-                >
-                  <span class="status-dot" :style="{ backgroundColor: statusMap[v.status]?.color || '#ccc' }"></span>
-                  <div class="vehicle-info">
-                    <div class="vehicle-id">{{ v.licensePlate }}</div>
-                    <div class="vehicle-stats">
-                      <div class="load-info">
-                        <span class="label">载重:</span>
-                        <span class="value">{{ v.currentLoad?.toFixed(1) || '0.0' }}/{{ v.maxLoadCapacity?.toFixed(1) || '0.0' }}t</span>
-                        <div class="progress-bar">
-                          <div
-                              class="progress-fill load-progress"
-                              :style="{ width: `${v.loadPercentage || 0}%` }"
-                          ></div>
-                        </div>
-                      </div>
-                      <div class="volume-info">
-                        <span class="label">载容:</span>
-                        <span class="value">{{ v.currentVolume?.toFixed(1) || '0.0' }}/{{ v.maxVolumeCapacity?.toFixed(1) || '0.0' }}m³</span>
-                        <div class="progress-bar">
-                          <div
-                              class="progress-fill volume-progress"
-                              :style="{ width: `${v.volumePercentage || 0}%` }"
-                          ></div>
-                        </div>
-                      </div>
-                      <div class="vehicle-location" :class="`status-${v.status?.toLowerCase()}`">
-                        {{ v.actionDescription || statusMap[v.status]?.text || v.status || '未知' }}
-                      </div>
-                    </div>
-                    <template v-if="v.currentAssignment">
-                      <br><small>任务: {{ v.currentAssignment }}</small>
-                    </template>
-                  </div>
-                  <ElButton
-                      text
-                      :icon="InfoFilled"
-                      @click.stop="handleVehicleClick(v)"
-                  />
-                </div>
-                <div v-if="vehicles.length === 0" class="no-vehicle">
-                  暂无运输任务
-                </div>
-              </div>
-            </ElCard>
-          </div>
-
-          <div class="panel-section">
             <ElCard shadow="never" class="box-card statistics-info">
               <template #header>
                 <div class="card-header">
@@ -167,88 +106,118 @@
       </ElMain>
 
       <transition name="el-zoom-in-left">
-        <ElAside v-show="isCostPanelVisible" width="300px" class="right-side-panel">
-          <div class="side-panel-scroll">
-            <div class="panel-section">
-              <ElCard shadow="never" class="box-card cost-card">
-                <template #header>
-                  <div class="card-header" style="justify-content: space-between;">
-                    <span>实时成本分析</span>
-                    <ElButton link type="info" @click="toggleCostPanel">✖</ElButton>
-                  </div>
-                </template>
-
-                <div class="cost-list">
-                  <div class="cost-item">
-                    <div class="cost-header-row">
-                      <span class="cost-title">直接成本 (A)</span>
-                      <span class="cost-value">{{ simulationCosts.costA.toFixed(2) }}</span>
+        <ElAside v-show="isMonitorPanelVisible" width="340px" class="right-side-panel monitor-panel">
+          <div class="monitor-header">
+            <span>运行监控</span>
+            <ElButton link type="info" @click="closeMonitorPanel">✖</ElButton>
+          </div>
+          <ElTabs v-model="activeMonitorTab" class="monitor-tabs">
+            <ElTabPane label="车辆监控" name="vehicles">
+              <div class="vehicle-monitor-list" ref="vehiclePanelScroll">
+                <div
+                    v-for="v in vehicles"
+                    :key="v.id"
+                    :id="`vehicle-item-${v.id}`"
+                    class="vehicle-monitor-item"
+                    :class="{ 'vehicle-item-highlighted': highlightedVehicleId === v.id }"
+                    @click="focusVehicleFromPanel(v)"
+                >
+                  <span class="status-dot" :style="{ backgroundColor: statusMap[v.status]?.color || '#ccc' }"></span>
+                  <div class="vehicle-monitor-main">
+                    <div class="vehicle-monitor-title">
+                      <span class="vehicle-id">{{ v.licensePlate }}</span>
+                      <span class="vehicle-status-text">{{ statusMap[v.status]?.text || v.status || '未知' }}</span>
                     </div>
-                    <div class="cost-footer-row">
-                      <span class="cost-desc">等待时间与空驶里程</span>
-                      <ElButton link type="primary" size="small" @click="showChart('A')">趋势图</ElButton>
+                    <div class="vehicle-monitor-desc">
+                      {{ v.actionDescription || v.currentAssignment || '暂无任务信息' }}
                     </div>
-                  </div>
-
-                  <div class="cost-item">
-                    <div class="cost-header-row">
-                      <span class="cost-title">效率成本 (B)</span>
-                      <span class="cost-value">{{ simulationCosts.costB.toFixed(2) }}</span>
-                    </div>
-                    <div class="cost-footer-row">
-                      <span class="cost-desc">空驶率与等待率</span>
-                      <ElButton link type="primary" size="small" @click="showChart('B')">趋势图</ElButton>
-                    </div>
-                  </div>
-
-                  <div class="cost-item">
-                    <div class="cost-header-row">
-                      <span class="cost-title">运能损耗 (C)</span>
-                      <span class="cost-value">{{ simulationCosts.costC.toFixed(2) }}</span>
-                    </div>
-                    <div class="cost-footer-row">
-                      <span class="cost-desc">理论与实际运能差</span>
-                      <ElButton link type="primary" size="small" @click="showChart('C')">趋势图</ElButton>
-                    </div>
-                  </div>
-
-                  <div class="cost-item total-cost">
-                    <div class="cost-header-row">
-                      <span class="cost-title">经济损耗 (D)</span>
-                      <span class="cost-value highlight-value">{{ simulationCosts.costD.toFixed(2) }}</span>
-                    </div>
-                    <div class="cost-footer-row">
-                      <span class="cost-desc">油耗与固定损耗</span>
-                      <ElButton link type="primary" size="small" @click="showChart('D')">趋势图</ElButton>
-                    </div>
-                  </div>
-
-                  <div class="cost-item">
-                    <div class="cost-header-row">
-                      <span class="cost-title">负载均衡 (E)</span>
-                      <span class="cost-value">{{ simulationCosts.costE.toFixed(4) }}</span>
-                    </div>
-                    <div class="cost-footer-row">
-                      <span class="cost-desc">车队工作量离散度</span>
-                      <ElButton link type="primary" size="small" @click="showChart('E')">趋势图</ElButton>
-                    </div>
-                  </div>
-
-                  <div class="cost-item total-cost">
-                    <div class="cost-header-row">
-                      <span class="cost-title">综合成本 (All)</span>
-                      <span class="cost-value highlight-value">{{ simulationCosts.allCost.toFixed(4) }}</span>
-                    </div>
-                    <div class="cost-footer-row">
-                      <span class="cost-desc">后端A-E加权计算</span>
-                      <ElButton link type="primary" size="small" @click="showChart('ALL')">趋势图</ElButton>
+                    <div class="vehicle-mini-metrics">
+                      <span>载重 {{ v.currentLoad?.toFixed(1) || '0.0' }}/{{ v.maxLoadCapacity?.toFixed(1) || '0.0' }}t</span>
+                      <div class="progress-bar mini-progress">
+                        <div class="progress-fill load-progress" :style="{ width: `${v.loadPercentage || 0}%` }"></div>
+                      </div>
+                      <span>载容 {{ v.currentVolume?.toFixed(1) || '0.0' }}/{{ v.maxVolumeCapacity?.toFixed(1) || '0.0' }}m³</span>
+                      <div class="progress-bar mini-progress">
+                        <div class="progress-fill volume-progress" :style="{ width: `${v.volumePercentage || 0}%` }"></div>
+                      </div>
                     </div>
                   </div>
                 </div>
+                <div v-if="vehicles.length === 0" class="no-vehicle monitor-empty">
+                  暂无运输任务
+                </div>
+              </div>
+            </ElTabPane>
+            <ElTabPane label="成本监控" name="costs">
+              <div class="cost-list monitor-tab-body">
+                <div class="cost-item">
+                  <div class="cost-header-row">
+                    <span class="cost-title">直接成本 (A)</span>
+                    <span class="cost-value">{{ simulationCosts.costA.toFixed(2) }}</span>
+                  </div>
+                  <div class="cost-footer-row">
+                    <span class="cost-desc">等待时间与空驶里程</span>
+                    <ElButton link type="primary" size="small" @click="showChart('A')">趋势图</ElButton>
+                  </div>
+                </div>
 
-              </ElCard>
-            </div>
-          </div>
+                <div class="cost-item">
+                  <div class="cost-header-row">
+                    <span class="cost-title">效率成本 (B)</span>
+                    <span class="cost-value">{{ simulationCosts.costB.toFixed(2) }}</span>
+                  </div>
+                  <div class="cost-footer-row">
+                    <span class="cost-desc">空驶率与等待率</span>
+                    <ElButton link type="primary" size="small" @click="showChart('B')">趋势图</ElButton>
+                  </div>
+                </div>
+
+                <div class="cost-item">
+                  <div class="cost-header-row">
+                    <span class="cost-title">运能损耗 (C)</span>
+                    <span class="cost-value">{{ simulationCosts.costC.toFixed(2) }}</span>
+                  </div>
+                  <div class="cost-footer-row">
+                    <span class="cost-desc">理论与实际运能差</span>
+                    <ElButton link type="primary" size="small" @click="showChart('C')">趋势图</ElButton>
+                  </div>
+                </div>
+
+                <div class="cost-item total-cost">
+                  <div class="cost-header-row">
+                    <span class="cost-title">经济损耗 (D)</span>
+                    <span class="cost-value highlight-value">{{ simulationCosts.costD.toFixed(2) }}</span>
+                  </div>
+                  <div class="cost-footer-row">
+                    <span class="cost-desc">油耗与固定损耗</span>
+                    <ElButton link type="primary" size="small" @click="showChart('D')">趋势图</ElButton>
+                  </div>
+                </div>
+
+                <div class="cost-item">
+                  <div class="cost-header-row">
+                    <span class="cost-title">负载均衡 (E)</span>
+                    <span class="cost-value">{{ simulationCosts.costE.toFixed(4) }}</span>
+                  </div>
+                  <div class="cost-footer-row">
+                    <span class="cost-desc">车队工作量离散度</span>
+                    <ElButton link type="primary" size="small" @click="showChart('E')">趋势图</ElButton>
+                  </div>
+                </div>
+
+                <div class="cost-item total-cost">
+                  <div class="cost-header-row">
+                    <span class="cost-title">综合成本 (All)</span>
+                    <span class="cost-value highlight-value">{{ simulationCosts.allCost.toFixed(4) }}</span>
+                  </div>
+                  <div class="cost-footer-row">
+                    <span class="cost-desc">后端A-E加权计算</span>
+                    <ElButton link type="primary" size="small" @click="showChart('ALL')">趋势图</ElButton>
+                  </div>
+                </div>
+              </div>
+            </ElTabPane>
+          </ElTabs>
         </ElAside>
       </transition>
 
@@ -305,9 +274,10 @@ import {
   ElMessageBox,
   ElSlider,
   ElDialog,
-  ElSwitch
+  ElSwitch,
+  ElTabs,
+  ElTabPane
 } from "element-plus";
-import { InfoFilled } from '@element-plus/icons-vue'
 
 let map = null;
 let AMapLib = null; // 保存加载后的 AMap 构造对象
@@ -321,21 +291,13 @@ const gotoMain = () => {
   router.push('./')
 }
 
-// --- 侧边栏滚动相关 ---
-const sidePanelScroll = ref(null); // 侧边栏滚动容器引用
+// --- 车辆监控面板滚动相关 ---
+const vehiclePanelScroll = ref(null); // 车辆监控滚动容器引用
 const highlightedVehicleId = ref(null); // 当前高亮的车辆ID
 let highlightTimer = null; // 高亮定时器
 
 const handleVehicleClick = (vehicle) => {
-  console.log('点击车辆:', vehicle);
-
-  // 滚动到该车辆
-  if (vehicle.id) {
-    scrollToVehicle(vehicle.id);
-  }
-
-  // 可以在地图上高亮显示该车辆
-  // highlightVehicleOnMap(vehicle);
+  focusVehicleFromPanel(vehicle);
 };
 
 import { useVehicleArrivalMonitor } from '@/composables/useVehicleArrivalMonitor';
@@ -431,9 +393,9 @@ const scrollToVehicle = (vehicleId) => {
     // 查找车辆元素
     const vehicleElement = document.getElementById(`vehicle-item-${vehicleId}`);
 
-    if (vehicleElement && sidePanelScroll.value) {
+    if (vehicleElement && vehiclePanelScroll.value) {
       // 计算滚动位置
-      const scrollContainer = sidePanelScroll.value;
+      const scrollContainer = vehiclePanelScroll.value;
       const containerRect = scrollContainer.getBoundingClientRect();
       const elementRect = vehicleElement.getBoundingClientRect();
 
@@ -456,24 +418,45 @@ const scrollToVehicle = (vehicleId) => {
 
       console.log(`已滚动到车辆 ${vehicleId}`);
 
-      // 设置定时器，0.5秒后清除高亮
+      // 设置定时器，短暂保留高亮，方便在大量车辆中定位
       highlightTimer = setTimeout(() => {
         highlightedVehicleId.value = null;
-      }, 500);
+      }, 1500);
     } else {
       console.warn(`未找到车辆 ${vehicleId} 的元素或滚动容器未初始化`);
     }
   });
 };
 
-// --- 成本监控面板相关状态 ---
-const isCostPanelVisible = ref(false); // 默认关闭，点击后再打开
-const toggleCostPanel = async () => {
-  isCostPanelVisible.value = !isCostPanelVisible.value;
-  await nextTick();
+// --- 右侧监控面板相关状态 ---
+const isMonitorPanelVisible = ref(false);
+const activeMonitorTab = ref('vehicles');
+
+const resizeMapAfterPanelChange = () => {
   setTimeout(() => {
     map?.resize?.();
   }, 80);
+};
+
+const openMonitorPanel = async (tab = 'vehicles') => {
+  activeMonitorTab.value = tab;
+  isMonitorPanelVisible.value = true;
+  await nextTick();
+  resizeMapAfterPanelChange();
+};
+
+const closeMonitorPanel = async () => {
+  isMonitorPanelVisible.value = false;
+  await nextTick();
+  resizeMapAfterPanelChange();
+};
+
+const toggleCostPanel = async () => {
+  if (isMonitorPanelVisible.value && activeMonitorTab.value === 'costs') {
+    await closeMonitorPanel();
+    return;
+  }
+  await openMonitorPanel('costs');
 };
 
 const simulationCosts = reactive({
@@ -2895,7 +2878,7 @@ const drawTwoStageRouteForAssignment = async (assignment, runGeneration = simula
 
     // 车辆信息窗口
     movingMarker.on('click', () => {
-      showVehicleInfoWindowFromMarker(assignment, null, movingMarker.getPosition());
+      handleVehicleMarkerClick(assignment, movingMarker.getPosition());
     });
 
     routeData.movingMarker = movingMarker;
@@ -3090,7 +3073,9 @@ const drawMultiStageRouteForVrpAssignment = async (assignment, runGeneration = s
     if (vehicleStatusManager.value) {
       vehicleStatusManager.value.registerVehicleMarker(assignment.vehicleId, movingMarker, assignment);
     }
-    movingMarker.on('click', () => { showVehicleInfoWindowFromMarker(assignment, null, movingMarker.getPosition()); });
+    movingMarker.on('click', () => {
+      handleVehicleMarkerClick(assignment, movingMarker.getPosition());
+    });
 
     // 4. 将 VRP 动画加入你们原本的全局动画管理器！
     if (animationManager) {
@@ -3153,15 +3138,82 @@ const normalizeMapPosition = (position) => {
   return Number.isFinite(lng) && Number.isFinite(lat) ? [lng, lat] : null;
 };
 
+const getAssignmentFallbackPosition = (assignment) => {
+  if (!assignment) return null;
+
+  return normalizeMapPosition([assignment.currentLng, assignment.currentLat]) ||
+      normalizeMapPosition([assignment.vehicleStartLng, assignment.vehicleStartLat]) ||
+      normalizeMapPosition([assignment.startLng, assignment.startLat]) ||
+      normalizeMapPosition([assignment.endLng, assignment.endLat]);
+};
+
+const buildAssignmentFromVehicle = (vehicle) => ({
+  vehicleId: vehicle.id,
+  licensePlate: vehicle.licensePlate,
+  vehicleStatus: vehicle.status,
+  routeName: vehicle.currentAssignment,
+  goodsName: vehicle.goodsInfo,
+  quantity: vehicle.quantity,
+  startPOIName: vehicle.startPOI,
+  endPOIName: vehicle.endPOI,
+  currentLoad: vehicle.currentLoad,
+  maxLoadCapacity: vehicle.maxLoadCapacity,
+  currentVolume: vehicle.currentVolume,
+  maxVolumeCapacity: vehicle.maxVolumeCapacity,
+  actionDescription: vehicle.actionDescription,
+  vrpProgress: vehicle.vrpProgress
+});
+
+const centerMapOnVehicle = (position) => {
+  const normalized = normalizeMapPosition(position);
+  if (!normalized || !map) return;
+
+  const currentZoom = typeof map.getZoom === 'function' ? map.getZoom() : null;
+  if (typeof map.setZoomAndCenter === 'function' && (!currentZoom || currentZoom < 12)) {
+    map.setZoomAndCenter(12, normalized);
+    return;
+  }
+
+  if (typeof map.setCenter === 'function') {
+    map.setCenter(normalized);
+  }
+};
+
+const focusVehicleFromPanel = async (vehicle) => {
+  if (!vehicle?.id) return;
+
+  await openMonitorPanel('vehicles');
+  scrollToVehicle(vehicle.id);
+
+  const marker = vehicleStatusManager.value?.vehicleMarkers?.get(vehicle.id);
+  const assignment = vehicleStatusManager.value?.assignmentData?.get(vehicle.id) ||
+      buildAssignmentFromVehicle(vehicle);
+  const markerPosition = normalizeMapPosition(marker?.getPosition?.());
+  const fallbackPosition = getAssignmentFallbackPosition(assignment);
+  const position = markerPosition || fallbackPosition;
+
+  if (!position) {
+    ElMessage.warning('当前车辆暂无可定位的地图位置');
+    return;
+  }
+
+  centerMapOnVehicle(position);
+  await handleVehicleMarkerClick(assignment, position);
+};
+
 // 处理车辆标记点击事件
 const handleVehicleMarkerClick = async (assignment, positionOverride = null) => {
   console.log('点击车辆标记:', assignment);
   console.log('尝试滚动到车辆ID:', assignment.vehicleId);
 
-  // 滚动到侧边栏对应车辆
+  await openMonitorPanel('vehicles');
+
+  // 滚动到车辆监控面板中的对应车辆
   if (assignment.vehicleId) {
     scrollToVehicle(assignment.vehicleId);
   }
+
+  centerMapOnVehicle(positionOverride || getAssignmentFallbackPosition(assignment));
 
   try {
     // 获取车辆详细信息
@@ -4272,9 +4324,9 @@ onUnmounted(() => {
 
 /* ==================== 右侧成本监控面板美化 ==================== */
 .right-side-panel {
-  flex: 0 0 300px;
-  width: 300px;
-  min-width: 300px;
+  flex: 0 0 340px;
+  width: 340px;
+  min-width: 340px;
   height: calc(100vh - 60px);
   position: fixed;
   top: 60px;
@@ -4286,6 +4338,130 @@ onUnmounted(() => {
   flex-direction: column;
   box-shadow: -2px 0 8px rgba(0, 0, 0, 0.05); /* 左侧加一点阴影区分层次 */
   z-index: 3000;
+}
+
+.monitor-panel {
+  padding: 0;
+}
+
+.monitor-header {
+  height: 48px;
+  padding: 0 14px;
+  border-bottom: 1px solid #ebeef5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #303133;
+  font-weight: 600;
+  background: #fff;
+  flex-shrink: 0;
+}
+
+.monitor-tabs {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.monitor-tabs :deep(.el-tabs__header) {
+  margin: 0;
+  padding: 0 12px;
+  background: #fff;
+}
+
+.monitor-tabs :deep(.el-tabs__content) {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.monitor-tabs :deep(.el-tab-pane) {
+  height: 100%;
+}
+
+.monitor-tab-body,
+.vehicle-monitor-list {
+  height: 100%;
+  overflow-y: auto;
+  padding: 12px;
+  box-sizing: border-box;
+}
+
+.vehicle-monitor-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.vehicle-monitor-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px;
+  background: #fff;
+  border: 1px solid #ebeef5;
+  border-radius: 8px;
+  cursor: pointer;
+  position: relative;
+  transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.vehicle-monitor-item:hover {
+  background: #f8fbff;
+  border-color: #c6e2ff;
+  box-shadow: 0 2px 8px rgba(64, 158, 255, 0.12);
+}
+
+.vehicle-monitor-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.vehicle-monitor-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.vehicle-status-text {
+  color: #606266;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.vehicle-monitor-desc {
+  color: #606266;
+  font-size: 12px;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vehicle-mini-metrics {
+  display: grid;
+  grid-template-columns: 92px 1fr;
+  gap: 5px 8px;
+  align-items: center;
+  margin-top: 8px;
+  color: #909399;
+  font-size: 11px;
+}
+
+.mini-progress {
+  min-width: 0;
+  height: 5px;
+}
+
+.monitor-empty {
+  margin: 16px 0;
+  padding: 18px 12px;
+  background: #fff;
+  border: 1px dashed #dcdfe6;
+  border-radius: 8px;
 }
 
 .cost-card {
