@@ -15,6 +15,7 @@ import org.example.roadsimulation.repository.ShipmentRepository;
 import org.example.roadsimulation.repository.VehicleRepository;
 import org.example.roadsimulation.service.GaodeMapService;
 import org.example.roadsimulation.service.ShipmentService;
+import org.example.roadsimulation.service.TransportLifecycleService;
 import org.jetbrains.annotations.NotNull;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
@@ -36,6 +37,7 @@ public class ShipmentServiceImpl implements ShipmentService {
     private final DataInitializer dataInitializer;
     private final VehicleRepository vehicleRepository;
     private final GaodeMapService gaodeMapService;
+    private final TransportLifecycleService transportLifecycleService;
 
     @Autowired
     public ShipmentServiceImpl(ShipmentRepository shipmentRepository,
@@ -44,7 +46,8 @@ public class ShipmentServiceImpl implements ShipmentService {
                                POIRepository poiRepository,
                                EnrollmentRepository enrollmentRepository,
                                GoodsRepository goodsRepository,
-                               DataInitializer dataInitializer) {
+                               DataInitializer dataInitializer,
+                               TransportLifecycleService transportLifecycleService) {
         this.shipmentRepository = shipmentRepository;
         this.poiRepository = poiRepository;
         this.enrollmentRepository = enrollmentRepository;
@@ -52,6 +55,7 @@ public class ShipmentServiceImpl implements ShipmentService {
         this.dataInitializer = dataInitializer;
         this.vehicleRepository = vehicleRepository;
         this.gaodeMapService = gaodeMapService;
+        this.transportLifecycleService = transportLifecycleService;
     }
 
     @Override
@@ -97,6 +101,15 @@ public class ShipmentServiceImpl implements ShipmentService {
         return shipmentRepository.findById(id)
                 .map(shipment -> {
                     validateStatusTransition(shipment.getStatus(), newStatus);
+                    if (newStatus == Shipment.ShipmentStatus.CANCELLED) {
+                        transportLifecycleService.cancelShipment(
+                                shipment,
+                                "Shipment status update",
+                                LocalDateTime.now(),
+                                "ShipmentService"
+                        );
+                        return shipment;
+                    }
                     shipment.setStatus(newStatus);
                     return shipmentRepository.save(shipment);
                 })

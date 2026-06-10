@@ -3,6 +3,7 @@ package org.example.roadsimulation;
 import org.example.roadsimulation.entity.*;
 import org.example.roadsimulation.repository.*;
 import jakarta.persistence.EntityManager;
+import org.example.roadsimulation.service.TransportLifecycleService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -54,6 +55,9 @@ public class SimulationDataCleanupService {
 
     @Autowired
     private EntityManager entityManager;
+
+    @Autowired
+    private TransportLifecycleService transportLifecycleService;
 
     /**
      * 清理所有模拟数据
@@ -266,9 +270,12 @@ public class SimulationDataCleanupService {
     private void resetSingleVehicleToPOI(Vehicle vehicle, POI targetPOI) {
         List<Assignment> vehicleAssignments = new ArrayList<>(vehicle.getAssignments());
         for (Assignment assignment : vehicleAssignments) {
-            vehicle.removeAssignment(assignment);
-            assignment.setAssignedVehicle(null);
-            assignmentRepository.save(assignment);
+            transportLifecycleService.cancelAssignment(
+                    assignment,
+                    "Vehicle reset",
+                    LocalDateTime.now(),
+                    "SimulationDataCleanupService"
+            );
         }
 
         vehicle.transitionToStatus(Vehicle.VehicleStatus.IDLE, LocalDateTime.now(), Duration.ZERO);

@@ -12,11 +12,11 @@ import org.example.roadsimulation.repository.AssignmentRepository;
 import org.example.roadsimulation.repository.ShipmentItemRepository;
 import org.example.roadsimulation.repository.VehicleRepository;
 import org.example.roadsimulation.service.TransportMetricsService;
+import org.example.roadsimulation.service.TransportLifecycleService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.*;
 
@@ -27,18 +27,21 @@ public class MultiOrderAssignmentMaterializer {
     private final ShipmentItemRepository shipmentItemRepository;
     private final VehicleRepository vehicleRepository;
     private final TransportMetricsService transportMetricsService;
+    private final TransportLifecycleService transportLifecycleService;
 
     @Autowired
     public MultiOrderAssignmentMaterializer(
             AssignmentRepository assignmentRepository,
             ShipmentItemRepository shipmentItemRepository,
             VehicleRepository vehicleRepository,
-            TransportMetricsService transportMetricsService
+            TransportMetricsService transportMetricsService,
+            TransportLifecycleService transportLifecycleService
     ) {
         this.assignmentRepository = assignmentRepository;
         this.shipmentItemRepository = shipmentItemRepository;
         this.vehicleRepository = vehicleRepository;
         this.transportMetricsService = transportMetricsService;
+        this.transportLifecycleService = transportLifecycleService;
     }
 
     /**
@@ -114,7 +117,6 @@ public class MultiOrderAssignmentMaterializer {
                 }
 
                 assignment.addShipmentItem(item);
-                item.setStatus(ShipmentItem.ShipmentItemStatus.ASSIGNED);
             }
 
             // 创建 AssignmentNode 链
@@ -144,10 +146,12 @@ public class MultiOrderAssignmentMaterializer {
                 continue;
             }
 
-            vehicle.transitionToStatus(Vehicle.VehicleStatus.ORDER_DRIVING, LocalDateTime.now(), Duration.ZERO);
-            vehicle.setUpdatedBy("MultiOrderGA");
-            vehicle.setUpdatedTime(LocalDateTime.now());
-            vehicleRepository.save(vehicle);
+            saved = transportLifecycleService.startAssignmentExecution(
+                    saved,
+                    vehicle,
+                    LocalDateTime.now(),
+                    "MultiOrderGA"
+            );
 
             createdAssignments.add(saved);
         }
@@ -175,16 +179,15 @@ public class MultiOrderAssignmentMaterializer {
                 ? Collections.emptySet()
                 : new LinkedHashSet<>(assignment.getShipmentItems());
         for (ShipmentItem item : items) {
-            item.setAssignment(null);
-            item.setStatus(ShipmentItem.ShipmentItemStatus.NOT_ASSIGNED);
             shipmentItemRepository.save(item);
         }
 
-        assignment.setStatus(Assignment.AssignmentStatus.FAILED);
-        assignment.setAssignedVehicle(null);
-        assignment.setUpdatedTime(LocalDateTime.now());
-        assignment.setUpdatedBy(reason);
-        assignmentRepository.save(assignment);
+        transportLifecycleService.rollbackAssignmentForRetry(
+                assignment,
+                assignment.getAssignedVehicle(),
+                items,
+                reason
+        );
     }
 
     private List<AssignmentNode> buildAssignmentNodes(

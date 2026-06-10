@@ -77,6 +77,7 @@ public class DataInitializer implements CommandLineRunner {
     private final SimulationContext simulationContext;
     private final BatchDirectVehicleAssignmentService batchDirectVehicleAssignmentService;
     private final OriginalVrpDispatchPolicy originalVrpDispatchPolicy;
+    private final TransportLifecycleService transportLifecycleService;
 
     private final Map<POI, POI> startToEndMapping = new ConcurrentHashMap<>(); // 起点到终点的映射关系
     // 修改成员变量，使用起点-终点对作为键
@@ -165,7 +166,8 @@ public class DataInitializer implements CommandLineRunner {
                             TransportMetricsService transportMetricsService,
                             SimulationContext simulationContext,
                             BatchDirectVehicleAssignmentService batchDirectVehicleAssignmentService,
-                            OriginalVrpDispatchPolicy originalVrpDispatchPolicy) {
+                            OriginalVrpDispatchPolicy originalVrpDispatchPolicy,
+                            TransportLifecycleService transportLifecycleService) {
         this.enrollmentRepository = enrollmentRepository;
         this.goodsRepository = goodsRepository;
         this.poiRepository = poiRepository;
@@ -186,6 +188,7 @@ public class DataInitializer implements CommandLineRunner {
         this.simulationContext = simulationContext;
         this.batchDirectVehicleAssignmentService = batchDirectVehicleAssignmentService;
         this.originalVrpDispatchPolicy = originalVrpDispatchPolicy;
+        this.transportLifecycleService = transportLifecycleService;
     }
 
     /**
@@ -1378,20 +1381,12 @@ public class DataInitializer implements CommandLineRunner {
         assignment.addNode(unloadNode);
 
         Assignment saved = assignmentRepository.save(assignment);
-
-        item.setStatus(ShipmentItem.ShipmentItemStatus.ASSIGNED);
-        item.setAssignment(saved);
-        item.setUpdatedBy(source);
-        item.setUpdatedTime(LocalDateTime.now());
-        shipmentItemRepository.save(item);
-
-        vehicle.transitionToStatus(Vehicle.VehicleStatus.ORDER_DRIVING, currentSimTimeOrNow(), Duration.ZERO);
-        vehicle.setCurrentLoad(0.0);
-        vehicle.setCurrentVolumn(0.0);
-        vehicle.addAssignment(saved);
-        vehicle.setUpdatedBy(source);
-        vehicle.setUpdatedTime(LocalDateTime.now());
-        vehicleRepository.save(vehicle);
+        saved = transportLifecycleService.startAssignmentExecution(
+                saved,
+                vehicle,
+                currentSimTimeOrNow(),
+                source
+        );
 
         registerAssignmentForFrontend(saved);
         return saved;
@@ -2213,15 +2208,16 @@ public class DataInitializer implements CommandLineRunner {
                     logger.warn("道路起点与终点为空");
                 }
                 assignment.setAssignedVehicle(vehicle);
-                // 这里的状态确保只有真正派了车的才会变成 ASSIGNED
                 assignment.setStatus(Assignment.AssignmentStatus.ASSIGNED);
 
-                // 将 ShipmentItem 状态同步为已分配
-                shipmentItem.setStatus(ShipmentItem.ShipmentItemStatus.ASSIGNED);
-                shipmentItemRepository.save(shipmentItem);
-
-                assignmentRepository.save(assignment);
-                assignments.add(assignment);
+                Assignment saved = assignmentRepository.save(assignment);
+                saved = transportLifecycleService.startAssignmentExecution(
+                        saved,
+                        vehicle,
+                        currentSimTimeOrNow(),
+                        "DataInitializer -- 普通任务派车"
+                );
+                assignments.add(saved);
             }
         }
         return assignments;
@@ -2239,16 +2235,12 @@ public class DataInitializer implements CommandLineRunner {
                     // 取消超时的ShipmentItems
                     Shipment shipment = shipmentRepository.findById(record.getShipmentId()).orElse(null);
                     if (shipment != null) {
-                        List<ShipmentItem> items = shipmentItemRepository.findByShipmentId(shipment.getId());
-                        for (ShipmentItem item : items) {
-                            if (item.getStatus() == ShipmentItem.ShipmentItemStatus.NOT_ASSIGNED
-                                    || item.getStatus() == ShipmentItem.ShipmentItemStatus.ASSIGNED) {
-                                item.setStatus(ShipmentItem.ShipmentItemStatus.DELIVERED);
-                                shipmentItemRepository.save(item);
-                            }
-                        }
-                        shipment.setStatus(Shipment.ShipmentStatus.CANCELLED);
-                        shipmentRepository.save(shipment);
+                        transportLifecycleService.cancelShipment(
+                                shipment,
+                                "POI shipment timeout",
+                                currentSimTimeOrNow(),
+                                "DataInitializer -- timeout cleanup"
+                        );
                     }
                     // 清理库存
                     POI sourcePoi = poiRepository.findById(record.getSourcePoiId()).orElse(null);
@@ -2468,6 +2460,10 @@ public class DataInitializer implements CommandLineRunner {
         assignment.setOriginPOI(fullRoutePois.get(0));
         assignment.setDestPOI(fullRoutePois.get(fullRoutePois.size() - 1));
 
+        for (ShipmentItem item : packedItems) {
+            assignment.addShipmentItem(item);
+        }
+
         // --- 核心：生成 AssignmentNodes 行程单 ---
         int sequence = 0;
 
@@ -2493,16 +2489,17 @@ public class DataInitializer implements CommandLineRunner {
         }
 
         // 保存 Assignment 及级联的 Nodes
-        assignmentRepository.save(assignment);
+        assignment = assignmentRepository.save(assignment);
 
         // 更新车辆状态与载重
         double totalAssignedWeight = packedItems.stream().mapToDouble(ShipmentItem::getWeight).sum();
         double totalAssignedVolume = packedItems.stream().mapToDouble(ShipmentItem::getVolume).sum();
-        vehicle.transitionToStatus(Vehicle.VehicleStatus.ORDER_DRIVING, currentSimTimeOrNow(), Duration.ZERO);
-        vehicle.setCurrentLoad(0.0);
-        vehicle.setCurrentVolumn(0.0);
-        vehicle.addAssignment(assignment);
-        vehicleRepository.save(vehicle);
+        assignment = transportLifecycleService.startAssignmentExecution(
+                assignment,
+                vehicle,
+                currentSimTimeOrNow(),
+                "DataInitializer -- VRP派车"
+        );
 
         try {
             double mileageWithoutThings = 0.0;
@@ -2591,13 +2588,6 @@ public class DataInitializer implements CommandLineRunner {
 
         } catch (Exception e) {
             System.err.println("VRP 路线成本精算时发生异常: " + e.getMessage());
-        }
-
-        // 更新 ShipmentItems 状态
-        for (ShipmentItem item : packedItems) {
-            item.setStatus(ShipmentItem.ShipmentItemStatus.ASSIGNED);
-            item.setAssignment(assignment);
-            shipmentItemRepository.save(item);
         }
 
         System.out.printf("🚀 [VRP 派车] 车辆 %s 成功拼载 %d 票货物 (总重 %.2ft)，生成多点行程单！%n",
@@ -2729,28 +2719,26 @@ public class DataInitializer implements CommandLineRunner {
                     originalLat = managedVehicle.getCurrentLatitude();
                 }
 
-                // 3. 双向关联：车辆添加任务
-                managedVehicle.addAssignment(assignment);
-
-                // 4. 更新车辆状态
-                managedVehicle.transitionToStatus(Vehicle.VehicleStatus.ORDER_DRIVING, currentSimTimeOrNow(), Duration.ZERO);
-
-                // 5. 设置当前位置
+                // 3. 保留车辆接收任务前的当前位置
                 managedVehicle.setCurrentLongitude(originalLng);
                 managedVehicle.setCurrentLatitude(originalLat);
 
-                // 6. 设置任务状态
+                // 4. 设置任务初始状态，再交由生命周期服务进入执行态
                 assignment.setStatus(Assignment.AssignmentStatus.ASSIGNED);
                 assignment.setUpdatedTime(LocalDateTime.now());
                 assignment.setUpdatedBy("DataInitializer -- 运输任务成功分配");
 
-                // 7. 更新车辆信息
                 managedVehicle.setUpdatedBy("DataInitializer -- 车辆接收运输任务");
                 managedVehicle.setUpdatedTime(LocalDateTime.now());
 
-                // 8. 保存所有更改
                 vehicleRepository.save(managedVehicle);
                 assignmentRepository.save(assignment);
+                transportLifecycleService.startAssignmentExecution(
+                        assignment,
+                        managedVehicle,
+                        currentSimTimeOrNow(),
+                        "DataInitializer -- 运输任务成功分配"
+                );
                 if (shouldAbortSimulationWork()) {
                     rollbackAssignmentAllocation(assignment, managedVehicle,
                             new ArrayList<>(assignment.getShipmentItems()),
@@ -3003,6 +2991,7 @@ public class DataInitializer implements CommandLineRunner {
                     .orElseThrow(() -> new RuntimeException("POI not found: " + startPOI.getId()));
 
             List<Enrollment> goalEnrollment = new ArrayList<>(freshStartPOI.getEnrollments());
+            Set<Long> completedAssignmentIds = new HashSet<>();
 
             for (Enrollment enrollment : goalEnrollment) {
                 if (enrollment.getGoods() != null) {
@@ -3021,35 +3010,16 @@ public class DataInitializer implements CommandLineRunner {
                         for (ShipmentItem item : items) {
                             Assignment assignment = item.getAssignment();
                             if (assignment != null && assignment.getAssignedVehicle() != null
-                                    && assignment.getAssignedVehicle().getId().equals(vehicle.getId())) {
-
-                                // =========== 修复：更新状态而不是删除 ===========
-
-                                // 1. 更新ShipmentItem状态为DELIVERED
-                                item.setStatus(ShipmentItem.ShipmentItemStatus.DELIVERED);
-                                item.setUpdatedTime(LocalDateTime.now());
-                                shipmentItemRepository.save(item);
-
-                                // 2. 更新Assignment状态为COMPLETED
-                                assignment.setStatus(Assignment.AssignmentStatus.COMPLETED);
-                                assignment.setEndTime(LocalDateTime.now());
-                                assignmentRepository.save(assignment);
-
-                                // 3. 更新Vehicle状态为IDLE
-                                Vehicle assignedVehicle = vehicleRepository.findById(vehicle.getId())
-                                        .orElseThrow(() -> new RuntimeException("Vehicle not found: " + vehicle.getId()));
-
-                                assignedVehicle.transitionToStatus(Vehicle.VehicleStatus.IDLE, currentSimTimeOrNow(), Duration.ZERO);
-                                assignedVehicle.setCurrentPOI(endPOI);
-                                assignedVehicle.setCurrentLongitude(endPOI.getLongitude());
-                                assignedVehicle.setCurrentLatitude(endPOI.getLatitude());
-                                assignedVehicle.setCurrentLoad(0.0);
-                                assignedVehicle.setCurrentVolumn(0.0);
-                                assignedVehicle.setUpdatedTime(LocalDateTime.now());
-                                vehicleRepository.save(assignedVehicle);
-
-                                // 4. 检查并更新Shipment状态
-                                checkAndUpdateShipmentStatus(freshShipment);
+                                    && assignment.getAssignedVehicle().getId().equals(vehicle.getId())
+                                    && assignment.getId() != null
+                                    && completedAssignmentIds.add(assignment.getId())) {
+                                transportLifecycleService.completeDelivery(
+                                        assignment,
+                                        vehicle,
+                                        endPOI,
+                                        currentSimTimeOrNow(),
+                                        "DataInitializer -- 车辆到达结算"
+                                );
                             }
                         }
 
@@ -3102,12 +3072,7 @@ public class DataInitializer implements CommandLineRunner {
             Set<ShipmentItem> items = assignment.getShipmentItems();
             for (ShipmentItem item : items) {
 
-                // A. 将该票货物标记为已送达
-                item.setStatus(ShipmentItem.ShipmentItemStatus.DELIVERED);
-                item.setUpdatedTime(LocalDateTime.now());
-                shipmentItemRepository.save(item);
-
-                // B. 追溯这票货物的源头，精准扣减库存
+                // 追溯这票货物的源头，精准扣减库存
                 Shipment shipment = item.getShipment();
                 if (shipment != null) {
                     POI originPOI = shipment.getOriginPOI();
@@ -3133,27 +3098,18 @@ public class DataInitializer implements CommandLineRunner {
                             }
                         }
                     }
-                    // C. 检查这个大运单是不是所有子件都送达了
-                    checkAndUpdateShipmentStatus(shipment);
                 }
             }
 
-            // 2. 释放 Assignment 任务
-            assignment.setStatus(Assignment.AssignmentStatus.COMPLETED);
-            assignment.setEndTime(LocalDateTime.now());
-            assignmentRepository.save(assignment);
+            transportLifecycleService.completeDelivery(
+                    assignment,
+                    vehicle,
+                    endPOI,
+                    currentSimTimeOrNow(),
+                    "DataInitializer -- VRP车辆到达结算"
+            );
 
-            // 3. 释放 Vehicle (让它变回空车，重回全局车池)
-            vehicle.transitionToStatus(Vehicle.VehicleStatus.IDLE, currentSimTimeOrNow(), Duration.ZERO);
-            vehicle.setCurrentPOI(endPOI); // 车辆停在最后这个卸货点
-            vehicle.setCurrentLongitude(endPOI.getLongitude());
-            vehicle.setCurrentLatitude(endPOI.getLatitude());
-            vehicle.setCurrentLoad(0.0);
-            vehicle.setCurrentVolumn(0.0);
-            vehicle.setUpdatedTime(LocalDateTime.now());
-            vehicleRepository.save(vehicle);
-
-            // 4. 清理前端用来刷新的缓存
+            // 清理前端用来刷新的缓存
             if (assignmentBriefMap.containsKey(assignment.getId())) {
                 AssignmentBriefDTO dto = assignmentBriefMap.get(assignment.getId());
                 dto.setStatus("COMPLETED");
@@ -3170,24 +3126,7 @@ public class DataInitializer implements CommandLineRunner {
 
     // 新增：检查和更新Shipment状态
     private void checkAndUpdateShipmentStatus(Shipment shipment) {
-        // 检查该Shipment的所有Item是否都是DELIVERED
-        boolean allDelivered = true;
-        for (ShipmentItem item : shipment.getItems()) {
-            if (item.getStatus() != ShipmentItem.ShipmentItemStatus.DELIVERED) {
-                allDelivered = false;
-                break;
-            }
-        }
-
-        // 如果所有Item都已完成，更新Shipment状态为DELIVERED
-        if (allDelivered) {
-            shipment.setStatus(Shipment.ShipmentStatus.DELIVERED);
-            shipment.setUpdatedAt(LocalDateTime.now());
-            shipmentRepository.save(shipment);
-
-            logger.info("Shipment {} 所有Item已完成，状态更新为DELIVERED",
-                    shipment.getId());
-        }
+        transportLifecycleService.refreshShipmentStatus(shipment);
     }
 
     /**
@@ -3464,39 +3403,12 @@ public class DataInitializer implements CommandLineRunner {
     ) {
         Long assignmentId = assignment != null ? assignment.getId() : null;
         try {
-            if (items != null) {
-                for (ShipmentItem item : items) {
-                    if (item == null) {
-                        continue;
-                    }
-                    item.setAssignment(null);
-                    item.setStatus(ShipmentItem.ShipmentItemStatus.NOT_ASSIGNED);
-                    item.setUpdatedBy("Route planning rollback");
-                    item.setUpdatedTime(LocalDateTime.now());
-                    shipmentItemRepository.save(item);
-                }
-            }
-
-            if (vehicle != null && vehicle.getId() != null) {
-                Vehicle managedVehicle = vehicleRepository.findById(vehicle.getId()).orElse(vehicle);
-                if (assignment != null) {
-                    managedVehicle.removeAssignment(assignment);
-                }
-                managedVehicle.transitionToStatus(Vehicle.VehicleStatus.IDLE, currentSimTimeOrNow(), Duration.ZERO);
-                managedVehicle.setCurrentLoad(0.0);
-                managedVehicle.setCurrentVolumn(0.0);
-                managedVehicle.setUpdatedBy("Route planning rollback");
-                managedVehicle.setUpdatedTime(LocalDateTime.now());
-                vehicleRepository.save(managedVehicle);
-            }
-
-            if (assignment != null) {
-                assignment.setAssignedVehicle(null);
-                assignment.setStatus(Assignment.AssignmentStatus.FAILED);
-                assignment.setUpdatedBy(reason);
-                assignment.setUpdatedTime(LocalDateTime.now());
-                assignmentRepository.save(assignment);
-            }
+            transportLifecycleService.rollbackAssignmentForRetry(
+                    assignment,
+                    vehicle,
+                    items,
+                    reason
+            );
 
             if (assignmentId != null) {
                 assignmentBriefMap.remove(assignmentId);

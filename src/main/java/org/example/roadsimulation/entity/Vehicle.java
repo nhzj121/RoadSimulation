@@ -11,6 +11,7 @@ import lombok.Setter;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.Objects;
 import java.util.Set;
@@ -219,8 +220,24 @@ public class Vehicle {
                 .filter(assignment -> assignment.isWaiting()
                         || assignment.isAssigned()
                         || assignment.isInProgress())
-                .findFirst()
+                .min(Comparator
+                        .comparingInt(Vehicle::activeAssignmentPriority)
+                        .thenComparing(Assignment::getCreatedTime, Comparator.nullsLast(LocalDateTime::compareTo))
+                        .thenComparing(Assignment::getId, Comparator.nullsLast(Long::compareTo)))
                 .orElse(null);
+    }
+
+    private static int activeAssignmentPriority(Assignment assignment) {
+        if (assignment.isInProgress()) {
+            return 0;
+        }
+        if (assignment.isAssigned()) {
+            return 1;
+        }
+        if (assignment.isWaiting()) {
+            return 2;
+        }
+        return 3;
     }
 
     /**

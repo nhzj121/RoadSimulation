@@ -8,6 +8,8 @@
         <div class="navbar-menu">
           <ElButton text @click="goToPOIManager">POI点管理</ElButton>
           <ElButton text @click="openMonitorPanel('vehicles')">车辆监控</ElButton>
+          <ElButton text @click="openMonitorPanel('shipments')">运单监控</ElButton>
+          <ElButton text @click="openMonitorPanel('assignments')">任务监控</ElButton>
           <ElButton type="primary" text @click="openMonitorPanel('costs')">
             成本监控
           </ElButton>
@@ -145,6 +147,68 @@
                 </div>
                 <div v-if="vehicles.length === 0" class="no-vehicle monitor-empty">
                   暂无运输任务
+                </div>
+              </div>
+            </ElTabPane>
+            <ElTabPane label="运单监控" name="shipments">
+              <div class="monitor-tab-body transport-monitor-list">
+                <div
+                    v-for="shipment in monitorShipments"
+                    :key="shipment.shipmentId"
+                    class="transport-monitor-item"
+                    :class="{ 'transport-item-highlighted': highlightedShipmentId === shipment.shipmentId }"
+                    @click="focusShipmentFromPanel(shipment)"
+                >
+                  <div class="transport-item-title">
+                    <span class="transport-main-text">{{ shipment.refNo || `运单${shipment.shipmentId}` }}</span>
+                    <span class="transport-status">{{ shipment.statusText || shipment.status || '未知' }}</span>
+                  </div>
+                  <div class="transport-item-desc">
+                    {{ shipment.originPOIName || '未知起点' }} → {{ shipment.destPOIName || '未知终点' }}
+                  </div>
+                  <div class="transport-progress-row">
+                    <span>{{ shipment.completedItems || 0 }}/{{ shipment.totalItems || 0 }}</span>
+                    <div class="progress-bar mini-progress">
+                      <div class="progress-fill shipment-progress-fill" :style="{ width: `${Math.min(100, shipment.progressPercentage || 0)}%` }"></div>
+                    </div>
+                    <span>{{ (shipment.progressPercentage || 0).toFixed(0) }}%</span>
+                  </div>
+                  <div class="transport-meta-row">
+                    <span>任务 {{ shipment.assignmentIds?.length || 0 }}</span>
+                    <span>车辆 {{ shipment.vehicleIds?.length || 0 }}</span>
+                  </div>
+                </div>
+                <div v-if="monitorShipments.length === 0" class="monitor-empty">
+                  暂无活跃运单
+                </div>
+              </div>
+            </ElTabPane>
+            <ElTabPane label="任务监控" name="assignments">
+              <div class="monitor-tab-body transport-monitor-list">
+                <div
+                    v-for="assignment in monitorAssignments"
+                    :key="assignment.assignmentId"
+                    class="transport-monitor-item"
+                    :class="{ 'transport-item-highlighted': highlightedAssignmentId === assignment.assignmentId }"
+                    @click="focusAssignmentFromPanel(assignment)"
+                >
+                  <div class="transport-item-title">
+                    <span class="transport-main-text">任务 {{ assignment.assignmentId }}</span>
+                    <span class="transport-status">{{ assignment.statusText || assignment.status || '未知' }}</span>
+                  </div>
+                  <div class="transport-item-desc">
+                    {{ assignment.startPOIName || '未知起点' }} → {{ assignment.endPOIName || '未知终点' }}
+                  </div>
+                  <div class="transport-item-desc">
+                    {{ assignment.licensePlate || '未分配车辆' }} · {{ assignment.goodsName || '暂无货物信息' }}
+                  </div>
+                  <div class="transport-meta-row">
+                    <span>运单 {{ assignment.shipmentRefNos?.join(', ') || '无' }}</span>
+                    <span>数量 {{ assignment.quantity || 0 }}</span>
+                  </div>
+                </div>
+                <div v-if="monitorAssignments.length === 0" class="monitor-empty">
+                  暂无活跃运输任务
                 </div>
               </div>
             </ElTabPane>
@@ -294,6 +358,8 @@ const gotoMain = () => {
 // --- 车辆监控面板滚动相关 ---
 const vehiclePanelScroll = ref(null); // 车辆监控滚动容器引用
 const highlightedVehicleId = ref(null); // 当前高亮的车辆ID
+const highlightedShipmentId = ref(null);
+const highlightedAssignmentId = ref(null);
 let highlightTimer = null; // 高亮定时器
 
 const handleVehicleClick = (vehicle) => {
@@ -441,6 +507,13 @@ const resizeMapAfterPanelChange = () => {
 const openMonitorPanel = async (tab = 'vehicles') => {
   activeMonitorTab.value = tab;
   isMonitorPanelVisible.value = true;
+  if (['vehicles', 'shipments', 'assignments'].includes(tab)) {
+    try {
+      await updateVehicleInfo();
+    } catch (error) {
+      console.error('刷新运输监控数据失败:', error);
+    }
+  }
   await nextTick();
   resizeMapAfterPanelChange();
 };
@@ -2305,6 +2378,34 @@ const statusMap = {
 };
 
 const vehicles = reactive([]); // 车辆列表，将从Assignment中获取
+const monitorShipments = reactive([]);
+const monitorAssignments = reactive([]);
+const monitorVehicles = reactive([]);
+const monitorLinks = reactive([]);
+const monitorSummary = reactive({
+  activeShipmentCount: 0,
+  activeAssignmentCount: 0,
+  activeVehicleCount: 0
+});
+
+const syncTransportMonitorData = (monitorData = {}) => {
+  monitorShipments.splice(0, monitorShipments.length, ...(monitorData.shipments || []));
+  monitorAssignments.splice(0, monitorAssignments.length, ...(monitorData.assignments || []));
+  monitorVehicles.splice(0, monitorVehicles.length, ...(monitorData.vehicles || []));
+  monitorLinks.splice(0, monitorLinks.length, ...(monitorData.links || []));
+
+  const summary = monitorData.summary || {};
+  monitorSummary.activeShipmentCount = summary.activeShipmentCount || 0;
+  monitorSummary.activeAssignmentCount = summary.activeAssignmentCount || 0;
+  monitorSummary.activeVehicleCount = summary.activeVehicleCount || 0;
+};
+
+const fetchTransportMonitor = async () => {
+  const response = await request.get('/api/simulation/monitor/active');
+  const monitorData = response.data || {};
+  syncTransportMonitorData(monitorData);
+  return monitorData;
+};
 
 /**
  * 更新车辆信息 - 修复版本
@@ -2313,11 +2414,11 @@ const vehicles = reactive([]); // 车辆列表，将从Assignment中获取
  */
 const updateVehicleInfo = async () => {
   try {
-    console.log('[车辆信息] 正在从 /api/assignments/active 获取数据...');
+    console.log('[运输监控] 正在从 /api/simulation/monitor/active 获取数据...');
 
-    // 调用项目中已存在且有效的接口
-    const response = await request.get('/api/assignments/active');
-    const activeAssignments = response.data;
+    const monitorData = await fetchTransportMonitor();
+    const activeAssignments = monitorData.assignments || [];
+    const activeMonitorVehicles = monitorData.vehicles || [];
 
     console.log(`[车辆信息] 获取到 ${activeAssignments?.length || 0} 个活动任务`);
 
@@ -2388,6 +2489,34 @@ const updateVehicleInfo = async () => {
       });
     }
 
+    if (activeMonitorVehicles && Array.isArray(activeMonitorVehicles)) {
+      activeMonitorVehicles.forEach(monitorVehicle => {
+        if (!monitorVehicle.vehicleId || vehicleMap.has(monitorVehicle.vehicleId)) {
+          return;
+        }
+        const vehicle = {
+          id: monitorVehicle.vehicleId,
+          licensePlate: monitorVehicle.licensePlate || `车辆${monitorVehicle.vehicleId}`,
+          status: monitorVehicle.status || 'IDLE',
+          currentAssignment: `任务 ${monitorVehicle.assignmentIds?.join(', ') || '无'}`,
+          goodsInfo: '',
+          quantity: 0,
+          currentLoad: monitorVehicle.currentLoad || 0,
+          maxLoadCapacity: monitorVehicle.maxLoadCapacity || 0,
+          currentVolume: monitorVehicle.currentVolume || 0,
+          maxVolumeCapacity: monitorVehicle.maxVolumeCapacity || 0,
+          currentPOIName: null,
+          lastArrivalPOI: null,
+          recentlyArrived: false
+        };
+        vehicle.loadPercentage = vehicle.maxLoadCapacity > 0 ?
+            Math.min(100, (vehicle.currentLoad / vehicle.maxLoadCapacity) * 100) : 0;
+        vehicle.volumePercentage = vehicle.maxVolumeCapacity > 0 ?
+            Math.min(100, (vehicle.currentVolume / vehicle.maxVolumeCapacity) * 100) : 0;
+        vehicleMap.set(monitorVehicle.vehicleId, vehicle);
+      });
+    }
+
     // 将处理好的车辆信息添加到响应式数组
     vehicleMap.forEach(vehicle => {
       vehicles.push(vehicle);
@@ -2400,7 +2529,7 @@ const updateVehicleInfo = async () => {
         v.status === 'TRANSPORT_DRIVING' ||
         v.status === 'UNLOADING'
     ).length;
-    stats.tasks = vehicles.length;
+    stats.tasks = monitorSummary.activeAssignmentCount || activeAssignments.length;
 
     console.log(`[车辆信息] 更新完成，共 ${vehicles.length} 辆车`);
     return vehicles;
@@ -3164,6 +3293,29 @@ const buildAssignmentFromVehicle = (vehicle) => ({
   vrpProgress: vehicle.vrpProgress
 });
 
+const findMonitorAssignment = (assignmentId) =>
+    monitorAssignments.find(item => item.assignmentId === assignmentId);
+
+const buildAssignmentFromMonitorAssignment = (assignment) => ({
+  assignmentId: assignment.assignmentId,
+  vehicleId: assignment.vehicleId,
+  licensePlate: assignment.licensePlate,
+  vehicleStatus: assignment.vehicleStatus,
+  routeName: assignment.routeName,
+  goodsName: assignment.goodsName,
+  quantity: assignment.quantity,
+  startPOIName: assignment.startPOIName,
+  endPOIName: assignment.endPOIName,
+  startLng: assignment.startLng,
+  startLat: assignment.startLat,
+  endLng: assignment.endLng,
+  endLat: assignment.endLat,
+  currentLoad: assignment.currentLoad,
+  maxLoadCapacity: assignment.maxLoadCapacity,
+  currentVolume: assignment.currentVolume,
+  maxVolumeCapacity: assignment.maxVolumeCapacity
+});
+
 const centerMapOnVehicle = (position) => {
   const normalized = normalizeMapPosition(position);
   if (!normalized || !map) return;
@@ -3177,6 +3329,67 @@ const centerMapOnVehicle = (position) => {
   if (typeof map.setCenter === 'function') {
     map.setCenter(normalized);
   }
+};
+
+const focusAssignmentFromPanel = async (assignment) => {
+  if (!assignment?.assignmentId) return;
+
+  await openMonitorPanel('assignments');
+  highlightedAssignmentId.value = assignment.assignmentId;
+
+  const infoAssignment = buildAssignmentFromMonitorAssignment(assignment);
+  const marker = assignment.vehicleId
+      ? vehicleStatusManager.value?.vehicleMarkers?.get(assignment.vehicleId)
+      : null;
+  const markerPosition = normalizeMapPosition(marker?.getPosition?.());
+  const position = markerPosition || getAssignmentFallbackPosition(infoAssignment);
+
+  if (!position) {
+    ElMessage.warning('当前任务暂无可定位的地图位置');
+    return;
+  }
+
+  centerMapOnVehicle(position);
+
+  try {
+    const vehicleDetail = assignment.vehicleId ? await getVehicleDetail(assignment.vehicleId) : null;
+    showVehicleInfoWindowFromMarker(infoAssignment, vehicleDetail, position);
+  } catch (error) {
+    console.error('获取任务车辆信息失败:', error);
+    showVehicleInfoWindowFromMarker(infoAssignment, null, position);
+  }
+};
+
+const focusShipmentFromPanel = async (shipment) => {
+  if (!shipment?.shipmentId) return;
+
+  await openMonitorPanel('shipments');
+  highlightedShipmentId.value = shipment.shipmentId;
+
+  const assignmentIds = shipment.assignmentIds || [];
+  const vehicleIds = shipment.vehicleIds || [];
+  const firstAssignment = assignmentIds.length > 0 ? findMonitorAssignment(assignmentIds[0]) : null;
+
+  if (firstAssignment) {
+    highlightedAssignmentId.value = firstAssignment.assignmentId;
+  }
+
+  if (vehicleIds.length === 1) {
+    const vehicle = vehicles.find(item => item.id === vehicleIds[0]);
+    if (vehicle) {
+      await focusVehicleFromPanel(vehicle);
+      highlightedShipmentId.value = shipment.shipmentId;
+      return;
+    }
+  }
+
+  if (firstAssignment) {
+    await focusAssignmentFromPanel(firstAssignment);
+    highlightedShipmentId.value = shipment.shipmentId;
+    return;
+  }
+
+  ElMessage.info('当前运单暂无可定位的关联任务或车辆');
 };
 
 const focusVehicleFromPanel = async (vehicle) => {
@@ -4462,6 +4675,87 @@ onUnmounted(() => {
   background: #fff;
   border: 1px dashed #dcdfe6;
   border-radius: 8px;
+  color: #909399;
+  font-size: 14px;
+  font-style: italic;
+  text-align: center;
+}
+
+.transport-monitor-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.transport-monitor-item {
+  padding: 10px;
+  background: #fff;
+  border: 1px solid #ebeef5;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.transport-monitor-item:hover {
+  background: #f8fbff;
+  border-color: #c6e2ff;
+  box-shadow: 0 2px 8px rgba(64, 158, 255, 0.12);
+}
+
+.transport-item-highlighted {
+  border-color: #409eff;
+  box-shadow: 0 0 0 2px rgba(64, 158, 255, 0.12);
+}
+
+.transport-item-title,
+.transport-meta-row,
+.transport-progress-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.transport-main-text {
+  min-width: 0;
+  color: #303133;
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transport-status {
+  color: #606266;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.transport-item-desc {
+  margin-top: 5px;
+  color: #606266;
+  font-size: 12px;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transport-progress-row {
+  margin-top: 8px;
+  color: #909399;
+  font-size: 11px;
+}
+
+.transport-meta-row {
+  margin-top: 8px;
+  color: #909399;
+  font-size: 11px;
+}
+
+.shipment-progress-fill {
+  background-color: #67c23a;
 }
 
 .cost-card {

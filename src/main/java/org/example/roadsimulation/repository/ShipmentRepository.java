@@ -20,6 +20,7 @@ public interface ShipmentRepository extends JpaRepository<Shipment, Long> {
 
     // 根据运单状态来查询相应运单
     List<Shipment> findByStatus(Shipment.ShipmentStatus status);
+    List<Shipment> findByStatusIn(List<Shipment.ShipmentStatus> statuses);
 
     // 检查运单系统参考号是否存在
     boolean existsByRefNo(String refNo);

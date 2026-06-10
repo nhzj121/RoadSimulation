@@ -6,6 +6,7 @@ import org.example.roadsimulation.config.DispatchStrategy;
 import org.example.roadsimulation.config.SimulationRuntimeConfig;
 import org.example.roadsimulation.dto.ApiResponse;
 import org.example.roadsimulation.dto.RuntimeCostDTO;
+import org.example.roadsimulation.dto.TransportMonitorDTO;
 import org.example.roadsimulation.dto.VehicleCostSummaryDTO;
 import org.example.roadsimulation.entity.Assignment;
 import org.example.roadsimulation.entity.POI;
@@ -18,6 +19,7 @@ import org.example.roadsimulation.repository.ShipmentItemRepository;
 import org.example.roadsimulation.repository.VehicleRepository;
 import org.example.roadsimulation.service.GaodeRoutePlanningQueueService;
 import org.example.roadsimulation.service.GetCostService;
+import org.example.roadsimulation.service.TransportMonitorService;
 import org.example.roadsimulation.service.impl.VehicleInitializationServiceImpl;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -56,6 +58,9 @@ public class SimulationController {
 
     @Autowired
     private GetCostService getCostService;
+
+    @Autowired
+    private TransportMonitorService transportMonitorService;
 
     @Autowired
     private GaodeRoutePlanningQueueService gaodeRoutePlanningQueueService;
@@ -138,6 +143,14 @@ public class SimulationController {
             Assignment assignment = assignmentRepository.findById(request.getAssignmentId())
                     .orElseThrow(() -> new RuntimeException("Assignment not found: " + request.getAssignmentId()));
 
+            if (assignment.getStatus() == Assignment.AssignmentStatus.COMPLETED
+                    || assignment.getStatus() == Assignment.AssignmentStatus.CANCELLED
+                    || assignment.getStatus() == Assignment.AssignmentStatus.FAILED) {
+                logger.info("Vehicle arrival ignored for closed assignment: id={}, status={}",
+                        assignment.getId(), assignment.getStatus());
+                return ResponseEntity.ok().build();
+            }
+
             Vehicle vehicle = assignment.getAssignedVehicle();
             if (vehicle == null) {
                 throw new RuntimeException("No vehicle assigned to assignment: " + request.getAssignmentId());
@@ -169,6 +182,11 @@ public class SimulationController {
                 vehicleRepository.findAll(),
                 assignmentRepository.findRuntimeActiveAssignments()
         );
+    }
+
+    @GetMapping("/monitor/active")
+    public TransportMonitorDTO getActiveTransportMonitor() {
+        return transportMonitorService.getActiveMonitor();
     }
 
     @GetMapping("/vehicle-costs")
