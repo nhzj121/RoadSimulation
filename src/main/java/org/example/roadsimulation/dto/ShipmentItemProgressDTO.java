@@ -32,7 +32,7 @@ public class ShipmentItemProgressDTO {
 
     // 状态信息
     @Setter @Getter
-    private String status; // 运单项状态：NOT_ASSIGNED, ASSIGNED, IN_TRANSIT, DELIVERED
+    private String status; // 运单项状态：NOT_ASSIGNED, ASSIGNED, LOADED, IN_TRANSIT, DELIVERED, CANCELLED
 
     @Setter @Getter
     private String statusText;
@@ -78,6 +78,8 @@ public class ShipmentItemProgressDTO {
                 return "运输中";
             case "DELIVERED":
                 return "已送达";
+            case "CANCELLED":
+                return "已取消";
             default:
                 return status;
         }
@@ -98,6 +100,8 @@ public class ShipmentItemProgressDTO {
                 return "#52c41a"; // 绿色
             case "DELIVERED":
                 return "#722ed1"; // 紫色
+            case "CANCELLED":
+                return "#8c8c8c"; // 深灰色
             default:
                 return "#ccc";
         }

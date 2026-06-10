@@ -38,6 +38,9 @@ public class ShipmentProgressService {
     @Autowired
     private VehicleService vehicleService;
 
+    @Autowired
+    private TransportLifecycleService transportLifecycleService;
+
     /**
      * 获取活跃运单列表（包含进度概览）
      * 活跃运单：状态为PLANNED、PICKED_UP、IN_TRANSIT的运单
@@ -146,30 +149,19 @@ public class ShipmentProgressService {
             double completedWeight = 0.0;
             double completedVolume = 0.0;
 
-            // 统计各项状态
             for (ShipmentItem item : shipmentItems) {
-                if (item.getAssignment() != null) {
-                    Assignment assignment = item.getAssignment();
-
-                    if (assignment.isCompleted()) {
-                        completedItems++;
-                        completedWeight += item.getWeight() != null ? item.getWeight() : 0;
-                        completedVolume += item.getVolume() != null ? item.getVolume() : 0;
-                    } else if (assignment.isInProgress()) {
-                        inProgressItems++;
-                    } else if (assignment.isWaiting() || assignment.isAssigned()) {
-                        waitingItems++;
-                    }
-                } else {
-                    waitingItems++; // 未分配任务
+                if (isCompletedItem(item)) {
+                    completedItems++;
+                    completedWeight += item.getWeight() != null ? item.getWeight() : 0;
+                    completedVolume += item.getVolume() != null ? item.getVolume() : 0;
+                } else if (isInProgressItem(item)) {
+                    inProgressItems++;
+                } else if (isWaitingItem(item)) {
+                    waitingItems++;
                 }
             }
 
-            // 更新运单状态
-            updateShipmentStatus(shipment, completedItems, totalItems);
-
-            // 保存更新
-            shipmentRepository.save(shipment);
+            transportLifecycleService.refreshShipmentStatus(shipment);
 
             logger.info("运单进度更新完成，运单ID: {}, 完成: {}/{}, 新状态: {}",
                     shipmentId, completedItems, totalItems, shipment.getStatus());
@@ -184,26 +176,7 @@ public class ShipmentProgressService {
      * 根据进度更新运单状态
      */
     private void updateShipmentStatus(Shipment shipment, int completedItems, int totalItems) {
-        if (totalItems == 0) return;
-
-        double progress = (double) completedItems / totalItems;
-
-        // 根据进度更新状态
-        if (progress >= 1.0) {
-            // 所有Items都已完成
-            shipment.setStatus(Shipment.ShipmentStatus.DELIVERED);
-        } else if (progress > 0) {
-            // 至少有一个Item在进行中或已完成
-            if (shipment.getStatus() == Shipment.ShipmentStatus.CREATED) {
-                shipment.setStatus(Shipment.ShipmentStatus.PLANNED);
-            }
-            if (shipment.getStatus() == Shipment.ShipmentStatus.PLANNED) {
-                shipment.setStatus(Shipment.ShipmentStatus.IN_TRANSIT);
-            }
-        }
-
-        // 更新时间戳
-        shipment.setUpdatedAt(LocalDateTime.now());
+        transportLifecycleService.refreshShipmentStatus(shipment);
     }
 
     /**
@@ -234,11 +207,11 @@ public class ShipmentProgressService {
 
         // 计算进度
         List<ShipmentItem> items = shipmentItemRepository.findByShipmentId(shipment.getId());
-        int totalItems = items.size();
+        int totalItems = countEffectiveItems(items);
         int completedItems = 0;
 
         for (ShipmentItem item : items) {
-            if (item.getAssignment() != null && item.getAssignment().isCompleted()) {
+            if (isCompletedItem(item)) {
                 completedItems++;
             }
         }
@@ -285,7 +258,7 @@ public class ShipmentProgressService {
         dto.setUpdatedAt(shipment.getUpdatedAt());
 
         // 计算进度统计
-        int totalItems = shipmentItems.size();
+        int totalItems = countEffectiveItems(shipmentItems);
         int completedItems = 0;
         int inProgressItems = 0;
         int waitingItems = 0;
@@ -299,20 +272,13 @@ public class ShipmentProgressService {
             ShipmentItemProgressDTO itemProgress = convertToShipmentItemProgressDTO(item);
             itemProgressList.add(itemProgress);
 
-            // 统计状态
-            if (item.getAssignment() != null) {
-                Assignment assignment = item.getAssignment();
-
-                if (assignment.isCompleted()) {
-                    completedItems++;
-                    completedWeight += item.getWeight() != null ? item.getWeight() : 0;
-                    completedVolume += item.getVolume() != null ? item.getVolume() : 0;
-                } else if (assignment.isInProgress()) {
-                    inProgressItems++;
-                } else if (assignment.isWaiting() || assignment.isAssigned()) {
-                    waitingItems++;
-                }
-            } else {
+            if (isCompletedItem(item)) {
+                completedItems++;
+                completedWeight += item.getWeight() != null ? item.getWeight() : 0;
+                completedVolume += item.getVolume() != null ? item.getVolume() : 0;
+            } else if (isInProgressItem(item)) {
+                inProgressItems++;
+            } else if (isWaitingItem(item)) {
                 waitingItems++;
             }
         }
@@ -374,25 +340,19 @@ public class ShipmentProgressService {
         dto.setVolume(item.getVolume());
 
         // 确定运单项状态
-        String status = "NOT_ASSIGNED";
+        String status = item.getStatus() != null ? item.getStatus().name() : "NOT_ASSIGNED";
         LocalDateTime loadedTime = null;
         LocalDateTime deliveredTime = null;
 
         if (item.getAssignment() != null) {
             Assignment assignment = item.getAssignment();
-
-            if (assignment.isCompleted()) {
-                status = "DELIVERED";
+            if (item.getStatus() == ShipmentItem.ShipmentItemStatus.DELIVERED) {
                 deliveredTime = assignment.getEndTime();
-            } else if (assignment.isInProgress()) {
-                // 检查是否已装货
-                if (assignment.getCurrentActionIndex() != null && assignment.getCurrentActionIndex() > 0) {
-                    status = "IN_TRANSIT";
-                } else {
-                    status = "ASSIGNED";
-                }
-            } else if (assignment.isAssigned() || assignment.isWaiting()) {
-                status = "ASSIGNED";
+            }
+            if (item.getStatus() == ShipmentItem.ShipmentItemStatus.LOADED
+                    || item.getStatus() == ShipmentItem.ShipmentItemStatus.IN_TRANSIT
+                    || item.getStatus() == ShipmentItem.ShipmentItemStatus.DELIVERED) {
+                loadedTime = assignment.getStartTime();
             }
 
             // 记录分配时间
@@ -452,17 +412,17 @@ public class ShipmentProgressService {
             // 统计运单项状态
             long totalItems = allItems.size();
             long notAssignedItems = allItems.stream()
-                    .filter(item -> item.getAssignment() == null)
+                    .filter(item -> item.getStatus() == ShipmentItem.ShipmentItemStatus.NOT_ASSIGNED)
                     .count();
             long assignedItems = allItems.stream()
-                    .filter(item -> item.getAssignment() != null &&
-                            (item.getAssignment().isWaiting() || item.getAssignment().isAssigned()))
+                    .filter(item -> item.getStatus() == ShipmentItem.ShipmentItemStatus.ASSIGNED
+                            || item.getStatus() == ShipmentItem.ShipmentItemStatus.LOADED)
                     .count();
             long inProgressItems = allItems.stream()
-                    .filter(item -> item.getAssignment() != null && item.getAssignment().isInProgress())
+                    .filter(item -> item.getStatus() == ShipmentItem.ShipmentItemStatus.IN_TRANSIT)
                     .count();
             long completedItems = allItems.stream()
-                    .filter(item -> item.getAssignment() != null && item.getAssignment().isCompleted())
+                    .filter(item -> item.getStatus() == ShipmentItem.ShipmentItemStatus.DELIVERED)
                     .count();
 
             // 计算总进度
@@ -478,11 +438,11 @@ public class ShipmentProgressService {
                     .sum();
 
             double completedWeight = allItems.stream()
-                    .filter(item -> item.getAssignment() != null && item.getAssignment().isCompleted())
+                    .filter(this::isCompletedItem)
                     .mapToDouble(item -> item.getWeight() != null ? item.getWeight() : 0)
                     .sum();
             double completedVolume = allItems.stream()
-                    .filter(item -> item.getAssignment() != null && item.getAssignment().isCompleted())
+                    .filter(this::isCompletedItem)
                     .mapToDouble(item -> item.getVolume() != null ? item.getVolume() : 0)
                     .sum();
 
@@ -520,5 +480,28 @@ public class ShipmentProgressService {
         }
 
         return summary;
+    }
+
+    private int countEffectiveItems(List<ShipmentItem> items) {
+        if (items == null) {
+            return 0;
+        }
+        return (int) items.stream()
+                .filter(item -> item.getStatus() != ShipmentItem.ShipmentItemStatus.CANCELLED)
+                .count();
+    }
+
+    private boolean isCompletedItem(ShipmentItem item) {
+        return item != null && item.getStatus() == ShipmentItem.ShipmentItemStatus.DELIVERED;
+    }
+
+    private boolean isInProgressItem(ShipmentItem item) {
+        return item != null && (item.getStatus() == ShipmentItem.ShipmentItemStatus.LOADED
+                || item.getStatus() == ShipmentItem.ShipmentItemStatus.IN_TRANSIT);
+    }
+
+    private boolean isWaitingItem(ShipmentItem item) {
+        return item != null && (item.getStatus() == ShipmentItem.ShipmentItemStatus.NOT_ASSIGNED
+                || item.getStatus() == ShipmentItem.ShipmentItemStatus.ASSIGNED);
     }
 }

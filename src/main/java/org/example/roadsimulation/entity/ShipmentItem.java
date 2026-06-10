@@ -90,7 +90,7 @@ public class ShipmentItem {
     private LocalDateTime createdTime = LocalDateTime.now();
 
     public enum ShipmentItemStatus {
-        NOT_ASSIGNED, ASSIGNED, LOADED, IN_TRANSIT, DELIVERED
+        NOT_ASSIGNED, ASSIGNED, LOADED, IN_TRANSIT, DELIVERED, CANCELLED
     }
 
     /**

@@ -214,6 +214,7 @@ public class Assignment {
 
     // ==================== Getter / Setter ====================
     public Long getId() { return id; }
+    public void setId(Long id) { this.id = id; }
     public AssignmentStatus getStatus() { return status; }
     public void setStatus(AssignmentStatus status) { this.status = status; }
     public Integer getCurrentActionIndex() { return currentActionIndex; }
@@ -386,8 +387,6 @@ public class Assignment {
             currentActionIndex++;
             return true;
         } else {
-            this.status = AssignmentStatus.COMPLETED;
-            this.endTime = simNow;
             return false;
         }
     }

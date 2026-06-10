@@ -4,12 +4,14 @@ import jakarta.annotation.PostConstruct;
 import jakarta.transaction.Transactional;
 import org.example.roadsimulation.entity.Assignment;
 import org.example.roadsimulation.entity.Assignment.AssignmentStatus;
+import org.example.roadsimulation.entity.POI;
 import org.example.roadsimulation.entity.Route;
 import org.example.roadsimulation.entity.Vehicle;
 import org.example.roadsimulation.entity.Vehicle.VehicleStatus;
 import org.example.roadsimulation.repository.AssignmentRepository;
 import org.example.roadsimulation.repository.VehicleRepository;
 import org.example.roadsimulation.service.StateTransitionService;
+import org.example.roadsimulation.service.TransportLifecycleService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -32,6 +34,8 @@ public class StateTransitionServiceImpl implements StateTransitionService {
     private VehicleRepository vehicleRepository;
     @Autowired
     private AssignmentRepository assignmentRepository;
+    @Autowired
+    private TransportLifecycleService transportLifecycleService;
 
     // 状态顺序（必须与矩阵行/列严格对应）
     private static final List<VehicleStatus> STATES = List.of(
@@ -66,7 +70,7 @@ public class StateTransitionServiceImpl implements StateTransitionService {
             VehicleStatus currentStatus, Assignment assignment, Vehicle vehicle) {
 
         if (assignment == null) {
-            return selectNextStateWithMarkovOnly(currentStatus);
+            return VehicleStatus.IDLE;
         }
 
         switch (assignment.getStatus()) {
@@ -74,27 +78,61 @@ public class StateTransitionServiceImpl implements StateTransitionService {
                 return VehicleStatus.ORDER_DRIVING;
 
             case IN_PROGRESS:
-                Integer idx = assignment.getCurrentActionIndex();
-                if (idx != null && assignment.getActionLine() != null && idx < assignment.getActionLine().size()) {
-                    Long actionId = assignment.getActionLine().get(idx);
-                    if (actionId != null) {
-                        long lastDigit = actionId % 10;
-                        if (lastDigit == 1) return VehicleStatus.LOADING;
-                        if (lastDigit == 2) return VehicleStatus.TRANSPORT_DRIVING;
-                        if (lastDigit == 3) return VehicleStatus.UNLOADING;
-                        if (lastDigit == 4) return VehicleStatus.WAITING;
-                        if (lastDigit == 5) return VehicleStatus.BREAKDOWN;
-                    }
+                if (currentStatus == VehicleStatus.ORDER_DRIVING) {
+                    return VehicleStatus.LOADING;
                 }
-                return VehicleStatus.TRANSPORT_DRIVING;
+                if (currentStatus == VehicleStatus.LOADING) {
+                    return VehicleStatus.TRANSPORT_DRIVING;
+                }
+                if (currentStatus == VehicleStatus.TRANSPORT_DRIVING) {
+                    return VehicleStatus.UNLOADING;
+                }
+                if (currentStatus == VehicleStatus.UNLOADING) {
+                    return VehicleStatus.IDLE;
+                }
+                return resolveNextStatusFromAssignmentNode(assignment, currentStatus);
 
             case COMPLETED:
+            case FAILED:
             case CANCELLED:
                 return VehicleStatus.IDLE;
 
             default:
-                return selectNextStateWithMarkovOnly(currentStatus);
+                return VehicleStatus.IDLE;
         }
+    }
+
+    private VehicleStatus resolveNextStatusFromAssignmentNode(Assignment assignment, VehicleStatus currentStatus) {
+        Integer idx = assignment.getCurrentActionIndex();
+        if (idx != null && assignment.getNodes() != null && idx < assignment.getNodes().size()) {
+            var node = assignment.getNodes().get(idx);
+            if (node != null && node.getActionType() != null) {
+                switch (node.getActionType()) {
+                    case LOAD:
+                        return VehicleStatus.LOADING;
+                    case UNLOAD:
+                        return currentStatus == VehicleStatus.TRANSPORT_DRIVING
+                                ? VehicleStatus.UNLOADING
+                                : VehicleStatus.TRANSPORT_DRIVING;
+                    default:
+                        return VehicleStatus.WAITING;
+                }
+            }
+        }
+
+        List<Long> actionLine = assignment.getActionLine();
+        if (idx != null && actionLine != null && idx < actionLine.size()) {
+            Long actionId = actionLine.get(idx);
+            if (actionId != null) {
+                long lastDigit = actionId % 10;
+                if (lastDigit == 1) return VehicleStatus.LOADING;
+                if (lastDigit == 2) return VehicleStatus.TRANSPORT_DRIVING;
+                if (lastDigit == 3) return VehicleStatus.UNLOADING;
+                if (lastDigit == 4) return VehicleStatus.WAITING;
+                if (lastDigit == 5) return VehicleStatus.BREAKDOWN;
+            }
+        }
+        return VehicleStatus.TRANSPORT_DRIVING;
     }
 
     /**
@@ -157,63 +195,79 @@ public class StateTransitionServiceImpl implements StateTransitionService {
                 simNow
         );
 
-        // ASSIGNED -> IN_PROGRESS：当 ORDER_DRIVING 结束时，任务进入运输流程
         if (assignment.getStatus() == AssignmentStatus.ASSIGNED) {
-            if (vehicle.getCurrentStatus() == VehicleStatus.ORDER_DRIVING) {
-                assignment.setStatus(AssignmentStatus.IN_PROGRESS);
-
-                if (assignment.getCurrentActionIndex() == null) {
-                    assignment.setCurrentActionIndex(0);
-                }
-                if (assignment.getStartTime() == null) {
-                    assignment.setStartTime(simNow);
-                }
-
-                assignmentRepository.save(assignment);
-
-                logger.info("[任务推进] aId={} ASSIGNED → IN_PROGRESS, actionIdx={}, startTime={}",
-                        assignment.getId(),
-                        assignment.getCurrentActionIndex(),
-                        assignment.getStartTime()
-                );
-            }
+            transportLifecycleService.startAssignmentExecution(
+                    assignment,
+                    vehicle,
+                    simNow,
+                    "StateTransitionService"
+            );
             return;
         }
 
         // IN_PROGRESS：完成一次动作状态后推进 actionIndex
         if (assignment.getStatus() == AssignmentStatus.IN_PROGRESS) {
+            VehicleStatus s = vehicle.getCurrentStatus();
+            if (s == VehicleStatus.UNLOADING) {
+                logger.info("[任务推进-卸货完成] assignmentId={} vehicleStatus={} simNow={}",
+                        assignment.getId(), s, simNow);
+                transportLifecycleService.completeDelivery(
+                        assignment,
+                        vehicle,
+                        resolveEndPOI(assignment),
+                        simNow,
+                        "StateTransitionService"
+                );
+                return;
+            }
+
             List<Long> line = assignment.getActionLine();
             if (line == null || line.isEmpty()) {
                 logger.info("[任务推进-跳过] assignmentId={} actionLine empty, do nothing", assignment.getId());
                 return;
             }
 
-            VehicleStatus s = vehicle.getCurrentStatus();
-            boolean actionLikeState =
-                    s == VehicleStatus.LOADING ||
-                            s == VehicleStatus.TRANSPORT_DRIVING ||
-                            s == VehicleStatus.UNLOADING ||
-                            s == VehicleStatus.WAITING ||
-                            s == VehicleStatus.BREAKDOWN;
-
-            if (actionLikeState) {
+            if (s == VehicleStatus.LOADING) {
+                transportLifecycleService.markLoadingCompleted(
+                        assignment,
+                        simNow,
+                        "StateTransitionService"
+                );
                 Integer before = assignment.getCurrentActionIndex();
-                logger.info("[任务推进-触发] assignmentId={} moveToNextAction beforeIndex={} simNow={} (vehicleStatus={})",
-                        assignment.getId(), before, simNow, s);
-
+                logger.info("[任务推进-装货完成] assignmentId={} moveToNextAction beforeIndex={} simNow={}",
+                        assignment.getId(), before, simNow);
                 assignment.moveToNextAction(simNow);
                 assignmentRepository.save(assignment);
-
                 logger.info("[任务推进] aId={} actionIdx {} → {} (simNow={})",
                         assignment.getId(),
                         before,
                         assignment.getCurrentActionIndex(),
                         simNow
                 );
+            } else if (s == VehicleStatus.TRANSPORT_DRIVING) {
+                transportLifecycleService.markTransportStarted(
+                        assignment,
+                        simNow,
+                        "StateTransitionService"
+                );
+                logger.info("[任务推进-运输中] assignmentId={} item status marked IN_TRANSIT", assignment.getId());
+            } else if (s == VehicleStatus.WAITING || s == VehicleStatus.BREAKDOWN) {
+                logger.info("[任务推进-等待/异常] assignmentId={} vehicleStatus={} 保持任务状态", assignment.getId(), s);
             } else {
                 logger.info("[任务推进-不推进] assignmentId={} vehicleStatus={} not action-like", assignment.getId(), s);
             }
         }
+    }
+
+    private POI resolveEndPOI(Assignment assignment) {
+        if (assignment == null) {
+            return null;
+        }
+        if (assignment.getDestPOI() != null) {
+            return assignment.getDestPOI();
+        }
+        Route route = assignment.getRoute();
+        return route != null ? route.getEndPOI() : null;
     }
 
     /**
@@ -407,6 +461,17 @@ public class StateTransitionServiceImpl implements StateTransitionService {
 
         // 3) 获取任务上下文
         Assignment assignment = vehicle.getCurrentAssignment();
+        if (assignment == null) {
+            if (vehicle.getCurrentStatus() != VehicleStatus.IDLE) {
+                vehicle.transitionToStatus(
+                        VehicleStatus.IDLE,
+                        simNow,
+                        calcStayDuration(VehicleStatus.IDLE, null, vehicle, minutesPerLoop)
+                );
+                vehicleRepository.save(vehicle);
+            }
+            return;
+        }
 
         // 4) 当前状态结束时推进任务
         onStateFinished(vehicle, assignment, simNow);

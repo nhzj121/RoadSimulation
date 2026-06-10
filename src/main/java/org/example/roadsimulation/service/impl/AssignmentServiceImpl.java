@@ -7,6 +7,7 @@ import org.example.roadsimulation.entity.Assignment.AssignmentStatus;
 import org.example.roadsimulation.repository.AssignmentRepository;
 import org.example.roadsimulation.service.AssignmentService;
 import org.example.roadsimulation.service.TransportMetricsService;
+import org.example.roadsimulation.service.TransportLifecycleService;
 import org.example.roadsimulation.service.VehicleService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
@@ -35,6 +36,9 @@ public class AssignmentServiceImpl implements AssignmentService {
 
     @Autowired
     private TransportMetricsService transportMetricsService;
+
+    @Autowired
+    private TransportLifecycleService transportLifecycleService;
 
     // ==================== CRUD ====================
 
@@ -144,9 +148,12 @@ public class AssignmentServiceImpl implements AssignmentService {
     @Override
     public AssignmentResponseDTO cancelAssignment(Long id) {
         Assignment assignment = findAssignmentById(id);
-        assignment.setStatus(AssignmentStatus.CANCELLED);
-        assignment.setEndTime(LocalDateTime.now());
-        assignmentRepository.save(assignment);
+        transportLifecycleService.cancelAssignment(
+                assignment,
+                "AssignmentService cancel",
+                LocalDateTime.now(),
+                "AssignmentService"
+        );
 
         calculateVehicleMetrics(assignment);
 
@@ -167,8 +174,19 @@ public class AssignmentServiceImpl implements AssignmentService {
     @Override
     public AssignmentResponseDTO updateAssignmentStatus(Long id, AssignmentStatus status) {
         Assignment assignment = findAssignmentById(id);
+        if (status == AssignmentStatus.CANCELLED) {
+            transportLifecycleService.cancelAssignment(
+                    assignment,
+                    "AssignmentService status update",
+                    LocalDateTime.now(),
+                    "AssignmentService"
+            );
+            calculateVehicleMetrics(assignment);
+            return convertToDTO(assignment);
+        }
+
         assignment.setStatus(status);
-        if(status == AssignmentStatus.COMPLETED || status == AssignmentStatus.CANCELLED){
+        if (status == AssignmentStatus.COMPLETED) {
             assignment.setEndTime(LocalDateTime.now());
         }
         assignmentRepository.save(assignment);
@@ -334,7 +352,15 @@ public class AssignmentServiceImpl implements AssignmentService {
 
     @Override
     public List<AssignmentBriefDTO> getAssignmentBriefsByIds(List<Long> assignmentIds) {
-        return new ArrayList<>();
+        if (assignmentIds == null || assignmentIds.isEmpty()) {
+            return new ArrayList<>();
+        }
+        List<Assignment> assignments = assignmentRepository.findByIds(assignmentIds);
+        List<AssignmentBriefDTO> result = new ArrayList<>();
+        for (Assignment assignment : assignments) {
+            result.add(convertToBriefDTO(assignment));
+        }
+        return result;
     }
 
     // ==================== 辅助方法 ====================
@@ -353,6 +379,76 @@ public class AssignmentServiceImpl implements AssignmentService {
     }
 
     // ==================== 核心：车辆指标计算 ====================
+    private AssignmentBriefDTO convertToBriefDTO(Assignment assignment) {
+        AssignmentBriefDTO dto = new AssignmentBriefDTO();
+        dto.setAssignmentId(assignment.getId());
+        dto.setStatus(assignment.getStatus() != null ? assignment.getStatus().toString() : "UNKNOWN");
+        dto.setCreatedTime(assignment.getCreatedTime());
+        dto.setStartTime(assignment.getStartTime());
+
+        Vehicle vehicle = assignment.getAssignedVehicle();
+        if (vehicle != null) {
+            dto.setVehicleId(vehicle.getId());
+            dto.setLicensePlate(vehicle.getLicensePlate());
+            dto.setVehicleStatus(vehicle.getCurrentStatus() != null ? vehicle.getCurrentStatus().toString() : "IDLE");
+            dto.setVehicleCurrentLon(vehicle.getCurrentLongitude() != null ? vehicle.getCurrentLongitude().doubleValue() : null);
+            dto.setVehicleCurrentLat(vehicle.getCurrentLatitude() != null ? vehicle.getCurrentLatitude().doubleValue() : null);
+            dto.setCurrentLoad(vehicle.getCurrentLoad());
+            dto.setMaxLoadCapacity(vehicle.getMaxLoadCapacity());
+            dto.setCurrentVolume(vehicle.getCurrentVolumn());
+            dto.setMaxVolumeCapacity(vehicle.getCargoVolume());
+        }
+
+        Route route = assignment.getRoute();
+        if (route != null) {
+            dto.setRouteId(route.getId());
+            dto.setRouteName(route.getName());
+            fillBriefStartPOI(dto, route.getStartPOI());
+            fillBriefEndPOI(dto, route.getEndPOI());
+        } else {
+            fillBriefStartPOI(dto, assignment.getOriginPOI());
+            fillBriefEndPOI(dto, assignment.getDestPOI());
+        }
+
+        Set<ShipmentItem> items = assignment.getShipmentItems();
+        if (items != null && !items.isEmpty()) {
+            ShipmentItem firstItem = items.iterator().next();
+            dto.setGoodsName(firstItem.getName());
+            dto.setQuantity(firstItem.getQty());
+            dto.setGoodsWeightPerUnit(firstItem.getWeight());
+            dto.setGoodsVolumePerUnit(firstItem.getVolume());
+            if (firstItem.getShipment() != null) {
+                dto.setShipmentRefNo(firstItem.getShipment().getRefNo());
+            }
+        }
+
+        if (dto.getStartPOIId() != null && dto.getEndPOIId() != null) {
+            dto.setPairId(dto.getStartPOIId() + "_" + dto.getEndPOIId());
+        }
+
+        return dto;
+    }
+
+    private void fillBriefStartPOI(AssignmentBriefDTO dto, POI poi) {
+        if (poi == null) {
+            return;
+        }
+        dto.setStartPOIId(poi.getId());
+        dto.setStartPOIName(poi.getName());
+        dto.setStartLng(poi.getLongitude());
+        dto.setStartLat(poi.getLatitude());
+    }
+
+    private void fillBriefEndPOI(AssignmentBriefDTO dto, POI poi) {
+        if (poi == null) {
+            return;
+        }
+        dto.setEndPOIId(poi.getId());
+        dto.setEndPOIName(poi.getName());
+        dto.setEndLng(poi.getLongitude());
+        dto.setEndLat(poi.getLatitude());
+    }
+
     private void calculateVehicleMetrics(Assignment assignment){
         if (assignment == null || assignment.getId() == null) {
             return;

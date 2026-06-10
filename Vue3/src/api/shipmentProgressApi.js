@@ -83,6 +83,7 @@ export const shipmentItemStatusMap = {
     LOADED: { text: '已装货', color: '#fa8c16' },
     IN_TRANSIT: { text: '运输中', color: '#52c41a' },
     DELIVERED: { text: '已送达', color: '#722ed1' },
+    CANCELLED: { text: '已取消', color: '#8c8c8c' },
 };
 
 /**
