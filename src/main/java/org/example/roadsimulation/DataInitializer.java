@@ -3045,6 +3045,8 @@ public class DataInitializer implements CommandLineRunner {
             }
 
             // 检查是否还有Enrollment，如果没有，则移除配对关系
+            completedAssignmentIds.forEach(this::markAssignmentAsCompleted);
+
             List<Enrollment> remainingEnrollments = new ArrayList<>(freshStartPOI.getEnrollments());
             if (remainingEnrollments.isEmpty()) {
                 String pairId = generatePoiPairKey(freshStartPOI, endPOI);
@@ -3915,11 +3917,44 @@ public class DataInitializer implements CommandLineRunner {
         }
     }
 
+    private AssignmentBriefDTO refreshAssignmentBriefRuntimeFields(AssignmentBriefDTO dto) {
+        if (dto == null || dto.getAssignmentId() == null) {
+            return dto;
+        }
+
+        assignmentRepository.findById(dto.getAssignmentId()).ifPresent(assignment -> {
+            dto.setStatus(assignment.getStatus() != null ? assignment.getStatus().toString() : "UNKNOWN");
+            dto.setStartTime(assignment.getStartTime());
+
+            Vehicle vehicle = assignment.getAssignedVehicle();
+            if (vehicle != null) {
+                dto.setVehicleId(vehicle.getId());
+                dto.setLicensePlate(vehicle.getLicensePlate());
+                dto.setVehicleStatus(vehicle.getCurrentStatus() != null
+                        ? vehicle.getCurrentStatus().toString()
+                        : "IDLE");
+                dto.setCurrentLoad(vehicle.getCurrentLoad());
+                dto.setCurrentVolume(vehicle.getCurrentVolumn());
+                dto.setMaxLoadCapacity(vehicle.getMaxLoadCapacity());
+                dto.setMaxVolumeCapacity(vehicle.getCargoVolume());
+                dto.setVehicleCurrentLon(vehicle.getCurrentLongitude() != null
+                        ? vehicle.getCurrentLongitude().doubleValue()
+                        : null);
+                dto.setVehicleCurrentLat(vehicle.getCurrentLatitude() != null
+                        ? vehicle.getCurrentLatitude().doubleValue()
+                        : null);
+            }
+        });
+
+        return dto;
+    }
+
     /**
      * 获取当前活跃的 Assignment 列表
      */
     public List<AssignmentBriefDTO> getActiveAssignments() {
         return assignmentBriefMap.values().stream()
+                .map(this::refreshAssignmentBriefRuntimeFields)
                 .filter(dto -> {
                     // 活跃状态：ASSIGNED, IN_PROGRESS
                     return "ASSIGNED".equals(dto.getStatus()) || "IN_PROGRESS".equals(dto.getStatus());
@@ -3932,6 +3967,7 @@ public class DataInitializer implements CommandLineRunner {
      */
     public List<AssignmentBriefDTO> getNewAssignments() {
         return assignmentBriefMap.values().stream()
+                .map(this::refreshAssignmentBriefRuntimeFields)
                 .filter(dto -> {
                     // 活跃且未绘制
                     return ("ASSIGNED".equals(dto.getStatus()) || "IN_PROGRESS".equals(dto.getStatus()))

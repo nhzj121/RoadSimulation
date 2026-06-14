@@ -19,6 +19,7 @@ import org.example.roadsimulation.repository.ShipmentItemRepository;
 import org.example.roadsimulation.repository.VehicleRepository;
 import org.example.roadsimulation.service.GaodeRoutePlanningQueueService;
 import org.example.roadsimulation.service.GetCostService;
+import org.example.roadsimulation.service.TransportLifecycleService;
 import org.example.roadsimulation.service.TransportMonitorService;
 import org.example.roadsimulation.service.impl.VehicleInitializationServiceImpl;
 import org.slf4j.Logger;
@@ -61,6 +62,9 @@ public class SimulationController {
 
     @Autowired
     private TransportMonitorService transportMonitorService;
+
+    @Autowired
+    private TransportLifecycleService transportLifecycleService;
 
     @Autowired
     private GaodeRoutePlanningQueueService gaodeRoutePlanningQueueService;
@@ -135,6 +139,40 @@ public class SimulationController {
         DispatchStrategy dispatchStrategy = resolveDispatchStrategy(request);
         simulationRuntimeConfig.setDispatchStrategy(dispatchStrategy);
         return ApiResponse.success("dispatch strategy updated", buildRuntimeConfigResponse());
+    }
+
+    @PostMapping("/assignment-loaded")
+    public ResponseEntity<ApiResponse<AssignmentLoadedResponse>> handleAssignmentLoaded(
+            @RequestBody AssignmentLoadedRequest request
+    ) {
+        try {
+            if (request == null) {
+                throw new IllegalArgumentException("request body is required");
+            }
+
+            TransportLifecycleService.LoadingCompletionResult result =
+                    transportLifecycleService.markFrontendLoadingCompleted(
+                            request.getAssignmentId(),
+                            request.getVehicleId(),
+                            simulationMainLoop.getCurrentSimTime(),
+                            "Frontend assignment-loaded"
+                    );
+
+            AssignmentLoadedResponse response = new AssignmentLoadedResponse(
+                    result.assignmentId(),
+                    result.vehicleId(),
+                    result.currentLoad(),
+                    result.currentVolume()
+            );
+            return ResponseEntity.ok(ApiResponse.success("assignment loaded", response));
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            logger.warn("Assignment loaded request rejected: {}", e.getMessage());
+            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
+        } catch (Exception e) {
+            logger.error("Assignment loaded processing failed", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(ApiResponse.error("assignment loaded processing failed"));
+        }
     }
 
     @PostMapping("/vehicle-arrived")
@@ -285,6 +323,62 @@ public class SimulationController {
 
         public void setEndPOIId(Long endPOIId) {
             this.endPOIId = endPOIId;
+        }
+    }
+
+    public static class AssignmentLoadedRequest {
+        private Long assignmentId;
+        private Long vehicleId;
+
+        public Long getAssignmentId() {
+            return assignmentId;
+        }
+
+        public void setAssignmentId(Long assignmentId) {
+            this.assignmentId = assignmentId;
+        }
+
+        public Long getVehicleId() {
+            return vehicleId;
+        }
+
+        public void setVehicleId(Long vehicleId) {
+            this.vehicleId = vehicleId;
+        }
+    }
+
+    public static class AssignmentLoadedResponse {
+        private final Long assignmentId;
+        private final Long vehicleId;
+        private final Double currentLoad;
+        private final Double currentVolume;
+
+        public AssignmentLoadedResponse(
+                Long assignmentId,
+                Long vehicleId,
+                Double currentLoad,
+                Double currentVolume
+        ) {
+            this.assignmentId = assignmentId;
+            this.vehicleId = vehicleId;
+            this.currentLoad = currentLoad;
+            this.currentVolume = currentVolume;
+        }
+
+        public Long getAssignmentId() {
+            return assignmentId;
+        }
+
+        public Long getVehicleId() {
+            return vehicleId;
+        }
+
+        public Double getCurrentLoad() {
+            return currentLoad;
+        }
+
+        public Double getCurrentVolume() {
+            return currentVolume;
         }
     }
 }
