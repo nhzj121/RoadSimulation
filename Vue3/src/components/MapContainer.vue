@@ -95,7 +95,7 @@
                 </div>
               </template>
               <div class="stats-info">
-                <div><strong>运行车辆</strong><span>{{ stats.running }}</span></div>
+                <div><strong>运行车辆</strong><span>{{ vehicleMonitorDisplayVehicles.length }}</span></div>
                 <div><strong>运输任务</strong><span>{{ stats.tasks }}</span></div>
               </div>
             </ElCard>
@@ -117,7 +117,7 @@
             <ElTabPane label="车辆监控" name="vehicles">
               <div class="vehicle-monitor-list" ref="vehiclePanelScroll">
                 <div
-                    v-for="v in vehicles"
+                    v-for="v in vehicleMonitorDisplayVehicles"
                     :key="v.id"
                     :id="`vehicle-item-${v.id}`"
                     class="vehicle-monitor-item"
@@ -145,7 +145,7 @@
                     </div>
                   </div>
                 </div>
-                <div v-if="vehicles.length === 0" class="no-vehicle monitor-empty">
+                <div v-if="vehicleMonitorDisplayVehicles.length === 0" class="no-vehicle monitor-empty">
                   暂无运输任务
                 </div>
               </div>
@@ -774,6 +774,7 @@ let assignmentDrawInProgress = false;
 // 响应式数据
 const drawnPairIds = ref(new Set()); // 已绘制的配对ID (可以删除)
 const drawnAssignmentIds = ref(new Set()); // 已绘制的Assignment ID
+const drawnVehicleIconIds = ref(new Set()); // Vehicle IDs with rendered, locatable vehicle markers.
 const activeRoutes = ref(new Map()); // 当前活动的路线映射，key为assignmentId
 
 // 路线规划缓存
@@ -802,6 +803,39 @@ const isActiveSimulationGeneration = (generation) => {
   return isSimulationRunning.value && !resetInProgress.value && generation === simulationGeneration.value;
 };
 
+function getVehicleIconId(vehicleId) {
+  return vehicleId === null || vehicleId === undefined ? null : String(vehicleId);
+}
+
+function markerHasValidPosition(marker) {
+  return Boolean(marker && normalizeMapPosition(marker.getPosition?.()));
+}
+
+function syncRegisteredVehicleStats() {
+  stats.running = vehicleMonitorDisplayVehicles.value.length;
+}
+
+function markDrawnVehicleIcon(vehicleId, marker) {
+  const iconId = getVehicleIconId(vehicleId);
+  if (!iconId || !markerHasValidPosition(marker)) {
+    return;
+  }
+  const nextIds = new Set(drawnVehicleIconIds.value);
+  nextIds.add(iconId);
+  drawnVehicleIconIds.value = nextIds;
+  syncRegisteredVehicleStats();
+}
+
+function unmarkDrawnVehicleIcon(vehicleId) {
+  const iconId = getVehicleIconId(vehicleId);
+  if (iconId) {
+    const nextIds = new Set(drawnVehicleIconIds.value);
+    nextIds.delete(iconId);
+    drawnVehicleIconIds.value = nextIds;
+    syncRegisteredVehicleStats();
+  }
+}
+
 const scheduleAssignmentDrawing = (drawer, runGeneration, label) => {
   if (!isActiveSimulationGeneration(runGeneration)) {
     return;
@@ -829,6 +863,7 @@ const cleanupRouteData = (routeData) => {
 };
 
 const discardRouteData = (assignmentId, routeData) => {
+  unmarkDrawnVehicleIcon(routeData?.assignment?.vehicleId);
   cleanupRouteData(routeData);
   activeRoutes.value.delete(assignmentId);
   drawnAssignmentIds.value.delete(assignmentId);
@@ -840,6 +875,8 @@ const cleanupAllActiveRoutes = () => {
   });
   activeRoutes.value.clear();
   drawnAssignmentIds.value.clear();
+  drawnVehicleIconIds.value = new Set();
+  syncRegisteredVehicleStats();
 };
 
 // Assignment状态跟踪
@@ -1360,6 +1397,11 @@ class VehicleAnimation {
       console.log(`[VehicleAnimation] ${this.licensePlate} loading payload synced`, correctedCargo);
       return correctedCargo;
     } catch (error) {
+      const message = error.response?.data?.message || error.message;
+      if (typeof message === 'string' && message.includes('Assignment is closed')) {
+        console.warn(`[VehicleAnimation] ${this.licensePlate} loading payload sync skipped: ${message}`);
+        return localCargo;
+      }
       console.error(`[VehicleAnimation] ${this.licensePlate} loading payload sync failed`, error);
       ElMessage.error(`车辆 ${this.licensePlate} 装货载重同步失败: ${error.response?.data?.message || error.message}`);
       return localCargo;
@@ -2687,12 +2729,7 @@ const updateVehicleInfo = async () => {
     vehicles.splice(0, vehicles.length, ...Array.from(vehicleMap.values()));
 
     // 更新统计信息
-    stats.running = vehicles.filter(v =>
-        v.status === 'ORDER_DRIVING' ||
-        v.status === 'LOADING' ||
-        v.status === 'TRANSPORT_DRIVING' ||
-        v.status === 'UNLOADING'
-    ).length;
+    stats.running = vehicleMonitorDisplayVehicles.value.length;
     stats.tasks = monitorSummary.activeAssignmentCount || activeAssignments.length;
 
     console.log(`[车辆信息] 更新完成，共 ${vehicles.length} 辆车`);
@@ -2754,6 +2791,8 @@ const clearDrawnRoutes = () => {
     } catch (_) {} // 忽略错误
   }
   vehicleAnimations.length = 0; // 清空vehicleAnimations数组
+  drawnVehicleIconIds.value = new Set();
+  syncRegisteredVehicleStats();
 };
 
 // 创建车辆图标（支持颜色和状态区分）
@@ -2892,6 +2931,7 @@ const clearRouteByAssignmentId = (assignmentId, vehicleId = null) => {
       }
       vehicleStatusManager.value.vehicleMarkers.delete(targetVehicleId);
       vehicleStatusManager.value.assignmentData.delete(targetVehicleId);
+      unmarkDrawnVehicleIcon(targetVehicleId);
     }
     return;
   }
@@ -2906,6 +2946,7 @@ const clearRouteByAssignmentId = (assignmentId, vehicleId = null) => {
     // 从映射中移除
     activeRoutes.value.delete(assignmentId);
     drawnAssignmentIds.value.delete(assignmentId);
+    unmarkDrawnVehicleIcon(targetVehicleId);
 
     console.log(`已清理Assignment ${assignmentId} 的路线`);
   }
@@ -3056,6 +3097,7 @@ const drawTwoStageRouteForAssignment = async (assignment, runGeneration = simula
           vehicleStatusManager.value.vehicleMarkers.delete(assignment.vehicleId);
           vehicleStatusManager.value.assignmentData.delete(assignment.vehicleId);
         }
+        unmarkDrawnVehicleIcon(assignment.vehicleId);
       }
     };
     activeRoutes.value.set(assignment.assignmentId, routeData);
@@ -3188,6 +3230,7 @@ const drawTwoStageRouteForAssignment = async (assignment, runGeneration = simula
           movingMarker,
           assignment
       );
+      markDrawnVehicleIcon(assignment.vehicleId, movingMarker);
     }
 
     // 车辆信息窗口
@@ -3256,6 +3299,7 @@ const drawMultiStageRouteForVrpAssignment = async (assignment, runGeneration = s
           vehicleStatusManager.value.vehicleMarkers.delete(assignment.vehicleId);
           vehicleStatusManager.value.assignmentData.delete(assignment.vehicleId);
         }
+        unmarkDrawnVehicleIcon(assignment.vehicleId);
       }
     };
     activeRoutes.value.set(assignment.assignmentId, routeData);
@@ -3386,6 +3430,7 @@ const drawMultiStageRouteForVrpAssignment = async (assignment, runGeneration = s
 
     if (vehicleStatusManager.value) {
       vehicleStatusManager.value.registerVehicleMarker(assignment.vehicleId, movingMarker, assignment);
+      markDrawnVehicleIcon(assignment.vehicleId, movingMarker);
     }
     movingMarker.on('click', () => {
       handleVehicleMarkerClick(assignment, movingMarker.getPosition());
@@ -3451,6 +3496,16 @@ const normalizeMapPosition = (position) => {
   const lat = Number(position.lat ?? position.latitude);
   return Number.isFinite(lng) && Number.isFinite(lat) ? [lng, lat] : null;
 };
+
+const vehicleMonitorDisplayVehicles = computed(() => vehicles.filter(vehicle => {
+  const iconId = getVehicleIconId(vehicle?.id);
+  if (!iconId || !drawnVehicleIconIds.value.has(iconId)) {
+    return false;
+  }
+
+  const marker = vehicleStatusManager.value?.vehicleMarkers?.get(vehicle.id);
+  return markerHasValidPosition(marker);
+}));
 
 const getAssignmentFallbackPosition = (assignment) => {
   if (!assignment) return null;
@@ -3828,7 +3883,7 @@ const fetchVehicles = async () => {
   try {
     const response = await request.get('/api/vehicles');
     vehicles.splice(0, vehicles.length, ...response.data);
-    stats.running = vehicles.filter(v => v.status === 'running').length;
+    stats.running = vehicleMonitorDisplayVehicles.value.length;
   } catch (error) {
     console.error('获取车辆数据失败:', error);
   }
@@ -3973,12 +4028,7 @@ const initVehicleStatusManager = () => {
     console.log(`[状态变化] 车辆 ${vehicle.licensePlate}: ${oldStatus} → ${newStatus}`);
 
     // 更新统计信息中的运行车辆数量
-    stats.running = vehicles.filter(v =>
-        v.status === 'ORDER_DRIVING' ||
-        v.status === 'LOADING' ||
-        v.status === 'TRANSPORT_DRIVING' ||
-        v.status === 'UNLOADING'
-    ).length;
+    stats.running = vehicleMonitorDisplayVehicles.value.length;
   });
 };
 
@@ -4043,6 +4093,9 @@ onUnmounted(() => {
     }
   });
   activeRoutes.value.clear();
+  drawnAssignmentIds.value.clear();
+  drawnVehicleIconIds.value = new Set();
+  syncRegisteredVehicleStats();
   drawnPairIds.value.clear();
 
   console.log('[MapContainer] 所有资源已清理');
