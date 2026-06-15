@@ -759,7 +759,7 @@ const onSpeedChange = (value) => {
 };
 
 const simulationTimer = ref(null);
-const simulationInterval = ref(8000); // 8秒更新一次
+const simulationInterval = ref(4000); // 4秒更新一次
 
 // --- 原有POI功能 ---
 const poiMarkers = ref([]); // 存储POI标记
@@ -769,6 +769,7 @@ const resetInProgress = ref(false); // 重置过程中禁止重复操作
 const useHeuristicDispatch = ref(false); // 是否启用启发式调度
 const simulationGeneration = ref(0);
 let routePlanningAbortController = null;
+let assignmentDrawInProgress = false;
 
 // 响应式数据
 const drawnPairIds = ref(new Set()); // 已绘制的配对ID (可以删除)
@@ -799,6 +800,26 @@ const invalidateSimulationGeneration = () => {
 
 const isActiveSimulationGeneration = (generation) => {
   return isSimulationRunning.value && !resetInProgress.value && generation === simulationGeneration.value;
+};
+
+const scheduleAssignmentDrawing = (drawer, runGeneration, label) => {
+  if (!isActiveSimulationGeneration(runGeneration)) {
+    return;
+  }
+  if (assignmentDrawInProgress) {
+    console.log(`[AssignmentDraw] skip ${label}: drawing already in progress`);
+    return;
+  }
+
+  assignmentDrawInProgress = true;
+  Promise.resolve()
+      .then(() => drawer(runGeneration))
+      .catch(error => {
+        console.error(`[AssignmentDraw] ${label} failed`, error);
+      })
+      .finally(() => {
+        assignmentDrawInProgress = false;
+      });
 };
 
 const cleanupRouteData = (routeData) => {
@@ -876,7 +897,7 @@ class VehicleStatusManager {
     }
 
     // 设置初始状态
-    const vehicle = this.vehicles.find(v => v.id === vehicleId);
+    const vehicle = this.vehicles[this.findVehicleIndex(vehicleId)];
     if (vehicle && vehicle.status) {
       this.updateVehicleIcon(vehicleId, vehicle.status);
     }
@@ -885,13 +906,80 @@ class VehicleStatusManager {
   /**
    * 更新车辆状态（核心方法）
    */
+  toNumber(value, fallback = 0) {
+    const numberValue = Number(value);
+    return Number.isFinite(numberValue) ? numberValue : fallback;
+  }
+
+  findVehicleIndex(vehicleId) {
+    return this.vehicles.findIndex(v => String(v.id) === String(vehicleId));
+  }
+
+  ensureVehicleRecord(vehicleId, status, additionalData = {}) {
+    let vehicleIndex = this.findVehicleIndex(vehicleId);
+    if (vehicleIndex !== -1) {
+      return this.vehicles[vehicleIndex];
+    }
+
+    const assignment = additionalData.assignment || this.assignmentData.get(vehicleId);
+    if (!assignment) {
+      return null;
+    }
+
+    if (additionalData.assignment) {
+      this.assignmentData.set(vehicleId, additionalData.assignment);
+    }
+
+    const position = additionalData.position || null;
+    const currentLoad = Math.max(0, this.toNumber(
+        additionalData.currentLoad !== undefined ? additionalData.currentLoad : assignment.currentLoad,
+        0
+    ));
+    const currentVolume = Math.max(0, this.toNumber(
+        additionalData.currentVolume !== undefined ? additionalData.currentVolume : assignment.currentVolume,
+        0
+    ));
+    const maxLoadCapacity = Math.max(0, this.toNumber(assignment.maxLoadCapacity, 0));
+    const maxVolumeCapacity = Math.max(0, this.toNumber(assignment.maxVolumeCapacity, 0));
+
+    const vehicle = {
+      id: vehicleId,
+      licensePlate: assignment.licensePlate || `车辆${vehicleId}`,
+      status: status || assignment.vehicleStatus || 'IDLE',
+      currentAssignment: assignment.routeName || assignment.currentAssignment || `任务 ${assignment.assignmentId || ''}`.trim(),
+      goodsInfo: assignment.goodsName || '',
+      quantity: assignment.quantity || 0,
+      startPOI: assignment.startPOIName || null,
+      endPOI: assignment.endPOIName || null,
+      currentLoad,
+      maxLoadCapacity,
+      currentVolume,
+      maxVolumeCapacity,
+      loadPercentage: maxLoadCapacity > 0 ? Math.min(100, (currentLoad / maxLoadCapacity) * 100) : 0,
+      volumePercentage: maxVolumeCapacity > 0 ? Math.min(100, (currentVolume / maxVolumeCapacity) * 100) : 0,
+      actionDescription: additionalData.actionDescription || assignment.actionDescription || null,
+      currentLongitude: position ? position[0] : this.toNumber(
+          assignment.vehicleCurrentLon ?? assignment.currentLng ?? assignment.vehicleStartLng ?? assignment.startLng,
+          null
+      ),
+      currentLatitude: position ? position[1] : this.toNumber(
+          assignment.vehicleCurrentLat ?? assignment.currentLat ?? assignment.vehicleStartLat ?? assignment.startLat,
+          null
+      ),
+      vrpProgress: additionalData.vrpProgress || assignment.vrpProgress || null
+    };
+
+    this.vehicles.push(vehicle);
+    console.log(`[VehicleStatusManager] 已创建临时车辆监控记录: ${vehicleId}`);
+    return vehicle;
+  }
+
   updateVehicleStatus(vehicleId, status, additionalData = {}) {
     console.log(`[VehicleStatusManager] 更新车辆状态: ${vehicleId} -> ${status}`, additionalData);
 
     // 1. 更新车辆列表中的状态
-    const vehicleIndex = this.vehicles.findIndex(v => v.id === vehicleId);
-    if (vehicleIndex !== -1) {
-      const vehicle = this.vehicles[vehicleIndex];
+    const vehicle = this.ensureVehicleRecord(vehicleId, status, additionalData);
+    if (vehicle) {
       const oldStatus = vehicle.status;
 
       // 保存旧状态用于回调
@@ -917,6 +1005,7 @@ class VehicleStatusManager {
       return true;
     } else {
       console.warn(`[VehicleStatusManager] 车辆ID ${vehicleId} 未找到`);
+      this.updateVehicleIcon(vehicleId, status);
       return false;
     }
   }
@@ -1018,7 +1107,7 @@ class VehicleStatusManager {
     }
 
     // 获取车辆信息以确定颜色
-    const vehicle = this.vehicles.find(v => v.id === vehicleId);
+    const vehicle = this.vehicles[this.findVehicleIndex(vehicleId)];
     let color = null;
 
     // 使用状态映射中的颜色，如果没有则使用车辆默认颜色
@@ -1094,15 +1183,15 @@ class VehicleStatusManager {
    * 获取车辆当前状态
    */
   getVehicleStatus(vehicleId) {
-    const vehicle = this.vehicles.find(v => v.id === vehicleId);
-    return vehicle?.status || 'UNKNOWN';
+    const vehicle = this.vehicles[this.findVehicleIndex(vehicleId)];
+    return vehicle?.status || null;
   }
 
   /**
    * 获取车辆详细信息（包含位置和载重）
    */
   getVehicleInfo(vehicleId) {
-    const vehicle = this.vehicles.find(v => v.id === vehicleId);
+    const vehicle = this.vehicles[this.findVehicleIndex(vehicleId)];
     if (!vehicle) return null;
 
     const assignment = this.assignmentData.get(vehicleId);
@@ -1216,6 +1305,65 @@ class VehicleAnimation {
     const sinDLat = Math.sin(dLat/2), sinDLon = Math.sin(dLon/2);
     const c = 2 * Math.asin(Math.sqrt(sinDLat*sinDLat + Math.cos(lat1)*Math.cos(lat2)*sinDLon*sinDLon));
     return R * c;
+  }
+
+  _toNumber(value, fallback = 0) {
+    const numberValue = Number(value);
+    return Number.isFinite(numberValue) ? numberValue : fallback;
+  }
+
+  _calculateLoadedCargo() {
+    const assignment = this.routeData.assignment || {};
+    const quantity = Math.max(0, this._toNumber(assignment.quantity, 0));
+    const weightPerUnit = Math.max(0, this._toNumber(assignment.goodsWeightPerUnit, 0));
+    const volumePerUnit = Math.max(0, this._toNumber(assignment.goodsVolumePerUnit, 0));
+
+    return {
+      currentLoad: weightPerUnit * quantity,
+      currentVolume: volumePerUnit * quantity
+    };
+  }
+
+  _applyLoadedCargo(cargo) {
+    const currentLoad = Math.max(0, this._toNumber(cargo?.currentLoad, 0));
+    const currentVolume = Math.max(0, this._toNumber(cargo?.currentVolume, 0));
+
+    this.routeData.assignment.currentLoad = currentLoad;
+    this.routeData.assignment.currentVolume = currentVolume;
+
+    if (this.statusManager) {
+      this.statusManager.updateVehicleStatus(this.vehicleId, 'TRANSPORT_DRIVING', {
+        assignment: this.routeData.assignment,
+        position: this.currentPosition,
+        currentLoad,
+        currentVolume,
+        isLoaded: true
+      });
+    }
+  }
+
+  async _reportLoadingCompleted(localCargo) {
+    try {
+      const response = await request.post('/api/simulation/assignment-loaded', {
+        assignmentId: this.assignmentId,
+        vehicleId: this.vehicleId
+      });
+      const payload = response.data?.data || response.data || {};
+      const correctedCargo = {
+        currentLoad: this._toNumber(payload.currentLoad, localCargo.currentLoad),
+        currentVolume: this._toNumber(payload.currentVolume, localCargo.currentVolume)
+      };
+      if (this.isCompleted) {
+        return correctedCargo;
+      }
+      this._applyLoadedCargo(correctedCargo);
+      console.log(`[VehicleAnimation] ${this.licensePlate} loading payload synced`, correctedCargo);
+      return correctedCargo;
+    } catch (error) {
+      console.error(`[VehicleAnimation] ${this.licensePlate} loading payload sync failed`, error);
+      ElMessage.error(`车辆 ${this.licensePlate} 装货载重同步失败: ${error.response?.data?.message || error.message}`);
+      return localCargo;
+    }
   }
 
   // 生成随机偏移（避免图标重叠）
@@ -1445,12 +1593,18 @@ class VehicleAnimation {
       console.log(`[VehicleAnimation] ${this.licensePlate} 开始装货...`);
       await this._waitWithSpeedFactor(2000);
 
+      const loadedCargo = this._calculateLoadedCargo();
+      this._applyLoadedCargo(loadedCargo);
+      void this._reportLoadingCompleted(loadedCargo);
+
       // 切换到第二阶段
       this.currentStage = 2;
       if (this.statusManager) {
         this.statusManager.updateVehicleStatus(this.vehicleId, 'TRANSPORT_DRIVING', {
           assignment: this.routeData.assignment,
           position: this.currentPosition,
+          currentLoad: loadedCargo.currentLoad,
+          currentVolume: loadedCargo.currentVolume,
           isLoaded: true
         });
       }
@@ -1478,6 +1632,8 @@ class VehicleAnimation {
       await this._waitWithSpeedFactor(2000);
       // ToDo
       // 完成任务
+      this.routeData.assignment.currentLoad = 0;
+      this.routeData.assignment.currentVolume = 0;
       if (this.statusManager) {
         this.statusManager.updateVehicleStatus(this.vehicleId, 'WAITING', {
           assignment: {
@@ -1907,31 +2063,7 @@ const handleVehicleArrived = async (assignmentId, vehicleId, endPOIId, licensePl
     console.log(`车辆 ${licensePlate} 到达处理完成`);
 
     // 2. 立即更新车辆状态为 WAITING，载重归零
-    if (vehicleStatusManager.value) {
-      vehicleStatusManager.value.updateVehicleStatus(vehicleId, 'IDLE', {
-        assignment: {
-          currentLoad: 0,
-          currentVolume: 0
-        },
-        position: null,
-        isLoaded: false
-      });
-    } else {
-      // 如果状态管理器未初始化，直接更新车辆列表
-      const vehicleIndex = vehicles.findIndex(v => v.id === vehicleId);
-      if (vehicleIndex !== -1) {
-        const vehicle = vehicles[vehicleIndex];
-        vehicle.status = 'IDLE';
-        vehicle.currentLoad = 0;
-        vehicle.currentVolume = 0;
-        vehicle.loadPercentage = 0;
-        vehicle.volumePercentage = 0;
-        vehicle.actionDescription = '等待任务';
-        console.log(`车辆 ${licensePlate} 载重已归零`);
-      }
-    }
-    // 4. 清理前端动画和路线
-    clearRouteByAssignmentId(assignmentId);
+    clearRouteByAssignmentId(assignmentId, vehicleId);
 
     // 2. 等待后端处理完成
     setTimeout(async () => {
@@ -1965,6 +2097,8 @@ const startSimulation = async () => {
     });
     isSimulationRunning.value = true;
 
+    await updateVehicleInfo();
+
     // 启动动画管理器
     if (animationManager.hasAnimations()) {
       // 有现有动画，恢复它们
@@ -1978,14 +2112,13 @@ const startSimulation = async () => {
       animationManager.startAll();
 
       // 初始加载当前活跃的Assignment
-      await fetchCurrentAssignments(runGeneration);
+      scheduleAssignmentDrawing(fetchCurrentAssignments, runGeneration, 'initial assignments');
     }
 
     // 启动定时更新
     startSimulationTimer();
 
     // 初始化车辆信息
-    await updateVehicleInfo();
 
     ElMessage.success('仿真已启动');
 
@@ -2080,6 +2213,7 @@ const resetSimulation = async () => {
       // 重置数据
       currentPOIs.value = [];
       vehicles.splice(0, vehicles.length);
+      syncTransportMonitorData({});
 
       // 重置统计信息
       stats.running = 0;
@@ -2093,6 +2227,7 @@ const resetSimulation = async () => {
       }
 
       const resetResult = await simulationController.resetSimulation();
+      syncTransportMonitorData({});
       if (!resetResult?.success) {
         throw new Error(resetResult?.message || '后端清理失败，请重试 reset');
       }
@@ -2121,14 +2256,14 @@ const startSimulationTimer = () => {
       const runGeneration = simulationGeneration.value;
       await fetchSimulationCosts();
 
-      // 增量获取并绘制新配对
-      await fetchAndDrawNewAssignments(runGeneration);
+      // Refresh monitor data before route drawing.
+      await updateVehicleInfo();
 
-      // 定期检查并清理已完成的Assignment
+      // Cleanup after the local monitor snapshot is stable.
       await checkAndCleanupCompletedAssignments();
 
-      // 更新车辆信息
-      await updateVehicleInfo();
+      // Draw new assignments asynchronously so route planning does not block monitor data.
+      scheduleAssignmentDrawing(fetchAndDrawNewAssignments, runGeneration, 'new assignments');
 
     }
   }, simulationInterval.value);
@@ -2417,61 +2552,87 @@ const updateVehicleInfo = async () => {
     console.log('[运输监控] 正在从 /api/simulation/monitor/active 获取数据...');
 
     const monitorData = await fetchTransportMonitor();
-    const activeAssignments = monitorData.assignments || [];
-    const activeMonitorVehicles = monitorData.vehicles || [];
+    const activeAssignments = Array.isArray(monitorData.assignments) ? monitorData.assignments : [];
+    const activeMonitorVehicles = Array.isArray(monitorData.vehicles) ? monitorData.vehicles : [];
+    const previousVehicleMap = new Map(vehicles.map(vehicle => [vehicle.id, { ...vehicle }]));
+    const toNumber = (value, fallback = 0) => {
+      const numberValue = Number(value);
+      return Number.isFinite(numberValue) ? numberValue : fallback;
+    };
+    const isKnownStatus = status => Boolean(status && status !== 'UNKNOWN');
 
     console.log(`[车辆信息] 获取到 ${activeAssignments?.length || 0} 个活动任务`);
 
-    // 清空当前车辆列表
-    vehicles.splice(0, vehicles.length);
+    // Build the next snapshot first, then replace vehicles atomically.
 
     const vehicleMap = new Map(); // 用于按车辆ID去重
 
     if (activeAssignments && Array.isArray(activeAssignments)) {
       activeAssignments.forEach(assignment => {
         if (assignment.vehicleId) {
+          const previous = previousVehicleMap.get(assignment.vehicleId) || {};
           const vehicle = {
             id: assignment.vehicleId,
             licensePlate: assignment.licensePlate || `车辆${assignment.vehicleId}`,
-            status: assignment.vehicleStatus || 'IDLE',
+            status: isKnownStatus(assignment.vehicleStatus)
+                ? assignment.vehicleStatus
+                : (isKnownStatus(previous.status) ? previous.status : 'IDLE'),
             currentAssignment: assignment.routeName,
             goodsInfo: assignment.goodsName,
             quantity: assignment.quantity,
             startPOI: assignment.startPOIName,
             endPOI: assignment.endPOIName,
             // 载重信息
-            currentLoad: assignment.currentLoad || 0,
-            maxLoadCapacity: assignment.maxLoadCapacity || 0,
+            currentLoad: Math.max(0, toNumber(assignment.currentLoad, previous.currentLoad || 0)),
+            maxLoadCapacity: Math.max(0, toNumber(assignment.maxLoadCapacity, previous.maxLoadCapacity || 0)),
             // 载容信息
-            currentVolume: assignment.currentVolume || 0,
-            maxVolumeCapacity: assignment.maxVolumeCapacity || 0,
+            currentVolume: Math.max(0, toNumber(assignment.currentVolume, previous.currentVolume || 0)),
+            maxVolumeCapacity: Math.max(0, toNumber(assignment.maxVolumeCapacity, previous.maxVolumeCapacity || 0)),
             // 货物单位信息
-            goodsWeightPerUnit: assignment.goodsWeightPerUnit || 0,
-            goodsVolumePerUnit: assignment.goodsVolumePerUnit || 0,
+            goodsWeightPerUnit: toNumber(assignment.goodsWeightPerUnit, 0),
+            goodsVolumePerUnit: toNumber(assignment.goodsVolumePerUnit, 0),
             // 为"到达检测"功能预留的字段
-            currentPOIName: assignment.currentPOIName || null,
-            lastArrivalPOI: null,
-            recentlyArrived: false
+            currentPOIName: assignment.currentPOIName || previous.currentPOIName || null,
+            lastArrivalPOI: previous.lastArrivalPOI || null,
+            recentlyArrived: previous.recentlyArrived || false,
+            actionDescription: previous.actionDescription || null,
+            vrpProgress: previous.vrpProgress || null
           };
 
           if (animationManager && animationManager.animations.has(assignment.assignmentId)) {
             const activeAnimation = animationManager.animations.get(assignment.assignmentId);
 
-            // 取本地的状态和载重，而不是后端的死数据
+            // Merge local animation status without overriding backend load for normal assignments.
             if (vehicleStatusManager.value) {
-              vehicle.status = vehicleStatusManager.value.getVehicleStatus(assignment.vehicleId) || vehicle.status;
+              const localStatus = vehicleStatusManager.value.getVehicleStatus(assignment.vehicleId);
+              if (isKnownStatus(localStatus)) {
+                vehicle.status = localStatus;
+              }
             }
 
             if (activeAnimation.routeData && activeAnimation.routeData.assignment) {
-              vehicle.currentLoad = activeAnimation.routeData.assignment.currentLoad || 0;
-              vehicle.currentVolume = activeAnimation.routeData.assignment.currentVolume || 0;
-              if (activeAnimation.routeData.assignment.vrpProgress) {
-                vehicle.vrpProgress = activeAnimation.routeData.assignment.vrpProgress;
+              const localAssignment = activeAnimation.routeData.assignment;
+              const progress = localAssignment.vrpProgress;
+              if (progress) {
+                vehicle.vrpProgress = progress;
+                if (Number.isFinite(Number(progress.currentLoad))) {
+                  vehicle.currentLoad = Math.max(0, toNumber(progress.currentLoad, vehicle.currentLoad));
+                }
+                if (Number.isFinite(Number(progress.currentVolume))) {
+                  vehicle.currentVolume = Math.max(0, toNumber(progress.currentVolume, vehicle.currentVolume));
+                }
                 const nextNode = vehicle.vrpProgress.nextNode;
                 if (nextNode) {
                   vehicle.actionDescription = nextNode.actionType === 'LOAD'
                       ? `前往装货点: ${nextNode.poiName || '未知'}`
                       : `前往卸货点: ${nextNode.poiName || '未知'}`;
+                }
+              } else {
+                if (Number.isFinite(Number(localAssignment.currentLoad))) {
+                  vehicle.currentLoad = Math.max(0, toNumber(localAssignment.currentLoad, vehicle.currentLoad));
+                }
+                if (Number.isFinite(Number(localAssignment.currentVolume))) {
+                  vehicle.currentVolume = Math.max(0, toNumber(localAssignment.currentVolume, vehicle.currentVolume));
                 }
               }
             }
@@ -2494,20 +2655,25 @@ const updateVehicleInfo = async () => {
         if (!monitorVehicle.vehicleId || vehicleMap.has(monitorVehicle.vehicleId)) {
           return;
         }
+        const previous = previousVehicleMap.get(monitorVehicle.vehicleId) || {};
         const vehicle = {
           id: monitorVehicle.vehicleId,
           licensePlate: monitorVehicle.licensePlate || `车辆${monitorVehicle.vehicleId}`,
-          status: monitorVehicle.status || 'IDLE',
+          status: isKnownStatus(monitorVehicle.status)
+              ? monitorVehicle.status
+              : (isKnownStatus(previous.status) ? previous.status : 'IDLE'),
           currentAssignment: `任务 ${monitorVehicle.assignmentIds?.join(', ') || '无'}`,
           goodsInfo: '',
           quantity: 0,
-          currentLoad: monitorVehicle.currentLoad || 0,
-          maxLoadCapacity: monitorVehicle.maxLoadCapacity || 0,
-          currentVolume: monitorVehicle.currentVolume || 0,
-          maxVolumeCapacity: monitorVehicle.maxVolumeCapacity || 0,
-          currentPOIName: null,
-          lastArrivalPOI: null,
-          recentlyArrived: false
+          currentLoad: Math.max(0, toNumber(monitorVehicle.currentLoad, previous.currentLoad || 0)),
+          maxLoadCapacity: Math.max(0, toNumber(monitorVehicle.maxLoadCapacity, previous.maxLoadCapacity || 0)),
+          currentVolume: Math.max(0, toNumber(monitorVehicle.currentVolume, previous.currentVolume || 0)),
+          maxVolumeCapacity: Math.max(0, toNumber(monitorVehicle.maxVolumeCapacity, previous.maxVolumeCapacity || 0)),
+          currentPOIName: previous.currentPOIName || null,
+          lastArrivalPOI: previous.lastArrivalPOI || null,
+          recentlyArrived: previous.recentlyArrived || false,
+          actionDescription: previous.actionDescription || null,
+          vrpProgress: previous.vrpProgress || null
         };
         vehicle.loadPercentage = vehicle.maxLoadCapacity > 0 ?
             Math.min(100, (vehicle.currentLoad / vehicle.maxLoadCapacity) * 100) : 0;
@@ -2518,9 +2684,7 @@ const updateVehicleInfo = async () => {
     }
 
     // 将处理好的车辆信息添加到响应式数组
-    vehicleMap.forEach(vehicle => {
-      vehicles.push(vehicle);
-    });
+    vehicles.splice(0, vehicles.length, ...Array.from(vehicleMap.values()));
 
     // 更新统计信息
     stats.running = vehicles.filter(v =>
@@ -2708,8 +2872,29 @@ const createVehicleIcon = (size = 32, status = 'IDLE', color = null, meta = {}) 
 };
 
 // 清除特定Assignment的路线
-const clearRouteByAssignmentId = (assignmentId) => {
+const clearRouteByAssignmentId = (assignmentId, vehicleId = null) => {
   const routeData = activeRoutes.value.get(assignmentId);
+  const targetVehicleId = vehicleId || routeData?.assignment?.vehicleId || null;
+  if (!routeData) {
+    drawnAssignmentIds.value.delete(assignmentId);
+    if (targetVehicleId && vehicleStatusManager.value) {
+      const marker = vehicleStatusManager.value.vehicleMarkers.get(targetVehicleId);
+      if (marker) {
+        try {
+          map?.remove(marker);
+        } catch (error) {
+          try {
+            marker.setMap?.(null);
+          } catch (innerError) {
+            console.warn(`Failed to cleanup vehicle ${targetVehicleId} marker`, innerError);
+          }
+        }
+      }
+      vehicleStatusManager.value.vehicleMarkers.delete(targetVehicleId);
+      vehicleStatusManager.value.assignmentData.delete(targetVehicleId);
+    }
+    return;
+  }
   if (routeData) {
     // 清理动画
     if (animationManager) {
@@ -3617,10 +3802,21 @@ const checkAndCleanupCompletedAssignments = async () => {
     const assignmentIdsToCleanup = response.data;
 
     if (assignmentIdsToCleanup && assignmentIdsToCleanup.length > 0) {
+      let cleanedAssignments = 0;
+      let skippedRunningAssignments = 0;
       assignmentIdsToCleanup.forEach(assignmentId => {
+        const animation = animationManager?.animations?.get(assignmentId);
+        if (animation && animation.isCompleted !== true) {
+          skippedRunningAssignments += 1;
+          return;
+        }
         clearRouteByAssignmentId(assignmentId);
+        cleanedAssignments += 1;
       });
-      console.log(`清理了 ${assignmentIdsToCleanup.length} 个已完成的Assignment`);
+      if (skippedRunningAssignments > 0) {
+        console.log(`[AssignmentCleanup] skipped ${skippedRunningAssignments} running assignments`);
+      }
+      console.log(`清理了 ${cleanedAssignments} 个已完成的Assignment`);
     }
   } catch (error) {
     console.error('检查并清理已完成Assignment失败:', error);

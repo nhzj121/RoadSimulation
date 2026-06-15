@@ -4,6 +4,7 @@ import jakarta.annotation.PostConstruct;
 import jakarta.transaction.Transactional;
 import org.example.roadsimulation.entity.Assignment;
 import org.example.roadsimulation.entity.Assignment.AssignmentStatus;
+import org.example.roadsimulation.entity.AssignmentNode;
 import org.example.roadsimulation.entity.POI;
 import org.example.roadsimulation.entity.Route;
 import org.example.roadsimulation.entity.Vehicle;
@@ -78,6 +79,9 @@ public class StateTransitionServiceImpl implements StateTransitionService {
                 return VehicleStatus.ORDER_DRIVING;
 
             case IN_PROGRESS:
+                if (hasAssignmentNodes(assignment)) {
+                    return resolveNextStatusFromNodes(assignment, currentStatus, vehicle);
+                }
                 if (currentStatus == VehicleStatus.ORDER_DRIVING) {
                     return VehicleStatus.LOADING;
                 }
@@ -133,6 +137,61 @@ public class StateTransitionServiceImpl implements StateTransitionService {
             }
         }
         return VehicleStatus.TRANSPORT_DRIVING;
+    }
+
+    private VehicleStatus resolveNextStatusFromNodes(
+            Assignment assignment,
+            VehicleStatus currentStatus,
+            Vehicle vehicle
+    ) {
+        AssignmentNode pendingNode = resolvePendingNode(assignment);
+        if (pendingNode == null) {
+            return VehicleStatus.IDLE;
+        }
+
+        if (currentStatus == VehicleStatus.ORDER_DRIVING || currentStatus == VehicleStatus.TRANSPORT_DRIVING) {
+            return statusForNodeAction(pendingNode);
+        }
+
+        if (currentStatus == VehicleStatus.LOADING || currentStatus == VehicleStatus.UNLOADING
+                || currentStatus == VehicleStatus.IDLE || currentStatus == VehicleStatus.WAITING) {
+            return hasRuntimeLoad(vehicle) ? VehicleStatus.TRANSPORT_DRIVING : VehicleStatus.ORDER_DRIVING;
+        }
+
+        return VehicleStatus.TRANSPORT_DRIVING;
+    }
+
+    private VehicleStatus statusForNodeAction(AssignmentNode node) {
+        if (node == null || node.getActionType() == null) {
+            return VehicleStatus.WAITING;
+        }
+        return switch (node.getActionType()) {
+            case LOAD -> VehicleStatus.LOADING;
+            case UNLOAD -> VehicleStatus.UNLOADING;
+            case PASS_BY -> VehicleStatus.WAITING;
+        };
+    }
+
+    private boolean hasRuntimeLoad(Vehicle vehicle) {
+        return vehicle != null && vehicle.getCurrentLoad() != null && vehicle.getCurrentLoad() > 0.0;
+    }
+
+    private boolean hasAssignmentNodes(Assignment assignment) {
+        return assignment != null && assignment.getNodes() != null && !assignment.getNodes().isEmpty();
+    }
+
+    private AssignmentNode resolvePendingNode(Assignment assignment) {
+        if (!hasAssignmentNodes(assignment)) {
+            return null;
+        }
+        Integer idx = assignment.getCurrentActionIndex();
+        if (idx != null && idx >= 0 && idx < assignment.getNodes().size()) {
+            AssignmentNode node = assignment.getNodes().get(idx);
+            if (node != null && !node.isCompleted()) {
+                return node;
+            }
+        }
+        return assignment.getNextPendingNode();
     }
 
     /**
@@ -208,6 +267,35 @@ public class StateTransitionServiceImpl implements StateTransitionService {
         // IN_PROGRESS：完成一次动作状态后推进 actionIndex
         if (assignment.getStatus() == AssignmentStatus.IN_PROGRESS) {
             VehicleStatus s = vehicle.getCurrentStatus();
+            if (hasAssignmentNodes(assignment)) {
+                if (s == VehicleStatus.LOADING || s == VehicleStatus.UNLOADING || s == VehicleStatus.WAITING) {
+                    AssignmentNode pendingNode = resolvePendingNode(assignment);
+                    if (pendingNode != null && statusForNodeAction(pendingNode) == s) {
+                        logger.info("[AssignmentNode] assignmentId={} nodeIndex={} action={} vehicleStatus={} simNow={}",
+                                assignment.getId(),
+                                pendingNode.getSequenceIndex(),
+                                pendingNode.getActionType(),
+                                s,
+                                simNow);
+                        transportLifecycleService.markCurrentNodeCompleted(
+                                assignment,
+                                vehicle,
+                                simNow,
+                                "StateTransitionService"
+                        );
+                        if (!transportLifecycleService.hasPendingNodes(assignment)) {
+                            transportLifecycleService.completeDelivery(
+                                    assignment,
+                                    vehicle,
+                                    resolveEndPOI(assignment),
+                                    simNow,
+                                    "StateTransitionService"
+                            );
+                        }
+                    }
+                }
+                return;
+            }
             if (s == VehicleStatus.UNLOADING) {
                 logger.info("[任务推进-卸货完成] assignmentId={} vehicleStatus={} simNow={}",
                         assignment.getId(), s, simNow);
