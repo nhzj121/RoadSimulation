@@ -26,6 +26,8 @@ import java.util.Set;
 @Service
 public class TransportLifecycleService {
 
+    private static final Duration FRONTEND_ORDER_DRIVING_WINDOW = Duration.ofMinutes(30);
+
     private final ShipmentRepository shipmentRepository;
     private final ShipmentItemRepository shipmentItemRepository;
     private final AssignmentRepository assignmentRepository;
@@ -91,7 +93,11 @@ public class TransportLifecycleService {
 
         if (managedVehicle != null) {
             managedVehicle.addAssignment(assignment);
-            managedVehicle.transitionToStatus(Vehicle.VehicleStatus.ORDER_DRIVING, now, Duration.ZERO);
+            managedVehicle.transitionToStatus(
+                    Vehicle.VehicleStatus.ORDER_DRIVING,
+                    now,
+                    FRONTEND_ORDER_DRIVING_WINDOW
+            );
             managedVehicle.setCurrentLoad(0.0);
             managedVehicle.setCurrentVolumn(0.0);
             managedVehicle.setUpdatedBy(actor);

@@ -92,7 +92,7 @@ public class StateTransitionServiceImpl implements StateTransitionService {
                     return VehicleStatus.UNLOADING;
                 }
                 if (currentStatus == VehicleStatus.UNLOADING) {
-                    return VehicleStatus.IDLE;
+                    return VehicleStatus.UNLOADING;
                 }
                 return resolveNextStatusFromAssignmentNode(assignment, currentStatus);
 
@@ -297,15 +297,8 @@ public class StateTransitionServiceImpl implements StateTransitionService {
                 return;
             }
             if (s == VehicleStatus.UNLOADING) {
-                logger.info("[任务推进-卸货完成] assignmentId={} vehicleStatus={} simNow={}",
+                logger.info("[任务推进-等待前端到达] assignmentId={} vehicleStatus={} simNow={}",
                         assignment.getId(), s, simNow);
-                transportLifecycleService.completeDelivery(
-                        assignment,
-                        vehicle,
-                        resolveEndPOI(assignment),
-                        simNow,
-                        "StateTransitionService"
-                );
                 return;
             }
 
