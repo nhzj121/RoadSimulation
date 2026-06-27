@@ -17,6 +17,7 @@ import org.example.roadsimulation.repository.AssignmentRepository;
 import org.example.roadsimulation.repository.POIRepository;
 import org.example.roadsimulation.repository.ShipmentItemRepository;
 import org.example.roadsimulation.repository.VehicleRepository;
+import org.example.roadsimulation.service.CostBaselineNormalizationService;
 import org.example.roadsimulation.service.GaodeRoutePlanningQueueService;
 import org.example.roadsimulation.service.GetCostService;
 import org.example.roadsimulation.service.TransportLifecycleService;
@@ -59,6 +60,9 @@ public class SimulationController {
 
     @Autowired
     private GetCostService getCostService;
+
+    @Autowired
+    private CostBaselineNormalizationService costBaselineNormalizationService;
 
     @Autowired
     private TransportMonitorService transportMonitorService;
@@ -216,10 +220,12 @@ public class SimulationController {
 
     @GetMapping("/costs")
     public RuntimeCostDTO getCurrentCosts() {
-        return getCostService.calculateRuntimeCosts(
+        RuntimeCostDTO costs = getCostService.calculateRuntimeCosts(
                 vehicleRepository.findAll(),
                 assignmentRepository.findRuntimeActiveAssignments()
         );
+        costBaselineNormalizationService.applyLatest(costs);
+        return costs;
     }
 
     @GetMapping("/monitor/active")
