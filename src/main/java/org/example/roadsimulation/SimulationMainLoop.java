@@ -1,7 +1,14 @@
 package org.example.roadsimulation;
 
 import org.example.roadsimulation.core.SimulationContext;
+import org.example.roadsimulation.dto.RuntimeCostDTO;
 import org.example.roadsimulation.entity.CostEntity;
+import org.example.roadsimulation.entity.ShipmentItem;
+import org.example.roadsimulation.repository.AssignmentRepository;
+import org.example.roadsimulation.repository.ShipmentItemRepository;
+import org.example.roadsimulation.repository.VehicleRepository;
+import org.example.roadsimulation.service.CostBaselineNormalizationService;
+import org.example.roadsimulation.service.GetCostService;
 import org.example.roadsimulation.service.POIShipmentManager;
 import org.example.roadsimulation.service.ProcessingChainServiceV2;
 import org.example.roadsimulation.service.VehicleInitializationService;
@@ -39,6 +46,21 @@ public class SimulationMainLoop {
 
     @Autowired
     private SimulationDispatchRouter simulationDispatchRouter;
+
+    @Autowired
+    private GetCostService getCostService;
+
+    @Autowired
+    private CostBaselineNormalizationService costBaselineNormalizationService;
+
+    @Autowired
+    private VehicleRepository vehicleRepository;
+
+    @Autowired
+    private AssignmentRepository assignmentRepository;
+
+    @Autowired
+    private ShipmentItemRepository shipmentItemRepository;
 
     @Autowired
     SimulationMainLoop(DataInitializer dataInitializer,
@@ -115,6 +137,7 @@ public class SimulationMainLoop {
                     return;
                 }
                 simulationDispatchRouter.dispatch();
+                recordCostNormalizationDispatchSnapshot();
                 if (shouldAbortLoop()) {
                     return;
                 }
@@ -190,6 +213,7 @@ public class SimulationMainLoop {
         try {
             simulationContext.reset();
             CostEntity.reset();
+            costBaselineNormalizationService.reset();
             System.out.println("仿真已重置");
         } finally {
             lifecycleLock.unlock();
@@ -206,5 +230,25 @@ public class SimulationMainLoop {
 
     private boolean shouldAbortLoop() {
         return simulationContext.shouldAbortSimulationWork();
+    }
+
+    private void recordCostNormalizationDispatchSnapshot() {
+        try {
+            RuntimeCostDTO costs = getCostService.calculateRuntimeCosts(
+                    vehicleRepository.findAll(),
+                    assignmentRepository.findRuntimeActiveAssignments()
+            );
+            long totalShipmentItems = shipmentItemRepository.count();
+            long notAssignedItems = shipmentItemRepository
+                    .findByStatus(ShipmentItem.ShipmentItemStatus.NOT_ASSIGNED)
+                    .size();
+            costBaselineNormalizationService.recordDispatchSnapshot(
+                    costs,
+                    totalShipmentItems,
+                    notAssignedItems
+            );
+        } catch (Exception ex) {
+            System.err.println("Cost baseline normalization snapshot failed: " + ex.getMessage());
+        }
     }
 }
