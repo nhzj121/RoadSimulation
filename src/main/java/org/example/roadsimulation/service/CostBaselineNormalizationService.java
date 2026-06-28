@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.example.roadsimulation.config.DispatchStrategy;
 import org.example.roadsimulation.config.SimulationRuntimeConfig;
+import org.example.roadsimulation.dto.RuntimeCostDetailDTO;
 import org.example.roadsimulation.dto.RuntimeCostDTO;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,6 +14,7 @@ import org.springframework.stereotype.Service;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.LocalDateTime;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.Locale;
@@ -53,6 +55,7 @@ public class CostBaselineNormalizationService {
 
     private WindowSnapshot previousSnapshot;
     private NormalizedWindow latestWindow;
+    private long nextWindowSequence = 1L;
 
     public CostBaselineNormalizationService(SimulationRuntimeConfig simulationRuntimeConfig) {
         this.simulationRuntimeConfig = simulationRuntimeConfig;
@@ -71,6 +74,7 @@ public class CostBaselineNormalizationService {
         DispatchStrategy strategy = currentStrategy();
         WindowSnapshot current = new WindowSnapshot(
                 strategy,
+                LocalDateTime.now(),
                 safe(currentCosts.getCostA()),
                 safe(currentCosts.getCostB()),
                 safe(currentCosts.getCostC()),
@@ -120,9 +124,70 @@ public class CostBaselineNormalizationService {
         dto.setBaselineStrategy(window.strategy().name());
     }
 
+    public synchronized RuntimeCostDetailDTO.WindowDetail exportLatestWindowDetail() {
+        NormalizedWindow window = latestWindow;
+        if (!enabled || window == null || window.strategy() != currentStrategy()) {
+            return null;
+        }
+
+        RuntimeCostDetailDTO.WindowDetail detail = new RuntimeCostDetailDTO.WindowDetail();
+        detail.setWindowId(window.windowId());
+        detail.setStrategy(window.strategy().name());
+        detail.setWindowStartTime(window.windowStartTime());
+        detail.setWindowEndTime(window.windowEndTime());
+        detail.setTaskScale(window.taskScale());
+        detail.setGeneratedShipmentItems(window.generatedShipmentItems());
+        detail.setNotAssignedItemsAtStart(window.notAssignedItemsAtStart());
+        detail.setStartCostA(window.startCostA());
+        detail.setStartCostB(window.startCostB());
+        detail.setStartCostC(window.startCostC());
+        detail.setStartCostD(window.startCostD());
+        detail.setStartCostE(window.startCostE());
+        detail.setEndCostA(window.endCostA());
+        detail.setEndCostB(window.endCostB());
+        detail.setEndCostC(window.endCostC());
+        detail.setEndCostD(window.endCostD());
+        detail.setEndCostE(window.endCostE());
+        detail.setUnitCostA(window.unitA());
+        detail.setUnitCostB(window.unitB());
+        detail.setUnitCostC(window.unitC());
+        detail.setUnitCostD(window.unitD());
+        detail.setUnitCostE(window.unitE());
+        return detail;
+    }
+
+    public synchronized RuntimeCostDetailDTO.BaselineDetail exportCurrentBaselineDetail() {
+        if (!enabled) {
+            return null;
+        }
+
+        DispatchStrategy strategy = currentStrategy();
+        String percentile = normalizedPercentile();
+        BaselineValues baseline = findBaseline(strategy);
+
+        RuntimeCostDetailDTO.BaselineDetail detail = new RuntimeCostDetailDTO.BaselineDetail();
+        detail.setBaselinePercentile(percentile);
+        detail.setBaselineStrategy(strategy.name());
+        detail.setRuntimeWeightA(RUNTIME_WEIGHT_A);
+        detail.setRuntimeWeightB(RUNTIME_WEIGHT_B);
+        detail.setRuntimeWeightC(RUNTIME_WEIGHT_C);
+        detail.setRuntimeWeightD(RUNTIME_WEIGHT_D);
+        detail.setRuntimeWeightE(RUNTIME_WEIGHT_E);
+
+        if (baseline != null && baseline.isValid()) {
+            detail.setBaselineCostA(baseline.a());
+            detail.setBaselineCostB(baseline.b());
+            detail.setBaselineCostC(baseline.c());
+            detail.setBaselineCostD(baseline.d());
+            detail.setBaselineCostE(baseline.e());
+        }
+        return detail;
+    }
+
     public synchronized void reset() {
         previousSnapshot = null;
         latestWindow = null;
+        nextWindowSequence = 1L;
     }
 
     void configureForTest(boolean enabled, String baselinePath, String baselinePercentile) {
@@ -133,6 +198,7 @@ public class CostBaselineNormalizationService {
         this.cachedPath = null;
         this.cachedLastModifiedMillis = Long.MIN_VALUE;
         this.lastWarningKey = null;
+        this.nextWindowSequence = 1L;
         reset();
     }
 
@@ -163,8 +229,29 @@ public class CostBaselineNormalizationService {
                 + RUNTIME_WEIGHT_E * normalizedE) / RUNTIME_WEIGHT_SUM;
 
         return new NormalizedWindow(
+                "runtime-cost-window-" + nextWindowSequence++,
                 end.strategy(),
                 percentile,
+                start.recordedAt(),
+                end.recordedAt(),
+                generatedItems,
+                start.notAssignedItems(),
+                taskScale,
+                start.costA(),
+                start.costB(),
+                start.costC(),
+                start.costD(),
+                start.costE(),
+                end.costA(),
+                end.costB(),
+                end.costC(),
+                end.costD(),
+                end.costE(),
+                unitA,
+                unitB,
+                unitC,
+                unitD,
+                unitE,
                 normalizedA,
                 normalizedB,
                 normalizedC,
@@ -292,6 +379,7 @@ public class CostBaselineNormalizationService {
 
     private record WindowSnapshot(
             DispatchStrategy strategy,
+            LocalDateTime recordedAt,
             double costA,
             double costB,
             double costC,
@@ -303,8 +391,29 @@ public class CostBaselineNormalizationService {
     }
 
     private record NormalizedWindow(
+            String windowId,
             DispatchStrategy strategy,
             String percentile,
+            LocalDateTime windowStartTime,
+            LocalDateTime windowEndTime,
+            long generatedShipmentItems,
+            long notAssignedItemsAtStart,
+            double taskScale,
+            double startCostA,
+            double startCostB,
+            double startCostC,
+            double startCostD,
+            double startCostE,
+            double endCostA,
+            double endCostB,
+            double endCostC,
+            double endCostD,
+            double endCostE,
+            double unitA,
+            double unitB,
+            double unitC,
+            double unitD,
+            double unitE,
             double normalizedA,
             double normalizedB,
             double normalizedC,

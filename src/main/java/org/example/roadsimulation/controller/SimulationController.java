@@ -5,6 +5,7 @@ import org.example.roadsimulation.SimulationMainLoop;
 import org.example.roadsimulation.config.DispatchStrategy;
 import org.example.roadsimulation.config.SimulationRuntimeConfig;
 import org.example.roadsimulation.dto.ApiResponse;
+import org.example.roadsimulation.dto.RuntimeCostDetailDTO;
 import org.example.roadsimulation.dto.RuntimeCostDTO;
 import org.example.roadsimulation.dto.TransportMonitorDTO;
 import org.example.roadsimulation.dto.VehicleCostSummaryDTO;
@@ -226,6 +227,18 @@ public class SimulationController {
         );
         costBaselineNormalizationService.applyLatest(costs);
         return costs;
+    }
+
+    @GetMapping("/costs/detail")
+    public RuntimeCostDetailDTO getCurrentCostDetail() {
+        RuntimeCostDetailDTO detail = getCostService.calculateRuntimeCostDetail(
+                vehicleRepository.findAll(),
+                assignmentRepository.findRuntimeActiveAssignments()
+        );
+        costBaselineNormalizationService.applyLatest(detail.getSummary());
+        detail.setWindow(costBaselineNormalizationService.exportLatestWindowDetail());
+        detail.setBaseline(costBaselineNormalizationService.exportCurrentBaselineDetail());
+        return detail;
     }
 
     @GetMapping("/monitor/active")
