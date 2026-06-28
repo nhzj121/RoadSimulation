@@ -10,7 +10,7 @@
           <ElButton text @click="openMonitorPanel('vehicles')">车辆监控</ElButton>
           <ElButton text @click="openMonitorPanel('shipments')">运单监控</ElButton>
           <ElButton text @click="openMonitorPanel('assignments')">任务监控</ElButton>
-          <ElButton type="primary" text @click="openMonitorPanel('costs')">
+          <ElButton type="primary" text @click="openRuntimeDashboard">
             成本监控
           </ElButton>
         </div>
@@ -212,75 +212,6 @@
                 </div>
               </div>
             </ElTabPane>
-            <ElTabPane label="成本监控" name="costs">
-              <div class="cost-list monitor-tab-body">
-                <div class="cost-item">
-                  <div class="cost-header-row">
-                    <span class="cost-title">直接成本 (A)</span>
-                    <span class="cost-value">{{ simulationCosts.costA.toFixed(2) }}</span>
-                  </div>
-                  <div class="cost-footer-row">
-                    <span class="cost-desc">等待时间与空驶里程</span>
-                    <ElButton link type="primary" size="small" @click="showChart('A')">趋势图</ElButton>
-                  </div>
-                </div>
-
-                <div class="cost-item">
-                  <div class="cost-header-row">
-                    <span class="cost-title">效率成本 (B)</span>
-                    <span class="cost-value">{{ simulationCosts.costB.toFixed(2) }}</span>
-                  </div>
-                  <div class="cost-footer-row">
-                    <span class="cost-desc">空驶率与等待率</span>
-                    <ElButton link type="primary" size="small" @click="showChart('B')">趋势图</ElButton>
-                  </div>
-                </div>
-
-                <div class="cost-item">
-                  <div class="cost-header-row">
-                    <span class="cost-title">运能损耗 (C)</span>
-                    <span class="cost-value">{{ simulationCosts.costC.toFixed(2) }}</span>
-                  </div>
-                  <div class="cost-footer-row">
-                    <span class="cost-desc">理论与实际运能差</span>
-                    <ElButton link type="primary" size="small" @click="showChart('C')">趋势图</ElButton>
-                  </div>
-                </div>
-
-                <div class="cost-item total-cost">
-                  <div class="cost-header-row">
-                    <span class="cost-title">经济损耗 (D)</span>
-                    <span class="cost-value highlight-value">{{ simulationCosts.costD.toFixed(2) }}</span>
-                  </div>
-                  <div class="cost-footer-row">
-                    <span class="cost-desc">油耗与固定损耗</span>
-                    <ElButton link type="primary" size="small" @click="showChart('D')">趋势图</ElButton>
-                  </div>
-                </div>
-
-                <div class="cost-item">
-                  <div class="cost-header-row">
-                    <span class="cost-title">负载均衡 (E)</span>
-                    <span class="cost-value">{{ simulationCosts.costE.toFixed(4) }}</span>
-                  </div>
-                  <div class="cost-footer-row">
-                    <span class="cost-desc">车队工作量离散度</span>
-                    <ElButton link type="primary" size="small" @click="showChart('E')">趋势图</ElButton>
-                  </div>
-                </div>
-
-                <div class="cost-item total-cost">
-                  <div class="cost-header-row">
-                    <span class="cost-title">综合成本 (All)</span>
-                    <span class="cost-value highlight-value">{{ simulationCosts.allCost.toFixed(4) }}</span>
-                  </div>
-                  <div class="cost-footer-row">
-                    <span class="cost-desc">后端A-E加权计算</span>
-                    <ElButton link type="primary" size="small" @click="showChart('ALL')">趋势图</ElButton>
-                  </div>
-                </div>
-              </div>
-            </ElTabPane>
           </ElTabs>
         </ElAside>
       </transition>
@@ -298,6 +229,286 @@
     >
       <div ref="chartRef" style="width: 100%; height: 400px;"></div>
     </ElDialog>
+
+    <div v-show="activeMainView === 'costDashboard'" class="runtime-dashboard-shell">
+      <div class="runtime-dashboard">
+        <div class="dashboard-topbar">
+          <div>
+            <div class="dashboard-eyebrow">Global Scheduling Monitor</div>
+            <h2>调度效果监控大屏</h2>
+          </div>
+          <ElButton type="primary" plain @click="returnToMapView">返回地图</ElButton>
+        </div>
+
+        <div class="dashboard-hero" :class="`dashboard-hero--${normalizedLevel}`">
+          <div class="dashboard-hero-main">
+            <div class="dashboard-eyebrow">Dispatch Cost Index</div>
+            <div class="dashboard-title-row">
+              <span class="dashboard-title">调度效果成本指数</span>
+              <span class="dashboard-status">{{ normalizedStatusText }}</span>
+            </div>
+            <div class="dashboard-score">{{ formatNormalizedValue(simulationCosts.normalizedAllCost) }}</div>
+            <div class="dashboard-meta">
+              <span>策略 {{ simulationCosts.baselineStrategy || '--' }}</span>
+              <span>基准 {{ simulationCosts.baselinePercentile || '--' }}</span>
+              <span>窗口 {{ runtimeCostDetail.window?.windowId || '等待完整窗口' }}</span>
+            </div>
+          </div>
+          <div class="dashboard-kpis">
+            <div v-for="item in dashboardKpis" :key="item.key" class="dashboard-kpi">
+              <span>{{ item.label }}</span>
+              <strong>{{ item.value }}</strong>
+              <small>{{ item.note }}</small>
+            </div>
+          </div>
+        </div>
+        <div v-if="runtimeCostDetail.error" class="dashboard-alert">
+          {{ runtimeCostDetail.error }}，当前大屏仅展示已缓存或基础成本监控数据。
+        </div>
+
+        <div class="dashboard-grid dashboard-grid--charts">
+          <section class="dashboard-panel">
+            <div class="dashboard-panel-head">
+              <div>
+                <h3>归一化综合成本趋势</h3>
+                <p>相对 P95 基准的成本指数</p>
+              </div>
+            </div>
+            <div ref="dashboardNormalizedCostTrendRef" class="dashboard-chart"></div>
+          </section>
+
+          <section class="dashboard-panel">
+            <div class="dashboard-panel-head">
+              <div>
+                <h3>原始 AllCost 趋势</h3>
+                <p>后端 A-E 加权原始成本参考</p>
+              </div>
+            </div>
+            <div ref="dashboardAllCostTrendRef" class="dashboard-chart"></div>
+          </section>
+
+          <section class="dashboard-panel">
+            <div class="dashboard-panel-head">
+              <div>
+                <h3>归一化维度分解</h3>
+                <p>1.0 为 P95 基准线</p>
+              </div>
+            </div>
+            <div ref="dashboardNormalizedRef" class="dashboard-chart"></div>
+          </section>
+
+          <section class="dashboard-panel">
+            <div class="dashboard-panel-head">
+              <div>
+                <h3>Cost 维度占比</h3>
+                <p>A-E 聚合值占比，不等同公式参数</p>
+              </div>
+            </div>
+            <div ref="dashboardCostShareRef" class="dashboard-chart"></div>
+          </section>
+        </div>
+
+        <div class="dashboard-grid dashboard-grid--detail">
+          <section class="dashboard-panel">
+            <div class="dashboard-panel-head">
+              <div>
+                <h3>调度窗口</h3>
+                <p>归一化窗口计算链路</p>
+              </div>
+            </div>
+            <div v-if="runtimeCostDetail.window" class="dashboard-metric-list">
+              <div v-for="item in windowDetailMetrics" :key="item.label" class="dashboard-metric-row">
+                <span>{{ item.label }}</span>
+                <strong>{{ item.value }}</strong>
+              </div>
+            </div>
+            <div v-else class="dashboard-empty">等待完整调度窗口</div>
+          </section>
+
+          <section class="dashboard-panel">
+            <div class="dashboard-panel-head">
+              <div>
+                <h3>P95 基准</h3>
+                <p>当前策略基准与权重</p>
+              </div>
+            </div>
+            <div v-if="runtimeCostDetail.baseline" class="dashboard-metric-list">
+              <div v-for="item in baselineDetailMetrics" :key="item.label" class="dashboard-metric-row">
+                <span>{{ item.label }}</span>
+                <strong>{{ item.value }}</strong>
+              </div>
+            </div>
+            <div v-else class="dashboard-empty">暂无基准详情</div>
+          </section>
+
+          <section class="dashboard-panel dashboard-panel--wide">
+            <div class="dashboard-panel-head">
+              <div>
+                <h3>Cost A-E 对照</h3>
+                <p>原始值、归一化值和基准值</p>
+              </div>
+            </div>
+            <div class="dashboard-cost-table">
+              <div class="dashboard-cost-table-head">
+                <span>维度</span>
+                <span>原始值</span>
+                <span>归一化</span>
+                <span>基准</span>
+                <span>权重</span>
+              </div>
+              <div v-for="row in dashboardCostRows" :key="row.key" class="dashboard-cost-table-row">
+                <span>{{ row.name }}</span>
+                <strong>{{ row.raw }}</strong>
+                <strong>{{ row.normalized }}</strong>
+                <span>{{ row.baseline }}</span>
+                <span>{{ row.weight }}</span>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <div class="dashboard-section-title">公式参数贡献</div>
+        <div class="dashboard-grid dashboard-grid--formula">
+          <section v-for="group in formulaContributionGroups" :key="group.key" class="dashboard-panel">
+            <div class="dashboard-panel-head">
+              <div>
+                <h3>{{ group.title }}</h3>
+                <p>{{ group.subtitle }}</p>
+              </div>
+            </div>
+            <div :ref="setFormulaChartRef(group.key)" class="dashboard-chart dashboard-chart--pie"></div>
+            <div class="dashboard-metric-list dashboard-metric-list--compact">
+              <div v-for="metric in group.metrics" :key="metric.label" class="dashboard-metric-row">
+                <span>{{ metric.label }}</span>
+                <strong>{{ metric.display }}</strong>
+              </div>
+            </div>
+          </section>
+
+          <section class="dashboard-panel">
+            <div class="dashboard-panel-head">
+              <div>
+                <h3>CostE 工作负载</h3>
+                <p>不伪装为饼图，直接展示统计量</p>
+              </div>
+            </div>
+            <div class="workload-metric-grid">
+              <div v-for="item in costEWorkloadMetrics" :key="item.label" class="workload-metric">
+                <span>{{ item.label }}</span>
+                <strong>{{ item.value }}</strong>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <div class="dashboard-section-title">全局运行态势</div>
+        <div class="dashboard-grid dashboard-grid--charts">
+          <section class="dashboard-panel dashboard-panel--wide">
+            <div class="dashboard-panel-head">
+              <div>
+                <h3>活跃对象趋势</h3>
+                <p>运单、任务、车辆与任务项状态</p>
+              </div>
+            </div>
+            <div ref="dashboardMonitorTrendRef" class="dashboard-chart"></div>
+          </section>
+
+          <section class="dashboard-panel">
+            <div class="dashboard-panel-head">
+              <div>
+                <h3>运单任务分布</h3>
+                <p>等待、进行中、完成</p>
+              </div>
+            </div>
+            <div ref="dashboardShipmentStateRef" class="dashboard-chart"></div>
+          </section>
+
+          <section class="dashboard-panel">
+            <div class="dashboard-panel-head">
+              <div>
+                <h3>任务状态分布</h3>
+                <p>活跃 Assignment 状态</p>
+              </div>
+            </div>
+            <div ref="dashboardAssignmentStatusRef" class="dashboard-chart"></div>
+          </section>
+
+          <section class="dashboard-panel">
+            <div class="dashboard-panel-head">
+              <div>
+                <h3>车辆状态分布</h3>
+                <p>活跃车辆运行状态</p>
+              </div>
+            </div>
+            <div ref="dashboardVehicleStatusRef" class="dashboard-chart"></div>
+          </section>
+        </div>
+
+        <div class="dashboard-grid dashboard-grid--top">
+          <section class="dashboard-panel">
+            <div class="dashboard-panel-head">
+              <div>
+                <h3>最高成本维度</h3>
+                <p>归一化 A-E 最大项</p>
+              </div>
+            </div>
+            <div class="dashboard-focus-card">
+              <strong>{{ highestNormalizedCostDimension.name }}</strong>
+              <span>{{ highestNormalizedCostDimension.value }}</span>
+              <small>{{ highestNormalizedCostDimension.desc }}</small>
+            </div>
+          </section>
+
+          <section class="dashboard-panel">
+            <div class="dashboard-panel-head">
+              <div>
+                <h3>等待运单 Top N</h3>
+                <p>按 waitingItems 排序</p>
+              </div>
+            </div>
+            <div class="dashboard-top-list">
+              <div v-for="item in topWaitingShipments" :key="item.shipmentId" class="dashboard-top-row">
+                <span>{{ item.refNo || `运单 ${item.shipmentId}` }}</span>
+                <strong>{{ item.waitingItems || 0 }}</strong>
+              </div>
+              <div v-if="topWaitingShipments.length === 0" class="dashboard-empty">暂无等待运单</div>
+            </div>
+          </section>
+
+          <section class="dashboard-panel">
+            <div class="dashboard-panel-head">
+              <div>
+                <h3>低进度运单 Top N</h3>
+                <p>活跃运单进度最低</p>
+              </div>
+            </div>
+            <div class="dashboard-top-list">
+              <div v-for="item in topLowProgressShipments" :key="item.shipmentId" class="dashboard-top-row">
+                <span>{{ item.refNo || `运单 ${item.shipmentId}` }}</span>
+                <strong>{{ formatPercent(item.progressPercentage) }}</strong>
+              </div>
+              <div v-if="topLowProgressShipments.length === 0" class="dashboard-empty">暂无活跃运单</div>
+            </div>
+          </section>
+
+          <section class="dashboard-panel">
+            <div class="dashboard-panel-head">
+              <div>
+                <h3>高负载车辆 Top N</h3>
+                <p>载重/载容利用率最大</p>
+              </div>
+            </div>
+            <div class="dashboard-top-list">
+              <div v-for="item in topUtilizedVehicles" :key="item.vehicleId" class="dashboard-top-row">
+                <span>{{ item.licensePlate || `车辆 ${item.vehicleId}` }}</span>
+                <strong>{{ item.display }}</strong>
+              </div>
+              <div v-if="topUtilizedVehicles.length === 0" class="dashboard-empty">暂无活跃车辆</div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
 
   </ElContainer>
 </template>
@@ -361,6 +572,7 @@ const highlightedVehicleId = ref(null); // 当前高亮的车辆ID
 const highlightedShipmentId = ref(null);
 const highlightedAssignmentId = ref(null);
 let highlightTimer = null; // 高亮定时器
+const activeMainView = ref('map');
 
 const handleVehicleClick = (vehicle) => {
   focusVehicleFromPanel(vehicle);
@@ -505,6 +717,12 @@ const resizeMapAfterPanelChange = () => {
 };
 
 const openMonitorPanel = async (tab = 'vehicles') => {
+  if (tab === 'costs') {
+    await openRuntimeDashboard();
+    return;
+  }
+  activeMainView.value = 'map';
+  disposeRuntimeDashboardCharts();
   activeMonitorTab.value = tab;
   isMonitorPanelVisible.value = true;
   if (['vehicles', 'shipments', 'assignments'].includes(tab)) {
@@ -525,11 +743,7 @@ const closeMonitorPanel = async () => {
 };
 
 const toggleCostPanel = async () => {
-  if (isMonitorPanelVisible.value && activeMonitorTab.value === 'costs') {
-    await closeMonitorPanel();
-    return;
-  }
-  await openMonitorPanel('costs');
+  await openRuntimeDashboard();
 };
 
 const simulationCosts = reactive({
@@ -538,7 +752,15 @@ const simulationCosts = reactive({
   costC: 0.0,
   costD: 0.0,
   costE: 0.0,
-  allCost: 0.0
+  allCost: 0.0,
+  normalizedCostA: null,
+  normalizedCostB: null,
+  normalizedCostC: null,
+  normalizedCostD: null,
+  normalizedCostE: null,
+  normalizedAllCost: null,
+  baselinePercentile: '',
+  baselineStrategy: ''
 });
 
 // 获取实时成本的接口请求
@@ -549,8 +771,66 @@ const costHistory = reactive({
   costC: [],
   costD: [],
   costE: [],
-  allCost: []
+  allCost: [],
+  normalizedCostA: [],
+  normalizedCostB: [],
+  normalizedCostC: [],
+  normalizedCostD: [],
+  normalizedCostE: [],
+  normalizedAllCost: []
 });
+
+const runtimeCostDetail = reactive({
+  generatedAt: '',
+  summary: null,
+  costA: null,
+  costB: null,
+  costC: null,
+  costD: null,
+  costE: null,
+  window: null,
+  baseline: null,
+  error: ''
+});
+
+const dashboardHistory = reactive({
+  times: [],
+  activeShipments: [],
+  activeAssignments: [],
+  activeVehicles: [],
+  waitingItems: [],
+  inProgressItems: [],
+  completedItems: [],
+  avgLoadUsage: [],
+  avgVolumeUsage: []
+});
+
+const DASHBOARD_HISTORY_LIMIT = 60;
+
+const resetRuntimeCostDetail = () => {
+  runtimeCostDetail.generatedAt = '';
+  runtimeCostDetail.summary = null;
+  runtimeCostDetail.costA = null;
+  runtimeCostDetail.costB = null;
+  runtimeCostDetail.costC = null;
+  runtimeCostDetail.costD = null;
+  runtimeCostDetail.costE = null;
+  runtimeCostDetail.window = null;
+  runtimeCostDetail.baseline = null;
+  runtimeCostDetail.error = '';
+};
+
+const clearDashboardHistory = () => {
+  dashboardHistory.times.splice(0);
+  dashboardHistory.activeShipments.splice(0);
+  dashboardHistory.activeAssignments.splice(0);
+  dashboardHistory.activeVehicles.splice(0);
+  dashboardHistory.waitingItems.splice(0);
+  dashboardHistory.inProgressItems.splice(0);
+  dashboardHistory.completedItems.splice(0);
+  dashboardHistory.avgLoadUsage.splice(0);
+  dashboardHistory.avgVolumeUsage.splice(0);
+};
 
 const resetSimulationCostDisplay = () => {
   simulationCosts.costA = 0.0;
@@ -559,6 +839,14 @@ const resetSimulationCostDisplay = () => {
   simulationCosts.costD = 0.0;
   simulationCosts.costE = 0.0;
   simulationCosts.allCost = 0.0;
+  simulationCosts.normalizedCostA = null;
+  simulationCosts.normalizedCostB = null;
+  simulationCosts.normalizedCostC = null;
+  simulationCosts.normalizedCostD = null;
+  simulationCosts.normalizedCostE = null;
+  simulationCosts.normalizedAllCost = null;
+  simulationCosts.baselinePercentile = '';
+  simulationCosts.baselineStrategy = '';
 
   costHistory.times.splice(0);
   costHistory.costA.splice(0);
@@ -567,23 +855,450 @@ const resetSimulationCostDisplay = () => {
   costHistory.costD.splice(0);
   costHistory.costE.splice(0);
   costHistory.allCost.splice(0);
+  costHistory.normalizedCostA.splice(0);
+  costHistory.normalizedCostB.splice(0);
+  costHistory.normalizedCostC.splice(0);
+  costHistory.normalizedCostD.splice(0);
+  costHistory.normalizedCostE.splice(0);
+  costHistory.normalizedAllCost.splice(0);
+  resetRuntimeCostDetail();
+  clearDashboardHistory();
+  activeMainView.value = 'map';
+  disposeRuntimeDashboardCharts();
 
   if (chartVisible.value && chartInstance) {
     updateChart();
   }
 };
 
+const isFiniteCostValue = (value) => typeof value === 'number' && Number.isFinite(value);
+
+const readCostNumber = (value) => {
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) ? numberValue : 0;
+};
+
+const readOptionalCostNumber = (value) => {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) ? numberValue : null;
+};
+
+const formatCostValue = (value, digits = 2) => readCostNumber(value).toFixed(digits);
+
+const formatNormalizedValue = (value) => {
+  if (!isFiniteCostValue(value)) {
+    return '--';
+  }
+  return value.toFixed(4);
+};
+
+const hasNormalizedCost = computed(() => isFiniteCostValue(simulationCosts.normalizedAllCost));
+
+const normalizedLevel = computed(() => {
+  if (!hasNormalizedCost.value) {
+    return 'pending';
+  }
+  if (simulationCosts.normalizedAllCost < 1.0) {
+    return 'good';
+  }
+  if (simulationCosts.normalizedAllCost <= 1.05) {
+    return 'warning';
+  }
+  return 'danger';
+});
+
+const normalizedStatusText = computed(() => {
+  if (!hasNormalizedCost.value) {
+    return '等待完整调度窗口';
+  }
+  if (simulationCosts.normalizedAllCost < 1.0) {
+    return '低于P95基准';
+  }
+  if (simulationCosts.normalizedAllCost <= 1.05) {
+    return '接近P95基准';
+  }
+  return '超过P95基准';
+});
+
+const normalizedCostMetrics = computed(() => [
+  {
+    key: 'normalizedCostA',
+    name: '直接成本 A',
+    desc: '等待与空驶窗口单位成本',
+    value: simulationCosts.normalizedCostA,
+    normalizedChartType: 'NA'
+  },
+  {
+    key: 'normalizedCostB',
+    name: '效率成本 B',
+    desc: '空驶率、等待率与空等惩罚',
+    value: simulationCosts.normalizedCostB,
+    normalizedChartType: 'NB'
+  },
+  {
+    key: 'normalizedCostC',
+    name: '运能损耗 C',
+    desc: '理论与实际运能窗口单位差',
+    value: simulationCosts.normalizedCostC,
+    normalizedChartType: 'NC'
+  },
+  {
+    key: 'normalizedCostD',
+    name: '经济损耗 D',
+    desc: '窗口经济损耗代理单位值',
+    value: simulationCosts.normalizedCostD,
+    normalizedChartType: 'ND'
+  },
+  {
+    key: 'normalizedCostE',
+    name: '负载均衡 E',
+    desc: '车队工作量离散度',
+    value: simulationCosts.normalizedCostE,
+    normalizedChartType: 'NE'
+  }
+]);
+
+const rawCostMetrics = computed(() => [
+  {
+    key: 'costA',
+    name: '直接成本 (A)',
+    desc: '等待时间与空驶里程',
+    display: formatCostValue(simulationCosts.costA, 2),
+    chartType: 'A'
+  },
+  {
+    key: 'costB',
+    name: '效率成本 (B)',
+    desc: '空驶率与等待率',
+    display: formatCostValue(simulationCosts.costB, 2),
+    chartType: 'B'
+  },
+  {
+    key: 'costC',
+    name: '运能损耗 (C)',
+    desc: '理论与实际运能差',
+    display: formatCostValue(simulationCosts.costC, 2),
+    chartType: 'C'
+  },
+  {
+    key: 'costD',
+    name: '经济损耗 (D)',
+    desc: '油耗与固定损耗',
+    display: formatCostValue(simulationCosts.costD, 2),
+    chartType: 'D'
+  },
+  {
+    key: 'costE',
+    name: '负载均衡 (E)',
+    desc: '车队工作量离散度',
+    display: formatCostValue(simulationCosts.costE, 4),
+    chartType: 'E'
+  },
+  {
+    key: 'allCost',
+    name: '综合成本 (All)',
+    desc: '后端A-E加权计算',
+    display: formatCostValue(simulationCosts.allCost, 4),
+    chartType: 'ALL',
+    total: true
+  }
+]);
+
+const formatPercent = (value, digits = 1) => `${readCostNumber(value).toFixed(digits)}%`;
+
+const formatDateTime = (value) => {
+  if (!value) {
+    return '--';
+  }
+  const text = String(value);
+  return text.includes('T') ? text.replace('T', ' ').slice(0, 19) : text;
+};
+
+const toDashboardNumber = (value, digits = 2) => {
+  const optional = readOptionalCostNumber(value);
+  return optional === null ? '--' : optional.toFixed(digits);
+};
+
+const toPositivePieValue = (value) => {
+  const numberValue = readCostNumber(value);
+  return numberValue > 0 ? numberValue : 0;
+};
+
+const sumBy = (items, field) => items.reduce((sum, item) => sum + readCostNumber(item?.[field]), 0);
+
+const currentVehicleDataset = computed(() => {
+  if (monitorVehicles.length > 0) {
+    return monitorVehicles;
+  }
+  return vehicles.map(vehicle => ({
+    vehicleId: vehicle.id,
+    licensePlate: vehicle.licensePlate,
+    status: vehicle.status,
+    statusText: statusMap[vehicle.status]?.text || vehicle.status,
+    currentLoad: vehicle.currentLoad,
+    maxLoadCapacity: vehicle.maxLoadCapacity,
+    currentVolume: vehicle.currentVolume,
+    maxVolumeCapacity: vehicle.maxVolumeCapacity
+  }));
+});
+
+const getUsagePercent = (current, max) => {
+  const maxValue = readCostNumber(max);
+  if (maxValue <= 0) {
+    return 0;
+  }
+  return Math.min(100, Math.max(0, (readCostNumber(current) / maxValue) * 100));
+};
+
+const averageUsage = (items, currentField, maxField) => {
+  const values = items
+      .map(item => getUsagePercent(item?.[currentField], item?.[maxField]))
+      .filter(value => Number.isFinite(value));
+  if (values.length === 0) {
+    return 0;
+  }
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+};
+
+const shipmentItemStateSummary = computed(() => ({
+  waiting: sumBy(monitorShipments, 'waitingItems'),
+  inProgress: sumBy(monitorShipments, 'inProgressItems'),
+  completed: sumBy(monitorShipments, 'completedItems')
+}));
+
+const dashboardKpis = computed(() => [
+  {
+    key: 'shipments',
+    label: '活跃运单',
+    value: monitorSummary.activeShipmentCount || monitorShipments.length,
+    note: 'Shipment'
+  },
+  {
+    key: 'assignments',
+    label: '活跃任务',
+    value: monitorSummary.activeAssignmentCount || monitorAssignments.length,
+    note: 'Assignment'
+  },
+  {
+    key: 'vehicles',
+    label: '活跃车辆',
+    value: monitorSummary.activeVehicleCount || currentVehicleDataset.value.length,
+    note: 'Vehicle'
+  },
+  {
+    key: 'waiting',
+    label: '等待任务项',
+    value: shipmentItemStateSummary.value.waiting,
+    note: 'Waiting'
+  },
+  {
+    key: 'load',
+    label: '平均载重率',
+    value: formatPercent(averageUsage(currentVehicleDataset.value, 'currentLoad', 'maxLoadCapacity')),
+    note: 'Load'
+  },
+  {
+    key: 'volume',
+    label: '平均载容率',
+    value: formatPercent(averageUsage(currentVehicleDataset.value, 'currentVolume', 'maxVolumeCapacity')),
+    note: 'Volume'
+  }
+]);
+
+const dashboardCostRows = computed(() => {
+  const baseline = runtimeCostDetail.baseline || {};
+  return normalizedCostMetrics.value.map(metric => {
+    const suffix = metric.key.replace('normalizedCost', '');
+    const rawKey = `cost${suffix}`;
+    return {
+      key: metric.key,
+      name: metric.name,
+      raw: formatCostValue(simulationCosts[rawKey], suffix === 'E' ? 4 : 2),
+      normalized: formatNormalizedValue(metric.value),
+      baseline: toDashboardNumber(baseline[`baselineCost${suffix}`], 4),
+      weight: toDashboardNumber(baseline[`runtimeWeight${suffix}`], 2)
+    };
+  });
+});
+
+const windowDetailMetrics = computed(() => {
+  const windowDetail = runtimeCostDetail.window || {};
+  return [
+    { label: '窗口ID', value: windowDetail.windowId || '--' },
+    { label: '策略', value: windowDetail.strategy || '--' },
+    { label: '开始时间', value: formatDateTime(windowDetail.windowStartTime) },
+    { label: '结束时间', value: formatDateTime(windowDetail.windowEndTime) },
+    { label: '任务规模', value: toDashboardNumber(windowDetail.taskScale, 2) },
+    { label: '新增任务项', value: windowDetail.generatedShipmentItems ?? '--' },
+    { label: '窗口初始未分配', value: windowDetail.notAssignedItemsAtStart ?? '--' },
+    { label: '单位CostA', value: toDashboardNumber(windowDetail.unitCostA, 4) },
+    { label: '单位CostB', value: toDashboardNumber(windowDetail.unitCostB, 4) },
+    { label: '单位CostC', value: toDashboardNumber(windowDetail.unitCostC, 4) },
+    { label: '单位CostD', value: toDashboardNumber(windowDetail.unitCostD, 4) },
+    { label: '单位CostE', value: toDashboardNumber(windowDetail.unitCostE, 4) }
+  ];
+});
+
+const baselineDetailMetrics = computed(() => {
+  const baseline = runtimeCostDetail.baseline || {};
+  return [
+    { label: '策略', value: baseline.baselineStrategy || '--' },
+    { label: '分位', value: baseline.baselinePercentile || '--' },
+    { label: '基准CostA', value: toDashboardNumber(baseline.baselineCostA, 4) },
+    { label: '基准CostB', value: toDashboardNumber(baseline.baselineCostB, 4) },
+    { label: '基准CostC', value: toDashboardNumber(baseline.baselineCostC, 4) },
+    { label: '基准CostD', value: toDashboardNumber(baseline.baselineCostD, 4) },
+    { label: '基准CostE', value: toDashboardNumber(baseline.baselineCostE, 4) },
+    { label: '权重A-E', value: ['A', 'B', 'C', 'D', 'E'].map(key => toDashboardNumber(baseline[`runtimeWeight${key}`], 2)).join(' / ') }
+  ];
+});
+
+const formulaContributionGroups = computed(() => {
+  const detail = runtimeCostDetail;
+  const costA = detail.costA || {};
+  const costB = detail.costB || {};
+  const costC = detail.costC || {};
+  const costD = detail.costD || {};
+  return [
+    {
+      key: 'costA',
+      title: 'CostA 公式参数贡献',
+      subtitle: '等待时间与空驶里程',
+      metrics: [
+        { label: '等待贡献', value: costA.waitingCostContribution, display: toDashboardNumber(costA.waitingCostContribution, 4) },
+        { label: '空驶贡献', value: costA.emptyDistanceCostContribution, display: toDashboardNumber(costA.emptyDistanceCostContribution, 4) },
+        { label: '等待小时', value: costA.totalWaitingHours, display: toDashboardNumber(costA.totalWaitingHours, 2) },
+        { label: '空驶公里', value: costA.totalEmptyDistanceKm, display: toDashboardNumber(costA.totalEmptyDistanceKm, 2) }
+      ]
+    },
+    {
+      key: 'costB',
+      title: 'CostB 公式参数贡献',
+      subtitle: '效率、等待与闲置惩罚',
+      metrics: [
+        { label: '空驶率贡献', value: costB.emptyMileageContribution, display: toDashboardNumber(costB.emptyMileageContribution, 4) },
+        { label: '等待运输贡献', value: costB.waitingTransportContribution, display: toDashboardNumber(costB.waitingTransportContribution, 4) },
+        { label: '最差等待贡献', value: costB.worstWaitingContribution, display: toDashboardNumber(costB.worstWaitingContribution, 4) },
+        { label: '闲置等待贡献', value: costB.idleWaitContribution, display: toDashboardNumber(costB.idleWaitContribution, 4) }
+      ]
+    },
+    {
+      key: 'costC',
+      title: 'CostC 公式参数贡献',
+      subtitle: '运能差与最差运能差',
+      metrics: [
+        { label: '运能差贡献', value: costC.capacityGapContribution, display: toDashboardNumber(costC.capacityGapContribution, 4) },
+        { label: '最差运能贡献', value: costC.worstCapacityContribution, display: toDashboardNumber(costC.worstCapacityContribution, 4) },
+        { label: '理论运能', value: costC.totalTheoryCapacity, display: toDashboardNumber(costC.totalTheoryCapacity, 2) },
+        { label: '实际运能', value: costC.totalActualCapacity, display: toDashboardNumber(costC.totalActualCapacity, 2) }
+      ]
+    },
+    {
+      key: 'costD',
+      title: 'CostD 公式参数贡献',
+      subtitle: '经济损失代理项',
+      metrics: [
+        { label: '利用损失贡献', value: costD.utilizationWasteContribution, display: toDashboardNumber(costD.utilizationWasteContribution, 4) },
+        { label: '时间损失贡献', value: costD.assignedTimeContribution, display: toDashboardNumber(costD.assignedTimeContribution, 4) },
+        { label: '闲置空间贡献', value: costD.idleSpaceContribution, display: toDashboardNumber(costD.idleSpaceContribution, 4) },
+        { label: '最差经济贡献', value: costD.worstEconomicContribution, display: toDashboardNumber(costD.worstEconomicContribution, 4) }
+      ]
+    }
+  ];
+});
+
+const costEWorkloadMetrics = computed(() => {
+  const costE = runtimeCostDetail.costE || {};
+  return [
+    { label: '平均工作负载', value: toDashboardNumber(costE.averageWorkload, 4) },
+    { label: '工作负载标准差', value: toDashboardNumber(costE.workloadStandardDeviation, 4) },
+    { label: '工作负载变异系数', value: toDashboardNumber(costE.workloadVariationCoefficient, 4) }
+  ];
+});
+
+const highestNormalizedCostDimension = computed(() => {
+  const validMetrics = normalizedCostMetrics.value.filter(metric => isFiniteCostValue(metric.value));
+  if (validMetrics.length === 0) {
+    return { name: '等待窗口数据', value: '--', desc: '暂无可定位的归一化维度' };
+  }
+  const metric = validMetrics.reduce((max, item) => item.value > max.value ? item : max, validMetrics[0]);
+  return {
+    name: metric.name,
+    value: formatNormalizedValue(metric.value),
+    desc: metric.desc
+  };
+});
+
+const topWaitingShipments = computed(() => [...monitorShipments]
+    .filter(item => readCostNumber(item.waitingItems) > 0)
+    .sort((a, b) => readCostNumber(b.waitingItems) - readCostNumber(a.waitingItems))
+    .slice(0, 5));
+
+const topLowProgressShipments = computed(() => [...monitorShipments]
+    .filter(item => readCostNumber(item.totalItems) > 0)
+    .sort((a, b) => readCostNumber(a.progressPercentage) - readCostNumber(b.progressPercentage))
+    .slice(0, 5));
+
+const topUtilizedVehicles = computed(() => currentVehicleDataset.value
+    .map(vehicle => {
+      const loadUsage = getUsagePercent(vehicle.currentLoad, vehicle.maxLoadCapacity);
+      const volumeUsage = getUsagePercent(vehicle.currentVolume, vehicle.maxVolumeCapacity);
+      const maxUsage = Math.max(loadUsage, volumeUsage);
+      return {
+        ...vehicle,
+        loadUsage,
+        volumeUsage,
+        maxUsage,
+        display: `${formatPercent(loadUsage)} / ${formatPercent(volumeUsage)}`
+      };
+    })
+    .filter(vehicle => vehicle.maxUsage > 0)
+    .sort((a, b) => b.maxUsage - a.maxUsage)
+    .slice(0, 5));
+
+const NORMALIZED_BAR_MAX = 1.5;
+
+const getNormalizedBarWidth = (value) => {
+  if (!isFiniteCostValue(value)) {
+    return '0%';
+  }
+  const capped = Math.max(0, Math.min(value, NORMALIZED_BAR_MAX));
+  return `${(capped / NORMALIZED_BAR_MAX) * 100}%`;
+};
+
+const getNormalizedBarClass = (value) => {
+  if (!isFiniteCostValue(value)) {
+    return 'normalized-bar-fill--pending';
+  }
+  if (value < 1.0) {
+    return 'normalized-bar-fill--good';
+  }
+  if (value <= 1.05) {
+    return 'normalized-bar-fill--warning';
+  }
+  return 'normalized-bar-fill--danger';
+};
+
 const chartVisible = ref(false);
-const chartTitle = ref('成本趋势');
+const chartTitle = ref('归一化综合成本趋势');
 const chartRef = ref(null);
-const currentChartType = ref('A');
+const currentChartType = ref('NALL');
 let chartInstance = null;
 
 const costTitles = {
   'A': '直接成本 (A) 趋势',
   'B': '效率成本 (B) 趋势',
   'C': '运能损耗 (C) 趋势',
-  'D': '经济损耗 (D) 趋势'
+  'D': '经济损耗 (D) 趋势',
+  'NA': '归一化直接成本 (A) 趋势',
+  'NB': '归一化效率成本 (B) 趋势',
+  'NC': '归一化运能损耗 (C) 趋势',
+  'ND': '归一化经济损耗 (D) 趋势',
+  'NE': '归一化负载均衡 (E) 趋势',
+  'NALL': '归一化综合成本趋势'
 };
 
 costTitles.E = '负载均衡 (E) 趋势';
@@ -628,10 +1343,17 @@ const updateChart = () => {
     'C': costHistory.costC,
     'D': costHistory.costD,
     'E': costHistory.costE,
-    'ALL': costHistory.allCost
+    'ALL': costHistory.allCost,
+    'NA': costHistory.normalizedCostA,
+    'NB': costHistory.normalizedCostB,
+    'NC': costHistory.normalizedCostC,
+    'ND': costHistory.normalizedCostD,
+    'NE': costHistory.normalizedCostE,
+    'NALL': costHistory.normalizedAllCost
   };
   
   const data = typeMap[currentChartType.value] || [];
+  const hasChartData = data.some(value => value !== null && value !== undefined && value !== '');
   
   const option = {
     tooltip: {
@@ -647,6 +1369,20 @@ const updateChart = () => {
       type: 'value',
       name: '数值'
     },
+    graphic: hasChartData ? [] : [
+      {
+        type: 'text',
+        left: 'center',
+        top: 'middle',
+        style: {
+          text: currentChartType.value.startsWith('N')
+              ? '等待完整调度窗口或基准数据'
+              : '暂无趋势数据',
+          fill: '#909399',
+          fontSize: 14
+        }
+      }
+    ],
     series: [
       {
         name: chartTitle.value,
@@ -676,6 +1412,321 @@ const updateChart = () => {
   }, 100);
 };
 
+const dashboardNormalizedCostTrendRef = ref(null);
+const dashboardAllCostTrendRef = ref(null);
+const dashboardNormalizedRef = ref(null);
+const dashboardCostShareRef = ref(null);
+const dashboardMonitorTrendRef = ref(null);
+const dashboardShipmentStateRef = ref(null);
+const dashboardAssignmentStatusRef = ref(null);
+const dashboardVehicleStatusRef = ref(null);
+const formulaChartRefs = reactive({});
+let runtimeDashboardChartInstances = {};
+
+const setFormulaChartRef = (key) => (el) => {
+  if (el) {
+    formulaChartRefs[key] = el;
+  } else {
+    delete formulaChartRefs[key];
+  }
+};
+
+const hasValues = (items) => items.some(item => readCostNumber(item?.value) > 0);
+
+const emptyChartGraphic = (text) => [
+  {
+    type: 'text',
+    left: 'center',
+    top: 'middle',
+    style: {
+      text,
+      fill: '#909399',
+      fontSize: 14
+    }
+  }
+];
+
+const dashboardPalette = ['#2f80ed', '#27ae60', '#f2994a', '#eb5757', '#9b51e0', '#00a8a8', '#6f7d95'];
+
+const buildPieOption = (title, items, emptyText = '暂无可计算占比') => {
+  const data = items
+      .map(item => ({ name: item.name, value: toPositivePieValue(item.value) }))
+      .filter(item => item.value > 0);
+  return {
+    color: dashboardPalette,
+    tooltip: { trigger: 'item', formatter: '{b}<br/>{c} ({d}%)' },
+    legend: {
+      bottom: 0,
+      type: 'scroll',
+      textStyle: { color: '#606266', fontSize: 11 }
+    },
+    graphic: data.length > 0 ? [] : emptyChartGraphic(emptyText),
+    series: [
+      {
+        name: title,
+        type: 'pie',
+        radius: ['42%', '68%'],
+        center: ['50%', '45%'],
+        avoidLabelOverlap: true,
+        label: { formatter: '{b}\n{d}%' },
+        data
+      }
+    ]
+  };
+};
+
+const buildLineTrendOption = ({ title, data, color, emptyText, yName = '数值' }) => {
+  const lineData = data.map(value => readOptionalCostNumber(value));
+  const hasData = lineData.some(value => value !== null);
+  return {
+    color: [color],
+    tooltip: { trigger: 'axis' },
+    legend: { top: 0, data: [title] },
+    grid: { left: 45, right: 24, top: 44, bottom: 34 },
+    xAxis: { type: 'category', data: costHistory.times },
+    yAxis: { type: 'value', name: yName },
+    graphic: hasData ? [] : emptyChartGraphic(emptyText),
+    series: [
+      {
+        name: title,
+        type: 'line',
+        smooth: true,
+        data: lineData,
+        connectNulls: false,
+        areaStyle: { opacity: 0.08 }
+      }
+    ]
+  };
+};
+
+const buildNormalizedCostTrendOption = () => buildLineTrendOption({
+  title: '归一化综合成本',
+  data: costHistory.normalizedAllCost,
+  color: '#2f80ed',
+  emptyText: '等待完整调度窗口或基准数据',
+  yName: '成本指数'
+});
+
+const buildAllCostTrendOption = () => buildLineTrendOption({
+  title: '原始AllCost',
+  data: costHistory.allCost,
+  color: '#27ae60',
+  emptyText: '暂无原始 AllCost 趋势数据',
+  yName: 'AllCost'
+});
+
+const buildNormalizedBreakdownOption = () => {
+  const metrics = normalizedCostMetrics.value;
+  const data = metrics.map(metric => readOptionalCostNumber(metric.value));
+  const hasData = data.some(value => value !== null);
+  return {
+    color: ['#2f80ed'],
+    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+    grid: { left: 92, right: 35, top: 18, bottom: 28 },
+    xAxis: {
+      type: 'value',
+      min: 0,
+      splitLine: { lineStyle: { color: '#edf0f5' } }
+    },
+    yAxis: {
+      type: 'category',
+      data: metrics.map(metric => metric.name),
+      axisLabel: { fontSize: 11 }
+    },
+    graphic: hasData ? [] : emptyChartGraphic('等待完整调度窗口或基准数据'),
+    series: [
+      {
+        name: '归一化成本',
+        type: 'bar',
+        data,
+        barMaxWidth: 18,
+        markLine: {
+          symbol: 'none',
+          label: { formatter: 'P95=1.0' },
+          lineStyle: { color: '#eb5757', type: 'dashed' },
+          data: [{ xAxis: 1 }]
+        }
+      }
+    ]
+  };
+};
+
+const buildCostShareOption = () => buildPieOption(
+    'Cost A-E 维度占比',
+    rawCostMetrics.value
+        .filter(metric => !metric.total)
+        .map(metric => ({ name: metric.name, value: simulationCosts[metric.key] })),
+    '暂无 Cost 维度占比数据'
+);
+
+const buildFormulaPieOption = (group) => buildPieOption(
+    group.title,
+    group.metrics
+        .filter(metric => metric.label.includes('贡献'))
+        .map(metric => ({ name: metric.label, value: metric.value })),
+    '暂无正向公式贡献值'
+);
+
+const groupStatusCounts = (items, statusKey = 'status', textKey = 'statusText') => {
+  const counts = new Map();
+  items.forEach(item => {
+    const status = item?.[statusKey] || 'UNKNOWN';
+    const label = item?.[textKey] || statusMap[status]?.text || status || '未知';
+    counts.set(label, (counts.get(label) || 0) + 1);
+  });
+  return [...counts.entries()].map(([name, value]) => ({ name, value }));
+};
+
+const buildMonitorTrendOption = () => {
+  const hasData = dashboardHistory.times.length > 0;
+  return {
+    color: ['#2f80ed', '#27ae60', '#f2994a', '#eb5757', '#9b51e0', '#00a8a8'],
+    tooltip: { trigger: 'axis' },
+    legend: {
+      top: 0,
+      type: 'scroll',
+      data: ['活跃运单', '活跃任务', '活跃车辆', '等待任务项', '平均载重率', '平均载容率']
+    },
+    grid: { left: 45, right: 24, top: 48, bottom: 34 },
+    xAxis: { type: 'category', data: dashboardHistory.times },
+    yAxis: { type: 'value' },
+    graphic: hasData ? [] : emptyChartGraphic('暂无全局态势趋势数据'),
+    series: [
+      { name: '活跃运单', type: 'line', smooth: true, data: dashboardHistory.activeShipments },
+      { name: '活跃任务', type: 'line', smooth: true, data: dashboardHistory.activeAssignments },
+      { name: '活跃车辆', type: 'line', smooth: true, data: dashboardHistory.activeVehicles },
+      { name: '等待任务项', type: 'line', smooth: true, data: dashboardHistory.waitingItems },
+      { name: '平均载重率', type: 'line', smooth: true, data: dashboardHistory.avgLoadUsage },
+      { name: '平均载容率', type: 'line', smooth: true, data: dashboardHistory.avgVolumeUsage }
+    ]
+  };
+};
+
+const buildShipmentStateOption = () => buildPieOption('运单任务项分布', [
+  { name: '等待', value: shipmentItemStateSummary.value.waiting },
+  { name: '进行中', value: shipmentItemStateSummary.value.inProgress },
+  { name: '完成', value: shipmentItemStateSummary.value.completed }
+], '暂无运单任务项数据');
+
+const buildAssignmentStatusOption = () => buildPieOption(
+    '任务状态分布',
+    groupStatusCounts(monitorAssignments),
+    '暂无活跃任务状态数据'
+);
+
+const buildVehicleStatusOption = () => buildPieOption(
+    '车辆状态分布',
+    groupStatusCounts(currentVehicleDataset.value),
+    '暂无活跃车辆状态数据'
+);
+
+const initRuntimeDashboardCharts = () => {
+  if (!window.echarts) {
+    return;
+  }
+  disposeRuntimeDashboardCharts();
+  const refs = {
+    normalizedCostTrend: dashboardNormalizedCostTrendRef.value,
+    allCostTrend: dashboardAllCostTrendRef.value,
+    normalized: dashboardNormalizedRef.value,
+    costShare: dashboardCostShareRef.value,
+    monitorTrend: dashboardMonitorTrendRef.value,
+    shipmentState: dashboardShipmentStateRef.value,
+    assignmentStatus: dashboardAssignmentStatusRef.value,
+    vehicleStatus: dashboardVehicleStatusRef.value,
+    ...formulaContributionGroups.value.reduce((acc, group) => {
+      acc[group.key] = formulaChartRefs[group.key];
+      return acc;
+    }, {})
+  };
+  Object.entries(refs).forEach(([key, el]) => {
+    if (el) {
+      runtimeDashboardChartInstances[key] = window.echarts.init(el);
+    }
+  });
+  updateRuntimeDashboardCharts();
+};
+
+const updateRuntimeDashboardCharts = () => {
+  if (activeMainView.value !== 'costDashboard' || !window.echarts) {
+    return;
+  }
+  const instances = runtimeDashboardChartInstances;
+  instances.normalizedCostTrend?.setOption(buildNormalizedCostTrendOption(), true);
+  instances.allCostTrend?.setOption(buildAllCostTrendOption(), true);
+  instances.normalized?.setOption(buildNormalizedBreakdownOption(), true);
+  instances.costShare?.setOption(buildCostShareOption(), true);
+  instances.monitorTrend?.setOption(buildMonitorTrendOption(), true);
+  instances.shipmentState?.setOption(buildShipmentStateOption(), true);
+  instances.assignmentStatus?.setOption(buildAssignmentStatusOption(), true);
+  instances.vehicleStatus?.setOption(buildVehicleStatusOption(), true);
+  formulaContributionGroups.value.forEach(group => {
+    instances[group.key]?.setOption(buildFormulaPieOption(group), true);
+  });
+  setTimeout(() => {
+    Object.values(runtimeDashboardChartInstances).forEach(instance => instance?.resize());
+  }, 80);
+};
+
+function disposeRuntimeDashboardCharts() {
+  Object.values(runtimeDashboardChartInstances).forEach(instance => instance?.dispose());
+  runtimeDashboardChartInstances = {};
+}
+
+const assignRuntimeCostDetail = (data = {}) => {
+  runtimeCostDetail.generatedAt = data.generatedAt || '';
+  runtimeCostDetail.summary = data.summary || null;
+  runtimeCostDetail.costA = data.costA || null;
+  runtimeCostDetail.costB = data.costB || null;
+  runtimeCostDetail.costC = data.costC || null;
+  runtimeCostDetail.costD = data.costD || null;
+  runtimeCostDetail.costE = data.costE || null;
+  runtimeCostDetail.window = data.window || null;
+  runtimeCostDetail.baseline = data.baseline || null;
+  runtimeCostDetail.error = '';
+};
+
+const fetchRuntimeCostDetail = async () => {
+  try {
+    const response = await request.get('/api/simulation/costs/detail');
+    if (response.data) {
+      assignRuntimeCostDetail(response.data);
+      updateRuntimeDashboardCharts();
+    }
+    return response.data;
+  } catch (error) {
+    if (error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError') {
+      return null;
+    }
+    runtimeCostDetail.error = '成本详情接口读取失败';
+    console.error('获取成本详情数据失败:', error);
+    updateRuntimeDashboardCharts();
+    return null;
+  }
+};
+
+const openRuntimeDashboard = async () => {
+  activeMainView.value = 'costDashboard';
+  isMonitorPanelVisible.value = false;
+  await Promise.allSettled([
+    fetchRuntimeCostDetail(),
+    fetchTransportMonitor()
+  ]);
+  await nextTick();
+  if (Object.keys(runtimeDashboardChartInstances).length === 0) {
+    initRuntimeDashboardCharts();
+  } else {
+    updateRuntimeDashboardCharts();
+  }
+};
+
+const returnToMapView = async () => {
+  activeMainView.value = 'map';
+  disposeRuntimeDashboardCharts();
+  await nextTick();
+  resizeMapAfterPanelChange();
+};
+
 const fetchSimulationCosts = async () => {
   try {
     const response = await request.get('/api/simulation/costs');
@@ -686,6 +1737,14 @@ const fetchSimulationCosts = async () => {
       simulationCosts.costD = response.data.costD || 0;
       simulationCosts.costE = response.data.costE || 0;
       simulationCosts.allCost = response.data.allCost || 0;
+      simulationCosts.normalizedCostA = readOptionalCostNumber(response.data.normalizedCostA);
+      simulationCosts.normalizedCostB = readOptionalCostNumber(response.data.normalizedCostB);
+      simulationCosts.normalizedCostC = readOptionalCostNumber(response.data.normalizedCostC);
+      simulationCosts.normalizedCostD = readOptionalCostNumber(response.data.normalizedCostD);
+      simulationCosts.normalizedCostE = readOptionalCostNumber(response.data.normalizedCostE);
+      simulationCosts.normalizedAllCost = readOptionalCostNumber(response.data.normalizedAllCost);
+      simulationCosts.baselinePercentile = response.data.baselinePercentile || '';
+      simulationCosts.baselineStrategy = response.data.baselineStrategy || '';
       
       // 记录历史数据用于折线图
       const now = new Date();
@@ -698,6 +1757,12 @@ const fetchSimulationCosts = async () => {
       costHistory.costD.push(simulationCosts.costD.toFixed(2));
       costHistory.costE.push(simulationCosts.costE.toFixed(4));
       costHistory.allCost.push(simulationCosts.allCost.toFixed(4));
+      costHistory.normalizedCostA.push(isFiniteCostValue(simulationCosts.normalizedCostA) ? simulationCosts.normalizedCostA.toFixed(4) : null);
+      costHistory.normalizedCostB.push(isFiniteCostValue(simulationCosts.normalizedCostB) ? simulationCosts.normalizedCostB.toFixed(4) : null);
+      costHistory.normalizedCostC.push(isFiniteCostValue(simulationCosts.normalizedCostC) ? simulationCosts.normalizedCostC.toFixed(4) : null);
+      costHistory.normalizedCostD.push(isFiniteCostValue(simulationCosts.normalizedCostD) ? simulationCosts.normalizedCostD.toFixed(4) : null);
+      costHistory.normalizedCostE.push(isFiniteCostValue(simulationCosts.normalizedCostE) ? simulationCosts.normalizedCostE.toFixed(4) : null);
+      costHistory.normalizedAllCost.push(isFiniteCostValue(simulationCosts.normalizedAllCost) ? simulationCosts.normalizedAllCost.toFixed(4) : null);
       
       // 保持最多 60 个数据点 (比如8秒更新一次，即8分钟的数据)
       if (costHistory.times.length > 60) {
@@ -708,11 +1773,18 @@ const fetchSimulationCosts = async () => {
         costHistory.costD.shift();
         costHistory.costE.shift();
         costHistory.allCost.shift();
+        costHistory.normalizedCostA.shift();
+        costHistory.normalizedCostB.shift();
+        costHistory.normalizedCostC.shift();
+        costHistory.normalizedCostD.shift();
+        costHistory.normalizedCostE.shift();
+        costHistory.normalizedAllCost.shift();
       }
       
       if (chartVisible.value && chartInstance) {
         updateChart();
       }
+      await fetchRuntimeCostDetail();
     }
   } catch (error) {
     if (error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError') {
@@ -2575,6 +3647,39 @@ const syncTransportMonitorData = (monitorData = {}) => {
   monitorSummary.activeShipmentCount = summary.activeShipmentCount || 0;
   monitorSummary.activeAssignmentCount = summary.activeAssignmentCount || 0;
   monitorSummary.activeVehicleCount = summary.activeVehicleCount || 0;
+
+  if (monitorData.summary || monitorData.shipments || monitorData.assignments || monitorData.vehicles) {
+    recordDashboardMonitorSnapshot();
+    updateRuntimeDashboardCharts();
+  }
+};
+
+const recordDashboardMonitorSnapshot = () => {
+  const now = new Date();
+  const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
+  const vehiclesForStats = currentVehicleDataset.value;
+
+  dashboardHistory.times.push(timeStr);
+  dashboardHistory.activeShipments.push(monitorSummary.activeShipmentCount || monitorShipments.length);
+  dashboardHistory.activeAssignments.push(monitorSummary.activeAssignmentCount || monitorAssignments.length);
+  dashboardHistory.activeVehicles.push(monitorSummary.activeVehicleCount || vehiclesForStats.length);
+  dashboardHistory.waitingItems.push(shipmentItemStateSummary.value.waiting);
+  dashboardHistory.inProgressItems.push(shipmentItemStateSummary.value.inProgress);
+  dashboardHistory.completedItems.push(shipmentItemStateSummary.value.completed);
+  dashboardHistory.avgLoadUsage.push(Number(averageUsage(vehiclesForStats, 'currentLoad', 'maxLoadCapacity').toFixed(2)));
+  dashboardHistory.avgVolumeUsage.push(Number(averageUsage(vehiclesForStats, 'currentVolume', 'maxVolumeCapacity').toFixed(2)));
+
+  if (dashboardHistory.times.length > DASHBOARD_HISTORY_LIMIT) {
+    dashboardHistory.times.shift();
+    dashboardHistory.activeShipments.shift();
+    dashboardHistory.activeAssignments.shift();
+    dashboardHistory.activeVehicles.shift();
+    dashboardHistory.waitingItems.shift();
+    dashboardHistory.inProgressItems.shift();
+    dashboardHistory.completedItems.shift();
+    dashboardHistory.avgLoadUsage.shift();
+    dashboardHistory.avgVolumeUsage.shift();
+  }
 };
 
 const fetchTransportMonitor = async () => {
@@ -5017,6 +6122,185 @@ onUnmounted(() => {
   gap: 12px;
 }
 
+.dispatch-effect-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.dispatch-score-card {
+  background: #ffffff;
+  border: 1px solid #ebeef5;
+  border-left: 4px solid #909399;
+  border-radius: 8px;
+  padding: 14px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+}
+
+.dispatch-score-card--good {
+  border-left-color: #67c23a;
+}
+
+.dispatch-score-card--warning {
+  border-left-color: #e6a23c;
+}
+
+.dispatch-score-card--danger {
+  border-left-color: #f56c6c;
+}
+
+.dispatch-score-card--pending {
+  border-left-color: #909399;
+}
+
+.dispatch-score-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.dispatch-score-title {
+  color: #303133;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.dispatch-score-subtitle {
+  margin-top: 4px;
+  color: #909399;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.dispatch-score-value {
+  margin-top: 14px;
+  color: #303133;
+  font-size: 34px;
+  font-weight: 700;
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+}
+
+.dispatch-score-status {
+  margin-top: 8px;
+  color: #606266;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.dispatch-score-note {
+  margin-top: 6px;
+  color: #909399;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.cost-section-title {
+  color: #303133;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.normalized-breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.normalized-row {
+  background: #ffffff;
+  border: 1px solid #ebeef5;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.normalized-row-head,
+.normalized-row-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.normalized-name {
+  color: #303133;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.normalized-value {
+  color: #303133;
+  font-size: 13px;
+  font-weight: 700;
+  max-width: 110px;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.normalized-bar-track {
+  position: relative;
+  height: 10px;
+  margin: 10px 0 8px;
+  overflow: hidden;
+  background: #f0f2f5;
+  border-radius: 6px;
+}
+
+.normalized-baseline-mark {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 66.6667%;
+  width: 2px;
+  background: #303133;
+  opacity: 0.35;
+  z-index: 2;
+}
+
+.normalized-bar-fill {
+  position: relative;
+  height: 100%;
+  min-width: 0;
+  border-radius: 6px;
+  z-index: 1;
+}
+
+.normalized-bar-fill--good {
+  background: #67c23a;
+}
+
+.normalized-bar-fill--warning {
+  background: #e6a23c;
+}
+
+.normalized-bar-fill--danger {
+  background: #f56c6c;
+}
+
+.normalized-bar-fill--pending {
+  background: #dcdfe6;
+}
+
+.normalized-row-foot {
+  color: #909399;
+  font-size: 12px;
+}
+
+.normalized-empty {
+  padding: 10px 12px;
+  color: #909399;
+  font-size: 12px;
+  text-align: center;
+  background: #f5f7fa;
+  border: 1px dashed #dcdfe6;
+  border-radius: 8px;
+}
+
+.cost-reference-list {
+  gap: 10px;
+}
+
 /* 单个成本卡片设计 */
 .cost-item {
   background-color: #ffffff;
@@ -5069,6 +6353,443 @@ onUnmounted(() => {
   font-size: 12px;
   color: #909399; /* 浅灰色副标题 */
   display: block;
+}
+
+.cost-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.runtime-dashboard-shell {
+  position: fixed;
+  top: 60px;
+  left: 320px;
+  right: 0;
+  bottom: 0;
+  z-index: 2400;
+  background: #f5f7fa;
+  overflow: hidden;
+}
+
+.runtime-dashboard {
+  width: 100%;
+  height: 100%;
+  overflow-y: auto;
+  padding: 18px;
+  box-sizing: border-box;
+  color: #303133;
+}
+
+.dashboard-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+  padding: 14px 16px;
+  background: #ffffff;
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(20, 36, 64, 0.04);
+}
+
+.dashboard-topbar h2 {
+  margin: 4px 0 0;
+  color: #303133;
+  font-size: 20px;
+  line-height: 1.2;
+}
+
+.dashboard-hero {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) minmax(360px, 0.9fr);
+  gap: 16px;
+  padding: 18px;
+  background: #ffffff;
+  border: 1px solid #e4e7ed;
+  border-left: 5px solid #909399;
+  border-radius: 8px;
+  box-shadow: 0 4px 14px rgba(20, 36, 64, 0.06);
+}
+
+.dashboard-hero--good {
+  border-left-color: #67c23a;
+}
+
+.dashboard-hero--warning {
+  border-left-color: #e6a23c;
+}
+
+.dashboard-hero--danger {
+  border-left-color: #f56c6c;
+}
+
+.dashboard-hero-main {
+  min-width: 0;
+}
+
+.dashboard-eyebrow {
+  color: #909399;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.dashboard-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+
+.dashboard-title {
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.dashboard-status {
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: #f0f2f5;
+  color: #606266;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.dashboard-score {
+  margin-top: 12px;
+  font-size: 44px;
+  line-height: 1;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.dashboard-meta {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  color: #606266;
+  font-size: 13px;
+}
+
+.dashboard-kpis {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.dashboard-alert {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid #f3d19e;
+  border-radius: 8px;
+  background: #fdf6ec;
+  color: #b88230;
+  font-size: 13px;
+}
+
+.dashboard-kpi,
+.dashboard-panel,
+.dashboard-focus-card,
+.workload-metric {
+  background: #ffffff;
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+}
+
+.dashboard-kpi {
+  padding: 12px;
+}
+
+.dashboard-kpi span,
+.dashboard-kpi small {
+  display: block;
+  color: #909399;
+  font-size: 12px;
+}
+
+.dashboard-kpi strong {
+  display: block;
+  margin: 6px 0 2px;
+  color: #303133;
+  font-size: 22px;
+  overflow-wrap: anywhere;
+}
+
+.dashboard-grid {
+  display: grid;
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.dashboard-grid--charts {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.dashboard-grid--detail {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.dashboard-grid--formula {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.dashboard-grid--top {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.dashboard-panel--wide {
+  grid-column: span 2;
+}
+
+.dashboard-panel {
+  min-width: 0;
+  padding: 14px;
+  box-shadow: 0 2px 10px rgba(20, 36, 64, 0.04);
+}
+
+.dashboard-panel-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.dashboard-panel-head h3 {
+  margin: 0;
+  color: #303133;
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.dashboard-panel-head p {
+  margin: 4px 0 0;
+  color: #909399;
+  font-size: 12px;
+}
+
+.dashboard-chart {
+  width: 100%;
+  height: 280px;
+}
+
+.dashboard-chart--pie {
+  height: 240px;
+}
+
+.dashboard-section-title {
+  margin-top: 18px;
+  color: #303133;
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.dashboard-metric-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dashboard-metric-list--compact {
+  margin-top: 8px;
+}
+
+.dashboard-metric-row,
+.dashboard-top-row,
+.dashboard-cost-table-head,
+.dashboard-cost-table-row {
+  display: grid;
+  align-items: center;
+  gap: 8px;
+}
+
+.dashboard-metric-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding-bottom: 7px;
+  border-bottom: 1px dashed #e4e7ed;
+  color: #606266;
+  font-size: 12px;
+}
+
+.dashboard-metric-row:last-child {
+  border-bottom: none;
+}
+
+.dashboard-metric-row strong {
+  max-width: 180px;
+  color: #303133;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.dashboard-cost-table {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dashboard-cost-table-head,
+.dashboard-cost-table-row {
+  grid-template-columns: 1.3fr repeat(4, minmax(72px, 1fr));
+}
+
+.dashboard-cost-table-head {
+  padding: 8px 10px;
+  background: #f5f7fa;
+  border-radius: 6px;
+  color: #909399;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.dashboard-cost-table-row {
+  padding: 8px 10px;
+  border-bottom: 1px solid #f0f2f5;
+  font-size: 12px;
+}
+
+.dashboard-cost-table-row strong {
+  color: #303133;
+}
+
+.workload-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.workload-metric {
+  padding: 14px;
+}
+
+.workload-metric span {
+  display: block;
+  color: #909399;
+  font-size: 12px;
+}
+
+.workload-metric strong {
+  display: block;
+  margin-top: 8px;
+  color: #303133;
+  font-size: 20px;
+  overflow-wrap: anywhere;
+}
+
+.dashboard-focus-card {
+  min-height: 118px;
+  padding: 14px;
+}
+
+.dashboard-focus-card strong,
+.dashboard-focus-card span,
+.dashboard-focus-card small {
+  display: block;
+}
+
+.dashboard-focus-card strong {
+  font-size: 18px;
+}
+
+.dashboard-focus-card span {
+  margin-top: 10px;
+  color: #2f80ed;
+  font-size: 30px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.dashboard-focus-card small {
+  margin-top: 6px;
+  color: #909399;
+  line-height: 1.4;
+}
+
+.dashboard-top-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dashboard-top-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 8px 0;
+  border-bottom: 1px dashed #e4e7ed;
+  font-size: 12px;
+}
+
+.dashboard-top-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dashboard-top-row strong {
+  color: #303133;
+}
+
+.dashboard-empty {
+  padding: 18px 12px;
+  border: 1px dashed #dcdfe6;
+  border-radius: 8px;
+  color: #909399;
+  font-size: 13px;
+  text-align: center;
+  background: #fafafa;
+}
+
+@media (max-width: 1400px) {
+  .runtime-dashboard-shell {
+    left: 340px;
+  }
+}
+
+@media (max-width: 1200px) {
+  .dashboard-hero,
+  .dashboard-grid--charts,
+  .dashboard-grid--detail,
+  .dashboard-grid--formula,
+  .dashboard-grid--top {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-panel--wide {
+    grid-column: span 1;
+  }
+
+  .dashboard-kpis,
+  .workload-metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 768px) {
+  .runtime-dashboard-shell {
+    left: 300px;
+  }
+}
+
+@media (max-width: 720px) {
+
+  .runtime-dashboard {
+    padding: 12px;
+  }
+
+  .dashboard-kpis,
+  .workload-metric-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-cost-table-head,
+  .dashboard-cost-table-row {
+    grid-template-columns: 1fr 1fr;
+  }
 }
 
 </style>

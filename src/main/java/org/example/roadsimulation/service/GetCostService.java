@@ -1,6 +1,7 @@
 package org.example.roadsimulation.service;
 
 import org.example.roadsimulation.core.SimulationContext;
+import org.example.roadsimulation.dto.RuntimeCostDetailDTO;
 import org.example.roadsimulation.dto.RuntimeCostDTO;
 import org.example.roadsimulation.dto.VehicleCostDTO;
 import org.example.roadsimulation.dto.VehicleCostSummaryDTO;
@@ -138,6 +139,91 @@ public class GetCostService {
         double allCost = calculateAllCost(costA, costB, costC, costD, costE);
 
         return new RuntimeCostDTO(costA, costB, costC, costD, costE, allCost);
+    }
+
+    public RuntimeCostDetailDTO calculateRuntimeCostDetail(List<Vehicle> vehicles, List<Assignment> activeAssignments) {
+        IdleVehicleCostStats idleStats = calculateIdleVehicleCostStats(vehicles, activeAssignments);
+        WorkloadStats workloadStats = calculateRuntimeWorkloadStats(vehicles);
+
+        double totalWaitingHours = safe(CostEntity.totalWaitingTime);
+        double totalEmptyDistanceKm = safe(CostEntity.totalMileageWithoutThings);
+        double emptyMileageRatio = safeDivide(totalEmptyDistanceKm, safe(CostEntity.totalMileage));
+        double assignedWaitingTransportRatio = safeDivide(totalWaitingHours, safe(CostEntity.totalTransportTime));
+        double theoryActualCapacityGap = safe(CostEntity.totalTheoryCapacity) - safe(CostEntity.totalRealityCapacity);
+        double capacityRatio = safeDivide(safe(CostEntity.totalRealityCapacity), safe(CostEntity.totalTheoryCapacity));
+        double assignedTimeEconomicLoss = VehicleType * totalWaitingHours + VehicleType * safe(CostEntity.totalTransportTime);
+
+        RuntimeCostDetailDTO.CostADetail costA = new RuntimeCostDetailDTO.CostADetail();
+        costA.setTotalWaitingHours(totalWaitingHours);
+        costA.setTotalEmptyDistanceKm(totalEmptyDistanceKm);
+        costA.setWaitingCostContribution(0.5 * totalWaitingHours);
+        costA.setEmptyDistanceCostContribution(0.5 * totalEmptyDistanceKm);
+
+        RuntimeCostDetailDTO.CostBDetail costB = new RuntimeCostDetailDTO.CostBDetail();
+        costB.setEmptyMileageRatio(emptyMileageRatio);
+        costB.setAssignedWaitingTransportRatio(assignedWaitingTransportRatio);
+        costB.setWorstWaitingTransportRatio(safe(CostEntity.WorstWaitingTransportTime));
+        costB.setIdleWaitPenalty(idleStats.idleWaitPenalty);
+        costB.setEmptyMileageContribution(0.4 * emptyMileageRatio);
+        costB.setWaitingTransportContribution(0.35 * assignedWaitingTransportRatio);
+        costB.setWorstWaitingContribution(0.1 * safe(CostEntity.WorstWaitingTransportTime));
+        costB.setIdleWaitContribution(0.15 * idleStats.idleWaitPenalty);
+
+        RuntimeCostDetailDTO.CostCDetail costC = new RuntimeCostDetailDTO.CostCDetail();
+        costC.setTotalTheoryCapacity(safe(CostEntity.totalTheoryCapacity));
+        costC.setTotalActualCapacity(safe(CostEntity.totalRealityCapacity));
+        costC.setTheoryActualCapacityGap(theoryActualCapacityGap);
+        costC.setWorstTheoryRealityCapacity(safe(CostEntity.WorstTheoryRealityCapacity));
+        costC.setCapacityGapContribution(0.9 * theoryActualCapacityGap);
+        costC.setWorstCapacityContribution(0.1 * safe(CostEntity.WorstTheoryRealityCapacity));
+
+        RuntimeCostDetailDTO.CostDDetail costD = new RuntimeCostDetailDTO.CostDDetail();
+        costD.setCapacityRatio(capacityRatio);
+        costD.setUtilizationWasteCost(VehicleType * capacityRatio);
+        costD.setAssignedTimeEconomicLoss(assignedTimeEconomicLoss);
+        costD.setIdleSpaceEconomicLoss(idleStats.idleSpaceEconomicLoss);
+        costD.setWorstEconomicLoss(safe(CostEntity.WorstLoss));
+        costD.setUtilizationWasteContribution(0.5 * VehicleType * capacityRatio);
+        costD.setAssignedTimeContribution(0.2 * assignedTimeEconomicLoss);
+        costD.setIdleSpaceContribution(0.1 * idleStats.idleSpaceEconomicLoss);
+        costD.setWorstEconomicContribution(0.2 * safe(CostEntity.WorstLoss));
+
+        RuntimeCostDetailDTO.CostEDetail costE = new RuntimeCostDetailDTO.CostEDetail();
+        costE.setAverageWorkload(workloadStats.averageWorkload);
+        costE.setWorkloadStandardDeviation(workloadStats.standardDeviation);
+        costE.setWorkloadVariationCoefficient(workloadStats.variationCoefficient);
+
+        RuntimeCostDTO summary = new RuntimeCostDTO(
+                costA.getWaitingCostContribution() + costA.getEmptyDistanceCostContribution(),
+                costB.getEmptyMileageContribution()
+                        + costB.getWaitingTransportContribution()
+                        + costB.getWorstWaitingContribution()
+                        + costB.getIdleWaitContribution(),
+                costC.getCapacityGapContribution() + costC.getWorstCapacityContribution(),
+                costD.getUtilizationWasteContribution()
+                        + costD.getAssignedTimeContribution()
+                        + costD.getIdleSpaceContribution()
+                        + costD.getWorstEconomicContribution(),
+                costE.getWorkloadVariationCoefficient(),
+                0.0
+        );
+        summary.setAllCost(calculateAllCost(
+                summary.getCostA(),
+                summary.getCostB(),
+                summary.getCostC(),
+                summary.getCostD(),
+                summary.getCostE()
+        ));
+
+        RuntimeCostDetailDTO detail = new RuntimeCostDetailDTO();
+        detail.setGeneratedAt(LocalDateTime.now());
+        detail.setSummary(summary);
+        detail.setCostA(costA);
+        detail.setCostB(costB);
+        detail.setCostC(costC);
+        detail.setCostD(costD);
+        detail.setCostE(costE);
+        return detail;
     }
 
     /**
@@ -699,6 +785,41 @@ public class GetCostService {
         return standardDeviation / average;
     }
 
+    private WorkloadStats calculateRuntimeWorkloadStats(List<Vehicle> vehicles) {
+        List<Vehicle> safeVehicles = vehicles == null ? List.of() : vehicles;
+        if (safeVehicles.isEmpty()) {
+            return new WorkloadStats(0.0, 0.0, 0.0);
+        }
+        if (simulationContext != null
+                && !simulationContext.isRunning()
+                && simulationContext.getLoopCount() == 0) {
+            return new WorkloadStats(0.0, 0.0, 0.0);
+        }
+
+        List<Double> workloads = new ArrayList<>();
+        LocalDateTime simNow = simulationContext == null ? null : simulationContext.getCurrentSimTime();
+        for (Vehicle vehicle : safeVehicles) {
+            workloads.add(getVehicleRuntimeWorkload(vehicle, simNow));
+        }
+
+        double sum = 0.0;
+        for (Double workload : workloads) {
+            sum += safe(workload);
+        }
+        double average = sum / workloads.size();
+        if (average <= 0.0) {
+            return new WorkloadStats(average, 0.0, 0.0);
+        }
+
+        double variance = 0.0;
+        for (Double workload : workloads) {
+            double diff = safe(workload) - average;
+            variance += diff * diff;
+        }
+        double standardDeviation = Math.sqrt(variance / workloads.size());
+        return new WorkloadStats(average, standardDeviation, standardDeviation / average);
+    }
+
     private double calculateAllCost(double costA, double costB, double costC, double costD, double costE) {
         return (RUNTIME_WEIGHT_A * safe(costA)
                 + RUNTIME_WEIGHT_B * safe(costB)
@@ -999,6 +1120,18 @@ public class GetCostService {
         private double fleetVolumeCapacity;
         private double idleWaitPenalty;
         private double idleSpaceEconomicLoss;
+    }
+
+    private static class WorkloadStats {
+        private final double averageWorkload;
+        private final double standardDeviation;
+        private final double variationCoefficient;
+
+        private WorkloadStats(double averageWorkload, double standardDeviation, double variationCoefficient) {
+            this.averageWorkload = averageWorkload;
+            this.standardDeviation = standardDeviation;
+            this.variationCoefficient = variationCoefficient;
+        }
     }
 
     private static class SchemeCostSnapshot {
