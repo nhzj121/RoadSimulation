@@ -33,8 +33,9 @@
                   <ElSlider
                       v-model="speedFactor"
                       :min="1"
-                      :max="100"
+                      :max="200"
                       :step="1"
+                      :marks="speedSliderMarks"
                       :format-tooltip="formatSpeedTooltip"
                       @change="onSpeedChange"
                       size="small"
@@ -1086,7 +1087,6 @@ const EXPERIMENT_PAUSED_STATUSES = new Set([
 
 const EXPERIMENT_RUNNING_STATUSES = new Set([
   'RUNNING_ORIGINAL',
-  'REBUILDING_FOR_HEURISTIC',
   'RUNNING_HEURISTIC'
 ]);
 
@@ -1281,9 +1281,53 @@ const clearExperimentScenario = async () => {
   }
 };
 
+const clearExperimentAssignmentVisuals = () => {
+  if (animationManager) {
+    animationManager.stopAll();
+  }
+  cleanupAllActiveRoutes();
+  routePlanningCache.clear();
+  assignmentStates.clear();
+  drawnAssignmentIds.value = new Set();
+  arrivalAckInFlight.clear();
+  arrivalAckCompleted.clear();
+  syncRegisteredVehicleStats();
+};
+
+const handleExperimentRunStatusTransition = (previousStatus, previousStrategy, nextStatusPayload) => {
+  const nextStatus = nextStatusPayload?.status || null;
+  const nextStrategy = nextStatusPayload?.currentStrategy || null;
+  if (!nextStatus || (previousStatus === nextStatus && previousStrategy === nextStrategy)) {
+    return;
+  }
+
+  if (nextStatus === 'REBUILDING_FOR_HEURISTIC') {
+    invalidateSimulationGeneration();
+    clearExperimentAssignmentVisuals();
+    return;
+  }
+
+  if (['COMPLETED', 'ABORTED', 'FAILED'].includes(nextStatus)) {
+    invalidateSimulationGeneration();
+    return;
+  }
+
+  if ((nextStatus === 'RUNNING_ORIGINAL' || nextStatus === 'RUNNING_HEURISTIC')
+      && (previousStatus !== nextStatus || previousStrategy !== nextStrategy)) {
+    if (previousStatus) {
+      clearExperimentAssignmentVisuals();
+    }
+    const runGeneration = beginSimulationGeneration();
+    scheduleAssignmentDrawing(fetchCurrentAssignments, runGeneration, `experiment ${nextStrategy || 'strategy'} assignments`);
+  }
+};
+
 const fetchExperimentRunStatus = async () => {
+  const previousStatus = experimentRun.status?.status || null;
+  const previousStrategy = experimentRun.status?.currentStrategy || null;
   const response = await request.get('/api/simulation/experiments/dispatch-comparison/run-status');
   experimentRun.status = unwrapApiData(response) || null;
+  handleExperimentRunStatusTransition(previousStatus, previousStrategy, experimentRun.status);
   return experimentRun.status;
 };
 
@@ -1342,11 +1386,16 @@ const startExperimentVisualRun = async () => {
     speedFactor.value = 100;
     onSpeedChange(100);
 
+    arrivalAckInFlight.clear();
+    arrivalAckCompleted.clear();
     const runGeneration = beginSimulationGeneration();
     const response = await request.post('/api/simulation/experiments/dispatch-comparison/start-visual-run');
     experimentRun.status = unwrapApiData(response) || null;
     experimentRun.result = null;
     isSimulationRunning.value = true;
+    if (animationManager) {
+      animationManager.resumeAll();
+    }
     startSimulationTimer();
     arrivalMonitor.startMonitoring(getVehiclePositions, getPOIList);
     scheduleAssignmentDrawing(fetchCurrentAssignments, runGeneration, 'experiment initial assignments');
@@ -2325,9 +2374,6 @@ const fetchRuntimeCostDetail = async () => {
     }
     return response.data;
   } catch (error) {
-    if (error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError') {
-      return null;
-    }
     runtimeCostDetail.error = '成本详情接口读取失败';
     console.error('获取成本详情数据失败:', error);
     updateRuntimeDashboardCharts();
@@ -2419,9 +2465,6 @@ const fetchSimulationCosts = async () => {
       await fetchRuntimeCostDetail();
     }
   } catch (error) {
-    if (error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError') {
-      return null;
-    }
     console.error('获取成本数据失败:', error);
   }
 };
@@ -2454,6 +2497,9 @@ const generateShipments = async () => {
 // --- 仿真控制 ---
 const speedFactor = ref(1);
 const formattedSpeed = computed(() => `${speedFactor.value.toFixed(1)}x`);
+const speedSliderMarks = {
+  100: '100x'
+};
 
 const formatSpeedTooltip = (value) => {
   return `${value.toFixed(1)}x`;
@@ -3641,7 +3687,7 @@ class VrpVehicleAnimation extends VehicleAnimation {
       this.isCompleted = true;
 
       // 通知后端到达！
-      handleVehicleArrived(this.assignmentId, this.vehicleId, nodeInfo.poiId, this.licensePlate);
+      await handleVehicleArrived(this.assignmentId, this.vehicleId, nodeInfo.poiId, this.licensePlate);
 
       // ================= 🌟 核心修复：清理整条路线的视觉残留 =================
       setTimeout(() => {
@@ -3760,7 +3806,7 @@ class VehicleAnimationManager {
 
   // 设置全局速度因子
   setGlobalSpeedFactor(factor) {
-    this.globalSpeedFactor = Math.max(1, Math.min(100, factor));
+    this.globalSpeedFactor = Math.max(1, Math.min(200, factor));
     this.animations.forEach(animation => {
       animation.updateSpeedFactor(this.globalSpeedFactor);
     });
@@ -3805,9 +3851,59 @@ let animationManager = null;
 
 // 状态管理器引用
 const vehicleStatusManager = ref(null);
+const arrivalAckInFlight = new Set();
+const arrivalAckCompleted = new Set();
 
 // --- 车辆到达处理函数 ---
+const acknowledgeExperimentVisualArrival = async (assignmentId, vehicleId) => {
+  if (!isExperimentRunActive.value || !assignmentId) {
+    return;
+  }
+  try {
+    const response = await request.post('/api/simulation/experiments/dispatch-comparison/visual-arrival-ack', {
+      assignmentId,
+      vehicleId
+    });
+    experimentRun.status = unwrapApiData(response) || experimentRun.status;
+  } catch (error) {
+    console.warn('[ExperimentVisualAck] failed', error?.response?.data?.message || error?.message || error);
+  }
+};
+
+const arrivalMessageOf = (error) => {
+  return error?.response?.data?.message
+      || error?.response?.data?.error
+      || error?.message
+      || '';
+};
+
+const isIgnorableExperimentArrivalError = (error) => {
+  if (!isExperimentRunActive.value) {
+    return false;
+  }
+  const message = arrivalMessageOf(error).toLowerCase();
+  return error?.response?.status === 404
+      || message.includes('closed assignment')
+      || message.includes('assignment is closed')
+      || message.includes('already completed')
+      || message.includes('no active visual experiment run')
+      || message.includes('duplicate');
+};
+
 const handleVehicleArrived = async (assignmentId, vehicleId, endPOIId, licensePlate) => {
+  const arrivalKey = String(assignmentId || '');
+  if (!arrivalKey) {
+    return false;
+  }
+  if (arrivalAckCompleted.has(arrivalKey)) {
+    console.info(`[VehicleArrival] duplicate completed arrival ignored: ${arrivalKey}`);
+    return true;
+  }
+  if (arrivalAckInFlight.has(arrivalKey)) {
+    console.info(`[VehicleArrival] duplicate in-flight arrival ignored: ${arrivalKey}`);
+    return true;
+  }
+  arrivalAckInFlight.add(arrivalKey);
   try {
     console.log(`处理车辆到达: ${licensePlate} (Assignment: ${assignmentId})`);
 
@@ -3821,6 +3917,8 @@ const handleVehicleArrived = async (assignmentId, vehicleId, endPOIId, licensePl
     console.log(`车辆 ${licensePlate} 到达处理完成`);
 
     // 2. 立即更新车辆状态为 WAITING，载重归零
+    await acknowledgeExperimentVisualArrival(assignmentId, vehicleId);
+    arrivalAckCompleted.add(arrivalKey);
     clearRouteByAssignmentId(assignmentId, vehicleId);
 
     // 2. 等待后端处理完成
@@ -3828,9 +3926,18 @@ const handleVehicleArrived = async (assignmentId, vehicleId, endPOIId, licensePl
       await updateVehicleInfo();
       console.log(`车辆 ${licensePlate} 状态已刷新`);
     }, 500);
+    return true;
   } catch (error) {
+    if (isIgnorableExperimentArrivalError(error)) {
+      console.info('[VehicleArrival] ignored experiment arrival lifecycle error:', arrivalMessageOf(error));
+      arrivalAckCompleted.add(arrivalKey);
+      return true;
+    }
     console.error('车辆到达处理失败:', error);
-    ElMessage.error(`车辆 ${licensePlate} 状态更新失败: ${error.message}`);
+    ElMessage.error(`车辆 ${licensePlate} 状态更新失败: ${arrivalMessageOf(error) || error}`);
+    return false;
+  } finally {
+    arrivalAckInFlight.delete(arrivalKey);
   }
 };
 
@@ -4036,11 +4143,13 @@ const startSimulationTimer = () => {
       // Cleanup after the local monitor snapshot is stable.
       await checkAndCleanupCompletedAssignments();
 
-      // Draw new assignments asynchronously so route planning does not block monitor data.
-      scheduleAssignmentDrawing(fetchAndDrawNewAssignments, runGeneration, 'new assignments');
-
       if (isExperimentRunActive.value) {
         await syncExperimentRunAfterStatusRefresh();
+      }
+
+      // Draw new assignments asynchronously so route planning does not block monitor data.
+      if (isActiveTransportGeneration(runGeneration)) {
+        scheduleAssignmentDrawing(fetchAndDrawNewAssignments, runGeneration, 'new assignments');
       }
 
     }
@@ -4574,6 +4683,8 @@ const clearFrontendSimulationVisuals = () => {
   clearDrawnRoutes();
   routePlanningCache.clear();
   assignmentStates.clear();
+  arrivalAckInFlight.clear();
+  arrivalAckCompleted.clear();
   syncTransportMonitorData({});
   currentPOIs.value = [];
   vehicles.splice(0, vehicles.length);
@@ -4910,6 +5021,11 @@ const drawTwoStageRouteForAssignment = async (assignment, runGeneration = simula
       return null;
     }
 
+    if (isLifecycleCancelledRoute(stage1Route) || isLifecycleCancelledRoute(stage2Route)) {
+      discardRouteData(assignment.assignmentId, routeData);
+      return null;
+    }
+
     if (!stage1Route || !stage2Route) {
       console.error(`Assignment ${assignment.assignmentId} 路线规划失败`);
       ElMessage.error(`任务 ${assignment.assignmentId} 路线规划失败`);
@@ -5117,6 +5233,10 @@ const drawMultiStageRouteForVrpAssignment = async (assignment, runGeneration = s
             `${assignment.assignmentId}_vrp_stage_${i}`,
             runGeneration
         );
+        if (isLifecycleCancelledRoute(routeResult)) {
+          discardRouteData(assignment.assignmentId, routeData);
+          return null;
+        }
         if (routeResult && routeResult.path && routeResult.path.length > 0) {
           path = routeResult.path;
           distance = routeResult.distance;
@@ -5262,7 +5382,7 @@ const computeSingleRouteWithCache = async (start, end, cacheKey, runGeneration =
   // 规划新路线
   const route = await computeSingleRoute(start, end, '0', runGeneration);
 
-  if (route && isActiveTransportGeneration(runGeneration)) {
+  if (route && !isLifecycleCancelledRoute(route) && isActiveTransportGeneration(runGeneration)) {
     // 缓存结果
     routePlanningCache.set(cacheKey, route);
   }
@@ -5698,6 +5818,43 @@ const fetchTasks = async () => {
 };
 
 // 计算单段路线
+const lifecycleCancelledRoute = { lifecycleCancelled: true };
+
+const routePlanningLifecyclePatterns = [
+  'gaode route planning queue is paused by simulation lifecycle',
+  'discarded by simulation lifecycle',
+  'discarded by simulation pause',
+  'discarded by simulation reset',
+  'interrupted by simulation pause',
+  'task is stale',
+  'route planning skipped during simulation reset'
+];
+
+const routePlanningMessageOf = (errorOrMessage) => {
+  if (!errorOrMessage) {
+    return '';
+  }
+  if (typeof errorOrMessage === 'string') {
+    return errorOrMessage;
+  }
+  return errorOrMessage?.response?.data?.message
+      || errorOrMessage?.response?.data?.error
+      || errorOrMessage?.message
+      || '';
+};
+
+const isRoutePlanningLifecycleCancellation = (errorOrMessage) => {
+  if (errorOrMessage?.code === 'ERR_CANCELED' || errorOrMessage?.name === 'CanceledError') {
+    return true;
+  }
+  const message = routePlanningMessageOf(errorOrMessage).toLowerCase();
+  return routePlanningLifecyclePatterns.some(pattern => message.includes(pattern));
+};
+
+const isLifecycleCancelledRoute = (route) => {
+  return Boolean(route?.lifecycleCancelled);
+};
+
 const computeSingleRoute = async (start, end, strategy = '0', runGeneration = simulationGeneration.value) => {
   if (!isActiveTransportGeneration(runGeneration)) return null;
   try {
@@ -5719,6 +5876,10 @@ const computeSingleRoute = async (start, end, strategy = '0', runGeneration = si
     const response = res.data;
 
     if (!response.success) {
+      if (isRoutePlanningLifecycleCancellation(response.message)) {
+        console.info('[RoutePlanning] lifecycle cancellation:', response.message);
+        return lifecycleCancelledRoute;
+      }
       console.error(`路线规划失败:`, response.message);
       ElMessage.error('路线规划失败');
       return null;
@@ -5761,8 +5922,9 @@ const computeSingleRoute = async (start, end, strategy = '0', runGeneration = si
       speedMps: pathInfo.distance / pathInfo.duration
     };
   } catch (error) {
-    if (error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError') {
-      return null;
+    if (isRoutePlanningLifecycleCancellation(error)) {
+      console.info('[RoutePlanning] lifecycle cancellation:', routePlanningMessageOf(error));
+      return lifecycleCancelledRoute;
     }
     console.error('路线规划出错:', error);
     ElMessage.error('路线规划出错');

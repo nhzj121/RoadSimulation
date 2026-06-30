@@ -102,6 +102,206 @@ public class BatchDirectVehicleAssignmentService {
         return new BatchMatchResult(matched, unmatched);
     }
 
+    public TailFallbackMatchResult matchOverdueTailFallback(
+            List<DirectAssignmentRequest> overdueRequests,
+            List<DirectAssignmentRequest> optionalRequests,
+            List<Vehicle> vehicles
+    ) {
+        List<DirectAssignmentRequest> cleanOverdueRequests = cleanRequests(overdueRequests);
+        if (cleanOverdueRequests.isEmpty()) {
+            return new TailFallbackMatchResult(List.of(), List.of());
+        }
+
+        List<DirectAssignmentRequest> cleanOptionalRequests = cleanRequests(optionalRequests);
+        List<Vehicle> cleanVehicles = vehicles == null
+                ? Collections.emptyList()
+                : vehicles.stream()
+                .filter(Objects::nonNull)
+                .filter(vehicle -> Vehicle.VehicleStatus.IDLE.equals(vehicle.getCurrentStatus()))
+                .toList();
+
+        if (cleanVehicles.isEmpty()) {
+            return new TailFallbackMatchResult(List.of(), cleanOverdueRequests);
+        }
+
+        List<TailFallbackAssignment> assignments = new ArrayList<>();
+        List<DirectAssignmentRequest> unmatched = new ArrayList<>();
+        Set<Long> usedVehicleIds = new LinkedHashSet<>();
+        Set<Long> usedRequestItemIds = new LinkedHashSet<>();
+
+        for (DirectAssignmentRequest overdueRequest : cleanOverdueRequests) {
+            Long overdueItemId = itemId(overdueRequest);
+            if (overdueItemId != null && usedRequestItemIds.contains(overdueItemId)) {
+                continue;
+            }
+
+            TailFallbackCandidate bestCandidate = cleanVehicles.stream()
+                    .filter(vehicle -> vehicle.getId() == null || !usedVehicleIds.contains(vehicle.getId()))
+                    .map(vehicle -> buildTailFallbackCandidate(
+                            overdueRequest,
+                            cleanOptionalRequests,
+                            vehicle,
+                            usedRequestItemIds
+                    ))
+                    .filter(Objects::nonNull)
+                    .max(Comparator
+                            .comparingDouble(TailFallbackCandidate::forcedLoadFactor)
+                            .thenComparing(candidate -> -candidate.distanceKm())
+                            .thenComparingDouble(TailFallbackCandidate::finalLoadFactor))
+                    .orElse(null);
+
+            if (bestCandidate == null) {
+                unmatched.add(overdueRequest);
+                continue;
+            }
+
+            Vehicle vehicle = bestCandidate.vehicle();
+            if (vehicle.getId() != null) {
+                usedVehicleIds.add(vehicle.getId());
+            }
+            for (DirectAssignmentRequest request : bestCandidate.requests()) {
+                Long usedItemId = itemId(request);
+                if (usedItemId != null) {
+                    usedRequestItemIds.add(usedItemId);
+                }
+            }
+            assignments.add(new TailFallbackAssignment(
+                    vehicle,
+                    overdueRequest,
+                    bestCandidate.requests(),
+                    bestCandidate.distanceKm(),
+                    bestCandidate.finalLoadFactor()
+            ));
+        }
+
+        return new TailFallbackMatchResult(assignments, unmatched);
+    }
+
+    private List<DirectAssignmentRequest> cleanRequests(List<DirectAssignmentRequest> requests) {
+        return requests == null
+                ? Collections.emptyList()
+                : requests.stream()
+                .filter(Objects::nonNull)
+                .filter(request -> request.getShipmentItem() != null)
+                .toList();
+    }
+
+    private TailFallbackCandidate buildTailFallbackCandidate(
+            DirectAssignmentRequest forcedRequest,
+            List<DirectAssignmentRequest> optionalRequests,
+            Vehicle vehicle,
+            Set<Long> usedRequestItemIds
+    ) {
+        if (!isFallbackFeasible(forcedRequest, vehicle)) {
+            return null;
+        }
+
+        ShipmentItem forcedItem = forcedRequest.getShipmentItem();
+        double totalWeight = safe(forcedItem.getWeight());
+        double totalVolume = safe(forcedItem.getVolume());
+        double maxLoad = safe(vehicle.getMaxLoadCapacity());
+        double maxVolume = safe(vehicle.getCargoVolume());
+        double forcedLoadFactor = loadFactor(totalWeight, totalVolume, maxLoad, maxVolume);
+
+        List<DirectAssignmentRequest> packedRequests = new ArrayList<>();
+        packedRequests.add(forcedRequest);
+        Set<Long> packedIds = new LinkedHashSet<>();
+        Long forcedId = itemId(forcedRequest);
+        if (forcedId != null) {
+            packedIds.add(forcedId);
+        }
+
+        List<DirectAssignmentRequest> candidates = optionalRequests.stream()
+                .filter(request -> {
+                    Long optionalItemId = itemId(request);
+                    return optionalItemId == null
+                            || (!packedIds.contains(optionalItemId) && !usedRequestItemIds.contains(optionalItemId));
+                })
+                .filter(request -> isFallbackFeasible(request, vehicle))
+                .sorted(Comparator.comparingDouble((DirectAssignmentRequest request) ->
+                        singleItemLoadFactor(request, vehicle)).reversed())
+                .toList();
+
+        double currentLoadFactor = forcedLoadFactor;
+        for (DirectAssignmentRequest optionalRequest : candidates) {
+            ShipmentItem item = optionalRequest.getShipmentItem();
+            double nextWeight = totalWeight + safe(item.getWeight());
+            double nextVolume = totalVolume + safe(item.getVolume());
+            if (nextWeight > maxLoad + EPS || nextVolume > maxVolume + EPS) {
+                continue;
+            }
+            double nextLoadFactor = loadFactor(nextWeight, nextVolume, maxLoad, maxVolume);
+            if (nextLoadFactor <= currentLoadFactor + EPS) {
+                continue;
+            }
+            packedRequests.add(optionalRequest);
+            Long itemId = itemId(optionalRequest);
+            if (itemId != null) {
+                packedIds.add(itemId);
+            }
+            totalWeight = nextWeight;
+            totalVolume = nextVolume;
+            currentLoadFactor = nextLoadFactor;
+        }
+
+        Point vehiclePoint = pointFromVehicle(vehicle);
+        Point startPoint = pointFromPoi(forcedRequest.getStartPOI());
+        double distanceKm = vehiclePoint == null || startPoint == null
+                ? INFEASIBLE_COST
+                : haversineKm(vehiclePoint.lat, vehiclePoint.lon, startPoint.lat, startPoint.lon);
+
+        return new TailFallbackCandidate(vehicle, packedRequests, distanceKm, forcedLoadFactor, currentLoadFactor);
+    }
+
+    private boolean isFallbackFeasible(DirectAssignmentRequest request, Vehicle vehicle) {
+        if (request == null || vehicle == null || request.getShipmentItem() == null) {
+            return false;
+        }
+        if (!Vehicle.VehicleStatus.IDLE.equals(vehicle.getCurrentStatus())) {
+            return false;
+        }
+        if (request.getStartPOI() == null || request.getEndPOI() == null) {
+            return false;
+        }
+
+        ShipmentItem item = request.getShipmentItem();
+        double itemWeight = safe(item.getWeight());
+        double itemVolume = safe(item.getVolume());
+        double maxLoad = safe(vehicle.getMaxLoadCapacity());
+        double maxVolume = safe(vehicle.getCargoVolume());
+        if (itemWeight <= 0.0 || itemVolume <= 0.0 || maxLoad <= 0.0 || maxVolume <= 0.0) {
+            return false;
+        }
+        if (itemWeight > maxLoad + EPS || itemVolume > maxVolume + EPS) {
+            return false;
+        }
+        return pointFromVehicle(vehicle) != null
+                && pointFromPoi(request.getStartPOI()) != null
+                && pointFromPoi(request.getEndPOI()) != null;
+    }
+
+    private double singleItemLoadFactor(DirectAssignmentRequest request, Vehicle vehicle) {
+        ShipmentItem item = request.getShipmentItem();
+        return loadFactor(
+                safe(item.getWeight()),
+                safe(item.getVolume()),
+                safe(vehicle.getMaxLoadCapacity()),
+                safe(vehicle.getCargoVolume())
+        );
+    }
+
+    private double loadFactor(double weight, double volume, double maxLoad, double maxVolume) {
+        double weightFactor = maxLoad > 0.0 ? weight / maxLoad : 0.0;
+        double volumeFactor = maxVolume > 0.0 ? volume / maxVolume : 0.0;
+        return Math.max(weightFactor, volumeFactor);
+    }
+
+    private Long itemId(DirectAssignmentRequest request) {
+        return request == null || request.getShipmentItem() == null
+                ? null
+                : request.getShipmentItem().getId();
+    }
+
     private PairCost calculatePairCost(DirectAssignmentRequest request, Vehicle vehicle) {
         ShipmentItem item = request.getShipmentItem();
         if (item == null || vehicle == null || request.getStartPOI() == null) {
@@ -256,6 +456,15 @@ public class BatchDirectVehicleAssignmentService {
         }
     }
 
+    private record TailFallbackCandidate(
+            Vehicle vehicle,
+            List<DirectAssignmentRequest> requests,
+            double distanceKm,
+            double forcedLoadFactor,
+            double finalLoadFactor
+    ) {
+    }
+
     public static class DirectAssignmentRequest {
         private final ShipmentItem shipmentItem;
         private final POI startPOI;
@@ -348,6 +557,71 @@ public class BatchDirectVehicleAssignmentService {
                 map.put(assignment.getVehicle(), assignment.getRequest().getShipmentItem());
             }
             return map;
+        }
+    }
+
+    public static class TailFallbackAssignment {
+        private final Vehicle vehicle;
+        private final DirectAssignmentRequest forcedRequest;
+        private final List<DirectAssignmentRequest> requests;
+        private final double cost;
+        private final double loadFactor;
+
+        private TailFallbackAssignment(
+                Vehicle vehicle,
+                DirectAssignmentRequest forcedRequest,
+                List<DirectAssignmentRequest> requests,
+                double cost,
+                double loadFactor
+        ) {
+            this.vehicle = vehicle;
+            this.forcedRequest = forcedRequest;
+            this.requests = requests == null ? List.of() : List.copyOf(requests);
+            this.cost = cost;
+            this.loadFactor = loadFactor;
+        }
+
+        public Vehicle getVehicle() {
+            return vehicle;
+        }
+
+        public DirectAssignmentRequest getForcedRequest() {
+            return forcedRequest;
+        }
+
+        public List<DirectAssignmentRequest> getRequests() {
+            return requests;
+        }
+
+        public double getCost() {
+            return cost;
+        }
+
+        public double getLoadFactor() {
+            return loadFactor;
+        }
+    }
+
+    public static class TailFallbackMatchResult {
+        private final List<TailFallbackAssignment> assignments;
+        private final List<DirectAssignmentRequest> unmatchedForcedRequests;
+
+        private TailFallbackMatchResult(
+                List<TailFallbackAssignment> assignments,
+                List<DirectAssignmentRequest> unmatchedForcedRequests
+        ) {
+            this.assignments = assignments == null ? List.of() : List.copyOf(assignments);
+            this.unmatchedForcedRequests = unmatchedForcedRequests == null
+                    ? List.of()
+                    : List.copyOf(unmatchedForcedRequests);
+        }
+
+        public List<TailFallbackAssignment> getAssignments() {
+            return assignments;
+        }
+
+        public List<DirectAssignmentRequest> getUnmatchedForcedRequests() {
+            return unmatchedForcedRequests;
         }
     }
 }

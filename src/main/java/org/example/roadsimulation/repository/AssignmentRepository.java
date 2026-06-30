@@ -11,6 +11,7 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -74,4 +75,10 @@ public interface AssignmentRepository extends JpaRepository<Assignment, Long> {
     // 批量查找
     @Query("SELECT a FROM Assignment a WHERE a.id IN :ids")
     List<Assignment> findByIds(@Param("ids") List<Long> ids);
+
+    @Query("SELECT DISTINCT a.id FROM Assignment a JOIN a.shipmentItems item WHERE item.id IN :itemIds")
+    List<Long> findAssignmentIdsByShipmentItemIds(@Param("itemIds") Collection<Long> itemIds);
+
+    @Query("SELECT DISTINCT a.id FROM Assignment a JOIN a.shipmentItems item WHERE item.id IN :itemIds AND a.status IN ('WAITING', 'ASSIGNED', 'IN_PROGRESS')")
+    List<Long> findRuntimeActiveAssignmentIdsByShipmentItemIds(@Param("itemIds") Collection<Long> itemIds);
 }

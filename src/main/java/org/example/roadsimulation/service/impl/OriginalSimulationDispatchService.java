@@ -16,5 +16,6 @@ public class OriginalSimulationDispatchService implements SimulationDispatchServ
     @Override
     public void dispatch() {
         dataInitializer.vrpDispatchingCycle();
+        dataInitializer.dispatchOverdueTailItems("TAIL_FALLBACK_ORIGINAL");
     }
 }

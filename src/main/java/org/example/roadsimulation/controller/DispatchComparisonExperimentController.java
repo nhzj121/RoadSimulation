@@ -4,6 +4,7 @@ import org.example.roadsimulation.dto.ApiResponse;
 import org.example.roadsimulation.dto.DispatchComparisonOptionsDTO;
 import org.example.roadsimulation.dto.DispatchComparisonPrepareRequest;
 import org.example.roadsimulation.dto.DispatchComparisonScenarioDTO;
+import org.example.roadsimulation.dto.DispatchComparisonVisualArrivalAckRequest;
 import org.example.roadsimulation.dto.DispatchComparisonVisualRunResultDTO;
 import org.example.roadsimulation.dto.DispatchComparisonVisualRunStatusDTO;
 import org.example.roadsimulation.service.DispatchComparisonExperimentService;
@@ -101,6 +102,20 @@ public class DispatchComparisonExperimentController {
             return ResponseEntity.ok(ApiResponse.success(
                     "visual experiment aborted",
                     experimentService.abortVisualRun()
+            ));
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
+        }
+    }
+
+    @PostMapping("/visual-arrival-ack")
+    public ResponseEntity<ApiResponse<DispatchComparisonVisualRunStatusDTO>> acknowledgeVisualArrival(
+            @RequestBody DispatchComparisonVisualArrivalAckRequest request
+    ) {
+        try {
+            return ResponseEntity.ok(ApiResponse.success(
+                    "visual arrival acknowledged",
+                    experimentService.acknowledgeVisualArrival(request)
             ));
         } catch (IllegalArgumentException | IllegalStateException e) {
             return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
