@@ -910,6 +910,21 @@ public class DataInitializer implements CommandLineRunner {
         assignmentStatusMap.clear();
     }
 
+    public synchronized void clearExperimentRuntimeCaches() {
+        startupProcessingShipmentsGenerated = false;
+        startToEndMapping.clear();
+        poiPairShipmentMapping.clear();
+        assignmentStatusMap.clear();
+        assignmentBriefMap.clear();
+        pairStatusMap.clear();
+        poiIsWithGoods.clear();
+        poiTrueCount.clear();
+        currentProcessingSegmentSelection = null;
+        if (poiShipmentManager != null) {
+            poiShipmentManager.reset();
+        }
+    }
+
     private boolean canRegisterFrontendAssignment() {
         return simulationContext != null && simulationContext.isRunning();
     }

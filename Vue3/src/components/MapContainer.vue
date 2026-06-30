@@ -45,16 +45,19 @@
                 <span class="control-label">启发式:</span>
                 <ElSwitch
                     v-model="useHeuristicDispatch"
-                    :disabled="isSimulationRunning"
+                    :disabled="isSimulationRunning || isExperimentRunActive"
                     active-text="启用"
                     inactive-text="关闭"
                     inline-prompt
                 />
               </div>
               <div class="control-group" style="margin-top: 15px;">
-                <ElButton type="primary" :disabled="resetInProgress" @click="startSimulation">▶ 开始</ElButton>
-                <ElButton type="primary" :disabled="resetInProgress" @click="pauseSimulation">⏸ 暂停</ElButton>
-                <ElButton :loading="resetInProgress" :disabled="resetInProgress" @click="resetSimulation">↻ 重置</ElButton>
+                <ElButton type="primary" :disabled="resetInProgress || hasPreparedExperimentScenario || isExperimentRunActive" @click="startSimulation">▶ 开始</ElButton>
+                <ElButton type="primary" :disabled="resetInProgress || isExperimentRunActive" @click="pauseSimulation">⏸ 暂停</ElButton>
+                <ElButton :loading="resetInProgress" :disabled="resetInProgress || isExperimentRunActive" @click="resetSimulation">↻ 重置</ElButton>
+              </div>
+              <div v-if="hasPreparedExperimentScenario" class="experiment-start-lock">
+                已准备实验场景，请清除实验标记后再启动普通仿真。
               </div>
               <div class="speed-display" style="margin-top: 10px; font-size: 12px; color: #666;">
                 当前速度: {{ formattedSpeed }}
@@ -73,7 +76,7 @@
               <div class="shipment-control">
                 <span class="control-label">生成数量:</span>
                 <input type="number" class="custom-input" v-model.number="shipmentCount" min="1" />
-                <ElButton type="primary" size="small" @click="generateShipments">生成</ElButton>
+                <ElButton type="primary" size="small" :disabled="isExperimentRunActive" @click="generateShipments">生成</ElButton>
               </div>
 
               <div class="task-sidebar" v-if="shipments && shipments.length > 0">
@@ -265,6 +268,238 @@
         <div v-if="runtimeCostDetail.error" class="dashboard-alert">
           {{ runtimeCostDetail.error }}，当前大屏仅展示已缓存或基础成本监控数据。
         </div>
+
+        <section class="dashboard-panel experiment-prep-panel">
+          <div class="dashboard-panel-head">
+            <div>
+              <h3>策略对比实验准备</h3>
+              <p>固定全部车辆初始 POI，并生成一批实验运单进入现有调度池</p>
+            </div>
+            <div class="experiment-actions">
+              <ElButton size="small" :loading="experimentPrep.loading" @click="refreshExperimentPreparation">
+                刷新实验状态
+              </ElButton>
+              <ElButton
+                size="small"
+                type="danger"
+                plain
+                :disabled="!hasPreparedExperimentScenario || experimentPrep.loading"
+                @click="clearExperimentScenario"
+              >
+                清除实验标记
+              </ElButton>
+            </div>
+          </div>
+
+          <div v-if="experimentPrep.error" class="dashboard-alert experiment-alert">
+            {{ experimentPrep.error }}
+          </div>
+
+          <div class="experiment-control-grid">
+            <div class="experiment-control-block">
+              <span>实验运单数量</span>
+              <ElInputNumber
+                v-model="experimentPrep.shipmentCount"
+                :min="1"
+                :max="20"
+                :disabled="experimentPrep.loading || hasPreparedExperimentScenario"
+                size="small"
+              />
+            </div>
+            <div class="experiment-control-block">
+              <span>实验车辆数</span>
+              <strong>{{ experimentPrep.vehicleCount || experimentPrep.vehicles.length || 0 }}</strong>
+            </div>
+            <div class="experiment-control-block">
+              <ElButton
+                type="primary"
+                :loading="experimentPrep.loading"
+                :disabled="!canPrepareExperimentScenario"
+                @click="prepareExperimentScenario"
+              >
+                准备实验场景
+              </ElButton>
+            </div>
+          </div>
+
+          <div class="experiment-note">
+            准备实验前必须先手动重置普通仿真数据；普通仿真运行中不能准备实验。
+          </div>
+
+          <div class="experiment-placement-preview">
+            <div class="experiment-placement-card experiment-placement-card--wide">
+              <span>车辆初始化规则</span>
+              <strong>{{ formatExperimentPlacementPolicy(experimentPrep.placementPolicy) }}</strong>
+              <small>后端统一分配，前端不再手动选择 POI</small>
+            </div>
+            <div class="experiment-placement-card">
+              <span>实验车辆</span>
+              <strong>{{ experimentPrep.vehicleCount || experimentPrep.vehicles.length || 0 }}</strong>
+              <small>全部车辆参与初始化</small>
+            </div>
+            <div class="experiment-placement-card">
+              <span>候选初始 POI</span>
+              <strong>{{ experimentPrep.candidateInitialPoiCount || 0 }}</strong>
+              <small>仓库 / 配送中心</small>
+            </div>
+          </div>
+
+          <div v-if="experimentPrep.current" class="experiment-summary">
+            <div class="dashboard-section-title">当前实验场景</div>
+            <div class="experiment-summary-grid">
+              <div class="dashboard-metric-row">
+                <span>实验ID</span>
+                <strong>{{ experimentPrep.current.experimentId }}</strong>
+              </div>
+              <div class="dashboard-metric-row">
+                <span>准备时间</span>
+                <strong>{{ formatExperimentDateTime(experimentPrep.current.preparedAt) }}</strong>
+              </div>
+              <div class="dashboard-metric-row">
+                <span>车辆数</span>
+                <strong>{{ experimentPrep.current.vehicleCount || 0 }}</strong>
+              </div>
+              <div class="dashboard-metric-row">
+                <span>实验运单数</span>
+                <strong>{{ experimentPrep.current.shipmentCount || 0 }}</strong>
+              </div>
+            </div>
+
+            <div class="experiment-placement-list">
+              <div class="experiment-table-head experiment-table-head--placement">
+                <span>Vehicle</span>
+                <span>Initial POI</span>
+                <span>Type</span>
+              </div>
+              <div
+                v-for="position in experimentScenarioPositionPreview"
+                :key="position.vehicleId"
+                class="experiment-table-row experiment-table-row--placement"
+              >
+                <span>{{ position.licensePlate || `Vehicle ${position.vehicleId}` }}</span>
+                <span>{{ position.poiName || `POI ${position.poiId}` }}</span>
+                <span>{{ position.poiType || '--' }}</span>
+              </div>
+              <div v-if="experimentScenarioHiddenPositionCount > 0" class="dashboard-empty">
+                还有 {{ experimentScenarioHiddenPositionCount }} 辆车的初始位置未展开显示
+              </div>
+            </div>
+
+            <div class="experiment-shipment-list">
+              <div class="experiment-table-head experiment-table-head--shipment">
+                <span>模板</span>
+                <span>路线</span>
+                <span>货物</span>
+                <span>数量</span>
+                <span>任务项</span>
+              </div>
+              <div
+                v-for="shipment in experimentPrep.current.shipments || []"
+                :key="shipment.shipmentItemId || shipment.templateCode"
+                class="experiment-table-row experiment-table-row--shipment"
+              >
+                <span>{{ shipment.templateCode }}</span>
+                <span>{{ shipment.originPoiName }} → {{ shipment.destinationPoiName }}</span>
+                <span>{{ shipment.goodsName || shipment.goodsSku }}</span>
+                <strong>{{ shipment.quantity }}</strong>
+                <span>{{ shipment.shipmentItemId }}</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="dashboard-panel experiment-run-panel">
+          <div class="dashboard-panel-head">
+            <div>
+              <h3>实验运行与结果对比</h3>
+              <p>按 ORIGINAL 到 HEURISTIC 自动运行同一实验场景</p>
+            </div>
+            <div class="experiment-actions">
+              <ElButton size="small" :loading="experimentRun.loading" @click="refreshExperimentRunState">
+                刷新运行状态
+              </ElButton>
+            </div>
+          </div>
+
+          <div v-if="experimentRun.error" class="dashboard-alert experiment-alert">
+            {{ experimentRun.error }}
+          </div>
+
+          <div class="experiment-run-grid">
+            <div class="experiment-run-status-card">
+              <span>运行状态</span>
+              <strong>{{ experimentRunStatusText }}</strong>
+              <small>{{ experimentRun.status?.currentStrategy || '等待启动' }}</small>
+            </div>
+            <div class="experiment-run-status-card">
+              <span>实验进度</span>
+              <strong>{{ experimentRunProgressText }}</strong>
+              <small>Loop {{ experimentRun.status?.currentLoop ?? 0 }} / {{ experimentRun.status?.maxLoops ?? '--' }}</small>
+            </div>
+            <div class="experiment-run-status-card">
+              <span>当前成本指数</span>
+              <strong>{{ formatNormalizedValue(experimentRun.status?.latestNormalizedAllCost) }}</strong>
+              <small>AllCost {{ formatCostValue(experimentRun.status?.latestAllCost, 4) }}</small>
+            </div>
+          </div>
+
+          <div class="experiment-run-actions">
+            <ElButton
+              type="primary"
+              :loading="experimentRun.loading"
+              :disabled="!canStartExperimentVisualRun"
+              @click="startExperimentVisualRun"
+            >
+              开始实验运行
+            </ElButton>
+            <ElButton
+              :disabled="!canPauseExperimentVisualRun"
+              @click="pauseExperimentVisualRun"
+            >
+              暂停
+            </ElButton>
+            <ElButton
+              :disabled="!canResumeExperimentVisualRun"
+              @click="resumeExperimentVisualRun"
+            >
+              继续
+            </ElButton>
+            <ElButton
+              type="danger"
+              plain
+              :disabled="!isExperimentRunActive || experimentRun.loading"
+              @click="abortExperimentVisualRun"
+            >
+              中止
+            </ElButton>
+          </div>
+
+          <div v-if="experimentRun.result" class="experiment-result-table">
+            <div class="experiment-result-head">
+              <span>策略</span>
+              <span>成本指数</span>
+              <span>AllCost</span>
+              <span>Cost A/B/C/D/E</span>
+              <span>完成</span>
+              <span>用车/任务</span>
+            </div>
+            <div
+              v-for="row in experimentResultRows"
+              :key="row.strategy"
+              class="experiment-result-row"
+            >
+              <strong>{{ row.strategy }}</strong>
+              <span>{{ row.normalizedAllCost }}</span>
+              <span>{{ row.allCost }}</span>
+              <span>{{ row.costs }}</span>
+              <span>{{ row.completed }}</span>
+              <span>{{ row.vehicleAndAssignment }}</span>
+            </div>
+          </div>
+          <div v-else class="dashboard-empty">
+            完成 ORIGINAL 与 HEURISTIC 两次运行后显示基础对比结果
+          </div>
+        </section>
 
         <div class="dashboard-grid dashboard-grid--charts">
           <section class="dashboard-panel">
@@ -551,7 +786,8 @@ import {
   ElDialog,
   ElSwitch,
   ElTabs,
-  ElTabPane
+  ElTabPane,
+  ElInputNumber
 } from "element-plus";
 
 let map = null;
@@ -793,6 +1029,24 @@ const runtimeCostDetail = reactive({
   error: ''
 });
 
+const experimentPrep = reactive({
+  shipmentCount: 10,
+  vehicles: [],
+  vehicleCount: 0,
+  candidateInitialPoiCount: 0,
+  placementPolicy: '',
+  current: null,
+  loading: false,
+  error: ''
+});
+
+const experimentRun = reactive({
+  status: null,
+  result: null,
+  loading: false,
+  error: ''
+});
+
 const dashboardHistory = reactive({
   times: [],
   activeShipments: [],
@@ -806,6 +1060,382 @@ const dashboardHistory = reactive({
 });
 
 const DASHBOARD_HISTORY_LIMIT = 60;
+
+const unwrapApiData = (response) => {
+  const payload = response?.data;
+  if (payload && Object.prototype.hasOwnProperty.call(payload, 'success')) {
+    return payload.data;
+  }
+  return payload;
+};
+
+const hasPreparedExperimentScenario = computed(() => !!experimentPrep.current?.experimentId);
+
+const EXPERIMENT_ACTIVE_STATUSES = new Set([
+  'RUNNING_ORIGINAL',
+  'PAUSED_ORIGINAL',
+  'REBUILDING_FOR_HEURISTIC',
+  'RUNNING_HEURISTIC',
+  'PAUSED_HEURISTIC'
+]);
+
+const EXPERIMENT_PAUSED_STATUSES = new Set([
+  'PAUSED_ORIGINAL',
+  'PAUSED_HEURISTIC'
+]);
+
+const EXPERIMENT_RUNNING_STATUSES = new Set([
+  'RUNNING_ORIGINAL',
+  'REBUILDING_FOR_HEURISTIC',
+  'RUNNING_HEURISTIC'
+]);
+
+const isExperimentRunActive = computed(() => {
+  const status = experimentRun.status?.status;
+  return EXPERIMENT_ACTIVE_STATUSES.has(status);
+});
+
+const isExperimentRunExecuting = computed(() => {
+  const status = experimentRun.status?.status;
+  return EXPERIMENT_RUNNING_STATUSES.has(status);
+});
+
+const canStartExperimentVisualRun = computed(() => {
+  return hasPreparedExperimentScenario.value
+      && !experimentRun.loading
+      && !isExperimentRunActive.value
+      && !isSimulationRunning.value;
+});
+
+const canPauseExperimentVisualRun = computed(() => {
+  const status = experimentRun.status?.status;
+  return !experimentRun.loading && (status === 'RUNNING_ORIGINAL' || status === 'RUNNING_HEURISTIC');
+});
+
+const canResumeExperimentVisualRun = computed(() => {
+  const status = experimentRun.status?.status;
+  return !experimentRun.loading && EXPERIMENT_PAUSED_STATUSES.has(status);
+});
+
+const experimentRunStatusText = computed(() => {
+  const status = experimentRun.status?.status || 'IDLE';
+  const labels = {
+    IDLE: '未启动',
+    PREPARED: '已准备',
+    RUNNING_ORIGINAL: 'ORIGINAL 运行中',
+    PAUSED_ORIGINAL: 'ORIGINAL 已暂停',
+    REBUILDING_FOR_HEURISTIC: '重建 HEURISTIC 场景',
+    RUNNING_HEURISTIC: 'HEURISTIC 运行中',
+    PAUSED_HEURISTIC: 'HEURISTIC 已暂停',
+    COMPLETED: '实验完成',
+    ABORTED: '已中止',
+    FAILED: '运行失败'
+  };
+  return labels[status] || status;
+});
+
+const experimentRunProgressText = computed(() => {
+  const completed = experimentRun.status?.completedItems ?? 0;
+  const total = experimentRun.status?.totalItems ?? 0;
+  return `${completed} / ${total}`;
+});
+
+const experimentResultRows = computed(() => {
+  const result = experimentRun.result;
+  if (!result) {
+    return [];
+  }
+  return [result.original, result.heuristic]
+      .filter(Boolean)
+      .map((item) => ({
+        strategy: item.strategy,
+        normalizedAllCost: formatNormalizedValue(item.normalizedAllCost),
+        allCost: formatCostValue(item.allCost, 4),
+        costs: [
+          formatCostValue(item.costA, 2),
+          formatCostValue(item.costB, 2),
+          formatCostValue(item.costC, 2),
+          formatCostValue(item.costD, 2),
+          formatCostValue(item.costE, 4)
+        ].join(' / '),
+        completed: `${item.completedItems || 0} / ${item.totalItems || 0}`,
+        vehicleAndAssignment: `${item.vehicleUsedCount || 0} / ${item.assignmentCount || 0}`
+      }));
+});
+
+const canPrepareExperimentScenario = computed(() => {
+  return !experimentPrep.loading
+      && !isSimulationRunning.value
+      && !isExperimentRunActive.value
+      && !hasPreparedExperimentScenario.value
+      && experimentPrep.shipmentCount >= 1
+      && experimentPrep.shipmentCount <= 20
+      && (experimentPrep.vehicleCount > 0 || experimentPrep.vehicles.length > 0)
+      && experimentPrep.candidateInitialPoiCount > 0;
+});
+
+const experimentScenarioPositionPreview = computed(() => {
+  const positions = experimentPrep.current?.vehicleInitialPositions;
+  return Array.isArray(positions) ? positions.slice(0, 12) : [];
+});
+
+const experimentScenarioHiddenPositionCount = computed(() => {
+  const positions = experimentPrep.current?.vehicleInitialPositions;
+  return Array.isArray(positions) ? Math.max(0, positions.length - experimentScenarioPositionPreview.value.length) : 0;
+});
+
+const formatExperimentPlacementPolicy = (policy) => {
+  if (policy === 'VEHICLE_ID_AND_INITIAL_POI_ID_ROUND_ROBIN') {
+    return '车辆ID排序 + 初始POI排序轮转分配';
+  }
+  return policy || '等待实验选项数据';
+};
+
+const formatExperimentDateTime = (value) => {
+  if (!value) {
+    return '--';
+  }
+  return String(value).replace('T', ' ').slice(0, 19);
+};
+
+const fetchExperimentVehiclesAndPois = async () => {
+  const response = await request.get('/api/simulation/experiments/dispatch-comparison/options');
+  const optionsData = unwrapApiData(response) || {};
+  const vehiclesData = optionsData.vehicles || [];
+  experimentPrep.vehicles = Array.isArray(vehiclesData)
+      ? [...vehiclesData].sort((a, b) => (a.vehicleId || 0) - (b.vehicleId || 0))
+      : [];
+  experimentPrep.vehicleCount = Number(optionsData.vehicleCount ?? experimentPrep.vehicles.length) || 0;
+  experimentPrep.candidateInitialPoiCount = Number(optionsData.candidateInitialPoiCount ?? 0) || 0;
+  experimentPrep.placementPolicy = optionsData.placementPolicy || '';
+};
+
+const fetchCurrentExperimentScenario = async () => {
+  const response = await request.get('/api/simulation/experiments/dispatch-comparison/current');
+  experimentPrep.current = unwrapApiData(response) || null;
+  return experimentPrep.current;
+};
+
+const refreshExperimentPreparation = async () => {
+  experimentPrep.loading = true;
+  experimentPrep.error = '';
+  try {
+    await Promise.all([
+      fetchExperimentVehiclesAndPois(),
+      fetchCurrentExperimentScenario()
+    ]);
+  } catch (error) {
+    experimentPrep.error = error?.response?.data?.message || error?.response?.data?.error || '实验准备数据读取失败';
+    console.error('实验准备数据读取失败:', error);
+  } finally {
+    experimentPrep.loading = false;
+  }
+};
+
+const prepareExperimentScenario = async () => {
+  if (!canPrepareExperimentScenario.value) {
+    if (isSimulationRunning.value) {
+      ElMessage.warning('普通仿真运行中，无法准备实验场景');
+    } else if (hasPreparedExperimentScenario.value) {
+      ElMessage.warning('已存在实验场景，请先清除实验标记并手动重置');
+    } else {
+      ElMessage.warning('实验准备条件不完整，请先刷新实验状态');
+    }
+    return;
+  }
+
+  experimentPrep.loading = true;
+  experimentPrep.error = '';
+  try {
+    const payload = {
+      shipmentCount: experimentPrep.shipmentCount
+    };
+    const response = await request.post('/api/simulation/experiments/dispatch-comparison/prepare', payload);
+    experimentPrep.current = unwrapApiData(response) || null;
+    ElMessage.success('实验场景准备完成');
+    await fetchExperimentVehiclesAndPois();
+  } catch (error) {
+    const message = error?.response?.data?.message || error?.response?.data?.error || '实验场景准备失败';
+    experimentPrep.error = message;
+    ElMessage.error(message);
+    console.error('实验场景准备失败:', error);
+  } finally {
+    experimentPrep.loading = false;
+  }
+};
+
+const clearExperimentScenario = async () => {
+  experimentPrep.loading = true;
+  experimentPrep.error = '';
+  try {
+    await request.delete('/api/simulation/experiments/dispatch-comparison/current');
+    experimentPrep.current = null;
+    ElMessage.success('实验场景标记已清除');
+  } catch (error) {
+    const message = error?.response?.data?.message || error?.response?.data?.error || '清除实验标记失败';
+    experimentPrep.error = message;
+    ElMessage.error(message);
+    console.error('清除实验标记失败:', error);
+  } finally {
+    experimentPrep.loading = false;
+  }
+};
+
+const fetchExperimentRunStatus = async () => {
+  const response = await request.get('/api/simulation/experiments/dispatch-comparison/run-status');
+  experimentRun.status = unwrapApiData(response) || null;
+  return experimentRun.status;
+};
+
+const fetchLatestExperimentRunResult = async () => {
+  const response = await request.get('/api/simulation/experiments/dispatch-comparison/latest-result');
+  experimentRun.result = unwrapApiData(response) || null;
+  return experimentRun.result;
+};
+
+const refreshExperimentRunState = async () => {
+  experimentRun.loading = true;
+  experimentRun.error = '';
+  try {
+    await Promise.all([
+      fetchExperimentRunStatus(),
+      fetchLatestExperimentRunResult()
+    ]);
+  } catch (error) {
+    const message = error?.response?.data?.message || error?.response?.data?.error || '实验运行状态读取失败';
+    experimentRun.error = message;
+    console.error('实验运行状态读取失败:', error);
+  } finally {
+    experimentRun.loading = false;
+  }
+};
+
+const syncExperimentRunAfterStatusRefresh = async () => {
+  try {
+    await fetchExperimentRunStatus();
+    const status = experimentRun.status?.status;
+    if (['COMPLETED', 'ABORTED', 'FAILED'].includes(status)) {
+      isSimulationRunning.value = false;
+      stopSimulationTimer();
+      invalidateSimulationGeneration();
+      clearFrontendSimulationVisuals();
+      await fetchLatestExperimentRunResult();
+    }
+  } catch (error) {
+    console.error('实验运行状态同步失败:', error);
+  }
+};
+
+const startExperimentVisualRun = async () => {
+  if (!canStartExperimentVisualRun.value) {
+    ElMessage.warning('实验运行条件不满足，请先准备实验场景并停止普通仿真');
+    return;
+  }
+  experimentRun.loading = true;
+  experimentRun.error = '';
+  try {
+    activeMainView.value = 'map';
+    disposeRuntimeDashboardCharts();
+    await nextTick();
+    resizeMapAfterPanelChange();
+
+    speedFactor.value = 100;
+    onSpeedChange(100);
+
+    const runGeneration = beginSimulationGeneration();
+    const response = await request.post('/api/simulation/experiments/dispatch-comparison/start-visual-run');
+    experimentRun.status = unwrapApiData(response) || null;
+    experimentRun.result = null;
+    isSimulationRunning.value = true;
+    startSimulationTimer();
+    arrivalMonitor.startMonitoring(getVehiclePositions, getPOIList);
+    scheduleAssignmentDrawing(fetchCurrentAssignments, runGeneration, 'experiment initial assignments');
+    ElMessage.success('实验运行已启动');
+  } catch (error) {
+    const message = error?.response?.data?.message || error?.response?.data?.error || '实验运行启动失败';
+    experimentRun.error = message;
+    isSimulationRunning.value = false;
+    invalidateSimulationGeneration();
+    ElMessage.error(message);
+    console.error('实验运行启动失败:', error);
+  } finally {
+    experimentRun.loading = false;
+  }
+};
+
+const pauseExperimentVisualRun = async () => {
+  if (!canPauseExperimentVisualRun.value) {
+    return;
+  }
+  experimentRun.loading = true;
+  experimentRun.error = '';
+  try {
+    const response = await request.post('/api/simulation/experiments/dispatch-comparison/pause');
+    experimentRun.status = unwrapApiData(response) || null;
+    isSimulationRunning.value = false;
+    stopSimulationTimer();
+    invalidateSimulationGeneration();
+    if (animationManager) {
+      animationManager.pauseAll();
+    }
+    ElMessage.success('实验运行已暂停');
+  } catch (error) {
+    const message = error?.response?.data?.message || error?.response?.data?.error || '暂停实验失败';
+    experimentRun.error = message;
+    ElMessage.error(message);
+  } finally {
+    experimentRun.loading = false;
+  }
+};
+
+const resumeExperimentVisualRun = async () => {
+  if (!canResumeExperimentVisualRun.value) {
+    return;
+  }
+  experimentRun.loading = true;
+  experimentRun.error = '';
+  try {
+    const response = await request.post('/api/simulation/experiments/dispatch-comparison/resume');
+    experimentRun.status = unwrapApiData(response) || null;
+    const runGeneration = beginSimulationGeneration();
+    isSimulationRunning.value = true;
+    startSimulationTimer();
+    if (animationManager) {
+      animationManager.resumeAll();
+    }
+    scheduleAssignmentDrawing(fetchCurrentAssignments, runGeneration, 'experiment resumed assignments');
+    ElMessage.success('实验运行已继续');
+  } catch (error) {
+    const message = error?.response?.data?.message || error?.response?.data?.error || '继续实验失败';
+    experimentRun.error = message;
+    ElMessage.error(message);
+  } finally {
+    experimentRun.loading = false;
+  }
+};
+
+const abortExperimentVisualRun = async () => {
+  if (!isExperimentRunActive.value) {
+    return;
+  }
+  experimentRun.loading = true;
+  experimentRun.error = '';
+  try {
+    const response = await request.post('/api/simulation/experiments/dispatch-comparison/abort');
+    experimentRun.status = unwrapApiData(response) || null;
+    isSimulationRunning.value = false;
+    stopSimulationTimer();
+    invalidateSimulationGeneration();
+    clearFrontendSimulationVisuals();
+    ElMessage.success('实验运行已中止');
+  } catch (error) {
+    const message = error?.response?.data?.message || error?.response?.data?.error || '中止实验失败';
+    experimentRun.error = message;
+    ElMessage.error(message);
+  } finally {
+    experimentRun.loading = false;
+  }
+};
 
 const resetRuntimeCostDetail = () => {
   runtimeCostDetail.generatedAt = '';
@@ -1710,7 +2340,9 @@ const openRuntimeDashboard = async () => {
   isMonitorPanelVisible.value = false;
   await Promise.allSettled([
     fetchRuntimeCostDetail(),
-    fetchTransportMonitor()
+    fetchTransportMonitor(),
+    refreshExperimentPreparation(),
+    refreshExperimentRunState()
   ]);
   await nextTick();
   if (Object.keys(runtimeDashboardChartInstances).length === 0) {
@@ -1805,6 +2437,10 @@ const clearHighlight = () => {
 
 // 生成运单（批量）
 const generateShipments = async () => {
+  if (isExperimentRunActive.value) {
+    ElMessage.warning('实验运行中不能生成普通运单');
+    return;
+  }
   if (shipmentCount.value <= 0) return;
   try {
     const res = await request.post('/api/shipments/batch-generate', { count: shipmentCount.value });
@@ -1875,6 +2511,14 @@ const isActiveSimulationGeneration = (generation) => {
   return isSimulationRunning.value && !resetInProgress.value && generation === simulationGeneration.value;
 };
 
+const isTransportAnimationActive = () => {
+  return (isSimulationRunning.value || isExperimentRunExecuting.value) && !resetInProgress.value;
+};
+
+const isActiveTransportGeneration = (generation) => {
+  return isTransportAnimationActive() && generation === simulationGeneration.value;
+};
+
 function getVehicleIconId(vehicleId) {
   return vehicleId === null || vehicleId === undefined ? null : String(vehicleId);
 }
@@ -1909,7 +2553,7 @@ function unmarkDrawnVehicleIcon(vehicleId) {
 }
 
 const scheduleAssignmentDrawing = (drawer, runGeneration, label) => {
-  if (!isActiveSimulationGeneration(runGeneration)) {
+  if (!isActiveTransportGeneration(runGeneration)) {
     return;
   }
   if (assignmentDrawInProgress) {
@@ -3199,6 +3843,14 @@ const startSimulation = async () => {
   if (resetInProgress.value) {
     return;
   }
+  if (isExperimentRunActive.value) {
+    ElMessage.warning('实验运行中不能启动普通仿真');
+    return;
+  }
+  if (hasPreparedExperimentScenario.value) {
+    ElMessage.warning('已准备实验场景，请清除实验标记后再启动普通仿真');
+    return;
+  }
 
   try {
     const runGeneration = beginSimulationGeneration();
@@ -3252,6 +3904,10 @@ const pauseSimulation = async () => {
   if (resetInProgress.value) {
     return;
   }
+  if (isExperimentRunActive.value) {
+    ElMessage.warning('实验运行中请使用实验暂停按钮');
+    return;
+  }
 
   try {
     console.log("已暂停仿真");
@@ -3277,6 +3933,10 @@ const pauseSimulation = async () => {
  */
 const resetSimulation = async () => {
   if (resetInProgress.value) {
+    return;
+  }
+  if (isExperimentRunActive.value) {
+    ElMessage.warning('实验运行中不能执行普通重置');
     return;
   }
 
@@ -3366,7 +4026,7 @@ const startSimulationTimer = () => {
   }
 
   simulationTimer.value = setInterval(async () => {
-    if (isSimulationRunning.value) {
+    if (isTransportAnimationActive()) {
       const runGeneration = simulationGeneration.value;
       await fetchSimulationCosts();
 
@@ -3378,6 +4038,10 @@ const startSimulationTimer = () => {
 
       // Draw new assignments asynchronously so route planning does not block monitor data.
       scheduleAssignmentDrawing(fetchAndDrawNewAssignments, runGeneration, 'new assignments');
+
+      if (isExperimentRunActive.value) {
+        await syncExperimentRunAfterStatusRefresh();
+      }
 
     }
   }, simulationInterval.value);
@@ -3900,7 +4564,26 @@ const clearDrawnRoutes = () => {
   syncRegisteredVehicleStats();
 };
 
-// 创建车辆图标（支持颜色和状态区分）
+// Frontend-only visual cleanup for experiment abort and terminal states.
+const clearFrontendSimulationVisuals = () => {
+  if (animationManager) {
+    animationManager.stopAll();
+  }
+  cleanupAllActiveRoutes();
+  clearPOIMarkers();
+  clearDrawnRoutes();
+  routePlanningCache.clear();
+  assignmentStates.clear();
+  syncTransportMonitorData({});
+  currentPOIs.value = [];
+  vehicles.splice(0, vehicles.length);
+  stats.running = 0;
+  stats.poiCount = 0;
+  stats.tasks = 0;
+  stats.anomalyRate = 0;
+};
+
+// Create vehicle icons with status-aware styling.
 const createVehicleIcon = (size = 32, status = 'IDLE', color = null, meta = {}) => {
   const el = document.createElement('div');
   el.style.width = `${size}px`;
@@ -4060,9 +4743,9 @@ const clearRouteByAssignmentId = (assignmentId, vehicleId = null) => {
 // 获取当前活跃的Assignment（用于初始加载）
 const fetchCurrentAssignments = async (runGeneration = simulationGeneration.value) => {
   try {
-    if (!isActiveSimulationGeneration(runGeneration)) return;
+    if (!isActiveTransportGeneration(runGeneration)) return;
     const response = await request.get('/api/assignments/active');
-    if (!isActiveSimulationGeneration(runGeneration)) return;
+    if (!isActiveTransportGeneration(runGeneration)) return;
     const assignments = response.data;
 
     if (assignments && assignments.length > 0) {
@@ -4077,7 +4760,7 @@ const fetchCurrentAssignments = async (runGeneration = simulationGeneration.valu
             } else {
               routeData = await drawTwoStageRouteForAssignment(assignment, runGeneration);
             }
-            if (!isActiveSimulationGeneration(runGeneration)) return;
+            if (!isActiveTransportGeneration(runGeneration)) return;
             if (routeData) {
               drawnAssignmentIds.value.add(assignment.assignmentId);
             }
@@ -4097,9 +4780,9 @@ const fetchCurrentAssignments = async (runGeneration = simulationGeneration.valu
 // 增量获取并绘制新Assignment
 const fetchAndDrawNewAssignments = async (runGeneration = simulationGeneration.value) => {
   try {
-    if (!isActiveSimulationGeneration(runGeneration)) return;
+    if (!isActiveTransportGeneration(runGeneration)) return;
     const response = await request.get('/api/assignments/new');
-    if (!isActiveSimulationGeneration(runGeneration)) return;
+    if (!isActiveTransportGeneration(runGeneration)) return;
     const newAssignments = response.data;
 
     if (!newAssignments || newAssignments.length === 0) {
@@ -4111,7 +4794,7 @@ const fetchAndDrawNewAssignments = async (runGeneration = simulationGeneration.v
 
     // 绘制新路线
     for (const assignment of newAssignments) {
-      if (!isActiveSimulationGeneration(runGeneration)) return;
+      if (!isActiveTransportGeneration(runGeneration)) return;
       if (assignment && assignment.assignmentId) {
         if (!drawnAssignmentIds.value.has(assignment.assignmentId)) {
           let routeData = null;
@@ -4121,7 +4804,7 @@ const fetchAndDrawNewAssignments = async (runGeneration = simulationGeneration.v
             routeData = await drawTwoStageRouteForAssignment(assignment, runGeneration);
           }
 
-          if (!isActiveSimulationGeneration(runGeneration)) return;
+          if (!isActiveTransportGeneration(runGeneration)) return;
           if (!routeData) {
             continue;
           }
@@ -4148,7 +4831,7 @@ const fetchAndDrawNewAssignments = async (runGeneration = simulationGeneration.v
 // 为Assignment绘制两段路线（修复版）
 const drawTwoStageRouteForAssignment = async (assignment, runGeneration = simulationGeneration.value) => {
   if (!AMapLib || !map) return null;
-  if (!isActiveSimulationGeneration(runGeneration)) return null;
+  if (!isActiveTransportGeneration(runGeneration)) return null;
 
   let routeData = null;
   try {
@@ -4222,7 +4905,7 @@ const drawTwoStageRouteForAssignment = async (assignment, runGeneration = simula
         runGeneration
     );
 
-    if (!isActiveSimulationGeneration(runGeneration)) {
+    if (!isActiveTransportGeneration(runGeneration)) {
       discardRouteData(assignment.assignmentId, routeData);
       return null;
     }
@@ -4368,7 +5051,7 @@ const drawTwoStageRouteForAssignment = async (assignment, runGeneration = simula
 // ==================== VRP 专线：绘制多节点复杂路线 ====================
 const drawMultiStageRouteForVrpAssignment = async (assignment, runGeneration = simulationGeneration.value) => {
   if (!AMapLib || !map) return null;
-  if (!isActiveSimulationGeneration(runGeneration)) return null;
+  if (!isActiveTransportGeneration(runGeneration)) return null;
 
   let routeData = null;
   try {
@@ -4411,7 +5094,7 @@ const drawMultiStageRouteForVrpAssignment = async (assignment, runGeneration = s
 
     // 1. 逐段请求高德路线，把多点串联起来
     for (let i = 0; i < nodes.length; i++) {
-      if (!isActiveSimulationGeneration(runGeneration)) {
+      if (!isActiveTransportGeneration(runGeneration)) {
         discardRouteData(assignment.assignmentId, routeData);
         return null;
       }
@@ -4419,7 +5102,7 @@ const drawMultiStageRouteForVrpAssignment = async (assignment, runGeneration = s
 
       // 防并发限流缓冲
       await new Promise(resolve => setTimeout(resolve, 500));
-      if (!isActiveSimulationGeneration(runGeneration)) {
+      if (!isActiveTransportGeneration(runGeneration)) {
         discardRouteData(assignment.assignmentId, routeData);
         return null;
       }
@@ -4443,7 +5126,7 @@ const drawMultiStageRouteForVrpAssignment = async (assignment, runGeneration = s
       }
 
       // 【修复】：直线兜底，绝不瞬移
-      if (!isActiveSimulationGeneration(runGeneration)) {
+      if (!isActiveTransportGeneration(runGeneration)) {
         discardRouteData(assignment.assignmentId, routeData);
         return null;
       }
@@ -4569,7 +5252,7 @@ const isValidCoordinate = (lng, lat) => {
 
 // 带缓存的路线规划
 const computeSingleRouteWithCache = async (start, end, cacheKey, runGeneration = simulationGeneration.value) => {
-  if (!isActiveSimulationGeneration(runGeneration)) return null;
+  if (!isActiveTransportGeneration(runGeneration)) return null;
   // 检查缓存
   if (routePlanningCache.has(cacheKey)) {
     console.log(`使用缓存的路线: ${cacheKey}`);
@@ -4579,7 +5262,7 @@ const computeSingleRouteWithCache = async (start, end, cacheKey, runGeneration =
   // 规划新路线
   const route = await computeSingleRoute(start, end, '0', runGeneration);
 
-  if (route && isActiveSimulationGeneration(runGeneration)) {
+  if (route && isActiveTransportGeneration(runGeneration)) {
     // 缓存结果
     routePlanningCache.set(cacheKey, route);
   }
@@ -5016,7 +5699,7 @@ const fetchTasks = async () => {
 
 // 计算单段路线
 const computeSingleRoute = async (start, end, strategy = '0', runGeneration = simulationGeneration.value) => {
-  if (!isActiveSimulationGeneration(runGeneration)) return null;
+  if (!isActiveTransportGeneration(runGeneration)) return null;
   try {
     const params = {
       startLon: String(start[0]),
@@ -5031,7 +5714,7 @@ const computeSingleRoute = async (start, end, strategy = '0', runGeneration = si
         { params, signal: routePlanningAbortController?.signal }
     );
 
-    if (!isActiveSimulationGeneration(runGeneration)) return null;
+    if (!isActiveTransportGeneration(runGeneration)) return null;
 
     const response = res.data;
 
@@ -5138,6 +5821,9 @@ const initVehicleStatusManager = () => {
 };
 
 onMounted(() => {
+  fetchCurrentExperimentScenario().catch(error => {
+    console.error('读取当前实验场景失败:', error);
+  });
   window._AMapSecurityConfig = {
     securityJsCode: "9df38c185c95fa1dbf78a1082b64f668",
   };
@@ -5175,6 +5861,18 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  if (isExperimentRunActive.value) {
+    try {
+      const abortUrl = 'http://localhost:8080/api/simulation/experiments/dispatch-comparison/abort';
+      if (navigator?.sendBeacon) {
+        navigator.sendBeacon(abortUrl, new Blob([], { type: 'application/json' }));
+      } else {
+        request.post('/api/simulation/experiments/dispatch-comparison/abort').catch(() => {});
+      }
+    } catch (error) {
+      console.warn('实验运行卸载中止请求发送失败:', error);
+    }
+  }
   invalidateSimulationGeneration();
   stopSimulationTimer();
 
@@ -6491,6 +7189,227 @@ onUnmounted(() => {
   background: #fdf6ec;
   color: #b88230;
   font-size: 13px;
+}
+
+.experiment-start-lock {
+  margin-top: 8px;
+  color: #b88230;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.experiment-prep-panel {
+  margin-top: 14px;
+}
+
+.experiment-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.experiment-alert {
+  margin-bottom: 12px;
+}
+
+.experiment-control-grid {
+  display: grid;
+  grid-template-columns: minmax(160px, 0.7fr) minmax(140px, 0.5fr) minmax(180px, 0.8fr);
+  gap: 18px;
+  align-items: end;
+}
+
+.experiment-control-block {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.experiment-control-block span,
+.experiment-note {
+  color: #909399;
+  font-size: 12px;
+}
+
+.experiment-control-block strong {
+  color: #303133;
+  font-size: 18px;
+}
+
+.experiment-note {
+  margin-top: 10px;
+}
+
+.experiment-placement-preview,
+.experiment-placement-list {
+  margin-top: 12px;
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.experiment-placement-preview {
+  display: grid;
+  grid-template-columns: minmax(280px, 1.4fr) repeat(2, minmax(150px, 0.6fr));
+  gap: 12px;
+  padding: 12px;
+  background: #fafafa;
+}
+
+.experiment-placement-card {
+  min-width: 0;
+  padding: 12px;
+  background: #ffffff;
+  border: 1px solid #ebeef5;
+  border-radius: 8px;
+}
+
+.experiment-placement-card span,
+.experiment-placement-card small {
+  display: block;
+  color: #909399;
+  font-size: 12px;
+}
+
+.experiment-placement-card strong {
+  display: block;
+  margin-top: 8px;
+  color: #303133;
+  font-size: 18px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.experiment-placement-card small {
+  margin-top: 6px;
+  line-height: 1.4;
+}
+
+.experiment-run-panel {
+  margin-top: 16px;
+}
+
+.experiment-run-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(160px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.experiment-run-status-card {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+  background: #fafafa;
+}
+
+.experiment-run-status-card span,
+.experiment-run-status-card small {
+  display: block;
+  color: #909399;
+  font-size: 12px;
+}
+
+.experiment-run-status-card strong {
+  display: block;
+  margin: 8px 0 4px;
+  color: #303133;
+  font-size: 20px;
+}
+
+.experiment-run-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.experiment-result-table {
+  margin-top: 14px;
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.experiment-result-head,
+.experiment-result-row {
+  display: grid;
+  grid-template-columns: minmax(90px, 0.7fr) repeat(5, minmax(100px, 1fr));
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  font-size: 13px;
+}
+
+.experiment-result-head {
+  background: #f5f7fa;
+  color: #606266;
+  font-weight: 700;
+}
+
+.experiment-result-row {
+  border-top: 1px solid #ebeef5;
+  color: #303133;
+}
+
+.experiment-shipment-list {
+  margin-top: 12px;
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.experiment-table-head,
+.experiment-table-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(90px, 0.5fr) minmax(220px, 1.4fr);
+  gap: 10px;
+  align-items: center;
+  padding: 9px 10px;
+}
+
+.experiment-table-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #f5f7fa;
+  color: #606266;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.experiment-table-row {
+  border-top: 1px solid #ebeef5;
+  color: #303133;
+  font-size: 13px;
+}
+
+.experiment-table-row .el-select {
+  width: 100%;
+}
+
+.experiment-summary {
+  margin-top: 14px;
+}
+
+.experiment-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.experiment-table-head--shipment,
+.experiment-table-row--shipment {
+  grid-template-columns: minmax(90px, 0.5fr) minmax(220px, 1.6fr) minmax(130px, 0.8fr) minmax(70px, 0.4fr) minmax(90px, 0.5fr);
+}
+
+.experiment-table-head--placement,
+.experiment-table-row--placement {
+  grid-template-columns: minmax(120px, 0.8fr) minmax(220px, 1.4fr) minmax(110px, 0.6fr);
 }
 
 .dashboard-kpi,
