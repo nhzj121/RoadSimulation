@@ -76,7 +76,6 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
 
     private static final int MAX_EXPERIMENT_SHIPMENTS = 20;
     private static final int MAX_VISUAL_RUN_LOOPS = 360;
-    private static final int VISUAL_COMPLETION_FALLBACK_GRACE_LOOPS = 2;
     private static final String FIXED_PLACEMENT_POLICY = "VEHICLE_ID_AND_INITIAL_POI_ID_ROUND_ROBIN";
 
     private final ReentrantLock visualRunLock = new ReentrantLock(true);
@@ -112,7 +111,6 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
     private volatile Long activeRunId;
     private volatile Long activeStrategyRunId;
     private volatile List<Long> activeStrategyShipmentItemIds = List.of();
-    private volatile int visualCompletionFallbackStartLoop = -1;
     private final Set<Long> visualArrivedAssignmentIds = ConcurrentHashMap.newKeySet();
 
     public DispatchComparisonExperimentServiceImpl(
@@ -528,7 +526,6 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
         activeStrategyRunId = strategyRun.getId();
         activeStrategyShipmentItemIds = List.copyOf(itemIds);
         visualArrivedAssignmentIds.clear();
-        visualCompletionFallbackStartLoop = -1;
 
         run.setCurrentStrategy(strategy.name());
         run.setCurrentLoop(0);
@@ -564,7 +561,6 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
         activeStrategyRunId = null;
         activeStrategyShipmentItemIds = List.of();
         visualArrivedAssignmentIds.clear();
-        visualCompletionFallbackStartLoop = -1;
         simulationModeGuard.clearDispatchComparisonExperimentActive();
     }
 
@@ -841,30 +837,14 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
 
     private boolean isCurrentStrategyComplete(int completed, int total) {
         if (total <= 0 || completed < total) {
-            visualCompletionFallbackStartLoop = -1;
             return false;
         }
         List<Long> assignmentIds = currentStrategyAssignmentIds();
         List<Long> activeAssignmentIds = currentStrategyRuntimeActiveAssignmentIds();
 
-        if (!assignmentIds.isEmpty()
+        return !assignmentIds.isEmpty()
                 && visualArrivedAssignmentIds.containsAll(assignmentIds)
-                && activeAssignmentIds.isEmpty()) {
-            visualCompletionFallbackStartLoop = -1;
-            return true;
-        }
-
-        if (activeAssignmentIds.isEmpty()) {
-            int loop = simulationContext.getLoopCount();
-            if (visualCompletionFallbackStartLoop < 0) {
-                visualCompletionFallbackStartLoop = loop;
-                return false;
-            }
-            return loop - visualCompletionFallbackStartLoop >= VISUAL_COMPLETION_FALLBACK_GRACE_LOOPS;
-        }
-
-        visualCompletionFallbackStartLoop = -1;
-        return false;
+                && activeAssignmentIds.isEmpty();
     }
 
     private List<Long> currentStrategyAssignmentIds() {
@@ -1102,24 +1082,25 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
         return List.of(
                 new ExperimentShipmentTemplate("EXP-LOG-01", POI.POIType.TIMBER_YARD, 0, POI.POIType.SAWMILL, 0, "LOG", 8),
                 new ExperimentShipmentTemplate("EXP-LOG-02", POI.POIType.TIMBER_YARD, 1, POI.POIType.SAWMILL, 1, "LOG", 10),
+                new ExperimentShipmentTemplate("EXP-LOG-02", POI.POIType.TIMBER_YARD, 2, POI.POIType.SAWMILL, 2, "LOG", 12),
                 new ExperimentShipmentTemplate("EXP-PLANK-01", POI.POIType.SAWMILL, 0, POI.POIType.BOARD_FACTORY, 0, "PLANK", 10),
                 new ExperimentShipmentTemplate("EXP-PLANK-02", POI.POIType.SAWMILL, 1, POI.POIType.BOARD_FACTORY, 1, "PLANK", 12),
+                new ExperimentShipmentTemplate("EXP-PLANK-02", POI.POIType.SAWMILL, 2, POI.POIType.BOARD_FACTORY, 2, "PLANK", 18),
                 new ExperimentShipmentTemplate("EXP-PANEL-01", POI.POIType.BOARD_FACTORY, 0, POI.POIType.FURNITURE_FACTORY, 0, "PANEL", 12),
                 new ExperimentShipmentTemplate("EXP-PANEL-02", POI.POIType.BOARD_FACTORY, 1, POI.POIType.FURNITURE_FACTORY, 1, "PANEL", 14),
-                new ExperimentShipmentTemplate("EXP-IRON-ORE-01", POI.POIType.IRON_MINE, 0, POI.POIType.STEEL_MILL, 0, "IRON_ORE", 10),
-                new ExperimentShipmentTemplate("EXP-IRON-ORE-02", POI.POIType.IRON_MINE, 1, POI.POIType.STEEL_MILL, 1, "IRON_ORE", 12),
-                new ExperimentShipmentTemplate("EXP-STEEL-BILLET-01", POI.POIType.STEEL_MILL, 0, POI.POIType.STEEL_PROCESSING_PLANT, 0, "STEEL_BILLET", 10),
-                new ExperimentShipmentTemplate("EXP-STEEL-BILLET-02", POI.POIType.STEEL_MILL, 1, POI.POIType.STEEL_PROCESSING_PLANT, 1, "STEEL_BILLET", 12),
-                new ExperimentShipmentTemplate("EXP-STEEL-PRODUCT-01", POI.POIType.STEEL_PROCESSING_PLANT, 0, POI.POIType.WAREHOUSE, 0, "STEEL_PRODUCT", 10),
-                new ExperimentShipmentTemplate("EXP-STEEL-PRODUCT-02", POI.POIType.STEEL_PROCESSING_PLANT, 1, POI.POIType.WAREHOUSE, 1, "STEEL_PRODUCT", 12),
+                new ExperimentShipmentTemplate("EXP-PANEL-02", POI.POIType.BOARD_FACTORY, 2, POI.POIType.FURNITURE_FACTORY, 2, "PANEL", 13),
+                new ExperimentShipmentTemplate("EXP-STEEL-PRODUCT-01", POI.POIType.STEEL_PROCESSING_PLANT, 0, POI.POIType.AUTO_ASSEMBLY_PLANT, 0, "STEEL_PRODUCT", 10),
+                new ExperimentShipmentTemplate("EXP-STEEL-PRODUCT-02", POI.POIType.STEEL_PROCESSING_PLANT, 1, POI.POIType.AUTO_ASSEMBLY_PLANT, 1, "STEEL_PRODUCT", 12),
+                new ExperimentShipmentTemplate("EXP-STEEL-PRODUCT-02", POI.POIType.STEEL_PROCESSING_PLANT, 2, POI.POIType.AUTO_ASSEMBLY_PLANT, 2, "STEEL_PRODUCT", 12),
+                new ExperimentShipmentTemplate("EXP-STEEL-PRODUCT-03", POI.POIType.STEEL_PROCESSING_PLANT, 4, POI.POIType.FURNITURE_FACTORY, 4, "STEEL_PRODUCT", 10),
+                new ExperimentShipmentTemplate("EXP-STEEL-PRODUCT-03", POI.POIType.STEEL_PROCESSING_PLANT, 2, POI.POIType.FURNITURE_FACTORY, 2, "STEEL_PRODUCT", 10),
+                new ExperimentShipmentTemplate("EXP-STEEL-PRODUCT-04", POI.POIType.STEEL_PROCESSING_PLANT, 3, POI.POIType.FURNITURE_FACTORY, 3, "STEEL_PRODUCT", 12),
                 new ExperimentShipmentTemplate("EXP-RUBBER-RAW-01", POI.POIType.WAREHOUSE, 2, POI.POIType.RUBBER_PROCESSING_PLANT, 0, "RUBBER_RAW", 10),
                 new ExperimentShipmentTemplate("EXP-RUBBER-RAW-02", POI.POIType.WAREHOUSE, 3, POI.POIType.RUBBER_PROCESSING_PLANT, 1, "RUBBER_RAW", 12),
                 new ExperimentShipmentTemplate("EXP-RUBBER-SEMI-01", POI.POIType.RUBBER_PROCESSING_PLANT, 0, POI.POIType.TIRE_MANUFACTURING_PLANT, 0, "RUBBER_SEMI", 10),
                 new ExperimentShipmentTemplate("EXP-RUBBER-SEMI-02", POI.POIType.RUBBER_PROCESSING_PLANT, 1, POI.POIType.TIRE_MANUFACTURING_PLANT, 1, "RUBBER_SEMI", 12),
-                new ExperimentShipmentTemplate("EXP-TIRE-01", POI.POIType.TIRE_MANUFACTURING_PLANT, 0, POI.POIType.AUTO_ASSEMBLY_PLANT, 0, "TIRE", 10),
-                new ExperimentShipmentTemplate("EXP-TIRE-02", POI.POIType.TIRE_MANUFACTURING_PLANT, 1, POI.POIType.AUTO_ASSEMBLY_PLANT, 1, "TIRE", 12),
-                new ExperimentShipmentTemplate("EXP-MIX-WOOD-01", POI.POIType.TIMBER_YARD, 2, POI.POIType.BOARD_FACTORY, 2, "LOG", 14),
-                new ExperimentShipmentTemplate("EXP-MIX-METAL-01", POI.POIType.IRON_MINE, 2, POI.POIType.STEEL_PROCESSING_PLANT, 2, "IRON_ORE", 14)
+                new ExperimentShipmentTemplate("EXP-TIRE-01", POI.POIType.TIRE_MANUFACTURING_PLANT, 0, POI.POIType.AUTO_ASSEMBLY_PLANT, 2, "TIRE", 10),
+                new ExperimentShipmentTemplate("EXP-TIRE-02", POI.POIType.TIRE_MANUFACTURING_PLANT, 1, POI.POIType.AUTO_ASSEMBLY_PLANT, 3, "TIRE", 12)
         );
     }
 
