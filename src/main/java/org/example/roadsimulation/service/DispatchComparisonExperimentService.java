@@ -1,0 +1,30 @@
+package org.example.roadsimulation.service;
+
+import org.example.roadsimulation.dto.DispatchComparisonPrepareRequest;
+import org.example.roadsimulation.dto.DispatchComparisonOptionsDTO;
+import org.example.roadsimulation.dto.DispatchComparisonScenarioDTO;
+import org.example.roadsimulation.dto.DispatchComparisonVisualRunResultDTO;
+import org.example.roadsimulation.dto.DispatchComparisonVisualRunStatusDTO;
+
+public interface DispatchComparisonExperimentService {
+
+    DispatchComparisonOptionsDTO getPreparationOptions();
+
+    DispatchComparisonScenarioDTO prepareScenario(DispatchComparisonPrepareRequest request);
+
+    DispatchComparisonScenarioDTO getCurrentScenario();
+
+    void clearCurrentScenario();
+
+    DispatchComparisonVisualRunStatusDTO startVisualRun();
+
+    DispatchComparisonVisualRunStatusDTO pauseVisualRun();
+
+    DispatchComparisonVisualRunStatusDTO resumeVisualRun();
+
+    DispatchComparisonVisualRunStatusDTO abortVisualRun();
+
+    DispatchComparisonVisualRunStatusDTO getVisualRunStatus();
+
+    DispatchComparisonVisualRunResultDTO getLatestVisualRunResult();
+}

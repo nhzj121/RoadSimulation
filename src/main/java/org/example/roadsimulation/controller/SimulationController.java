@@ -4,6 +4,7 @@ import org.example.roadsimulation.DataInitializer;
 import org.example.roadsimulation.SimulationMainLoop;
 import org.example.roadsimulation.config.DispatchStrategy;
 import org.example.roadsimulation.config.SimulationRuntimeConfig;
+import org.example.roadsimulation.core.SimulationModeGuard;
 import org.example.roadsimulation.dto.ApiResponse;
 import org.example.roadsimulation.dto.RuntimeCostDetailDTO;
 import org.example.roadsimulation.dto.RuntimeCostDTO;
@@ -77,6 +78,9 @@ public class SimulationController {
     @Autowired
     private VehicleRepository vehicleRepository;
 
+    @Autowired
+    private SimulationModeGuard simulationModeGuard;
+
     @Value("${app.simulation.startup-pre-generation.enabled:false}")
     private boolean startupPreGenerationEnabled;
 
@@ -84,6 +88,9 @@ public class SimulationController {
     public ApiResponse<Map<String, Object>> startSimulation(
             @RequestBody(required = false) StartSimulationRequest request
     ) {
+        if (simulationModeGuard.isDispatchComparisonExperimentActive()) {
+            return ApiResponse.error("dispatch comparison experiment is active");
+        }
         DispatchStrategy dispatchStrategy = resolveDispatchStrategy(request);
         simulationRuntimeConfig.setDispatchStrategy(dispatchStrategy);
         gaodeRoutePlanningQueueService.resume();

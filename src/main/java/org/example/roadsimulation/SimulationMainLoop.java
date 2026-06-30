@@ -1,6 +1,7 @@
 package org.example.roadsimulation;
 
 import org.example.roadsimulation.core.SimulationContext;
+import org.example.roadsimulation.core.SimulationModeGuard;
 import org.example.roadsimulation.dto.RuntimeCostDTO;
 import org.example.roadsimulation.entity.CostEntity;
 import org.example.roadsimulation.entity.ShipmentItem;
@@ -40,6 +41,9 @@ public class SimulationMainLoop {
 
     @Autowired
     private SimulationContext simulationContext;
+
+    @Autowired
+    private SimulationModeGuard simulationModeGuard;
 
     @Autowired
     private POIShipmentManager poiShipmentManager;
@@ -229,6 +233,9 @@ public class SimulationMainLoop {
     }
 
     private boolean shouldAbortLoop() {
+        if (simulationModeGuard != null && simulationModeGuard.isDispatchComparisonExperimentActive()) {
+            return true;
+        }
         return simulationContext.shouldAbortSimulationWork();
     }
 
