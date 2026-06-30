@@ -14,6 +14,8 @@ import org.example.roadsimulation.repository.*;
 import org.example.roadsimulation.service.*;
 import org.example.roadsimulation.service.BatchDirectVehicleAssignmentService.BatchMatchResult;
 import org.example.roadsimulation.service.BatchDirectVehicleAssignmentService.DirectAssignmentRequest;
+import org.example.roadsimulation.service.BatchDirectVehicleAssignmentService.TailFallbackAssignment;
+import org.example.roadsimulation.service.BatchDirectVehicleAssignmentService.TailFallbackMatchResult;
 import org.example.roadsimulation.service.BatchDirectVehicleAssignmentService.VehicleAssignment;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -57,6 +59,8 @@ public class DataInitializer implements CommandLineRunner {
     private static final Logger logger = LoggerFactory.getLogger(DataInitializer.class);
     private static final int STARTUP_SHIPMENT_MIN_QUANTITY = 25;
     private static final int STARTUP_SHIPMENT_MAX_QUANTITY = 35;
+    private static final int TAIL_FALLBACK_WAIT_LOOPS = 6;
+    private static final int DEFAULT_MINUTES_PER_LOOP = 30;
     private final ShipmentProgressService shipmentProgressService;
     private final EnrollmentRepository enrollmentRepository;
     private final GoodsRepository goodsRepository;
@@ -711,6 +715,7 @@ public class DataInitializer implements CommandLineRunner {
                 ShipmentItem item = shipmentItemService.initalizeShipmentItem(shipment, goods, quantity);
 
                 // 🌟 最关键的一步：将状态设为 NOT_ASSIGNED，把它推入 VRP 算法的全局待接单池！
+                markShipmentItemCreatedAtSimTime(item);
                 item.setStatus(ShipmentItem.ShipmentItemStatus.NOT_ASSIGNED);
                 shipmentItemRepository.save(item);
 
@@ -934,7 +939,19 @@ public class DataInitializer implements CommandLineRunner {
     }
 
     private LocalDateTime currentSimTimeOrNow() {
-        return simulationContext == null ? LocalDateTime.now() : simulationContext.getCurrentSimTime();
+        if (simulationContext == null || simulationContext.getCurrentSimTime() == null) {
+            return LocalDateTime.now();
+        }
+        return simulationContext.getCurrentSimTime();
+    }
+
+    private ShipmentItem markShipmentItemCreatedAtSimTime(ShipmentItem item) {
+        if (item == null) {
+            return null;
+        }
+        item.setCreatedTime(currentSimTimeOrNow());
+        item.setUpdatedTime(LocalDateTime.now());
+        return item;
     }
 
     public synchronized void resetSimulationRuntimeData() {
@@ -1309,6 +1326,7 @@ public class DataInitializer implements CommandLineRunner {
             ProcessingStage targetStage,
             POI processingPOI
     ) {
+        markShipmentItemCreatedAtSimTime(item);
         item.setStatus(ShipmentItem.ShipmentItemStatus.NOT_ASSIGNED);
         item.setAssignment(null);
         item.setStage(targetStage);
@@ -1850,6 +1868,7 @@ public class DataInitializer implements CommandLineRunner {
             );
 
             // 关键：关联Goods实体
+            markShipmentItemCreatedAtSimTime(shipmentItem);
             shipmentItem.setGoods(goods);
 
             // 关键：确保双向关系（ShipmentItem构造函数中已调用setShipment）
@@ -1961,6 +1980,7 @@ public class DataInitializer implements CommandLineRunner {
                 // 异常货物：单件超重，无车能装
                 ShipmentItem item = shipmentItemService.initalizeShipmentItem(
                         shipment, goods, chunkQty);
+                markShipmentItemCreatedAtSimTime(item);
                 item.setStatus(ShipmentItem.ShipmentItemStatus.NOT_ASSIGNED);
                 shipmentItemRepository.save(item);
                 unassignedCount++;
@@ -1970,6 +1990,7 @@ public class DataInitializer implements CommandLineRunner {
 
             ShipmentItem shipmentItem = shipmentItemService.initalizeShipmentItem(
                     shipment, goods, chunkQty);
+            markShipmentItemCreatedAtSimTime(shipmentItem);
             shipmentItem.setStatus(ShipmentItem.ShipmentItemStatus.NOT_ASSIGNED);
             shipmentItemRepository.save(shipmentItem);
             directAssignmentRequests.add(new DirectAssignmentRequest(
@@ -2071,6 +2092,189 @@ public class DataInitializer implements CommandLineRunner {
             item.setAssignment(null);
             shipmentItemRepository.save(item);
         }
+    }
+
+    @Transactional
+    public int dispatchOverdueTailItems(String source) {
+        LocalDateTime simNow = currentSimTimeOrNow();
+        int loop = simulationContext != null ? simulationContext.getLoopCount() : currentLoopCount;
+        String actor = normalizeTailFallbackSource(source);
+
+        List<ShipmentItem> pendingItems = shipmentItemRepository.findByStatus(ShipmentItem.ShipmentItemStatus.NOT_ASSIGNED)
+                .stream()
+                .filter(Objects::nonNull)
+                .filter(item -> item.getAssignment() == null)
+                .toList();
+        if (pendingItems.isEmpty()) {
+            logger.info("[TailFallback] No pending shipment items. source={}", actor);
+            return 0;
+        }
+
+        List<ShipmentItem> overdueItems = pendingItems.stream()
+                .filter(item -> isOverdueForTailFallback(item, loop, simNow))
+                .sorted(Comparator.comparing(ShipmentItem::getCreatedTime, Comparator.nullsLast(Comparator.naturalOrder()))
+                        .thenComparing(ShipmentItem::getId, Comparator.nullsLast(Long::compareTo)))
+                .toList();
+        if (overdueItems.isEmpty()) {
+            logger.info("[TailFallback] No overdue shipment items. pending={}, loop={}, source={}",
+                    pendingItems.size(), loop, actor);
+            return 0;
+        }
+
+        List<Vehicle> idleVehicles = vehicleRepository.findByCurrentStatus(Vehicle.VehicleStatus.IDLE);
+        if (idleVehicles == null || idleVehicles.isEmpty()) {
+            logger.info("[TailFallback] No idle vehicles. overdue={}, loop={}, source={}",
+                    overdueItems.size(), loop, actor);
+            return 0;
+        }
+
+        List<DirectAssignmentRequest> overdueRequests = toTailFallbackRequests(overdueItems, 0);
+        List<ShipmentItem> optionalItems = pendingItems.stream()
+                .filter(item -> overdueItems.stream().noneMatch(overdue -> Objects.equals(overdue.getId(), item.getId())))
+                .toList();
+        List<DirectAssignmentRequest> optionalRequests = toTailFallbackRequests(optionalItems, overdueRequests.size());
+
+        TailFallbackMatchResult matchResult = batchDirectVehicleAssignmentService.matchOverdueTailFallback(
+                overdueRequests,
+                optionalRequests,
+                idleVehicles
+        );
+
+        int dispatchedCount = 0;
+        for (TailFallbackAssignment assignment : matchResult.getAssignments()) {
+            if (shouldAbortSimulationWork()) {
+                return dispatchedCount;
+            }
+            try {
+                dispatchTailFallbackAssignment(assignment, actor, simNow, loop);
+                dispatchedCount++;
+            } catch (Exception e) {
+                logger.warn("[TailFallback] Dispatch failed. forcedItem={}, vehicle={}, source={}, reason={}",
+                        assignment.getForcedRequest() != null && assignment.getForcedRequest().getShipmentItem() != null
+                                ? assignment.getForcedRequest().getShipmentItem().getId()
+                                : null,
+                        assignment.getVehicle() != null ? assignment.getVehicle().getId() : null,
+                        actor,
+                        e.getMessage());
+            }
+        }
+
+        for (DirectAssignmentRequest unmatched : matchResult.getUnmatchedForcedRequests()) {
+            ShipmentItem item = unmatched.getShipmentItem();
+            logger.info("[TailFallback] Forced item still unmatched. item={}, waitLoops={}, source={}",
+                    item != null ? item.getId() : null,
+                    item != null ? waitingLoopsForTailFallback(item, simNow) : 0,
+                    actor);
+        }
+
+        return dispatchedCount;
+    }
+
+    private List<DirectAssignmentRequest> toTailFallbackRequests(List<ShipmentItem> items, int orderOffset) {
+        List<DirectAssignmentRequest> requests = new ArrayList<>();
+        if (items == null || items.isEmpty()) {
+            return requests;
+        }
+        int order = orderOffset;
+        for (ShipmentItem item : items) {
+            if (item == null || item.getShipment() == null) {
+                continue;
+            }
+            Shipment shipment = item.getShipment();
+            requests.add(new DirectAssignmentRequest(
+                    item,
+                    shipment.getOriginPOI(),
+                    shipment.getDestPOI(),
+                    null,
+                    order++
+            ));
+        }
+        return requests;
+    }
+
+    private boolean isOverdueForTailFallback(ShipmentItem item, int currentLoop, LocalDateTime currentSimTime) {
+        return item != null
+                && item.getStatus() == ShipmentItem.ShipmentItemStatus.NOT_ASSIGNED
+                && item.getAssignment() == null
+                && currentLoop >= TAIL_FALLBACK_WAIT_LOOPS
+                && waitingLoopsForTailFallback(item, currentSimTime) >= TAIL_FALLBACK_WAIT_LOOPS;
+    }
+
+    private int waitingLoopsForTailFallback(ShipmentItem item, LocalDateTime currentSimTime) {
+        if (item == null || item.getCreatedTime() == null || currentSimTime == null) {
+            return 0;
+        }
+        LocalDateTime createdTime = item.getCreatedTime();
+        if (createdTime.isAfter(currentSimTime)) {
+            return 0;
+        }
+        int minutesPerLoop = simulationContext != null && simulationContext.getMinutesPerLoop() > 0
+                ? simulationContext.getMinutesPerLoop()
+                : DEFAULT_MINUTES_PER_LOOP;
+        long elapsedMinutes = Duration.between(createdTime, currentSimTime).toMinutes();
+        if (elapsedMinutes <= 0) {
+            return 0;
+        }
+        return (int) (elapsedMinutes / minutesPerLoop);
+    }
+
+    private void dispatchTailFallbackAssignment(
+            TailFallbackAssignment tailAssignment,
+            String source,
+            LocalDateTime simNow,
+            int loop
+    ) {
+        if (tailAssignment == null || tailAssignment.getVehicle() == null) {
+            return;
+        }
+        List<ShipmentItem> items = tailAssignment.getRequests().stream()
+                .map(DirectAssignmentRequest::getShipmentItem)
+                .filter(Objects::nonNull)
+                .filter(item -> item.getStatus() == ShipmentItem.ShipmentItemStatus.NOT_ASSIGNED)
+                .distinct()
+                .toList();
+        if (items.isEmpty()) {
+            return;
+        }
+
+        List<POI> pickupPois = new ArrayList<>();
+        List<POI> dropoffPois = new ArrayList<>();
+        for (ShipmentItem item : items) {
+            if (item.getShipment() == null
+                    || item.getShipment().getOriginPOI() == null
+                    || item.getShipment().getDestPOI() == null) {
+                throw new IllegalArgumentException("tail fallback item is missing shipment POIs: " + item.getId());
+            }
+            pickupPois.add(item.getShipment().getOriginPOI());
+        }
+        for (int i = items.size() - 1; i >= 0; i--) {
+            dropoffPois.add(items.get(i).getShipment().getDestPOI());
+        }
+
+        for (ShipmentItem item : items) {
+            long waitingSeconds = item.getCreatedTime() == null
+                    ? 0L
+                    : Math.max(0L, Duration.between(item.getCreatedTime(), simNow).toSeconds());
+            item.setWaitingAssignmentSeconds(waitingSeconds);
+        }
+
+        dispatchVrpVehicle(tailAssignment.getVehicle(), items, pickupPois, dropoffPois, source);
+        logger.info("[TailFallback] Dispatched forcedItem={}, items={}, vehicle={}, waitLoops={}, loop={}, loadFactor={}, source={}",
+                tailAssignment.getForcedRequest() != null && tailAssignment.getForcedRequest().getShipmentItem() != null
+                        ? tailAssignment.getForcedRequest().getShipmentItem().getId()
+                        : null,
+                items.stream().map(ShipmentItem::getId).toList(),
+                tailAssignment.getVehicle().getId(),
+                tailAssignment.getForcedRequest() != null && tailAssignment.getForcedRequest().getShipmentItem() != null
+                        ? waitingLoopsForTailFallback(tailAssignment.getForcedRequest().getShipmentItem(), simNow)
+                        : 0,
+                loop,
+                String.format("%.4f", tailAssignment.getLoadFactor()),
+                source);
+    }
+
+    private String normalizeTailFallbackSource(String source) {
+        return source == null || source.isBlank() ? "TAIL_FALLBACK" : source;
     }
 
     private void updateDirectAssignmentRuntimeCost(Vehicle vehicle, ShipmentItem item, POI startPOI, POI endPOI) {
@@ -2178,6 +2382,7 @@ public class DataInitializer implements CommandLineRunner {
             ShipmentItem fragmentItem = shipmentItemService.initalizeShipmentItem(shipment, goods, currentFragmentQty);
 
             // 2. 核心标记：状态洗白为 NOT_ASSIGNED，代表该碎片暴露在全局待拼载池中
+            markShipmentItemCreatedAtSimTime(fragmentItem);
             fragmentItem.setStatus(ShipmentItem.ShipmentItemStatus.NOT_ASSIGNED);
             shipmentItemRepository.save(fragmentItem);
 
@@ -2456,6 +2661,16 @@ public class DataInitializer implements CommandLineRunner {
      * VRP 专用的派车方法：将拼好的货物打包成多节点路线，并派发车辆
      */
     private void dispatchVrpVehicle(Vehicle vehicle, List<ShipmentItem> packedItems, List<POI> pickupPois, List<POI> dropoffPois) {
+        dispatchVrpVehicle(vehicle, packedItems, pickupPois, dropoffPois, "DataInitializer -- VRP派车");
+    }
+
+    private void dispatchVrpVehicle(
+            Vehicle vehicle,
+            List<ShipmentItem> packedItems,
+            List<POI> pickupPois,
+            List<POI> dropoffPois,
+            String source
+    ) {
         if (shouldAbortSimulationWork()) {
             return;
         }
@@ -2471,6 +2686,10 @@ public class DataInitializer implements CommandLineRunner {
         Assignment assignment = new Assignment(packedItems.get(0), route);
         assignment.setAssignedVehicle(vehicle);
         assignment.setStatus(Assignment.AssignmentStatus.ASSIGNED);
+        assignment.setCreatedTime(currentSimTimeOrNow());
+        assignment.setStartTime(assignment.getCreatedTime());
+        assignment.setUpdatedBy(source);
+        assignment.setUpdatedTime(LocalDateTime.now());
 
         assignment.setOriginPOI(fullRoutePois.get(0));
         assignment.setDestPOI(fullRoutePois.get(fullRoutePois.size() - 1));
@@ -2513,7 +2732,7 @@ public class DataInitializer implements CommandLineRunner {
                 assignment,
                 vehicle,
                 currentSimTimeOrNow(),
-                "DataInitializer -- VRP派车"
+                source
         );
 
         try {

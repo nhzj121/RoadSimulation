@@ -64,11 +64,13 @@ public class HeuristicSimulationDispatchService implements SimulationDispatchSer
 
         if (pendingItems.isEmpty()) {
             log.info("[Dispatch][HEURISTIC] No pending shipment items.");
+            dataInitializer.dispatchOverdueTailItems("TAIL_FALLBACK_HEURISTIC");
             return;
         }
 
         if (idleVehicles.isEmpty()) {
             log.info("[Dispatch][HEURISTIC] No idle vehicles.");
+            dataInitializer.dispatchOverdueTailItems("TAIL_FALLBACK_HEURISTIC");
             return;
         }
 
@@ -119,5 +121,6 @@ public class HeuristicSimulationDispatchService implements SimulationDispatchSer
                 frontendRegisterElapsed,
                 System.currentTimeMillis() - dispatchStart
         );
+        dataInitializer.dispatchOverdueTailItems("TAIL_FALLBACK_HEURISTIC");
     }
 }

@@ -11,6 +11,7 @@ import org.example.roadsimulation.core.SimulationModeGuard;
 import org.example.roadsimulation.dto.DispatchComparisonOptionsDTO;
 import org.example.roadsimulation.dto.DispatchComparisonPrepareRequest;
 import org.example.roadsimulation.dto.DispatchComparisonScenarioDTO;
+import org.example.roadsimulation.dto.DispatchComparisonVisualArrivalAckRequest;
 import org.example.roadsimulation.dto.DispatchComparisonVisualRunResultDTO;
 import org.example.roadsimulation.dto.DispatchComparisonVisualRunStatusDTO;
 import org.example.roadsimulation.dto.RuntimeCostDTO;
@@ -45,9 +46,12 @@ import org.example.roadsimulation.service.GaodeRoutePlanningQueueService;
 import org.example.roadsimulation.service.GetCostService;
 import org.example.roadsimulation.service.POIShipmentManager;
 import org.example.roadsimulation.service.VehicleInitializationService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.time.Duration;
@@ -62,13 +66,17 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
 
 @Service
 public class DispatchComparisonExperimentServiceImpl implements DispatchComparisonExperimentService {
 
+    private static final Logger log = LoggerFactory.getLogger(DispatchComparisonExperimentServiceImpl.class);
+
     private static final int MAX_EXPERIMENT_SHIPMENTS = 20;
     private static final int MAX_VISUAL_RUN_LOOPS = 360;
+    private static final int VISUAL_COMPLETION_FALLBACK_GRACE_LOOPS = 2;
     private static final String FIXED_PLACEMENT_POLICY = "VEHICLE_ID_AND_INITIAL_POI_ID_ROUND_ROBIN";
 
     private final ReentrantLock visualRunLock = new ReentrantLock(true);
@@ -98,11 +106,14 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
     private final GetCostService getCostService;
     private final CostBaselineNormalizationService costBaselineNormalizationService;
     private final GaodeRoutePlanningQueueService routePlanningQueueService;
+    private final TransactionTemplate transactionTemplate;
 
     private volatile DispatchComparisonScenarioDTO currentScenario;
     private volatile Long activeRunId;
     private volatile Long activeStrategyRunId;
     private volatile List<Long> activeStrategyShipmentItemIds = List.of();
+    private volatile int visualCompletionFallbackStartLoop = -1;
+    private final Set<Long> visualArrivedAssignmentIds = ConcurrentHashMap.newKeySet();
 
     public DispatchComparisonExperimentServiceImpl(
             SimulationContext simulationContext,
@@ -128,7 +139,8 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
             StateUpdateService stateUpdateService,
             GetCostService getCostService,
             CostBaselineNormalizationService costBaselineNormalizationService,
-            GaodeRoutePlanningQueueService routePlanningQueueService
+            GaodeRoutePlanningQueueService routePlanningQueueService,
+            TransactionTemplate transactionTemplate
     ) {
         this.simulationContext = simulationContext;
         this.simulationModeGuard = simulationModeGuard;
@@ -154,6 +166,7 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
         this.getCostService = getCostService;
         this.costBaselineNormalizationService = costBaselineNormalizationService;
         this.routePlanningQueueService = routePlanningQueueService;
+        this.transactionTemplate = transactionTemplate;
     }
 
     @Override
@@ -232,7 +245,6 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
     }
 
     @Override
-    @Transactional(rollbackFor = Exception.class)
     public DispatchComparisonVisualRunStatusDTO startVisualRun() {
         visualRunLock.lock();
         try {
@@ -246,16 +258,18 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
                 throw new IllegalStateException("dispatch comparison experiment is already active");
             }
 
-            DispatchComparisonExperimentRun run = new DispatchComparisonExperimentRun();
-            run.setExperimentId(currentScenario.getExperimentId());
-            run.setStatus(RunStatus.PREPARED);
-            run.setScenarioJson(writeScenarioJson(currentScenario));
-            run.setShipmentCount(currentScenario.getShipmentCount());
-            run.setVehicleCount(currentScenario.getVehicleCount());
-            run.setTotalItems(currentScenario.getShipmentCount());
-            run.setMaxLoops(MAX_VISUAL_RUN_LOOPS);
-            run.setStartedAt(LocalDateTime.now());
-            run = experimentRunRepository.save(run);
+            DispatchComparisonExperimentRun run = transactionTemplate.execute(status -> {
+                DispatchComparisonExperimentRun newRun = new DispatchComparisonExperimentRun();
+                newRun.setExperimentId(currentScenario.getExperimentId());
+                newRun.setStatus(RunStatus.PREPARED);
+                newRun.setScenarioJson(writeScenarioJson(currentScenario));
+                newRun.setShipmentCount(currentScenario.getShipmentCount());
+                newRun.setVehicleCount(currentScenario.getVehicleCount());
+                newRun.setTotalItems(currentScenario.getShipmentCount());
+                newRun.setMaxLoops(MAX_VISUAL_RUN_LOOPS);
+                newRun.setStartedAt(LocalDateTime.now());
+                return experimentRunRepository.save(newRun);
+            });
 
             activeRunId = run.getId();
             simulationModeGuard.markDispatchComparisonExperimentActive();
@@ -267,7 +281,6 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
     }
 
     @Override
-    @Transactional
     public DispatchComparisonVisualRunStatusDTO pauseVisualRun() {
         visualRunLock.lock();
         try {
@@ -279,18 +292,19 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
             } else {
                 return toStatusDTO(run, null);
             }
+            transactionTemplate.executeWithoutResult(status -> {
+                experimentRunRepository.save(run);
+                updateActiveStrategyStatus(StrategyRunStatus.PAUSED);
+            });
             simulationContext.setRunning(false);
             routePlanningQueueService.pauseAndCancelPending();
-            updateActiveStrategyStatus(StrategyRunStatus.PAUSED);
-            experimentRunRepository.save(run);
-            return toStatusDTO(run, latestActiveStrategyRun());
+            return getVisualRunStatus();
         } finally {
             visualRunLock.unlock();
         }
     }
 
     @Override
-    @Transactional
     public DispatchComparisonVisualRunStatusDTO resumeVisualRun() {
         visualRunLock.lock();
         try {
@@ -302,11 +316,29 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
             } else {
                 return toStatusDTO(run, null);
             }
+            transactionTemplate.executeWithoutResult(status -> {
+                experimentRunRepository.save(run);
+                updateActiveStrategyStatus(StrategyRunStatus.RUNNING);
+            });
             simulationModeGuard.markDispatchComparisonExperimentActive();
             simulationContext.setRunning(true);
             routePlanningQueueService.resume();
-            updateActiveStrategyStatus(StrategyRunStatus.RUNNING);
-            experimentRunRepository.save(run);
+            return getVisualRunStatus();
+        } finally {
+            visualRunLock.unlock();
+        }
+    }
+
+    @Override
+    public DispatchComparisonVisualRunStatusDTO abortVisualRun() {
+        visualRunLock.lock();
+        try {
+            DispatchComparisonExperimentRun run = activeRunOrThrow();
+            transactionTemplate.executeWithoutResult(status -> {
+                failOrCloseRun(run, RunStatus.ABORTED, "aborted by user");
+                updateActiveStrategyStatus(StrategyRunStatus.ABORTED);
+            });
+            cleanupAfterExperimentStops(run);
             return toStatusDTO(run, latestActiveStrategyRun());
         } finally {
             visualRunLock.unlock();
@@ -314,14 +346,19 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
     }
 
     @Override
-    @Transactional(rollbackFor = Exception.class)
-    public DispatchComparisonVisualRunStatusDTO abortVisualRun() {
+    public DispatchComparisonVisualRunStatusDTO acknowledgeVisualArrival(DispatchComparisonVisualArrivalAckRequest request) {
+        if (request == null || request.getAssignmentId() == null) {
+            throw new IllegalArgumentException("assignmentId is required");
+        }
         visualRunLock.lock();
         try {
             DispatchComparisonExperimentRun run = activeRunOrThrow();
-            failOrCloseRun(run, RunStatus.ABORTED, "aborted by user");
-            updateActiveStrategyStatus(StrategyRunStatus.ABORTED);
-            cleanupAfterExperimentStops(run);
+            if (!isRunningStatus(run.getStatus())) {
+                return toStatusDTO(run, latestActiveStrategyRun());
+            }
+            if (currentStrategyAssignmentIds().contains(request.getAssignmentId())) {
+                visualArrivedAssignmentIds.add(request.getAssignmentId());
+            }
             return toStatusDTO(run, latestActiveStrategyRun());
         } finally {
             visualRunLock.unlock();
@@ -370,7 +407,6 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
     }
 
     @Scheduled(fixedRate = 4000)
-    @Transactional(rollbackFor = Exception.class)
     public void executeVisualRunLoop() {
         if (!simulationModeGuard.isDispatchComparisonExperimentActive()) {
             return;
@@ -387,6 +423,19 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
         } catch (Exception ex) {
             DispatchComparisonExperimentRun run = activeRunOrLatest();
             if (run != null) {
+                log.error(
+                        "[DispatchComparisonExperiment] visual run loop failed. runId={}, status={}, strategy={}, loop={}, completedItems={}, totalItems={}, assignmentCount={}, visualAckCount={}, runtimeActiveAssignmentCount={}",
+                        run.getId(),
+                        run.getStatus(),
+                        run.getCurrentStrategy(),
+                        run.getCurrentLoop(),
+                        run.getCompletedItems(),
+                        run.getTotalItems(),
+                        safeCurrentStrategyAssignmentCount(),
+                        visualArrivedAssignmentIds.size(),
+                        safeCurrentStrategyRuntimeActiveAssignmentCount(),
+                        ex
+                );
                 failOrCloseRun(run, RunStatus.FAILED, ex.getMessage());
                 cleanupAfterExperimentStops(run);
             }
@@ -426,23 +475,25 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
         run.setCurrentLoop(loop);
         run.setCompletedItems(completed);
         run.setTotalItems(total);
-        experimentRunRepository.save(run);
 
         strategyRun.setLoopCount(loop);
         strategyRun.setCompletedItems(completed);
         strategyRun.setTotalItems(total);
-        strategyRunRepository.save(strategyRun);
+        transactionTemplate.executeWithoutResult(status -> {
+            experimentRunRepository.save(run);
+            strategyRunRepository.save(strategyRun);
+        });
 
-        if (total > 0 && completed >= total) {
+        if (isCurrentStrategyComplete(completed, total)) {
             finalizeStrategy(strategyRun, StrategyRunStatus.COMPLETED);
             if (DispatchStrategy.ORIGINAL.name().equals(strategyRun.getStrategy())) {
                 run.setStatus(RunStatus.REBUILDING_FOR_HEURISTIC);
-                experimentRunRepository.save(run);
+                transactionTemplate.executeWithoutResult(status -> experimentRunRepository.save(run));
                 prepareStrategyRun(run, DispatchStrategy.HEURISTIC);
             } else {
                 run.setStatus(RunStatus.COMPLETED);
                 run.setEndedAt(LocalDateTime.now());
-                experimentRunRepository.save(run);
+                transactionTemplate.executeWithoutResult(status -> experimentRunRepository.save(run));
                 cleanupAfterExperimentStops(run);
             }
             return;
@@ -476,6 +527,8 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
         activeRunId = run.getId();
         activeStrategyRunId = strategyRun.getId();
         activeStrategyShipmentItemIds = List.copyOf(itemIds);
+        visualArrivedAssignmentIds.clear();
+        visualCompletionFallbackStartLoop = -1;
 
         run.setCurrentStrategy(strategy.name());
         run.setCurrentLoop(0);
@@ -510,6 +563,8 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
         activeRunId = null;
         activeStrategyRunId = null;
         activeStrategyShipmentItemIds = List.of();
+        visualArrivedAssignmentIds.clear();
+        visualCompletionFallbackStartLoop = -1;
         simulationModeGuard.clearDispatchComparisonExperimentActive();
     }
 
@@ -523,6 +578,10 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
     }
 
     private void restoreVehiclesToScenario(DispatchComparisonScenarioDTO scenario) {
+        transactionTemplate.executeWithoutResult(status -> restoreVehiclesToScenarioInTransaction(scenario));
+    }
+
+    private void restoreVehiclesToScenarioInTransaction(DispatchComparisonScenarioDTO scenario) {
         LocalDateTime now = LocalDateTime.now();
         for (DispatchComparisonScenarioDTO.VehiclePositionSummary position : scenario.getVehicleInitialPositions()) {
             Vehicle vehicle = vehicleRepository.findById(position.getVehicleId())
@@ -573,6 +632,7 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
                     source.getTotalWeight(),
                     source.getTotalVolume()
             );
+            item.setCreatedTime(simulationContext.getCurrentSimTime());
             item.setGoods(goods);
             item.setStatus(ShipmentItem.ShipmentItemStatus.NOT_ASSIGNED);
             item.setUpdatedBy("DispatchComparisonExperiment");
@@ -779,6 +839,64 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
                 .count();
     }
 
+    private boolean isCurrentStrategyComplete(int completed, int total) {
+        if (total <= 0 || completed < total) {
+            visualCompletionFallbackStartLoop = -1;
+            return false;
+        }
+        List<Long> assignmentIds = currentStrategyAssignmentIds();
+        List<Long> activeAssignmentIds = currentStrategyRuntimeActiveAssignmentIds();
+
+        if (!assignmentIds.isEmpty()
+                && visualArrivedAssignmentIds.containsAll(assignmentIds)
+                && activeAssignmentIds.isEmpty()) {
+            visualCompletionFallbackStartLoop = -1;
+            return true;
+        }
+
+        if (activeAssignmentIds.isEmpty()) {
+            int loop = simulationContext.getLoopCount();
+            if (visualCompletionFallbackStartLoop < 0) {
+                visualCompletionFallbackStartLoop = loop;
+                return false;
+            }
+            return loop - visualCompletionFallbackStartLoop >= VISUAL_COMPLETION_FALLBACK_GRACE_LOOPS;
+        }
+
+        visualCompletionFallbackStartLoop = -1;
+        return false;
+    }
+
+    private List<Long> currentStrategyAssignmentIds() {
+        if (activeStrategyShipmentItemIds.isEmpty()) {
+            return List.of();
+        }
+        return assignmentRepository.findAssignmentIdsByShipmentItemIds(activeStrategyShipmentItemIds);
+    }
+
+    private List<Long> currentStrategyRuntimeActiveAssignmentIds() {
+        if (activeStrategyShipmentItemIds.isEmpty()) {
+            return List.of();
+        }
+        return assignmentRepository.findRuntimeActiveAssignmentIdsByShipmentItemIds(activeStrategyShipmentItemIds);
+    }
+
+    private int safeCurrentStrategyAssignmentCount() {
+        try {
+            return currentStrategyAssignmentIds().size();
+        } catch (Exception ignored) {
+            return -1;
+        }
+    }
+
+    private int safeCurrentStrategyRuntimeActiveAssignmentCount() {
+        try {
+            return currentStrategyRuntimeActiveAssignmentIds().size();
+        } catch (Exception ignored) {
+            return -1;
+        }
+    }
+
     private int countUsedVehicles() {
         Set<Long> vehicleIds = new HashSet<>();
         for (Assignment assignment : assignmentRepository.findAll()) {
@@ -896,6 +1014,15 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
         dto.setMessage(run.getFailureReason());
         dto.setStartedAt(run.getStartedAt());
         dto.setEndedAt(run.getEndedAt());
+        List<Long> assignmentIds = currentStrategyAssignmentIds();
+        List<Long> activeAssignmentIds = currentStrategyRuntimeActiveAssignmentIds();
+        List<Long> missingVisualArrivalAssignmentIds = assignmentIds.stream()
+                .filter(id -> !visualArrivedAssignmentIds.contains(id))
+                .toList();
+        dto.setAssignmentCount(assignmentIds.size());
+        dto.setVisualArrivedAssignmentCount(assignmentIds.size() - missingVisualArrivalAssignmentIds.size());
+        dto.setRuntimeActiveAssignmentCount(activeAssignmentIds.size());
+        dto.setMissingVisualArrivalAssignmentIds(missingVisualArrivalAssignmentIds);
         if (strategyRun != null) {
             dto.setLatestAllCost(strategyRun.getAllCost());
             dto.setLatestNormalizedAllCost(strategyRun.getNormalizedAllCost());
@@ -975,24 +1102,24 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
         return List.of(
                 new ExperimentShipmentTemplate("EXP-LOG-01", POI.POIType.TIMBER_YARD, 0, POI.POIType.SAWMILL, 0, "LOG", 8),
                 new ExperimentShipmentTemplate("EXP-LOG-02", POI.POIType.TIMBER_YARD, 1, POI.POIType.SAWMILL, 1, "LOG", 10),
-                new ExperimentShipmentTemplate("EXP-LOG-03", POI.POIType.TIMBER_YARD, 2, POI.POIType.SAWMILL, 0, "LOG", 12),
-                new ExperimentShipmentTemplate("EXP-LOG-04", POI.POIType.TIMBER_YARD, 0, POI.POIType.SAWMILL, 2, "LOG", 14),
-                new ExperimentShipmentTemplate("EXP-LOG-05", POI.POIType.TIMBER_YARD, 1, POI.POIType.SAWMILL, 0, "LOG", 16),
-                new ExperimentShipmentTemplate("EXP-LOG-06", POI.POIType.TIMBER_YARD, 2, POI.POIType.SAWMILL, 1, "LOG", 18),
-                new ExperimentShipmentTemplate("EXP-IRON-01", POI.POIType.IRON_MINE, 0, POI.POIType.STEEL_MILL, 0, "IRON_ORE", 8),
-                new ExperimentShipmentTemplate("EXP-IRON-02", POI.POIType.IRON_MINE, 1, POI.POIType.STEEL_MILL, 1, "IRON_ORE", 10),
-                new ExperimentShipmentTemplate("EXP-IRON-03", POI.POIType.IRON_MINE, 2, POI.POIType.STEEL_MILL, 0, "IRON_ORE", 12),
-                new ExperimentShipmentTemplate("EXP-IRON-04", POI.POIType.IRON_MINE, 0, POI.POIType.STEEL_MILL, 2, "IRON_ORE", 14),
-                new ExperimentShipmentTemplate("EXP-IRON-05", POI.POIType.IRON_MINE, 1, POI.POIType.STEEL_MILL, 0, "IRON_ORE", 16),
-                new ExperimentShipmentTemplate("EXP-IRON-06", POI.POIType.IRON_MINE, 2, POI.POIType.STEEL_MILL, 1, "IRON_ORE", 18),
-                new ExperimentShipmentTemplate("EXP-RUBBER-01", POI.POIType.RUBBER_PROCESSING_PLANT, 0, POI.POIType.TIRE_MANUFACTURING_PLANT, 0, "RUBBER_SEMI", 8),
-                new ExperimentShipmentTemplate("EXP-RUBBER-02", POI.POIType.RUBBER_PROCESSING_PLANT, 1, POI.POIType.TIRE_MANUFACTURING_PLANT, 1, "RUBBER_SEMI", 10),
-                new ExperimentShipmentTemplate("EXP-RUBBER-03", POI.POIType.RUBBER_PROCESSING_PLANT, 2, POI.POIType.TIRE_MANUFACTURING_PLANT, 0, "RUBBER_SEMI", 12),
-                new ExperimentShipmentTemplate("EXP-RUBBER-04", POI.POIType.RUBBER_PROCESSING_PLANT, 0, POI.POIType.TIRE_MANUFACTURING_PLANT, 2, "RUBBER_SEMI", 14),
-                new ExperimentShipmentTemplate("EXP-RUBBER-05", POI.POIType.RUBBER_PROCESSING_PLANT, 1, POI.POIType.TIRE_MANUFACTURING_PLANT, 0, "RUBBER_SEMI", 16),
-                new ExperimentShipmentTemplate("EXP-RUBBER-06", POI.POIType.RUBBER_PROCESSING_PLANT, 2, POI.POIType.TIRE_MANUFACTURING_PLANT, 1, "RUBBER_SEMI", 18),
-                new ExperimentShipmentTemplate("EXP-LOG-07", POI.POIType.TIMBER_YARD, 3, POI.POIType.SAWMILL, 3, "LOG", 20),
-                new ExperimentShipmentTemplate("EXP-IRON-07", POI.POIType.IRON_MINE, 3, POI.POIType.STEEL_MILL, 3, "IRON_ORE", 20)
+                new ExperimentShipmentTemplate("EXP-PLANK-01", POI.POIType.SAWMILL, 0, POI.POIType.BOARD_FACTORY, 0, "PLANK", 10),
+                new ExperimentShipmentTemplate("EXP-PLANK-02", POI.POIType.SAWMILL, 1, POI.POIType.BOARD_FACTORY, 1, "PLANK", 12),
+                new ExperimentShipmentTemplate("EXP-PANEL-01", POI.POIType.BOARD_FACTORY, 0, POI.POIType.FURNITURE_FACTORY, 0, "PANEL", 12),
+                new ExperimentShipmentTemplate("EXP-PANEL-02", POI.POIType.BOARD_FACTORY, 1, POI.POIType.FURNITURE_FACTORY, 1, "PANEL", 14),
+                new ExperimentShipmentTemplate("EXP-IRON-ORE-01", POI.POIType.IRON_MINE, 0, POI.POIType.STEEL_MILL, 0, "IRON_ORE", 10),
+                new ExperimentShipmentTemplate("EXP-IRON-ORE-02", POI.POIType.IRON_MINE, 1, POI.POIType.STEEL_MILL, 1, "IRON_ORE", 12),
+                new ExperimentShipmentTemplate("EXP-STEEL-BILLET-01", POI.POIType.STEEL_MILL, 0, POI.POIType.STEEL_PROCESSING_PLANT, 0, "STEEL_BILLET", 10),
+                new ExperimentShipmentTemplate("EXP-STEEL-BILLET-02", POI.POIType.STEEL_MILL, 1, POI.POIType.STEEL_PROCESSING_PLANT, 1, "STEEL_BILLET", 12),
+                new ExperimentShipmentTemplate("EXP-STEEL-PRODUCT-01", POI.POIType.STEEL_PROCESSING_PLANT, 0, POI.POIType.WAREHOUSE, 0, "STEEL_PRODUCT", 10),
+                new ExperimentShipmentTemplate("EXP-STEEL-PRODUCT-02", POI.POIType.STEEL_PROCESSING_PLANT, 1, POI.POIType.WAREHOUSE, 1, "STEEL_PRODUCT", 12),
+                new ExperimentShipmentTemplate("EXP-RUBBER-RAW-01", POI.POIType.WAREHOUSE, 2, POI.POIType.RUBBER_PROCESSING_PLANT, 0, "RUBBER_RAW", 10),
+                new ExperimentShipmentTemplate("EXP-RUBBER-RAW-02", POI.POIType.WAREHOUSE, 3, POI.POIType.RUBBER_PROCESSING_PLANT, 1, "RUBBER_RAW", 12),
+                new ExperimentShipmentTemplate("EXP-RUBBER-SEMI-01", POI.POIType.RUBBER_PROCESSING_PLANT, 0, POI.POIType.TIRE_MANUFACTURING_PLANT, 0, "RUBBER_SEMI", 10),
+                new ExperimentShipmentTemplate("EXP-RUBBER-SEMI-02", POI.POIType.RUBBER_PROCESSING_PLANT, 1, POI.POIType.TIRE_MANUFACTURING_PLANT, 1, "RUBBER_SEMI", 12),
+                new ExperimentShipmentTemplate("EXP-TIRE-01", POI.POIType.TIRE_MANUFACTURING_PLANT, 0, POI.POIType.AUTO_ASSEMBLY_PLANT, 0, "TIRE", 10),
+                new ExperimentShipmentTemplate("EXP-TIRE-02", POI.POIType.TIRE_MANUFACTURING_PLANT, 1, POI.POIType.AUTO_ASSEMBLY_PLANT, 1, "TIRE", 12),
+                new ExperimentShipmentTemplate("EXP-MIX-WOOD-01", POI.POIType.TIMBER_YARD, 2, POI.POIType.BOARD_FACTORY, 2, "LOG", 14),
+                new ExperimentShipmentTemplate("EXP-MIX-METAL-01", POI.POIType.IRON_MINE, 2, POI.POIType.STEEL_PROCESSING_PLANT, 2, "IRON_ORE", 14)
         );
     }
 
