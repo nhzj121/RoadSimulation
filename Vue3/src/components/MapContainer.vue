@@ -478,7 +478,7 @@
           <div v-if="experimentRun.result" class="experiment-result-table">
             <div class="experiment-result-head">
               <span>策略</span>
-              <span>成本指数</span>
+              <span>实验级成本指数</span>
               <span>AllCost</span>
               <span>Cost A/B/C/D/E</span>
               <span>完成</span>
@@ -499,6 +499,84 @@
           </div>
           <div v-else class="dashboard-empty">
             完成 ORIGINAL 与 HEURISTIC 两次运行后显示基础对比结果
+          </div>
+
+          <div class="experiment-optimization-panel">
+            <div class="experiment-optimization-head">
+              <div>
+                <h4>调度优化分析</h4>
+                <p>以实验级归一化 AllCost 成本指数为主指标，统一基准为 ORIGINAL P95，数值越低表示调度成本越低</p>
+              </div>
+              <span
+                class="experiment-optimization-badge"
+                :class="`experiment-optimization-badge--${experimentOptimizationSummary.level}`"
+              >
+                {{ experimentOptimizationSummary.label }}
+              </span>
+            </div>
+
+            <div v-if="experimentOptimizationSummary.available" class="experiment-optimization-content">
+              <div class="experiment-optimization-cards">
+                <div
+                  v-for="card in experimentOptimizationCards"
+                  :key="card.label"
+                  class="experiment-optimization-card"
+                >
+                  <span>{{ card.label }}</span>
+                  <strong>{{ card.value }}</strong>
+                  <small>{{ card.note }}</small>
+                </div>
+              </div>
+
+              <div class="experiment-optimization-table experiment-optimization-table--dimension">
+                <div class="experiment-optimization-table-head">
+                  <span>实验级归一化维度</span>
+                  <span>ORIGINAL</span>
+                  <span>HEURISTIC</span>
+                  <span>差值</span>
+                  <span>改善率</span>
+                  <span>原始差值</span>
+                  <span>归因</span>
+                </div>
+                <div
+                  v-for="row in experimentDimensionComparisonRows"
+                  :key="row.key"
+                  class="experiment-optimization-table-row"
+                >
+                  <strong>{{ row.label }}</strong>
+                  <span>{{ row.original }}</span>
+                  <span>{{ row.heuristic }}</span>
+                  <span :class="row.deltaClass">{{ row.delta }}</span>
+                  <span :class="row.rateClass">{{ row.improvementRate }}</span>
+                  <span>{{ row.rawDelta }}</span>
+                  <span>{{ row.badge }}</span>
+                </div>
+              </div>
+
+              <div class="experiment-optimization-table experiment-optimization-table--efficiency">
+                <div class="experiment-optimization-table-head">
+                  <span>效率参考</span>
+                  <span>ORIGINAL</span>
+                  <span>HEURISTIC</span>
+                  <span>差值</span>
+                </div>
+                <div
+                  v-for="row in experimentEfficiencyComparisonRows"
+                  :key="row.key"
+                  class="experiment-optimization-table-row"
+                >
+                  <strong>{{ row.label }}</strong>
+                  <span>{{ row.original }}</span>
+                  <span>{{ row.heuristic }}</span>
+                  <span>{{ row.delta }}</span>
+                </div>
+              </div>
+            </div>
+            <div v-else class="dashboard-empty">
+              暂无实验级归一化结果：需要 ORIGINAL 与 HEURISTIC 均完成，且 ORIGINAL P95 基准和实验级成本指数有效
+            </div>
+
+            <div ref="experimentOptimizationTrendRef" class="dashboard-chart experiment-optimization-chart"></div>
           </div>
         </section>
 
@@ -1149,7 +1227,7 @@ const experimentResultRows = computed(() => {
       .filter(Boolean)
       .map((item) => ({
         strategy: item.strategy,
-        normalizedAllCost: formatNormalizedValue(item.normalizedAllCost),
+        normalizedAllCost: formatNormalizedValue(item.experimentNormalizedAllCost),
         allCost: formatCostValue(item.allCost, 4),
         costs: [
           formatCostValue(item.costA, 2),
@@ -1161,6 +1239,198 @@ const experimentResultRows = computed(() => {
         completed: `${item.completedItems || 0} / ${item.totalItems || 0}`,
         vehicleAndAssignment: `${item.vehicleUsedCount || 0} / ${item.assignmentCount || 0}`
       }));
+});
+
+const EXPERIMENT_OPTIMIZATION_NEUTRAL_THRESHOLD = 0.01;
+
+const experimentNumber = (value) => {
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) ? numberValue : null;
+};
+
+const isCompletedStrategyResult = (item) => item?.status === 'COMPLETED';
+
+const calculateImprovementRate = (originalValue, heuristicValue) => {
+  const originalNumber = experimentNumber(originalValue);
+  const heuristicNumber = experimentNumber(heuristicValue);
+  if (originalNumber === null || heuristicNumber === null || originalNumber === 0) {
+    return null;
+  }
+  return (originalNumber - heuristicNumber) / originalNumber;
+};
+
+const formatExperimentSignedNumber = (value, digits = 4) => {
+  const numberValue = experimentNumber(value);
+  if (numberValue === null) {
+    return '--';
+  }
+  const sign = numberValue > 0 ? '+' : '';
+  return `${sign}${numberValue.toFixed(digits)}`;
+};
+
+const formatExperimentRate = (rate, digits = 2) => {
+  const numberValue = experimentNumber(rate);
+  if (numberValue === null) {
+    return '--';
+  }
+  const percentage = numberValue * 100;
+  const sign = percentage > 0 ? '+' : '';
+  return `${sign}${percentage.toFixed(digits)}%`;
+};
+
+const experimentOptimizationSummary = computed(() => {
+  const original = experimentRun.result?.original;
+  const heuristic = experimentRun.result?.heuristic;
+  const originalCost = experimentNumber(original?.experimentNormalizedAllCost);
+  const heuristicCost = experimentNumber(heuristic?.experimentNormalizedAllCost);
+  if (!isCompletedStrategyResult(original)
+      || !isCompletedStrategyResult(heuristic)
+      || originalCost === null
+      || heuristicCost === null
+      || originalCost === 0) {
+    return {
+      available: false,
+      level: 'pending',
+      label: '暂无实验级结果',
+      normalizedAllCostDelta: null,
+      normalizedAllCostImprovementRate: null
+    };
+  }
+
+  const improvementRate = calculateImprovementRate(originalCost, heuristicCost);
+  const delta = heuristicCost - originalCost;
+  let level = 'neutral';
+  let label = '基本持平';
+  if (improvementRate > EXPERIMENT_OPTIMIZATION_NEUTRAL_THRESHOLD) {
+    level = 'good';
+    label = '启发式优化';
+  } else if (improvementRate < -EXPERIMENT_OPTIMIZATION_NEUTRAL_THRESHOLD) {
+    level = 'danger';
+    label = '启发式退化';
+  }
+
+  return {
+    available: true,
+    level,
+    label,
+    normalizedAllCostDelta: delta,
+    normalizedAllCostImprovementRate: improvementRate,
+    original,
+    heuristic
+  };
+});
+
+const experimentOptimizationCards = computed(() => {
+  const summary = experimentOptimizationSummary.value;
+  if (!summary.available) {
+    return [];
+  }
+  const original = summary.original;
+  const heuristic = summary.heuristic;
+  const allCostRate = calculateImprovementRate(original?.allCost, heuristic?.allCost);
+  const originalAllCost = experimentNumber(original?.allCost);
+  const heuristicAllCost = experimentNumber(heuristic?.allCost);
+  const allCostDelta = originalAllCost === null || heuristicAllCost === null
+      ? null
+      : heuristicAllCost - originalAllCost;
+  return [
+    {
+      label: '实验级成本指数优化率',
+      value: formatExperimentRate(summary.normalizedAllCostImprovementRate),
+      note: '正值表示 HEURISTIC 更优'
+    },
+    {
+      label: '实验级成本指数差值',
+      value: formatExperimentSignedNumber(summary.normalizedAllCostDelta, 4),
+      note: 'HEURISTIC - ORIGINAL，负值更优'
+    },
+    {
+      label: '原始 AllCost 改善率',
+      value: formatExperimentRate(allCostRate),
+      note: `差值 ${formatExperimentSignedNumber(allCostDelta, 4)}`
+    }
+  ];
+});
+
+const experimentCostDimensionDefs = [
+  { key: 'A', label: 'Cost A', normalizedKey: 'experimentNormalizedCostA', rawKey: 'costA', digits: 4 },
+  { key: 'B', label: 'Cost B', normalizedKey: 'experimentNormalizedCostB', rawKey: 'costB', digits: 4 },
+  { key: 'C', label: 'Cost C', normalizedKey: 'experimentNormalizedCostC', rawKey: 'costC', digits: 4 },
+  { key: 'D', label: 'Cost D', normalizedKey: 'experimentNormalizedCostD', rawKey: 'costD', digits: 4 },
+  { key: 'E', label: 'Cost E', normalizedKey: 'experimentNormalizedCostE', rawKey: 'costE', digits: 4 }
+];
+
+const experimentDimensionComparisonRows = computed(() => {
+  const summary = experimentOptimizationSummary.value;
+  if (!summary.available) {
+    return [];
+  }
+  const rows = experimentCostDimensionDefs.map(def => {
+    const originalValue = experimentNumber(summary.original?.[def.normalizedKey]);
+    const heuristicValue = experimentNumber(summary.heuristic?.[def.normalizedKey]);
+    const delta = originalValue === null || heuristicValue === null ? null : heuristicValue - originalValue;
+    const improvementRate = calculateImprovementRate(originalValue, heuristicValue);
+    const rawOriginal = experimentNumber(summary.original?.[def.rawKey]);
+    const rawHeuristic = experimentNumber(summary.heuristic?.[def.rawKey]);
+    const rawDelta = rawOriginal === null || rawHeuristic === null ? null : rawHeuristic - rawOriginal;
+    return {
+      key: def.key,
+      label: def.label,
+      original: originalValue === null ? '--' : originalValue.toFixed(def.digits),
+      heuristic: heuristicValue === null ? '--' : heuristicValue.toFixed(def.digits),
+      delta: formatExperimentSignedNumber(delta, def.digits),
+      deltaValue: delta,
+      improvementRate: formatExperimentRate(improvementRate),
+      improvementRateValue: improvementRate,
+      rawDelta: formatExperimentSignedNumber(rawDelta, def.key === 'E' ? 4 : 2),
+      badge: '--'
+    };
+  });
+
+  const validRows = rows.filter(row => row.improvementRateValue !== null);
+  if (validRows.length > 0) {
+    const bestRow = validRows.reduce((best, row) =>
+      row.improvementRateValue > best.improvementRateValue ? row : best
+    );
+    const worstRow = validRows.reduce((worst, row) =>
+      row.improvementRateValue < worst.improvementRateValue ? row : worst
+    );
+    if (bestRow.improvementRateValue > 0) {
+      bestRow.badge = '改善最大';
+    }
+    if (worstRow.improvementRateValue < 0) {
+      worstRow.badge = worstRow.badge === '改善最大' ? '波动最大' : '退化最大';
+    }
+  }
+
+  return rows.map(row => ({
+    ...row,
+    deltaClass: row.deltaValue < 0 ? 'is-good' : row.deltaValue > 0 ? 'is-danger' : '',
+    rateClass: row.improvementRateValue > 0 ? 'is-good' : row.improvementRateValue < 0 ? 'is-danger' : ''
+  }));
+});
+
+const experimentEfficiencyComparisonRows = computed(() => {
+  const summary = experimentOptimizationSummary.value;
+  if (!summary.available) {
+    return [];
+  }
+  return [
+    { key: 'loopCount', label: '完成轮次', digits: 0 },
+    { key: 'vehicleUsedCount', label: '用车数', digits: 0 },
+    { key: 'assignmentCount', label: '派车任务数', digits: 0 }
+  ].map(item => {
+    const originalValue = experimentNumber(summary.original?.[item.key]);
+    const heuristicValue = experimentNumber(summary.heuristic?.[item.key]);
+    const delta = originalValue === null || heuristicValue === null ? null : heuristicValue - originalValue;
+    return {
+      key: item.key,
+      label: item.label,
+      original: originalValue === null ? '--' : originalValue.toFixed(item.digits),
+      heuristic: heuristicValue === null ? '--' : heuristicValue.toFixed(item.digits),
+      delta: formatExperimentSignedNumber(delta, item.digits)
+    };
+  });
 });
 
 const canPrepareExperimentScenario = computed(() => {
@@ -1334,7 +1604,19 @@ const fetchExperimentRunStatus = async () => {
 const fetchLatestExperimentRunResult = async () => {
   const response = await request.get('/api/simulation/experiments/dispatch-comparison/latest-result');
   experimentRun.result = unwrapApiData(response) || null;
+  updateRuntimeDashboardCharts();
   return experimentRun.result;
+};
+
+const showExperimentResultDashboard = async () => {
+  activeMainView.value = 'costDashboard';
+  isMonitorPanelVisible.value = false;
+  await nextTick();
+  if (Object.keys(runtimeDashboardChartInstances).length === 0) {
+    initRuntimeDashboardCharts();
+  } else {
+    updateRuntimeDashboardCharts();
+  }
 };
 
 const refreshExperimentRunState = async () => {
@@ -1356,6 +1638,7 @@ const refreshExperimentRunState = async () => {
 
 const syncExperimentRunAfterStatusRefresh = async () => {
   try {
+    const previousStatus = experimentRun.status?.status || null;
     await fetchExperimentRunStatus();
     const status = experimentRun.status?.status;
     if (['COMPLETED', 'ABORTED', 'FAILED'].includes(status)) {
@@ -1364,6 +1647,21 @@ const syncExperimentRunAfterStatusRefresh = async () => {
       invalidateSimulationGeneration();
       clearFrontendSimulationVisuals();
       await fetchLatestExperimentRunResult();
+      if (status === 'COMPLETED' && experimentRun.result) {
+        await showExperimentResultDashboard();
+      }
+      return;
+    }
+
+    if (previousStatus === 'RUNNING_HEURISTIC' && status === 'PREPARED') {
+      const result = await fetchLatestExperimentRunResult();
+      if (result) {
+        isSimulationRunning.value = false;
+        stopSimulationTimer();
+        invalidateSimulationGeneration();
+        clearFrontendSimulationVisuals();
+        await showExperimentResultDashboard();
+      }
     }
   } catch (error) {
     console.error('实验运行状态同步失败:', error);
@@ -2099,6 +2397,7 @@ const dashboardMonitorTrendRef = ref(null);
 const dashboardShipmentStateRef = ref(null);
 const dashboardAssignmentStatusRef = ref(null);
 const dashboardVehicleStatusRef = ref(null);
+const experimentOptimizationTrendRef = ref(null);
 const formulaChartRefs = reactive({});
 let runtimeDashboardChartInstances = {};
 
@@ -2193,6 +2492,64 @@ const buildAllCostTrendOption = () => buildLineTrendOption({
   emptyText: '暂无原始 AllCost 趋势数据',
   yName: 'AllCost'
 });
+
+const buildExperimentOptimizationTrendOption = () => {
+  const originalTrend = Array.isArray(experimentRun.result?.original?.costTrend)
+      ? experimentRun.result.original.costTrend
+      : [];
+  const heuristicTrend = Array.isArray(experimentRun.result?.heuristic?.costTrend)
+      ? experimentRun.result.heuristic.costTrend
+      : [];
+  const loops = [...new Set([
+    ...originalTrend.map(point => point?.loopCount),
+    ...heuristicTrend.map(point => point?.loopCount)
+  ].filter(loop => loop !== null && loop !== undefined))]
+      .sort((a, b) => Number(a) - Number(b));
+
+  const toTrendMap = (trend) => {
+    const map = new Map();
+    trend.forEach(point => {
+      const loop = point?.loopCount;
+      if (loop !== null && loop !== undefined) {
+        map.set(loop, readOptionalCostNumber(point?.normalizedAllCost));
+      }
+    });
+    return map;
+  };
+  const originalMap = toTrendMap(originalTrend);
+  const heuristicMap = toTrendMap(heuristicTrend);
+  const originalData = loops.map(loop => originalMap.has(loop) ? originalMap.get(loop) : null);
+  const heuristicData = loops.map(loop => heuristicMap.has(loop) ? heuristicMap.get(loop) : null);
+  const hasData = [...originalData, ...heuristicData].some(value => value !== null);
+
+  return {
+    color: ['#2f80ed', '#eb5757'],
+    tooltip: { trigger: 'axis' },
+    legend: { top: 0, data: ['ORIGINAL', 'HEURISTIC'] },
+    grid: { left: 48, right: 24, top: 44, bottom: 34 },
+    xAxis: { type: 'category', name: 'Loop', data: loops.map(loop => String(loop)) },
+    yAxis: { type: 'value', name: '成本指数' },
+    graphic: hasData ? [] : emptyChartGraphic('等待 ORIGINAL 与 HEURISTIC 成本趋势数据'),
+    series: [
+      {
+        name: 'ORIGINAL',
+        type: 'line',
+        smooth: true,
+        data: originalData,
+        connectNulls: false,
+        areaStyle: { opacity: 0.06 }
+      },
+      {
+        name: 'HEURISTIC',
+        type: 'line',
+        smooth: true,
+        data: heuristicData,
+        connectNulls: false,
+        areaStyle: { opacity: 0.06 }
+      }
+    ]
+  };
+};
 
 const buildNormalizedBreakdownOption = () => {
   const metrics = normalizedCostMetrics.value;
@@ -2313,6 +2670,7 @@ const initRuntimeDashboardCharts = () => {
     shipmentState: dashboardShipmentStateRef.value,
     assignmentStatus: dashboardAssignmentStatusRef.value,
     vehicleStatus: dashboardVehicleStatusRef.value,
+    experimentOptimizationTrend: experimentOptimizationTrendRef.value,
     ...formulaContributionGroups.value.reduce((acc, group) => {
       acc[group.key] = formulaChartRefs[group.key];
       return acc;
@@ -2339,6 +2697,7 @@ const updateRuntimeDashboardCharts = () => {
   instances.shipmentState?.setOption(buildShipmentStateOption(), true);
   instances.assignmentStatus?.setOption(buildAssignmentStatusOption(), true);
   instances.vehicleStatus?.setOption(buildVehicleStatusOption(), true);
+  instances.experimentOptimizationTrend?.setOption(buildExperimentOptimizationTrendOption(), true);
   formulaContributionGroups.value.forEach(group => {
     instances[group.key]?.setOption(buildFormulaPieOption(group), true);
   });
@@ -3868,6 +4227,18 @@ const acknowledgeExperimentVisualArrival = async (assignmentId, vehicleId) => {
   } catch (error) {
     console.warn('[ExperimentVisualAck] failed', error?.response?.data?.message || error?.message || error);
   }
+};
+
+const shouldCompensateExperimentVisualAck = (assignmentId) => {
+  if (!isExperimentRunActive.value || assignmentId === null || assignmentId === undefined) {
+    return false;
+  }
+  const missingIds = experimentRun.status?.missingVisualArrivalAssignmentIds;
+  if (!Array.isArray(missingIds) || missingIds.length === 0) {
+    return false;
+  }
+  const targetId = String(assignmentId);
+  return missingIds.some(id => String(id) === targetId);
 };
 
 const arrivalMessageOf = (error) => {
@@ -5890,17 +6261,25 @@ const checkAndCleanupCompletedAssignments = async () => {
     if (assignmentIdsToCleanup && assignmentIdsToCleanup.length > 0) {
       let cleanedAssignments = 0;
       let skippedRunningAssignments = 0;
-      assignmentIdsToCleanup.forEach(assignmentId => {
+      let compensatedVisualAcks = 0;
+      for (const assignmentId of assignmentIdsToCleanup) {
         const animation = animationManager?.animations?.get(assignmentId);
         if (animation && animation.isCompleted !== true) {
           skippedRunningAssignments += 1;
-          return;
+          continue;
+        }
+        if (shouldCompensateExperimentVisualAck(assignmentId)) {
+          await acknowledgeExperimentVisualArrival(assignmentId);
+          compensatedVisualAcks += 1;
         }
         clearRouteByAssignmentId(assignmentId);
         cleanedAssignments += 1;
-      });
+      }
       if (skippedRunningAssignments > 0) {
         console.log(`[AssignmentCleanup] skipped ${skippedRunningAssignments} running assignments`);
+      }
+      if (compensatedVisualAcks > 0) {
+        console.log(`[AssignmentCleanup] compensated ${compensatedVisualAcks} experiment visual arrivals`);
       }
       console.log(`清理了 ${cleanedAssignments} 个已完成的Assignment`);
     }
@@ -7640,6 +8019,149 @@ onUnmounted(() => {
   color: #303133;
 }
 
+.experiment-optimization-panel {
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid #dbe7f5;
+  border-radius: 8px;
+  background: #fbfdff;
+}
+
+.experiment-optimization-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.experiment-optimization-head h4 {
+  margin: 0;
+  color: #303133;
+  font-size: 15px;
+}
+
+.experiment-optimization-head p {
+  margin: 4px 0 0;
+  color: #909399;
+  font-size: 12px;
+}
+
+.experiment-optimization-badge {
+  flex: 0 0 auto;
+  padding: 5px 10px;
+  border-radius: 14px;
+  font-size: 12px;
+  font-weight: 700;
+  background: #f4f4f5;
+  color: #606266;
+}
+
+.experiment-optimization-badge--good {
+  background: #ecf8f1;
+  color: #1f8f4d;
+}
+
+.experiment-optimization-badge--danger {
+  background: #fef0f0;
+  color: #c45656;
+}
+
+.experiment-optimization-badge--neutral {
+  background: #fdf6ec;
+  color: #b88230;
+}
+
+.experiment-optimization-badge--pending {
+  background: #f4f4f5;
+  color: #909399;
+}
+
+.experiment-optimization-content {
+  margin-top: 12px;
+}
+
+.experiment-optimization-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.experiment-optimization-card {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.experiment-optimization-card span,
+.experiment-optimization-card small {
+  display: block;
+  color: #909399;
+  font-size: 12px;
+}
+
+.experiment-optimization-card strong {
+  display: block;
+  margin: 6px 0 4px;
+  color: #303133;
+  font-size: 22px;
+  line-height: 1.2;
+}
+
+.experiment-optimization-table {
+  margin-top: 12px;
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.experiment-optimization-table-head,
+.experiment-optimization-table-row {
+  display: grid;
+  gap: 10px;
+  align-items: center;
+  padding: 9px 10px;
+  font-size: 13px;
+}
+
+.experiment-optimization-table--dimension .experiment-optimization-table-head,
+.experiment-optimization-table--dimension .experiment-optimization-table-row {
+  grid-template-columns: minmax(80px, 0.6fr) repeat(6, minmax(90px, 1fr));
+}
+
+.experiment-optimization-table--efficiency .experiment-optimization-table-head,
+.experiment-optimization-table--efficiency .experiment-optimization-table-row {
+  grid-template-columns: minmax(120px, 1fr) repeat(3, minmax(90px, 1fr));
+}
+
+.experiment-optimization-table-head {
+  background: #f5f7fa;
+  color: #606266;
+  font-weight: 700;
+}
+
+.experiment-optimization-table-row {
+  border-top: 1px solid #ebeef5;
+  color: #303133;
+}
+
+.experiment-optimization-table-row .is-good {
+  color: #1f8f4d;
+  font-weight: 700;
+}
+
+.experiment-optimization-table-row .is-danger {
+  color: #c45656;
+  font-weight: 700;
+}
+
+.experiment-optimization-chart {
+  margin-top: 12px;
+  height: 260px;
+}
+
 .experiment-shipment-list {
   margin-top: 12px;
   border: 1px solid #e4e7ed;
@@ -7965,6 +8487,19 @@ onUnmounted(() => {
 
   .dashboard-panel--wide {
     grid-column: span 1;
+  }
+
+  .experiment-optimization-cards {
+    grid-template-columns: 1fr;
+  }
+
+  .experiment-optimization-table-head,
+  .experiment-optimization-table-row,
+  .experiment-optimization-table--dimension .experiment-optimization-table-head,
+  .experiment-optimization-table--dimension .experiment-optimization-table-row,
+  .experiment-optimization-table--efficiency .experiment-optimization-table-head,
+  .experiment-optimization-table--efficiency .experiment-optimization-table-row {
+    grid-template-columns: 1fr;
   }
 
   .dashboard-kpis,

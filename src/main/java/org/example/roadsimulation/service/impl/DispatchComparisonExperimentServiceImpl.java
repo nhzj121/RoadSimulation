@@ -41,6 +41,7 @@ import org.example.roadsimulation.repository.ShipmentItemRepository;
 import org.example.roadsimulation.repository.ShipmentRepository;
 import org.example.roadsimulation.repository.VehicleRepository;
 import org.example.roadsimulation.service.CostBaselineNormalizationService;
+import org.example.roadsimulation.service.CostBaselineNormalizationService.ExperimentRunNormalizationResult;
 import org.example.roadsimulation.service.DispatchComparisonExperimentService;
 import org.example.roadsimulation.service.GaodeRoutePlanningQueueService;
 import org.example.roadsimulation.service.GetCostService;
@@ -546,6 +547,7 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
         strategyRun.setAssignmentCount((int) assignmentRepository.count());
         strategyRun.setVehicleUsedCount(countUsedVehicles());
         copyCosts(strategyRun, costs);
+        copyExperimentNormalizedCosts(strategyRun, costs);
         strategyRunRepository.save(strategyRun);
     }
 
@@ -902,6 +904,27 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
         strategyRun.setNormalizedAllCost(costs.getNormalizedAllCost());
     }
 
+    private void copyExperimentNormalizedCosts(DispatchComparisonStrategyRun strategyRun, RuntimeCostDTO costs) {
+        ExperimentRunNormalizationResult result =
+                costBaselineNormalizationService.normalizeExperimentTotalAgainstOriginalP95(
+                        costs,
+                        strategyRun.getTotalItems()
+                );
+        if (result == null) {
+            return;
+        }
+
+        strategyRun.setExperimentNormalizedCostA(result.normalizedCostA());
+        strategyRun.setExperimentNormalizedCostB(result.normalizedCostB());
+        strategyRun.setExperimentNormalizedCostC(result.normalizedCostC());
+        strategyRun.setExperimentNormalizedCostD(result.normalizedCostD());
+        strategyRun.setExperimentNormalizedCostE(result.normalizedCostE());
+        strategyRun.setExperimentNormalizedAllCost(result.normalizedAllCost());
+        strategyRun.setExperimentNormalizationBaselineStrategy(result.baselineStrategy());
+        strategyRun.setExperimentNormalizationBaselinePercentile(result.baselinePercentile());
+        strategyRun.setExperimentNormalizationScope(result.scope());
+    }
+
     private void failOrCloseRun(DispatchComparisonExperimentRun run, RunStatus status, String reason) {
         run.setStatus(status);
         run.setEndedAt(LocalDateTime.now());
@@ -1036,6 +1059,15 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
         result.setNormalizedCostD(strategyRun.getNormalizedCostD());
         result.setNormalizedCostE(strategyRun.getNormalizedCostE());
         result.setNormalizedAllCost(strategyRun.getNormalizedAllCost());
+        result.setExperimentNormalizedCostA(strategyRun.getExperimentNormalizedCostA());
+        result.setExperimentNormalizedCostB(strategyRun.getExperimentNormalizedCostB());
+        result.setExperimentNormalizedCostC(strategyRun.getExperimentNormalizedCostC());
+        result.setExperimentNormalizedCostD(strategyRun.getExperimentNormalizedCostD());
+        result.setExperimentNormalizedCostE(strategyRun.getExperimentNormalizedCostE());
+        result.setExperimentNormalizedAllCost(strategyRun.getExperimentNormalizedAllCost());
+        result.setExperimentNormalizationBaselineStrategy(strategyRun.getExperimentNormalizationBaselineStrategy());
+        result.setExperimentNormalizationBaselinePercentile(strategyRun.getExperimentNormalizationBaselinePercentile());
+        result.setExperimentNormalizationScope(strategyRun.getExperimentNormalizationScope());
 
         for (DispatchComparisonCostSnapshot snapshot :
                 costSnapshotRepository.findByStrategyRunIdOrderByLoopCountAsc(strategyRun.getId())) {
@@ -1080,20 +1112,20 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
 
     private List<ExperimentShipmentTemplate> templates() {
         return List.of(
-                new ExperimentShipmentTemplate("EXP-LOG-01", POI.POIType.TIMBER_YARD, 0, POI.POIType.SAWMILL, 0, "LOG", 8),
-                new ExperimentShipmentTemplate("EXP-LOG-02", POI.POIType.TIMBER_YARD, 1, POI.POIType.SAWMILL, 1, "LOG", 10),
-                new ExperimentShipmentTemplate("EXP-LOG-02", POI.POIType.TIMBER_YARD, 2, POI.POIType.SAWMILL, 2, "LOG", 12),
-                new ExperimentShipmentTemplate("EXP-PLANK-01", POI.POIType.SAWMILL, 0, POI.POIType.BOARD_FACTORY, 0, "PLANK", 10),
+                new ExperimentShipmentTemplate("EXP-LOG-01", POI.POIType.TIMBER_YARD, 23, POI.POIType.SAWMILL, 3, "LOG", 8),
+                new ExperimentShipmentTemplate("EXP-LOG-02", POI.POIType.TIMBER_YARD, 19, POI.POIType.SAWMILL, 1, "LOG", 10),
+                new ExperimentShipmentTemplate("EXP-LOG-02", POI.POIType.TIMBER_YARD, 21, POI.POIType.SAWMILL, 2, "LOG", 12),
+                new ExperimentShipmentTemplate("EXP-PLANK-01", POI.POIType.SAWMILL, 3, POI.POIType.BOARD_FACTORY, 0, "PLANK", 10),
                 new ExperimentShipmentTemplate("EXP-PLANK-02", POI.POIType.SAWMILL, 1, POI.POIType.BOARD_FACTORY, 1, "PLANK", 12),
                 new ExperimentShipmentTemplate("EXP-PLANK-02", POI.POIType.SAWMILL, 2, POI.POIType.BOARD_FACTORY, 2, "PLANK", 18),
                 new ExperimentShipmentTemplate("EXP-PANEL-01", POI.POIType.BOARD_FACTORY, 0, POI.POIType.FURNITURE_FACTORY, 0, "PANEL", 12),
-                new ExperimentShipmentTemplate("EXP-PANEL-02", POI.POIType.BOARD_FACTORY, 1, POI.POIType.FURNITURE_FACTORY, 1, "PANEL", 14),
+                new ExperimentShipmentTemplate("EXP-PANEL-02", POI.POIType.BOARD_FACTORY, 1, POI.POIType.FURNITURE_FACTORY, 8, "PANEL", 14),
                 new ExperimentShipmentTemplate("EXP-PANEL-02", POI.POIType.BOARD_FACTORY, 2, POI.POIType.FURNITURE_FACTORY, 2, "PANEL", 13),
                 new ExperimentShipmentTemplate("EXP-STEEL-PRODUCT-01", POI.POIType.STEEL_PROCESSING_PLANT, 0, POI.POIType.AUTO_ASSEMBLY_PLANT, 0, "STEEL_PRODUCT", 10),
                 new ExperimentShipmentTemplate("EXP-STEEL-PRODUCT-02", POI.POIType.STEEL_PROCESSING_PLANT, 1, POI.POIType.AUTO_ASSEMBLY_PLANT, 1, "STEEL_PRODUCT", 12),
                 new ExperimentShipmentTemplate("EXP-STEEL-PRODUCT-02", POI.POIType.STEEL_PROCESSING_PLANT, 2, POI.POIType.AUTO_ASSEMBLY_PLANT, 2, "STEEL_PRODUCT", 12),
                 new ExperimentShipmentTemplate("EXP-STEEL-PRODUCT-03", POI.POIType.STEEL_PROCESSING_PLANT, 4, POI.POIType.FURNITURE_FACTORY, 4, "STEEL_PRODUCT", 10),
-                new ExperimentShipmentTemplate("EXP-STEEL-PRODUCT-03", POI.POIType.STEEL_PROCESSING_PLANT, 2, POI.POIType.FURNITURE_FACTORY, 2, "STEEL_PRODUCT", 10),
+                new ExperimentShipmentTemplate("EXP-STEEL-PRODUCT-03", POI.POIType.STEEL_PROCESSING_PLANT, 2, POI.POIType.FURNITURE_FACTORY, 7, "STEEL_PRODUCT", 10),
                 new ExperimentShipmentTemplate("EXP-STEEL-PRODUCT-04", POI.POIType.STEEL_PROCESSING_PLANT, 3, POI.POIType.FURNITURE_FACTORY, 3, "STEEL_PRODUCT", 12),
                 new ExperimentShipmentTemplate("EXP-RUBBER-RAW-01", POI.POIType.WAREHOUSE, 2, POI.POIType.RUBBER_PROCESSING_PLANT, 0, "RUBBER_RAW", 10),
                 new ExperimentShipmentTemplate("EXP-RUBBER-RAW-02", POI.POIType.WAREHOUSE, 3, POI.POIType.RUBBER_PROCESSING_PLANT, 1, "RUBBER_RAW", 12),

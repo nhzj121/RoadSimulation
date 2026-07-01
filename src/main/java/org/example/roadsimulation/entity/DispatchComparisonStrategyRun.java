@@ -98,6 +98,33 @@ public class DispatchComparisonStrategyRun {
     @Column(name = "normalized_all_cost")
     private Double normalizedAllCost;
 
+    @Column(name = "experiment_normalized_cost_a")
+    private Double experimentNormalizedCostA;
+
+    @Column(name = "experiment_normalized_cost_b")
+    private Double experimentNormalizedCostB;
+
+    @Column(name = "experiment_normalized_cost_c")
+    private Double experimentNormalizedCostC;
+
+    @Column(name = "experiment_normalized_cost_d")
+    private Double experimentNormalizedCostD;
+
+    @Column(name = "experiment_normalized_cost_e")
+    private Double experimentNormalizedCostE;
+
+    @Column(name = "experiment_normalized_all_cost")
+    private Double experimentNormalizedAllCost;
+
+    @Column(name = "experiment_normalization_baseline_strategy", length = 20)
+    private String experimentNormalizationBaselineStrategy;
+
+    @Column(name = "experiment_normalization_baseline_percentile", length = 10)
+    private String experimentNormalizationBaselinePercentile;
+
+    @Column(name = "experiment_normalization_scope", length = 40)
+    private String experimentNormalizationScope;
+
     public Long getId() {
         return id;
     }
@@ -276,5 +303,77 @@ public class DispatchComparisonStrategyRun {
 
     public void setNormalizedAllCost(Double normalizedAllCost) {
         this.normalizedAllCost = normalizedAllCost;
+    }
+
+    public Double getExperimentNormalizedCostA() {
+        return experimentNormalizedCostA;
+    }
+
+    public void setExperimentNormalizedCostA(Double experimentNormalizedCostA) {
+        this.experimentNormalizedCostA = experimentNormalizedCostA;
+    }
+
+    public Double getExperimentNormalizedCostB() {
+        return experimentNormalizedCostB;
+    }
+
+    public void setExperimentNormalizedCostB(Double experimentNormalizedCostB) {
+        this.experimentNormalizedCostB = experimentNormalizedCostB;
+    }
+
+    public Double getExperimentNormalizedCostC() {
+        return experimentNormalizedCostC;
+    }
+
+    public void setExperimentNormalizedCostC(Double experimentNormalizedCostC) {
+        this.experimentNormalizedCostC = experimentNormalizedCostC;
+    }
+
+    public Double getExperimentNormalizedCostD() {
+        return experimentNormalizedCostD;
+    }
+
+    public void setExperimentNormalizedCostD(Double experimentNormalizedCostD) {
+        this.experimentNormalizedCostD = experimentNormalizedCostD;
+    }
+
+    public Double getExperimentNormalizedCostE() {
+        return experimentNormalizedCostE;
+    }
+
+    public void setExperimentNormalizedCostE(Double experimentNormalizedCostE) {
+        this.experimentNormalizedCostE = experimentNormalizedCostE;
+    }
+
+    public Double getExperimentNormalizedAllCost() {
+        return experimentNormalizedAllCost;
+    }
+
+    public void setExperimentNormalizedAllCost(Double experimentNormalizedAllCost) {
+        this.experimentNormalizedAllCost = experimentNormalizedAllCost;
+    }
+
+    public String getExperimentNormalizationBaselineStrategy() {
+        return experimentNormalizationBaselineStrategy;
+    }
+
+    public void setExperimentNormalizationBaselineStrategy(String experimentNormalizationBaselineStrategy) {
+        this.experimentNormalizationBaselineStrategy = experimentNormalizationBaselineStrategy;
+    }
+
+    public String getExperimentNormalizationBaselinePercentile() {
+        return experimentNormalizationBaselinePercentile;
+    }
+
+    public void setExperimentNormalizationBaselinePercentile(String experimentNormalizationBaselinePercentile) {
+        this.experimentNormalizationBaselinePercentile = experimentNormalizationBaselinePercentile;
+    }
+
+    public String getExperimentNormalizationScope() {
+        return experimentNormalizationScope;
+    }
+
+    public void setExperimentNormalizationScope(String experimentNormalizationScope) {
+        this.experimentNormalizationScope = experimentNormalizationScope;
     }
 }

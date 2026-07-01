@@ -39,6 +39,15 @@ public class DispatchComparisonVisualRunResultDTO {
         private Double normalizedCostD;
         private Double normalizedCostE;
         private Double normalizedAllCost;
+        private Double experimentNormalizedCostA;
+        private Double experimentNormalizedCostB;
+        private Double experimentNormalizedCostC;
+        private Double experimentNormalizedCostD;
+        private Double experimentNormalizedCostE;
+        private Double experimentNormalizedAllCost;
+        private String experimentNormalizationBaselineStrategy;
+        private String experimentNormalizationBaselinePercentile;
+        private String experimentNormalizationScope;
         private List<CostPoint> costTrend = new ArrayList<>();
     }
 
