@@ -184,6 +184,48 @@ public class CostBaselineNormalizationService {
         return detail;
     }
 
+    public synchronized ExperimentRunNormalizationResult normalizeExperimentTotalAgainstOriginalP95(
+            RuntimeCostDTO costs,
+            Integer totalItems
+    ) {
+        if (!enabled || costs == null || totalItems == null || totalItems <= 0) {
+            return null;
+        }
+
+        String percentile = "P95";
+        BaselineValues baseline = findBaseline(DispatchStrategy.ORIGINAL, percentile);
+        if (baseline == null || !baseline.isValid()) {
+            warnOnce("invalid-experiment-baseline-ORIGINAL-" + percentile,
+                    "Experiment cost normalization skipped: missing or invalid "
+                            + percentile + " baseline for ORIGINAL");
+            return null;
+        }
+
+        double taskScale = totalItems.doubleValue();
+        double normalizedA = (safe(costs.getCostA()) / taskScale) / baseline.a();
+        double normalizedB = safe(costs.getCostB()) / baseline.b();
+        double normalizedC = (safe(costs.getCostC()) / taskScale) / baseline.c();
+        double normalizedD = (safe(costs.getCostD()) / taskScale) / baseline.d();
+        double normalizedE = safe(costs.getCostE()) / baseline.e();
+        double normalizedAllCost = (RUNTIME_WEIGHT_A * normalizedA
+                + RUNTIME_WEIGHT_B * normalizedB
+                + RUNTIME_WEIGHT_C * normalizedC
+                + RUNTIME_WEIGHT_D * normalizedD
+                + RUNTIME_WEIGHT_E * normalizedE) / RUNTIME_WEIGHT_SUM;
+
+        return new ExperimentRunNormalizationResult(
+                normalizedA,
+                normalizedB,
+                normalizedC,
+                normalizedD,
+                normalizedE,
+                normalizedAllCost,
+                DispatchStrategy.ORIGINAL.name(),
+                percentile,
+                "EXPERIMENT_TOTAL"
+        );
+    }
+
     public synchronized void reset() {
         previousSnapshot = null;
         latestWindow = null;
@@ -262,6 +304,10 @@ public class CostBaselineNormalizationService {
     }
 
     private BaselineValues findBaseline(DispatchStrategy strategy) {
+        return findBaseline(strategy, normalizedPercentile());
+    }
+
+    private BaselineValues findBaseline(DispatchStrategy strategy, String percentile) {
         BaselineCatalog catalog = loadBaselineCatalog();
         if (catalog == null) {
             return null;
@@ -270,7 +316,10 @@ public class CostBaselineNormalizationService {
         if (strategyBaselines == null) {
             return null;
         }
-        return strategyBaselines.get(normalizedPercentile().toLowerCase(Locale.ROOT));
+        String key = percentile == null || percentile.isBlank()
+                ? normalizedPercentile()
+                : percentile.trim().toUpperCase(Locale.ROOT);
+        return strategyBaselines.get(key.toLowerCase(Locale.ROOT));
     }
 
     private synchronized BaselineCatalog loadBaselineCatalog() {
@@ -356,6 +405,19 @@ public class CostBaselineNormalizationService {
     }
 
     private record BaselineCatalog(Map<DispatchStrategy, Map<String, BaselineValues>> values) {
+    }
+
+    public record ExperimentRunNormalizationResult(
+            double normalizedCostA,
+            double normalizedCostB,
+            double normalizedCostC,
+            double normalizedCostD,
+            double normalizedCostE,
+            double normalizedAllCost,
+            String baselineStrategy,
+            String baselinePercentile,
+            String scope
+    ) {
     }
 
     private record BaselineValues(double a, double b, double c, double d, double e) {
