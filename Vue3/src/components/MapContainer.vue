@@ -109,6 +109,120 @@
 
       <ElMain>
         <div id="container"></div>
+        <div
+            v-if="floatingVehicleInfo.visible"
+            ref="vehicleFloatingInfoWindowRef"
+            class="vehicle-floating-info-window"
+            :style="{ left: `${floatingVehicleInfo.position.left}px`, top: `${floatingVehicleInfo.position.top}px` }"
+        >
+          <div class="vehicle-floating-info-header" @pointerdown="startFloatingVehicleInfoDrag">
+            <div>
+              <div class="vehicle-floating-info-title">
+                {{ floatingVehicleTitle }}
+              </div>
+              <div class="vehicle-floating-info-subtitle">
+                ID: {{ floatingVehicleInfo.vehicleId || '-' }}
+              </div>
+            </div>
+            <button
+                class="vehicle-floating-info-close"
+                type="button"
+                title="Close"
+                @pointerdown.stop
+                @click.stop="closeFloatingVehicleInfo"
+            >
+              x
+            </button>
+          </div>
+
+          <div class="vehicle-floating-info-body">
+            <div class="vehicle-floating-status-row">
+              <span class="vehicle-floating-status-dot" :style="{ backgroundColor: floatingVehicleInfo.statusColor }"></span>
+              <span>{{ floatingVehicleInfo.statusText || floatingVehicleInfo.currentStatus || '-' }}</span>
+              <span v-if="floatingVehicleInfo.loading" class="vehicle-floating-loading">Loading...</span>
+            </div>
+
+            <div v-if="floatingVehicleDisplayInfo.actionDescription" class="vehicle-floating-line">
+              <strong>Action:</strong> {{ floatingVehicleDisplayInfo.actionDescription }}
+            </div>
+
+            <div class="vehicle-floating-section">
+              <div class="vehicle-floating-section-title">Task</div>
+              <div class="vehicle-floating-grid">
+                <span>Assignment</span>
+                <strong>{{ floatingVehicleDisplayAssignment.assignmentId || '-' }}</strong>
+                <span>Route</span>
+                <strong>{{ floatingVehicleDisplayAssignment.routeName || floatingVehicleDisplayInfo.currentAssignment || '-' }}</strong>
+                <span>From</span>
+                <strong>{{ floatingVehicleDisplayAssignment.startPOIName || floatingVehicleDisplayInfo.startPOI || '-' }}</strong>
+                <span>To</span>
+                <strong>{{ floatingVehicleDisplayAssignment.endPOIName || floatingVehicleDisplayInfo.endPOI || '-' }}</strong>
+                <span>Goods</span>
+                <strong>{{ floatingVehicleDisplayAssignment.goodsName || floatingVehicleDisplayInfo.goodsInfo || '-' }}</strong>
+                <span>Quantity</span>
+                <strong>{{ floatingVehicleDisplayAssignment.quantity || floatingVehicleDisplayInfo.quantity || 0 }}</strong>
+              </div>
+            </div>
+
+            <div
+                v-if="floatingVehicleVrpRows.length > 0"
+                class="vehicle-floating-section vehicle-floating-vrp"
+            >
+              <div class="vehicle-floating-section-title">
+                VRP Progress {{ floatingVehicleVrpProgress.currentStageIndex + 1 }} / {{ floatingVehicleVrpProgress.totalNodes }}
+              </div>
+              <div class="vehicle-floating-line">
+                <strong>Carried:</strong> {{ floatingVehicleVrpProgress.carriedCount || 0 }}
+              </div>
+              <div class="vehicle-floating-vrp-table">
+                <div
+                    v-for="row in floatingVehicleVrpRows"
+                    :key="row.index"
+                    class="vehicle-floating-vrp-row"
+                    :class="{ active: row.isCurrent, done: row.isDone }"
+                >
+                  <span>#{{ row.index + 1 }}</span>
+                  <span>{{ row.actionText }}/{{ row.stateText }}</span>
+                  <span :title="row.poiName">{{ row.poiName || '-' }}</span>
+                  <span>{{ formatDelta(row.weightDelta, 't') }}</span>
+                  <span>{{ formatDelta(row.volumeDelta, 'm³') }}</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="vehicle-floating-section">
+              <div class="vehicle-floating-section-title">Load</div>
+              <div class="vehicle-floating-metric-row">
+                <span>{{ formatNumber(floatingVehicleDisplayInfo.currentLoad) }} / {{ formatNumber(floatingVehicleDisplayInfo.maxLoadCapacity) }} t</span>
+                <strong>{{ floatingVehicleLoadPercent.toFixed(1) }}%</strong>
+              </div>
+              <div class="vehicle-floating-progress">
+                <div class="vehicle-floating-progress-fill load" :style="{ width: `${floatingVehicleLoadPercent}%` }"></div>
+              </div>
+              <div class="vehicle-floating-metric-row">
+                <span>{{ formatNumber(floatingVehicleDisplayInfo.currentVolume) }} / {{ formatNumber(floatingVehicleDisplayInfo.maxVolumeCapacity) }} m³</span>
+                <strong>{{ floatingVehicleVolumePercent.toFixed(1) }}%</strong>
+              </div>
+              <div class="vehicle-floating-progress">
+                <div class="vehicle-floating-progress-fill volume" :style="{ width: `${floatingVehicleVolumePercent}%` }"></div>
+              </div>
+            </div>
+
+            <div v-if="floatingVehicleInfo.vehicleDetail" class="vehicle-floating-section">
+              <div class="vehicle-floating-section-title">Vehicle</div>
+              <div class="vehicle-floating-grid">
+                <span>Model</span>
+                <strong>{{ floatingVehicleInfo.vehicleDetail.brand || '-' }} {{ floatingVehicleInfo.vehicleDetail.modelType || '' }}</strong>
+                <span>Type</span>
+                <strong>{{ floatingVehicleInfo.vehicleDetail.vehicleType || '-' }}</strong>
+                <span>Capacity</span>
+                <strong>{{ floatingVehicleInfo.vehicleDetail.maxLoadCapacity || 0 }} t</strong>
+                <span v-if="floatingVehicleInfo.vehicleDetail.driverName">Driver</span>
+                <strong v-if="floatingVehicleInfo.vehicleDetail.driverName">{{ floatingVehicleInfo.vehicleDetail.driverName }}</strong>
+              </div>
+            </div>
+          </div>
+        </div>
       </ElMain>
 
       <transition name="el-zoom-in-left">
@@ -126,7 +240,7 @@
                     :id="`vehicle-item-${v.id}`"
                     class="vehicle-monitor-item"
                     :class="{ 'vehicle-item-highlighted': highlightedVehicleId === v.id }"
-                    @click="focusVehicleFromPanel(v)"
+                    @click="openVehicleFloatingInfo(v, { source: 'panel' })"
                 >
                   <span class="status-dot" :style="{ backgroundColor: statusMap[v.status]?.color || '#ccc' }"></span>
                   <div class="vehicle-monitor-main">
@@ -576,7 +690,12 @@
               暂无实验级归一化结果：需要 ORIGINAL 与 HEURISTIC 均完成，且 ORIGINAL P95 基准和实验级成本指数有效
             </div>
 
-            <div ref="experimentOptimizationTrendRef" class="dashboard-chart experiment-optimization-chart"></div>
+            <!--
+              Window-level normalizedAllCost trend is kept for future process analysis,
+              but hidden here because this panel now uses experiment-level normalized costs.
+              Restore with the chart registration/update comments below if needed.
+            -->
+            <!-- <div ref="experimentOptimizationTrendRef" class="dashboard-chart experiment-optimization-chart"></div> -->
           </div>
         </section>
 
@@ -888,9 +1007,24 @@ const highlightedShipmentId = ref(null);
 const highlightedAssignmentId = ref(null);
 let highlightTimer = null; // 高亮定时器
 const activeMainView = ref('map');
+const vehicleFloatingInfoWindowRef = ref(null);
+const FLOATING_VEHICLE_INFO_DEFAULT_POSITION = Object.freeze({ left: 16, top: 16 });
+const floatingVehicleInfo = reactive({
+  visible: false,
+  loading: false,
+  vehicleId: null,
+  assignment: null,
+  vehicleInfo: null,
+  vehicleDetail: null,
+  currentStatus: null,
+  statusText: '',
+  statusColor: '#ccc',
+  position: { ...FLOATING_VEHICLE_INFO_DEFAULT_POSITION }
+});
+let floatingVehicleDragState = null;
 
 const handleVehicleClick = (vehicle) => {
-  focusVehicleFromPanel(vehicle);
+  openVehicleFloatingInfo(vehicle, { source: 'panel' });
 };
 
 import { useVehicleArrivalMonitor } from '@/composables/useVehicleArrivalMonitor';
@@ -1049,6 +1183,19 @@ const openMonitorPanel = async (tab = 'vehicles') => {
   }
   await nextTick();
   resizeMapAfterPanelChange();
+};
+
+const openVehicleMonitorPanelWithoutMapResize = async () => {
+  activeMainView.value = 'map';
+  disposeRuntimeDashboardCharts();
+  activeMonitorTab.value = 'vehicles';
+  isMonitorPanelVisible.value = true;
+  try {
+    await updateVehicleInfo();
+  } catch (error) {
+    console.error('刷新车辆监控数据失败:', error);
+  }
+  await nextTick();
 };
 
 const closeMonitorPanel = async () => {
@@ -2050,19 +2197,19 @@ const dashboardKpis = computed(() => [
   {
     key: 'shipments',
     label: '活跃运单',
-    value: monitorSummary.activeShipmentCount || monitorShipments.length,
+    value: displayMonitorShipments.value.length,
     note: 'Shipment'
   },
   {
     key: 'assignments',
     label: '活跃任务',
-    value: monitorSummary.activeAssignmentCount || monitorAssignments.length,
+    value: displayTaskCount.value,
     note: 'Assignment'
   },
   {
     key: 'vehicles',
     label: '活跃车辆',
-    value: monitorSummary.activeVehicleCount || currentVehicleDataset.value.length,
+    value: vehicleMonitorDisplayVehicles.value.length,
     note: 'Vehicle'
   },
   {
@@ -2670,7 +2817,8 @@ const initRuntimeDashboardCharts = () => {
     shipmentState: dashboardShipmentStateRef.value,
     assignmentStatus: dashboardAssignmentStatusRef.value,
     vehicleStatus: dashboardVehicleStatusRef.value,
-    experimentOptimizationTrend: experimentOptimizationTrendRef.value,
+    // Hidden for now: this chart is window-level normalizedAllCost, while the panel uses experiment-level costs.
+    // experimentOptimizationTrend: experimentOptimizationTrendRef.value,
     ...formulaContributionGroups.value.reduce((acc, group) => {
       acc[group.key] = formulaChartRefs[group.key];
       return acc;
@@ -2697,7 +2845,8 @@ const updateRuntimeDashboardCharts = () => {
   instances.shipmentState?.setOption(buildShipmentStateOption(), true);
   instances.assignmentStatus?.setOption(buildAssignmentStatusOption(), true);
   instances.vehicleStatus?.setOption(buildVehicleStatusOption(), true);
-  instances.experimentOptimizationTrend?.setOption(buildExperimentOptimizationTrendOption(), true);
+  // Hidden for now with the template container above.
+  // instances.experimentOptimizationTrend?.setOption(buildExperimentOptimizationTrendOption(), true);
   formulaContributionGroups.value.forEach(group => {
     instances[group.key]?.setOption(buildFormulaPieOption(group), true);
   });
@@ -3524,7 +3673,7 @@ class VehicleAnimation {
         return localCargo;
       }
       console.error(`[VehicleAnimation] ${this.licensePlate} loading payload sync failed`, error);
-      ElMessage.error(`车辆 ${this.licensePlate} 装货载重同步失败: ${error.response?.data?.message || error.message}`);
+      // ElMessage.error(`车辆 ${this.licensePlate} 装货载重同步失败: ${error.response?.data?.message || error.message}`);
       return localCargo;
     }
   }
@@ -4305,7 +4454,7 @@ const handleVehicleArrived = async (assignmentId, vehicleId, endPOIId, licensePl
       return true;
     }
     console.error('车辆到达处理失败:', error);
-    ElMessage.error(`车辆 ${licensePlate} 状态更新失败: ${arrivalMessageOf(error) || error}`);
+    // ElMessage.error(`车辆 ${licensePlate} 状态更新失败: ${arrivalMessageOf(error) || error}`);
     return false;
   } finally {
     arrivalAckInFlight.delete(arrivalKey);
@@ -4781,6 +4930,69 @@ const monitorSummary = reactive({
   activeVehicleCount: 0
 });
 
+const floatingVehicleDisplayAssignment = computed(() => floatingVehicleInfo.assignment || {});
+const floatingVehicleDisplayInfo = computed(() => floatingVehicleInfo.vehicleInfo || {});
+const floatingVehicleTitle = computed(() =>
+    floatingVehicleDisplayInfo.value.licensePlate ||
+    floatingVehicleDisplayAssignment.value.licensePlate ||
+    (floatingVehicleInfo.vehicleId ? `Vehicle ${floatingVehicleInfo.vehicleId}` : 'Vehicle')
+);
+const floatingVehicleLoadPercent = computed(() => calculateUsagePercent(
+    floatingVehicleDisplayInfo.value.currentLoad,
+    floatingVehicleDisplayInfo.value.maxLoadCapacity
+));
+const floatingVehicleVolumePercent = computed(() => calculateUsagePercent(
+    floatingVehicleDisplayInfo.value.currentVolume,
+    floatingVehicleDisplayInfo.value.maxVolumeCapacity
+));
+const floatingVehicleVrpProgress = computed(() => {
+  const assignment = floatingVehicleDisplayAssignment.value;
+  const info = floatingVehicleDisplayInfo.value;
+  const progress = info.vrpProgress || assignment.vrpProgress || {};
+  const totalNodes = Array.isArray(assignment.nodes) ? assignment.nodes.length : 0;
+  const maxStageIndex = Math.max(0, totalNodes - 1);
+  const rawStageIndex = Number(progress.currentStageIndex);
+  const currentStageIndex = Number.isFinite(rawStageIndex)
+      ? Math.min(Math.max(rawStageIndex, 0), maxStageIndex)
+      : 0;
+  return {
+    ...progress,
+    currentStageIndex,
+    totalNodes
+  };
+});
+const floatingVehicleVrpRows = computed(() => {
+  const assignment = floatingVehicleDisplayAssignment.value;
+  if (assignment.vrp !== true || !Array.isArray(assignment.nodes)) {
+    return [];
+  }
+  const currentStageIndex = floatingVehicleVrpProgress.value.currentStageIndex;
+  return assignment.nodes.map((node, index) => ({
+    ...node,
+    index,
+    isDone: index < currentStageIndex,
+    isCurrent: index === currentStageIndex,
+    actionText: node.actionType === 'LOAD' ? 'Load' : 'Unload',
+    stateText: index === currentStageIndex ? 'Current' : index < currentStageIndex ? 'Done' : 'Pending',
+    poiName: node.poiName || ''
+  }));
+});
+
+const toFiniteNumber = (value, fallback = 0) => {
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) ? numberValue : fallback;
+};
+
+const formatNumber = (value, digits = 1) => toFiniteNumber(value, 0).toFixed(digits);
+
+const calculateUsagePercent = (current, max) => {
+  const maxValue = toFiniteNumber(max, 0);
+  if (maxValue <= 0) return 0;
+  return Math.min(100, Math.max(0, (toFiniteNumber(current, 0) / maxValue) * 100));
+};
+
+const firstDefined = (...values) => values.find(value => value !== undefined && value !== null);
+
 const syncTransportMonitorData = (monitorData = {}) => {
   monitorShipments.splice(0, monitorShipments.length, ...(monitorData.shipments || []));
   monitorAssignments.splice(0, monitorAssignments.length, ...(monitorData.assignments || []));
@@ -4998,7 +5210,7 @@ const getVehicleDetail = async (vehicleId) => {
     return response.data;
   } catch (error) {
     console.error(`获取车辆${vehicleId}详细信息失败:`, error);
-    ElMessage.error(`获取车辆信息失败: ${vehicleId}`);
+    // ElMessage.error(`获取车辆信息失败: ${vehicleId}`);
     return null;
   }
 };
@@ -5510,7 +5722,10 @@ const drawTwoStageRouteForAssignment = async (assignment, runGeneration = simula
 
     // 车辆信息窗口
     movingMarker.on('click', () => {
-      handleVehicleMarkerClick(assignment, movingMarker.getPosition());
+      openVehicleFloatingInfo(assignment, {
+        source: 'marker',
+        position: movingMarker.getPosition()
+      });
     });
 
     routeData.movingMarker = movingMarker;
@@ -5712,7 +5927,10 @@ const drawMultiStageRouteForVrpAssignment = async (assignment, runGeneration = s
       markDrawnVehicleIcon(assignment.vehicleId, movingMarker);
     }
     movingMarker.on('click', () => {
-      handleVehicleMarkerClick(assignment, movingMarker.getPosition());
+      openVehicleFloatingInfo(assignment, {
+        source: 'marker',
+        position: movingMarker.getPosition()
+      });
     });
 
     // 4. 将 VRP 动画加入你们原本的全局动画管理器！
@@ -5957,6 +6175,267 @@ const buildAssignmentFromMonitorAssignment = (assignment) => ({
   currentVolume: assignment.currentVolume,
   maxVolumeCapacity: assignment.maxVolumeCapacity
 });
+
+const getVehicleIdFromFloatingSource = (source) =>
+    source?.vehicleId ?? source?.id ?? null;
+
+const findVehicleSnapshot = (vehicleId) =>
+    vehicles.find(vehicle => String(vehicle.id) === String(vehicleId)) || null;
+
+const resolveFloatingVehicleAssignment = (source, vehicleId, options = {}) => {
+  if (options.assignment) {
+    return options.assignment;
+  }
+  const managerAssignment = vehicleStatusManager.value?.assignmentData?.get(vehicleId);
+  if (managerAssignment) {
+    return managerAssignment;
+  }
+  if (source?.assignmentId || source?.vehicleId) {
+    return source;
+  }
+  const vehicleSnapshot = findVehicleSnapshot(vehicleId) || source;
+  return buildAssignmentFromVehicle(vehicleSnapshot || { id: vehicleId });
+};
+
+const isValidDisplayText = (value) =>
+    typeof value === 'string' && value.trim().length > 0;
+
+const isPositiveDisplayQuantity = (value) => {
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) && numericValue > 0;
+};
+
+const pickDisplayText = (primary, supplement) =>
+    isValidDisplayText(primary) ? primary : isValidDisplayText(supplement) ? supplement : primary;
+
+const pickDisplayQuantity = (primary, supplement) =>
+    isPositiveDisplayQuantity(primary)
+        ? primary
+        : isPositiveDisplayQuantity(supplement)
+            ? supplement
+            : primary;
+
+const mergeExperimentVehicleDisplayAssignment = (baseAssignment, displayInfo) => {
+  if (!displayInfo || normalizeDisplayId(baseAssignment?.assignmentId) !== normalizeDisplayId(displayInfo.assignmentId)) {
+    return baseAssignment;
+  }
+  return {
+    ...baseAssignment,
+    assignmentId: baseAssignment?.assignmentId ?? displayInfo.assignmentId,
+    vehicleId: baseAssignment?.vehicleId ?? displayInfo.vehicleId,
+    licensePlate: baseAssignment?.licensePlate || displayInfo.licensePlate,
+    vehicleStatus: baseAssignment?.vehicleStatus || displayInfo.vehicleStatus,
+    routeId: baseAssignment?.routeId ?? displayInfo.routeId,
+    routeName: pickDisplayText(baseAssignment?.routeName, displayInfo.routeName),
+    startPOIId: baseAssignment?.startPOIId ?? displayInfo.startPOIId,
+    startPOIName: pickDisplayText(baseAssignment?.startPOIName, displayInfo.startPOIName),
+    endPOIId: baseAssignment?.endPOIId ?? displayInfo.endPOIId,
+    endPOIName: pickDisplayText(baseAssignment?.endPOIName, displayInfo.endPOIName),
+    goodsName: pickDisplayText(baseAssignment?.goodsName, displayInfo.goodsName),
+    quantity: pickDisplayQuantity(baseAssignment?.quantity, displayInfo.quantity),
+    shipmentRefNos: baseAssignment?.shipmentRefNos || displayInfo.shipmentRefNos,
+    currentLoad: firstDefined(baseAssignment?.currentLoad, displayInfo.currentLoad),
+    maxLoadCapacity: firstDefined(baseAssignment?.maxLoadCapacity, displayInfo.maxLoadCapacity),
+    currentVolume: firstDefined(baseAssignment?.currentVolume, displayInfo.currentVolume),
+    maxVolumeCapacity: firstDefined(baseAssignment?.maxVolumeCapacity, displayInfo.maxVolumeCapacity),
+    nodes: Array.isArray(baseAssignment?.nodes) && baseAssignment.nodes.length > 0
+        ? baseAssignment.nodes
+        : Array.isArray(displayInfo.nodes)
+            ? displayInfo.nodes
+            : baseAssignment?.nodes
+  };
+};
+
+const fetchExperimentVehicleDisplayInfo = async (vehicleId, assignmentId) => {
+  if (!isExperimentRunActive.value || !vehicleId || !assignmentId) {
+    return null;
+  }
+  try {
+    const response = await request.get('/api/simulation/experiments/dispatch-comparison/vehicle-display-info', {
+      params: {
+        vehicleId,
+        assignmentId
+      }
+    });
+    return unwrapApiData(response) || null;
+  } catch (error) {
+    console.warn('[ExperimentVehicleDisplayInfo] failed', error?.response?.data?.message || error?.message || error);
+    return null;
+  }
+};
+
+const buildFloatingVehicleInfo = (vehicleId, assignment, vehicleDetail = null) => {
+  const managerInfo = vehicleStatusManager.value?.getVehicleInfo(vehicleId) || {};
+  const vehicleSnapshot = findVehicleSnapshot(vehicleId) || {};
+  const currentStatus = vehicleStatusManager.value?.getVehicleStatus(vehicleId) ||
+      assignment?.vehicleStatus ||
+      assignment?.status ||
+      vehicleSnapshot.status ||
+      'ORDER_DRIVING';
+  const statusMeta = statusMap[currentStatus] || {};
+  const currentLoad = firstDefined(managerInfo.currentLoad, vehicleSnapshot.currentLoad, assignment?.currentLoad, 0);
+  const maxLoadCapacity = firstDefined(managerInfo.maxLoadCapacity, vehicleSnapshot.maxLoadCapacity, assignment?.maxLoadCapacity, 0);
+  const currentVolume = firstDefined(managerInfo.currentVolume, vehicleSnapshot.currentVolume, assignment?.currentVolume, 0);
+  const maxVolumeCapacity = firstDefined(managerInfo.maxVolumeCapacity, vehicleSnapshot.maxVolumeCapacity, assignment?.maxVolumeCapacity, 0);
+  return {
+    currentStatus,
+    statusText: statusMeta.text || currentStatus,
+    statusColor: statusMeta.color || '#ccc',
+    vehicleInfo: {
+      ...assignment,
+      ...vehicleSnapshot,
+      ...managerInfo,
+      id: vehicleId,
+      vehicleId,
+      licensePlate: managerInfo.licensePlate || vehicleSnapshot.licensePlate || assignment?.licensePlate || `Vehicle ${vehicleId}`,
+      status: currentStatus,
+      currentAssignment: managerInfo.currentAssignment || vehicleSnapshot.currentAssignment || assignment?.routeName || assignment?.currentAssignment,
+      goodsInfo: managerInfo.goodsInfo || vehicleSnapshot.goodsInfo || assignment?.goodsName,
+      quantity: firstDefined(managerInfo.quantity, vehicleSnapshot.quantity, assignment?.quantity, 0),
+      startPOI: managerInfo.startPOI || vehicleSnapshot.startPOI || assignment?.startPOIName,
+      endPOI: managerInfo.endPOI || vehicleSnapshot.endPOI || assignment?.endPOIName,
+      currentLoad: toFiniteNumber(currentLoad, 0),
+      maxLoadCapacity: toFiniteNumber(maxLoadCapacity, 0),
+      currentVolume: toFiniteNumber(currentVolume, 0),
+      maxVolumeCapacity: toFiniteNumber(maxVolumeCapacity, 0),
+      loadPercentage: calculateUsagePercent(currentLoad, maxLoadCapacity),
+      volumePercentage: calculateUsagePercent(currentVolume, maxVolumeCapacity),
+      actionDescription: managerInfo.actionDescription || vehicleSnapshot.actionDescription || assignment?.actionDescription,
+      vrpProgress: managerInfo.vrpProgress || vehicleSnapshot.vrpProgress || assignment?.vrpProgress || null
+    },
+    vehicleDetail
+  };
+};
+
+const applyFloatingVehicleInfoPayload = (vehicleId, assignment, vehicleDetail, loading) => {
+  const payload = buildFloatingVehicleInfo(vehicleId, assignment, vehicleDetail);
+  floatingVehicleInfo.visible = true;
+  floatingVehicleInfo.loading = loading;
+  floatingVehicleInfo.vehicleId = vehicleId;
+  floatingVehicleInfo.assignment = assignment || {};
+  floatingVehicleInfo.vehicleInfo = payload.vehicleInfo;
+  floatingVehicleInfo.vehicleDetail = payload.vehicleDetail;
+  floatingVehicleInfo.currentStatus = payload.currentStatus;
+  floatingVehicleInfo.statusText = payload.statusText;
+  floatingVehicleInfo.statusColor = payload.statusColor;
+};
+
+const setFloatingVehicleHighlight = (vehicleId) => {
+  clearHighlight();
+  highlightedVehicleId.value = vehicleId;
+  highlightTimer = setTimeout(() => {
+    highlightedVehicleId.value = null;
+    highlightTimer = null;
+  }, 1500);
+};
+
+const clampFloatingVehicleInfoPosition = (left, top) => {
+  const container = document.getElementById('container');
+  const windowEl = vehicleFloatingInfoWindowRef.value;
+  const rect = container?.getBoundingClientRect?.();
+  const minLeft = 8;
+  const minTop = 8;
+  if (!rect) {
+    return {
+      left: Math.max(minLeft, left),
+      top: Math.max(minTop, top)
+    };
+  }
+  const width = windowEl?.offsetWidth || 360;
+  const height = windowEl?.offsetHeight || 280;
+  const maxLeft = Math.max(minLeft, rect.width - width - 8);
+  const maxTop = Math.max(minTop, rect.height - height - 8);
+  return {
+    left: Math.min(Math.max(minLeft, left), maxLeft),
+    top: Math.min(Math.max(minTop, top), maxTop)
+  };
+};
+
+const setFloatingVehicleInfoPosition = (left, top) => {
+  const nextPosition = clampFloatingVehicleInfoPosition(left, top);
+  floatingVehicleInfo.position.left = nextPosition.left;
+  floatingVehicleInfo.position.top = nextPosition.top;
+};
+
+const resetFloatingVehicleInfoPosition = () => {
+  setFloatingVehicleInfoPosition(
+      FLOATING_VEHICLE_INFO_DEFAULT_POSITION.left,
+      FLOATING_VEHICLE_INFO_DEFAULT_POSITION.top
+  );
+};
+
+const closeFloatingVehicleInfo = () => {
+  stopFloatingVehicleInfoDrag();
+  floatingVehicleInfo.visible = false;
+  floatingVehicleInfo.loading = false;
+};
+
+const startFloatingVehicleInfoDrag = (event) => {
+  if (event.button !== undefined && event.button !== 0) {
+    return;
+  }
+  event.preventDefault();
+  stopFloatingVehicleInfoDrag();
+  floatingVehicleDragState = {
+    startX: event.clientX,
+    startY: event.clientY,
+    originLeft: floatingVehicleInfo.position.left,
+    originTop: floatingVehicleInfo.position.top
+  };
+  window.addEventListener('pointermove', handleFloatingVehicleInfoDrag, { passive: false });
+  window.addEventListener('pointerup', stopFloatingVehicleInfoDrag);
+  window.addEventListener('pointercancel', stopFloatingVehicleInfoDrag);
+};
+
+const handleFloatingVehicleInfoDrag = (event) => {
+  if (!floatingVehicleDragState) {
+    return;
+  }
+  event.preventDefault();
+  const nextLeft = floatingVehicleDragState.originLeft + event.clientX - floatingVehicleDragState.startX;
+  const nextTop = floatingVehicleDragState.originTop + event.clientY - floatingVehicleDragState.startY;
+  setFloatingVehicleInfoPosition(nextLeft, nextTop);
+};
+
+const stopFloatingVehicleInfoDrag = () => {
+  if (!floatingVehicleDragState) {
+    return;
+  }
+  floatingVehicleDragState = null;
+  window.removeEventListener('pointermove', handleFloatingVehicleInfoDrag);
+  window.removeEventListener('pointerup', stopFloatingVehicleInfoDrag);
+  window.removeEventListener('pointercancel', stopFloatingVehicleInfoDrag);
+};
+
+const openVehicleFloatingInfo = async (source, options = {}) => {
+  const vehicleId = getVehicleIdFromFloatingSource(source);
+  if (!vehicleId) {
+    return;
+  }
+
+  await openVehicleMonitorPanelWithoutMapResize();
+  const assignment = resolveFloatingVehicleAssignment(source, vehicleId, options);
+  let displayAssignment = assignment;
+  const assignmentId = assignment?.assignmentId ?? source?.assignmentId ?? options.assignment?.assignmentId;
+  const experimentDisplayInfoPromise = fetchExperimentVehicleDisplayInfo(vehicleId, assignmentId);
+  setFloatingVehicleHighlight(vehicleId);
+  resetFloatingVehicleInfoPosition();
+  applyFloatingVehicleInfoPayload(vehicleId, assignment, null, true);
+  await nextTick();
+  resetFloatingVehicleInfoPosition();
+
+  let vehicleDetail = null;
+  try {
+    vehicleDetail = await getVehicleDetail(vehicleId);
+  } catch (error) {
+    console.error('获取车辆详情失败:', error);
+  }
+  const experimentDisplayInfo = await experimentDisplayInfoPromise;
+  displayAssignment = mergeExperimentVehicleDisplayAssignment(displayAssignment, experimentDisplayInfo);
+  applyFloatingVehicleInfoPayload(vehicleId, displayAssignment, vehicleDetail, false);
+  await nextTick();
+  setFloatingVehicleInfoPosition(floatingVehicleInfo.position.left, floatingVehicleInfo.position.top);
+};
 
 const centerMapOnVehicle = (position) => {
   const normalized = normalizeMapPosition(position);
@@ -6525,6 +7004,7 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  stopFloatingVehicleInfoDrag();
   if (isExperimentRunActive.value) {
     try {
       const abortUrl = 'http://localhost:8080/api/simulation/experiments/dispatch-comparison/abort';
@@ -7075,6 +7555,187 @@ onUnmounted(() => {
   width: 100%;
   height: 100%;
   position: relative;
+}
+
+.vehicle-floating-info-window {
+  position: absolute;
+  width: 360px;
+  max-width: calc(100% - 16px);
+  max-height: calc(100% - 16px);
+  background: #fff;
+  border: 1px solid #dcdfe6;
+  border-radius: 8px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.18);
+  color: #303133;
+  z-index: 2200;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.vehicle-floating-info-header {
+  min-height: 48px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #ebeef5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: move;
+  user-select: none;
+  background: #f8f9fb;
+}
+
+.vehicle-floating-info-title {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 20px;
+  color: #303133;
+}
+
+.vehicle-floating-info-subtitle {
+  font-size: 12px;
+  line-height: 16px;
+  color: #909399;
+}
+
+.vehicle-floating-info-close {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #606266;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 28px;
+  flex-shrink: 0;
+}
+
+.vehicle-floating-info-close:hover {
+  background: #ebeef5;
+  color: #303133;
+}
+
+.vehicle-floating-info-body {
+  padding: 12px;
+  overflow-y: auto;
+  font-size: 12px;
+}
+
+.vehicle-floating-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-weight: 600;
+}
+
+.vehicle-floating-status-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.vehicle-floating-loading {
+  margin-left: auto;
+  color: #909399;
+  font-weight: 400;
+}
+
+.vehicle-floating-line {
+  margin: 6px 0;
+  color: #606266;
+}
+
+.vehicle-floating-section {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid #ebeef5;
+}
+
+.vehicle-floating-section-title {
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.vehicle-floating-grid {
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr);
+  gap: 6px 8px;
+  align-items: start;
+}
+
+.vehicle-floating-grid span {
+  color: #909399;
+}
+
+.vehicle-floating-grid strong,
+.vehicle-floating-metric-row strong {
+  color: #303133;
+  font-weight: 600;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.vehicle-floating-metric-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 8px 0 4px;
+  color: #606266;
+}
+
+.vehicle-floating-progress {
+  height: 6px;
+  background: #ebeef5;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.vehicle-floating-progress-fill {
+  height: 100%;
+  border-radius: 3px;
+}
+
+.vehicle-floating-progress-fill.load {
+  background: #67c23a;
+}
+
+.vehicle-floating-progress-fill.volume {
+  background: #409eff;
+}
+
+.vehicle-floating-vrp-table {
+  border: 1px solid #ebeef5;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.vehicle-floating-vrp-row {
+  display: grid;
+  grid-template-columns: 32px 72px minmax(0, 1fr) 56px 56px;
+  gap: 4px;
+  align-items: center;
+  padding: 5px 6px;
+  border-bottom: 1px solid #ebeef5;
+  color: #606266;
+}
+
+.vehicle-floating-vrp-row:last-child {
+  border-bottom: 0;
+}
+
+.vehicle-floating-vrp-row.active {
+  background: #ecf5ff;
+  color: #303133;
+}
+
+.vehicle-floating-vrp-row.done {
+  background: #f0f9eb;
 }
 
 .el-main {

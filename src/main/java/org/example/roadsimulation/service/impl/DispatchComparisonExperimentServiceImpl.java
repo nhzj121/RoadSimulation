@@ -14,8 +14,10 @@ import org.example.roadsimulation.dto.DispatchComparisonScenarioDTO;
 import org.example.roadsimulation.dto.DispatchComparisonVisualArrivalAckRequest;
 import org.example.roadsimulation.dto.DispatchComparisonVisualRunResultDTO;
 import org.example.roadsimulation.dto.DispatchComparisonVisualRunStatusDTO;
+import org.example.roadsimulation.dto.DispatchComparisonVehicleDisplayInfoDTO;
 import org.example.roadsimulation.dto.RuntimeCostDTO;
 import org.example.roadsimulation.entity.Assignment;
+import org.example.roadsimulation.entity.AssignmentNode;
 import org.example.roadsimulation.entity.CostEntity;
 import org.example.roadsimulation.entity.DispatchComparisonCostSnapshot;
 import org.example.roadsimulation.entity.DispatchComparisonExperimentRun;
@@ -25,6 +27,7 @@ import org.example.roadsimulation.entity.DispatchComparisonStrategyRun.StrategyR
 import org.example.roadsimulation.entity.Enrollment;
 import org.example.roadsimulation.entity.Goods;
 import org.example.roadsimulation.entity.POI;
+import org.example.roadsimulation.entity.Route;
 import org.example.roadsimulation.entity.Shipment;
 import org.example.roadsimulation.entity.ShipmentItem;
 import org.example.roadsimulation.entity.Vehicle;
@@ -403,6 +406,56 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
             }
         }
         return result;
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public DispatchComparisonVehicleDisplayInfoDTO getVehicleDisplayInfo(Long vehicleId, Long assignmentId) {
+        if (vehicleId == null) {
+            throw new IllegalArgumentException("vehicleId is required");
+        }
+        if (assignmentId == null) {
+            throw new IllegalArgumentException("assignmentId is required");
+        }
+
+        DispatchComparisonExperimentRun run = activeRunOrLatest();
+        if (run == null || !isVehicleDisplayInfoStatus(run.getStatus())) {
+            return null;
+        }
+        if (!currentStrategyAssignmentIds().contains(assignmentId)) {
+            return null;
+        }
+
+        Assignment assignment = assignmentRepository.findById(assignmentId).orElse(null);
+        if (assignment == null) {
+            return null;
+        }
+        Vehicle vehicle = assignment.getAssignedVehicle();
+        if (vehicle == null || vehicle.getId() == null || !vehicle.getId().equals(vehicleId)) {
+            return null;
+        }
+
+        List<AssignmentNode> nodes = assignmentNodeRepository.findByAssignmentIdOrderBySequenceIndexAsc(assignmentId);
+        if (nodes == null) {
+            nodes = List.of();
+        }
+        List<ShipmentItem> items = shipmentItemRepository.findByAssignmentId(assignmentId);
+
+        DispatchComparisonVehicleDisplayInfoDTO dto = new DispatchComparisonVehicleDisplayInfoDTO();
+        dto.setVehicleId(vehicle.getId());
+        dto.setLicensePlate(vehicle.getLicensePlate());
+        dto.setVehicleStatus(vehicle.getCurrentStatus() == null ? null : vehicle.getCurrentStatus().name());
+        dto.setAssignmentId(assignment.getId());
+        dto.setAssignmentStatus(assignment.getStatus() == null ? null : assignment.getStatus().name());
+        dto.setCurrentStrategy(run.getCurrentStrategy());
+        fillRouteSummary(dto, assignment, nodes);
+        fillCargoSummary(dto, items);
+        dto.setCurrentLoad(valueOrZero(vehicle.getCurrentLoad()));
+        dto.setMaxLoadCapacity(valueOrZero(vehicle.getMaxLoadCapacity()));
+        dto.setCurrentVolume(valueOrZero(vehicle.getCurrentVolumn()));
+        dto.setMaxVolumeCapacity(valueOrZero(vehicle.getCargoVolume()));
+        dto.setNodes(nodes.stream().map(this::toVehicleDisplayNode).toList());
+        return dto;
     }
 
     @Scheduled(fixedRate = 4000)
@@ -997,8 +1050,152 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
         return status == RunStatus.RUNNING_ORIGINAL || status == RunStatus.RUNNING_HEURISTIC;
     }
 
+    private boolean isVehicleDisplayInfoStatus(RunStatus status) {
+        return status == RunStatus.RUNNING_ORIGINAL
+                || status == RunStatus.PAUSED_ORIGINAL
+                || status == RunStatus.RUNNING_HEURISTIC
+                || status == RunStatus.PAUSED_HEURISTIC;
+    }
+
     private boolean isTerminalStatus(RunStatus status) {
         return status == RunStatus.COMPLETED || status == RunStatus.ABORTED || status == RunStatus.FAILED;
+    }
+
+    private void fillRouteSummary(
+            DispatchComparisonVehicleDisplayInfoDTO dto,
+            Assignment assignment,
+            List<AssignmentNode> nodes
+    ) {
+        Route route = assignment.getRoute();
+        if (route != null) {
+            dto.setRouteId(route.getId());
+            dto.setRouteName(route.getName());
+        }
+
+        POI startPoi = firstNodePoi(nodes, AssignmentNode.NodeActionType.LOAD);
+        POI endPoi = lastNodePoi(nodes, AssignmentNode.NodeActionType.UNLOAD);
+        if (startPoi == null) {
+            startPoi = assignment.getOriginPOI();
+        }
+        if (endPoi == null) {
+            endPoi = assignment.getDestPOI();
+        }
+        if (startPoi == null && route != null) {
+            startPoi = route.getStartPOI();
+        }
+        if (endPoi == null && route != null) {
+            endPoi = route.getEndPOI();
+        }
+        fillDisplayStartPoi(dto, startPoi);
+        fillDisplayEndPoi(dto, endPoi);
+    }
+
+    private POI firstNodePoi(List<AssignmentNode> nodes, AssignmentNode.NodeActionType actionType) {
+        if (nodes == null) {
+            return null;
+        }
+        for (AssignmentNode node : nodes) {
+            if (node != null && node.getActionType() == actionType && node.getPoi() != null) {
+                return node.getPoi();
+            }
+        }
+        return null;
+    }
+
+    private POI lastNodePoi(List<AssignmentNode> nodes, AssignmentNode.NodeActionType actionType) {
+        if (nodes == null) {
+            return null;
+        }
+        for (int index = nodes.size() - 1; index >= 0; index--) {
+            AssignmentNode node = nodes.get(index);
+            if (node != null && node.getActionType() == actionType && node.getPoi() != null) {
+                return node.getPoi();
+            }
+        }
+        return null;
+    }
+
+    private void fillDisplayStartPoi(DispatchComparisonVehicleDisplayInfoDTO dto, POI poi) {
+        if (poi == null) {
+            return;
+        }
+        dto.setStartPOIId(poi.getId());
+        dto.setStartPOIName(poi.getName());
+    }
+
+    private void fillDisplayEndPoi(DispatchComparisonVehicleDisplayInfoDTO dto, POI poi) {
+        if (poi == null) {
+            return;
+        }
+        dto.setEndPOIId(poi.getId());
+        dto.setEndPOIName(poi.getName());
+    }
+
+    private void fillCargoSummary(DispatchComparisonVehicleDisplayInfoDTO dto, List<ShipmentItem> items) {
+        List<String> goodsNames = new ArrayList<>();
+        List<String> refNos = new ArrayList<>();
+        int quantity = 0;
+
+        if (items != null) {
+            for (ShipmentItem item : items) {
+                String goodsName = itemGoodsName(item);
+                if (isNonBlank(goodsName) && !goodsNames.contains(goodsName)) {
+                    goodsNames.add(goodsName);
+                }
+                if (item != null && item.getQty() != null && item.getQty() > 0) {
+                    quantity += item.getQty();
+                }
+                String refNo = item != null && item.getShipment() != null ? item.getShipment().getRefNo() : null;
+                if (isNonBlank(refNo) && !refNos.contains(refNo)) {
+                    refNos.add(refNo);
+                }
+            }
+        }
+
+        dto.setGoodsName(goodsNames.isEmpty() ? null : String.join(", ", goodsNames));
+        dto.setQuantity(quantity > 0 ? quantity : null);
+        dto.setShipmentRefNos(refNos.isEmpty() ? null : String.join(", ", refNos));
+    }
+
+    private String itemGoodsName(ShipmentItem item) {
+        if (item == null) {
+            return null;
+        }
+        if (isNonBlank(item.getName())) {
+            return item.getName();
+        }
+        return item.getGoods() == null ? null : item.getGoods().getName();
+    }
+
+    private DispatchComparisonVehicleDisplayInfoDTO.NodeInfo toVehicleDisplayNode(AssignmentNode node) {
+        DispatchComparisonVehicleDisplayInfoDTO.NodeInfo dto =
+                new DispatchComparisonVehicleDisplayInfoDTO.NodeInfo();
+        dto.setSequenceIndex(node.getSequenceIndex());
+        POI poi = node.getPoi();
+        if (poi != null) {
+            dto.setPoiId(poi.getId());
+            dto.setPoiName(poi.getName());
+            dto.setPoiType(poi.getPoiType() == null ? null : poi.getPoiType().name());
+        }
+        dto.setActionType(node.getActionType() == null ? null : node.getActionType().name());
+        dto.setWeightDelta(valueOrZero(node.getWeightDelta()));
+        dto.setVolumeDelta(valueOrZero(node.getVolumeDelta()));
+        dto.setCompleted(node.isCompleted());
+        ShipmentItem item = node.getShipmentItem();
+        if (item != null) {
+            dto.setShipmentItemId(item.getId());
+            dto.setGoodsName(itemGoodsName(item));
+            dto.setQuantity(item.getQty());
+        }
+        return dto;
+    }
+
+    private boolean isNonBlank(String value) {
+        return value != null && !value.isBlank();
+    }
+
+    private Double valueOrZero(Double value) {
+        return value == null ? 0.0 : value;
     }
 
     private DispatchComparisonVisualRunStatusDTO toStatusDTO(

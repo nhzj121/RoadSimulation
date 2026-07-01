@@ -6,6 +6,7 @@ import org.example.roadsimulation.dto.DispatchComparisonScenarioDTO;
 import org.example.roadsimulation.dto.DispatchComparisonVisualArrivalAckRequest;
 import org.example.roadsimulation.dto.DispatchComparisonVisualRunResultDTO;
 import org.example.roadsimulation.dto.DispatchComparisonVisualRunStatusDTO;
+import org.example.roadsimulation.dto.DispatchComparisonVehicleDisplayInfoDTO;
 
 public interface DispatchComparisonExperimentService {
 
@@ -30,4 +31,6 @@ public interface DispatchComparisonExperimentService {
     DispatchComparisonVisualRunStatusDTO getVisualRunStatus();
 
     DispatchComparisonVisualRunResultDTO getLatestVisualRunResult();
+
+    DispatchComparisonVehicleDisplayInfoDTO getVehicleDisplayInfo(Long vehicleId, Long assignmentId);
 }
