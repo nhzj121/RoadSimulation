@@ -7,6 +7,7 @@ import org.example.roadsimulation.dto.DispatchComparisonScenarioDTO;
 import org.example.roadsimulation.dto.DispatchComparisonVisualArrivalAckRequest;
 import org.example.roadsimulation.dto.DispatchComparisonVisualRunResultDTO;
 import org.example.roadsimulation.dto.DispatchComparisonVisualRunStatusDTO;
+import org.example.roadsimulation.dto.DispatchComparisonVehicleDisplayInfoDTO;
 import org.example.roadsimulation.service.DispatchComparisonExperimentService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -14,6 +15,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -130,5 +132,16 @@ public class DispatchComparisonExperimentController {
     @GetMapping("/latest-result")
     public ResponseEntity<ApiResponse<DispatchComparisonVisualRunResultDTO>> latestResult() {
         return ResponseEntity.ok(ApiResponse.success("query success", experimentService.getLatestVisualRunResult()));
+    }
+
+    @GetMapping("/vehicle-display-info")
+    public ResponseEntity<ApiResponse<DispatchComparisonVehicleDisplayInfoDTO>> vehicleDisplayInfo(
+            @RequestParam Long vehicleId,
+            @RequestParam Long assignmentId
+    ) {
+        return ResponseEntity.ok(ApiResponse.success(
+                "query success",
+                experimentService.getVehicleDisplayInfo(vehicleId, assignmentId)
+        ));
     }
 }
