@@ -100,7 +100,7 @@
               </template>
               <div class="stats-info">
                 <div><strong>运行车辆</strong><span>{{ vehicleMonitorDisplayVehicles.length }}</span></div>
-                <div><strong>运输任务</strong><span>{{ stats.tasks }}</span></div>
+                <div><strong>运输任务</strong><span>{{ displayTaskCount }}</span></div>
               </div>
             </ElCard>
           </div>
@@ -157,7 +157,7 @@
             <ElTabPane label="运单监控" name="shipments">
               <div class="monitor-tab-body transport-monitor-list">
                 <div
-                    v-for="shipment in monitorShipments"
+                    v-for="shipment in displayMonitorShipments"
                     :key="shipment.shipmentId"
                     class="transport-monitor-item"
                     :class="{ 'transport-item-highlighted': highlightedShipmentId === shipment.shipmentId }"
@@ -182,7 +182,7 @@
                     <span>车辆 {{ shipment.vehicleIds?.length || 0 }}</span>
                   </div>
                 </div>
-                <div v-if="monitorShipments.length === 0" class="monitor-empty">
+                <div v-if="displayMonitorShipments.length === 0" class="monitor-empty">
                   暂无活跃运单
                 </div>
               </div>
@@ -190,7 +190,7 @@
             <ElTabPane label="任务监控" name="assignments">
               <div class="monitor-tab-body transport-monitor-list">
                 <div
-                    v-for="assignment in monitorAssignments"
+                    v-for="assignment in displayMonitorAssignments"
                     :key="assignment.assignmentId"
                     class="transport-monitor-item"
                     :class="{ 'transport-item-highlighted': highlightedAssignmentId === assignment.assignmentId }"
@@ -198,7 +198,7 @@
                 >
                   <div class="transport-item-title">
                     <span class="transport-main-text">任务 {{ assignment.assignmentId }}</span>
-                    <span class="transport-status">{{ assignment.statusText || assignment.status || '未知' }}</span>
+                    <span class="transport-status">{{ assignment.displayStatusText || assignment.statusText || assignment.status || '未知' }}</span>
                   </div>
                   <div class="transport-item-desc">
                     {{ assignment.startPOIName || '未知起点' }} → {{ assignment.endPOIName || '未知终点' }}
@@ -211,7 +211,7 @@
                     <span>数量 {{ assignment.quantity || 0 }}</span>
                   </div>
                 </div>
-                <div v-if="monitorAssignments.length === 0" class="monitor-empty">
+                <div v-if="displayMonitorAssignments.length === 0" class="monitor-empty">
                   暂无活跃运输任务
                 </div>
               </div>
@@ -5415,6 +5415,125 @@ const vehicleMonitorDisplayVehicles = computed(() => vehicles.filter(vehicle => 
   return markerHasValidPosition(marker);
 }));
 
+const normalizeDisplayId = (value) => {
+  if (value === null || value === undefined) return null;
+  return String(value);
+};
+
+const lookupMapByLooseId = (mapLike, id) => {
+  if (!mapLike || id === null || id === undefined) return null;
+  if (mapLike.has(id)) return mapLike.get(id);
+  const stringId = String(id);
+  if (mapLike.has(stringId)) return mapLike.get(stringId);
+  const numberId = Number(id);
+  if (Number.isFinite(numberId) && mapLike.has(numberId)) {
+    return mapLike.get(numberId);
+  }
+  return null;
+};
+
+const getRouteDataForDisplayAssignment = (assignmentId) =>
+    lookupMapByLooseId(activeRoutes.value, assignmentId);
+
+const getVehicleMarkerForDisplay = (vehicleId) =>
+    lookupMapByLooseId(vehicleStatusManager.value?.vehicleMarkers, vehicleId);
+
+const visibleAssignmentIds = computed(() => {
+  const ids = [];
+  drawnAssignmentIds.value.forEach(assignmentId => {
+    const routeData = getRouteDataForDisplayAssignment(assignmentId);
+    if (!routeData || routeData.drawing || routeData.cleaned) {
+      return;
+    }
+
+    const vehicleId = routeData.assignment?.vehicleId;
+    if (vehicleId === null || vehicleId === undefined) {
+      return;
+    }
+
+    const marker = getVehicleMarkerForDisplay(vehicleId);
+    if (markerHasValidPosition(marker)) {
+      ids.push(normalizeDisplayId(assignmentId));
+    }
+  });
+  return ids;
+});
+
+const visibleAssignmentIdSet = computed(() => new Set(visibleAssignmentIds.value));
+const displayTaskCount = computed(() => visibleAssignmentIds.value.length);
+
+const displayStatusTextForVehicleStatus = (status) => {
+  if (!status) return null;
+  return statusMap[status]?.text || status;
+};
+
+const getFrontendAssignmentStatus = (assignment) => {
+  if (!assignment) return null;
+  const vehicleStatus = assignment.vehicleId
+      ? vehicleStatusManager.value?.getVehicleStatus?.(assignment.vehicleId)
+      : null;
+  if (vehicleStatus) {
+    return vehicleStatus;
+  }
+
+  const routeAssignment = getRouteDataForDisplayAssignment(assignment.assignmentId)?.assignment;
+  return routeAssignment?.frontendStatus || routeAssignment?.vehicleStatus || routeAssignment?.status || null;
+};
+
+const displayMonitorAssignments = computed(() => {
+  const visibleIds = visibleAssignmentIdSet.value;
+  return monitorAssignments
+      .filter(assignment => visibleIds.has(normalizeDisplayId(assignment.assignmentId)))
+      .map(assignment => {
+        const frontendStatus = getFrontendAssignmentStatus(assignment);
+        if (!frontendStatus) {
+          return { ...assignment };
+        }
+
+        return {
+          ...assignment,
+          displayVehicleStatus: frontendStatus,
+          displayStatusText: displayStatusTextForVehicleStatus(frontendStatus)
+        };
+      });
+});
+
+const displayMonitorShipments = computed(() => {
+  const displayAssignments = displayMonitorAssignments.value;
+  return monitorShipments
+      .map(shipment => {
+        const shipmentId = normalizeDisplayId(shipment.shipmentId);
+        const originalAssignmentIds = new Set((shipment.assignmentIds || []).map(normalizeDisplayId));
+        const assignmentIds = [];
+        const vehicleIds = [];
+
+        displayAssignments.forEach(assignment => {
+          const assignmentShipmentIds = (assignment.shipmentIds || []).map(normalizeDisplayId);
+          const belongsToShipment = assignmentShipmentIds.includes(shipmentId)
+              || originalAssignmentIds.has(normalizeDisplayId(assignment.assignmentId));
+          if (!belongsToShipment) {
+            return;
+          }
+
+          if (!assignmentIds.includes(assignment.assignmentId)) {
+            assignmentIds.push(assignment.assignmentId);
+          }
+          if (assignment.vehicleId !== null
+              && assignment.vehicleId !== undefined
+              && !vehicleIds.includes(assignment.vehicleId)) {
+            vehicleIds.push(assignment.vehicleId);
+          }
+        });
+
+        return {
+          ...shipment,
+          assignmentIds,
+          vehicleIds
+        };
+      })
+      .filter(shipment => shipment.assignmentIds.length > 0);
+});
+
 const getAssignmentFallbackPosition = (assignment) => {
   if (!assignment) return null;
 
@@ -5444,11 +5563,15 @@ const buildAssignmentFromVehicle = (vehicle) => ({
 const findMonitorAssignment = (assignmentId) =>
     monitorAssignments.find(item => item.assignmentId === assignmentId);
 
+const findDisplayMonitorAssignment = (assignmentId) =>
+    displayMonitorAssignments.value.find(item =>
+        normalizeDisplayId(item.assignmentId) === normalizeDisplayId(assignmentId));
+
 const buildAssignmentFromMonitorAssignment = (assignment) => ({
   assignmentId: assignment.assignmentId,
   vehicleId: assignment.vehicleId,
   licensePlate: assignment.licensePlate,
-  vehicleStatus: assignment.vehicleStatus,
+  vehicleStatus: assignment.displayVehicleStatus || assignment.vehicleStatus,
   routeName: assignment.routeName,
   goodsName: assignment.goodsName,
   quantity: assignment.quantity,
@@ -5516,7 +5639,7 @@ const focusShipmentFromPanel = async (shipment) => {
 
   const assignmentIds = shipment.assignmentIds || [];
   const vehicleIds = shipment.vehicleIds || [];
-  const firstAssignment = assignmentIds.length > 0 ? findMonitorAssignment(assignmentIds[0]) : null;
+  const firstAssignment = assignmentIds.length > 0 ? findDisplayMonitorAssignment(assignmentIds[0]) : null;
 
   if (firstAssignment) {
     highlightedAssignmentId.value = firstAssignment.assignmentId;
