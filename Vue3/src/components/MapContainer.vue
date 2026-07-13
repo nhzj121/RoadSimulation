@@ -1226,6 +1226,12 @@ const simulationCosts = reactive({
 });
 
 // 获取实时成本的接口请求
+const normalizedBreakdownLastEffectiveValues = reactive({
+  normalizedCostA: null,
+  normalizedCostC: null,
+  normalizedCostD: null
+});
+
 const costHistory = reactive({
   times: [],
   costA: [],
@@ -1971,6 +1977,9 @@ const resetSimulationCostDisplay = () => {
   simulationCosts.normalizedAllCost = null;
   simulationCosts.baselinePercentile = '';
   simulationCosts.baselineStrategy = '';
+  normalizedBreakdownLastEffectiveValues.normalizedCostA = null;
+  normalizedBreakdownLastEffectiveValues.normalizedCostC = null;
+  normalizedBreakdownLastEffectiveValues.normalizedCostD = null;
 
   costHistory.times.splice(0);
   costHistory.costA.splice(0);
@@ -2009,6 +2018,36 @@ const readOptionalCostNumber = (value) => {
   const numberValue = Number(value);
   return Number.isFinite(numberValue) ? numberValue : null;
 };
+
+const normalizedBreakdownCarryForwardKeys = new Set([
+  'normalizedCostA',
+  'normalizedCostC',
+  'normalizedCostD'
+]);
+
+const buildNormalizedBreakdownDisplayRows = () => normalizedCostMetrics.value.map(metric => {
+  const currentValue = readOptionalCostNumber(metric.value);
+  const canCarryForward = normalizedBreakdownCarryForwardKeys.has(metric.key);
+  if (canCarryForward && currentValue !== null && currentValue > 0) {
+    normalizedBreakdownLastEffectiveValues[metric.key] = currentValue;
+  }
+
+  const lastEffectiveValue = canCarryForward
+      ? readOptionalCostNumber(normalizedBreakdownLastEffectiveValues[metric.key])
+      : null;
+  const isCarriedForward = canCarryForward
+      && currentValue === 0
+      && lastEffectiveValue !== null
+      && lastEffectiveValue > 0;
+  const displayValue = isCarriedForward ? lastEffectiveValue : currentValue;
+
+  return {
+    ...metric,
+    currentValue,
+    displayValue,
+    isCarriedForward
+  };
+});
 
 const formatCostValue = (value, digits = 2) => readCostNumber(value).toFixed(digits);
 
@@ -2699,12 +2738,36 @@ const buildExperimentOptimizationTrendOption = () => {
 };
 
 const buildNormalizedBreakdownOption = () => {
-  const metrics = normalizedCostMetrics.value;
-  const data = metrics.map(metric => readOptionalCostNumber(metric.value));
-  const hasData = data.some(value => value !== null);
+  const metrics = buildNormalizedBreakdownDisplayRows();
+  const data = metrics.map(metric => ({
+    value: metric.displayValue,
+    currentValue: metric.currentValue,
+    isCarriedForward: metric.isCarriedForward,
+    itemStyle: metric.isCarriedForward ? { color: '#8ab8ff', opacity: 0.72 } : undefined
+  }));
+  const hasData = metrics.some(metric => metric.displayValue !== null);
   return {
     color: ['#2f80ed'],
-    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      formatter: (params) => {
+        const param = Array.isArray(params) ? params[0] : params;
+        const row = metrics[param?.dataIndex];
+        if (!row) {
+          return '';
+        }
+        const lines = [
+          row.name,
+          `当前窗口值: ${formatNormalizedValue(row.currentValue)}`,
+          `展示值: ${formatNormalizedValue(row.displayValue)}`
+        ];
+        if (row.isCarriedForward) {
+          lines.push('说明: 当前窗口为 0，展示最近有效值');
+        }
+        return lines.join('<br/>');
+      }
+    },
     grid: { left: 92, right: 35, top: 18, bottom: 28 },
     xAxis: {
       type: 'value',
