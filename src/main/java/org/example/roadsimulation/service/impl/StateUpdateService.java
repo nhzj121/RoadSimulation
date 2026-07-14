@@ -3,7 +3,6 @@ package org.example.roadsimulation.service.impl;
 import org.example.roadsimulation.entity.Vehicle;
 import org.example.roadsimulation.entity.Vehicle.VehicleStatus;
 import org.example.roadsimulation.repository.VehicleRepository;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -21,21 +20,15 @@ import java.util.stream.Collectors;
 @Service
 public class StateUpdateService {
 
-    // ✅ 改成注入具体实现：这样可以稳定调用 resetVehicleStateWindows
+    private static final int LOOPS_PER_STATS = 2;
+
+    // 注入具体实现，以调用主循环专用的状态窗口重置方法。
     private final StateTransitionServiceImpl stateTransitionService;
     private final VehicleRepository vehicleRepository;
 
-    /**
-     * 统计打印频率：每隔多少个 loop 打印一次
-     * MINUTES_PER_LOOP=30：
-     * - loopsPerStats=2 -> 每 1 小时打印一次
-     */
-    private final int loopsPerStats = 2;
-
-    // ✅ 确保 reset 只执行一次
+    // 确保每个服务生命周期内自动 reset 只执行一次。
     private boolean windowsResetDone = false;
 
-    @Autowired
     public StateUpdateService(StateTransitionServiceImpl stateTransitionService,
                               VehicleRepository vehicleRepository) {
         this.stateTransitionService = stateTransitionService;
@@ -63,7 +56,7 @@ public class StateUpdateService {
             stateTransitionService.batchUpdateAllVehicleStates(simNow, minutesPerLoop);
 
             // ✅ 统计打印：按 loop 节奏输出
-            if (loopsPerStats > 0 && loopCount % loopsPerStats == 0) {
+            if (LOOPS_PER_STATS > 0 && loopCount % LOOPS_PER_STATS == 0) {
                 printStateStatistics(simNow);
             }
 

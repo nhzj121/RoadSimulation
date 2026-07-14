@@ -17,7 +17,6 @@ import org.example.roadsimulation.service.GaodeMapService;
 import org.example.roadsimulation.service.ShipmentService;
 import org.example.roadsimulation.service.TransportLifecycleService;
 import org.jetbrains.annotations.NotNull;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.transaction.annotation.Transactional;
@@ -39,7 +38,6 @@ public class ShipmentServiceImpl implements ShipmentService {
     private final GaodeMapService gaodeMapService;
     private final TransportLifecycleService transportLifecycleService;
 
-    @Autowired
     public ShipmentServiceImpl(ShipmentRepository shipmentRepository,
                                VehicleRepository vehicleRepository,
                                GaodeMapService gaodeMapService,
@@ -297,7 +295,7 @@ public class ShipmentServiceImpl implements ShipmentService {
     private record TransportRule(POI.POIType startType, POI.POIType endType, String goodsSku) {}
 
     // 初始化支持的完整加工链
-    private final List<TransportRule> VALID_RULES = List.of(
+    private static final List<TransportRule> VALID_RULES = List.of(
             new TransportRule(POI.POIType.TIMBER_YARD, POI.POIType.SAWMILL, "LOG"), // 原木 -> 锯木厂
             new TransportRule(POI.POIType.IRON_MINE, POI.POIType.STEEL_MILL, "IRON_ORE"),   // 玻璃厂 -> 仓库
             new TransportRule(POI.POIType.RUBBER_PROCESSING_PLANT, POI.POIType.TIRE_MANUFACTURING_PLANT, "RUBBER_SEMI") // 菜基地 -> 菜市场

@@ -31,11 +31,10 @@ import java.util.Set;
 @Service
 public class GetCostService {
 
-    private Double VehicleType = 1.0;
-
     @Autowired
     private SimulationContext simulationContext;
 
+    private static final double VEHICLE_TYPE_FACTOR = 1.0;
     private static final double WEIGHT_A = 0.15;
     private static final double WEIGHT_B = 0.15;
     private static final double WEIGHT_C = 0.18;
@@ -117,9 +116,10 @@ public class GetCostService {
     private Double getCostByALlOilAndFixedConsumptionWithWorst(IdleVehicleCostStats idleStats){
         IdleVehicleCostStats safeIdleStats = idleStats == null ? new IdleVehicleCostStats() : idleStats;
         double capacityRatio = CostEntity.totalTheoryCapacity == 0.0 ? 0.0 : (CostEntity.totalRealityCapacity / CostEntity.totalTheoryCapacity);
-        double assignedTimeEconomicLoss = VehicleType * CostEntity.totalWaitingTime + VehicleType * CostEntity.totalTransportTime;
+        double assignedTimeEconomicLoss = VEHICLE_TYPE_FACTOR * CostEntity.totalWaitingTime
+                + VEHICLE_TYPE_FACTOR * CostEntity.totalTransportTime;
 
-        return 0.5 * VehicleType * capacityRatio
+        return 0.5 * VEHICLE_TYPE_FACTOR * capacityRatio
                 + 0.2 * assignedTimeEconomicLoss
                 + 0.1 * safeIdleStats.idleSpaceEconomicLoss
                 + 0.2 * CostEntity.WorstLoss;
@@ -136,9 +136,7 @@ public class GetCostService {
         double costC = getCostByAllEffectiveTransportCapacityWithWorst();
         double costD = getCostByALlOilAndFixedConsumptionWithWorst(idleStats);
         double costE = getCostByVehicleWorkloadBalance(vehicles);
-        double allCost = calculateAllCost(costA, costB, costC, costD, costE);
-
-        return new RuntimeCostDTO(costA, costB, costC, costD, costE, allCost);
+        return buildRuntimeCostSummary(costA, costB, costC, costD, costE);
     }
 
     public RuntimeCostDetailDTO calculateRuntimeCostDetail(List<Vehicle> vehicles, List<Assignment> activeAssignments) {
@@ -151,7 +149,8 @@ public class GetCostService {
         double assignedWaitingTransportRatio = safeDivide(totalWaitingHours, safe(CostEntity.totalTransportTime));
         double theoryActualCapacityGap = safe(CostEntity.totalTheoryCapacity) - safe(CostEntity.totalRealityCapacity);
         double capacityRatio = safeDivide(safe(CostEntity.totalRealityCapacity), safe(CostEntity.totalTheoryCapacity));
-        double assignedTimeEconomicLoss = VehicleType * totalWaitingHours + VehicleType * safe(CostEntity.totalTransportTime);
+        double assignedTimeEconomicLoss = VEHICLE_TYPE_FACTOR * totalWaitingHours
+                + VEHICLE_TYPE_FACTOR * safe(CostEntity.totalTransportTime);
 
         RuntimeCostDetailDTO.CostADetail costA = new RuntimeCostDetailDTO.CostADetail();
         costA.setTotalWaitingHours(totalWaitingHours);
@@ -179,11 +178,11 @@ public class GetCostService {
 
         RuntimeCostDetailDTO.CostDDetail costD = new RuntimeCostDetailDTO.CostDDetail();
         costD.setCapacityRatio(capacityRatio);
-        costD.setUtilizationWasteCost(VehicleType * capacityRatio);
+        costD.setUtilizationWasteCost(VEHICLE_TYPE_FACTOR * capacityRatio);
         costD.setAssignedTimeEconomicLoss(assignedTimeEconomicLoss);
         costD.setIdleSpaceEconomicLoss(idleStats.idleSpaceEconomicLoss);
         costD.setWorstEconomicLoss(safe(CostEntity.WorstLoss));
-        costD.setUtilizationWasteContribution(0.5 * VehicleType * capacityRatio);
+        costD.setUtilizationWasteContribution(0.5 * VEHICLE_TYPE_FACTOR * capacityRatio);
         costD.setAssignedTimeContribution(0.2 * assignedTimeEconomicLoss);
         costD.setIdleSpaceContribution(0.1 * idleStats.idleSpaceEconomicLoss);
         costD.setWorstEconomicContribution(0.2 * safe(CostEntity.WorstLoss));
@@ -193,7 +192,7 @@ public class GetCostService {
         costE.setWorkloadStandardDeviation(workloadStats.standardDeviation);
         costE.setWorkloadVariationCoefficient(workloadStats.variationCoefficient);
 
-        RuntimeCostDTO summary = new RuntimeCostDTO(
+        RuntimeCostDTO summary = buildRuntimeCostSummary(
                 costA.getWaitingCostContribution() + costA.getEmptyDistanceCostContribution(),
                 costB.getEmptyMileageContribution()
                         + costB.getWaitingTransportContribution()
@@ -204,16 +203,8 @@ public class GetCostService {
                         + costD.getAssignedTimeContribution()
                         + costD.getIdleSpaceContribution()
                         + costD.getWorstEconomicContribution(),
-                costE.getWorkloadVariationCoefficient(),
-                0.0
+                costE.getWorkloadVariationCoefficient()
         );
-        summary.setAllCost(calculateAllCost(
-                summary.getCostA(),
-                summary.getCostB(),
-                summary.getCostC(),
-                summary.getCostD(),
-                summary.getCostE()
-        ));
 
         RuntimeCostDetailDTO detail = new RuntimeCostDetailDTO();
         detail.setGeneratedAt(LocalDateTime.now());
@@ -231,27 +222,12 @@ public class GetCostService {
      * E = 工作量标准差 / 平均工作量，工作量 = 总行驶时间 + 0.5 * 总等待时间。
      */
     public Double getCostByVehicleWorkloadBalance(List<Vehicle> vehicles) {
-        List<Vehicle> safeVehicles = vehicles == null ? List.of() : vehicles;
-        if (safeVehicles.isEmpty()) {
-            return 0.0;
-        }
-        if (simulationContext != null
-                && !simulationContext.isRunning()
-                && simulationContext.getLoopCount() == 0) {
-            return 0.0;
-        }
-
-        List<Double> workloads = new ArrayList<>();
-        LocalDateTime simNow = simulationContext == null ? null : simulationContext.getCurrentSimTime();
-        for (Vehicle vehicle : safeVehicles) {
-            workloads.add(getVehicleRuntimeWorkload(vehicle, simNow));
-        }
-        return calculateVariationCoefficient(workloads);
+        return calculateRuntimeWorkloadStats(vehicles).variationCoefficient;
     }
 
     /**
      * =========================================================================
-     * 新增：边际成本预估器 (Cost Estimator) —— 专供 VRP 启发式算法使用
+     * 边际成本预估器 (Cost Estimator) —— 供 VRP 启发式算法使用
      * =========================================================================
      * 作用：在不污染全局 CostEntity 的前提下，模拟“如果增加这笔订单”，总成本会发生什么变化。
      * * @param deltaMileage 新增的总行驶里程 (千米)
@@ -304,8 +280,9 @@ public class GetCostService {
         // 注意：在你原有的公式中，Cost D 的 capacityRatio 是加项。如果是成本惩罚，这里通常是减去收益。
         // 但为了与你现有的计算逻辑保持绝对一致，这里沿用你的公式结构。
         double simCapacityRatio = simTotalTheoryCapacity == 0.0 ? 0.0 : (simTotalRealityCapacity / simTotalTheoryCapacity);
-        double simCostD = 0.5 * VehicleType * simCapacityRatio
-                + 0.2 * (VehicleType * simTotalWaitingTime + VehicleType * simTotalTransportTime)
+        double simCostD = 0.5 * VEHICLE_TYPE_FACTOR * simCapacityRatio
+                + 0.2 * (VEHICLE_TYPE_FACTOR * simTotalWaitingTime
+                + VEHICLE_TYPE_FACTOR * simTotalTransportTime)
                 + 0.2 * simWorstLoss;
 
         // 6. 计算总预测代价（你可以根据业务侧重点给 A、B、C、D 赋予不同的外层权重）
@@ -573,8 +550,9 @@ public class GetCostService {
                 + 0.1 * snapshot.worstWaitingTransportRatio;
         snapshot.costC = 0.9 * Math.max(0.0, snapshot.totalTheoryCapacity - snapshot.totalActualCapacity)
                 + 0.1 * snapshot.worstCapacityWaste;
-        snapshot.costD = 0.5 * VehicleType * capacityRatio
-                + 0.3 * (VehicleType * snapshot.totalWaitingHours + VehicleType * snapshot.totalTransportHours)
+        snapshot.costD = 0.5 * VEHICLE_TYPE_FACTOR * capacityRatio
+                + 0.3 * (VEHICLE_TYPE_FACTOR * snapshot.totalWaitingHours
+                + VEHICLE_TYPE_FACTOR * snapshot.totalTransportHours)
                 + 0.2 * snapshot.worstLoss;
         snapshot.costE = calculateVariationCoefficient(workloads);
         snapshot.costG = snapshot.totalBaseRouteDistanceKm <= 0.0
@@ -826,6 +804,21 @@ public class GetCostService {
                 + RUNTIME_WEIGHT_C * safe(costC)
                 + RUNTIME_WEIGHT_D * safe(costD)
                 + RUNTIME_WEIGHT_E * safe(costE)) / RUNTIME_ALL_COST_WEIGHT_SUM;
+    }
+
+    private RuntimeCostDTO buildRuntimeCostSummary(double costA,
+                                                   double costB,
+                                                   double costC,
+                                                   double costD,
+                                                   double costE) {
+        return new RuntimeCostDTO(
+                costA,
+                costB,
+                costC,
+                costD,
+                costE,
+                calculateAllCost(costA, costB, costC, costD, costE)
+        );
     }
 
     private double getVehicleRuntimeWorkload(Vehicle vehicle, LocalDateTime simNow) {

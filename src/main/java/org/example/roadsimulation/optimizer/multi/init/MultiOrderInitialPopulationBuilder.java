@@ -10,7 +10,6 @@ import org.example.roadsimulation.optimizer.multi.ga.InsertionThresholdPolicy;
 import org.example.roadsimulation.optimizer.multi.ga.MutationConfig;
 import org.example.roadsimulation.optimizer.multi.insertion.FeasibleInsertionService;
 import org.example.roadsimulation.optimizer.multi.insertion.InsertionCandidate;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
@@ -28,7 +27,6 @@ public class MultiOrderInitialPopulationBuilder {
 
     private final FeasibleInsertionService insertionService;
 
-    @Autowired
     public MultiOrderInitialPopulationBuilder(FeasibleInsertionService insertionService) {
         this.insertionService = insertionService;
     }

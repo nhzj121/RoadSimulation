@@ -20,6 +20,10 @@ import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 
+/**
+ * Adds baseline-relative metrics without replacing the raw runtime costs.
+ * Runtime windows and whole-experiment totals deliberately use different input scopes.
+ */
 @Service
 public class CostBaselineNormalizationService {
 
@@ -35,6 +39,9 @@ public class CostBaselineNormalizationService {
             + RUNTIME_WEIGHT_C
             + RUNTIME_WEIGHT_D
             + RUNTIME_WEIGHT_E;
+    private static final String EXPERIMENT_BASELINE_PERCENTILE = "P95";
+    private static final String EXPERIMENT_NORMALIZATION_SCOPE = "EXPERIMENT_TOTAL";
+    private static final String RUNTIME_WINDOW_ID_PREFIX = "runtime-cost-window-";
 
     private final SimulationRuntimeConfig simulationRuntimeConfig;
     private final ObjectMapper objectMapper;
@@ -192,7 +199,7 @@ public class CostBaselineNormalizationService {
             return null;
         }
 
-        String percentile = "P95";
+        String percentile = EXPERIMENT_BASELINE_PERCENTILE;
         BaselineValues baseline = findBaseline(DispatchStrategy.ORIGINAL, percentile);
         if (baseline == null || !baseline.isValid()) {
             warnOnce("invalid-experiment-baseline-ORIGINAL-" + percentile,
@@ -207,11 +214,13 @@ public class CostBaselineNormalizationService {
         double normalizedC = (safe(costs.getCostC()) / taskScale) / baseline.c();
         double normalizedD = (safe(costs.getCostD()) / taskScale) / baseline.d();
         double normalizedE = safe(costs.getCostE()) / baseline.e();
-        double normalizedAllCost = (RUNTIME_WEIGHT_A * normalizedA
-                + RUNTIME_WEIGHT_B * normalizedB
-                + RUNTIME_WEIGHT_C * normalizedC
-                + RUNTIME_WEIGHT_D * normalizedD
-                + RUNTIME_WEIGHT_E * normalizedE) / RUNTIME_WEIGHT_SUM;
+        double normalizedAllCost = calculateNormalizedAllCost(
+                normalizedA,
+                normalizedB,
+                normalizedC,
+                normalizedD,
+                normalizedE
+        );
 
         return new ExperimentRunNormalizationResult(
                 normalizedA,
@@ -222,7 +231,7 @@ public class CostBaselineNormalizationService {
                 normalizedAllCost,
                 DispatchStrategy.ORIGINAL.name(),
                 percentile,
-                "EXPERIMENT_TOTAL"
+                EXPERIMENT_NORMALIZATION_SCOPE
         );
     }
 
@@ -264,14 +273,16 @@ public class CostBaselineNormalizationService {
         double normalizedC = unitC / baseline.c();
         double normalizedD = unitD / baseline.d();
         double normalizedE = unitE / baseline.e();
-        double normalizedAllCost = (RUNTIME_WEIGHT_A * normalizedA
-                + RUNTIME_WEIGHT_B * normalizedB
-                + RUNTIME_WEIGHT_C * normalizedC
-                + RUNTIME_WEIGHT_D * normalizedD
-                + RUNTIME_WEIGHT_E * normalizedE) / RUNTIME_WEIGHT_SUM;
+        double normalizedAllCost = calculateNormalizedAllCost(
+                normalizedA,
+                normalizedB,
+                normalizedC,
+                normalizedD,
+                normalizedE
+        );
 
         return new NormalizedWindow(
-                "runtime-cost-window-" + nextWindowSequence++,
+                RUNTIME_WINDOW_ID_PREFIX + nextWindowSequence++,
                 end.strategy(),
                 percentile,
                 start.recordedAt(),
@@ -395,6 +406,18 @@ public class CostBaselineNormalizationService {
         }
         lastWarningKey = key;
         log.warn(message);
+    }
+
+    private double calculateNormalizedAllCost(double normalizedA,
+                                              double normalizedB,
+                                              double normalizedC,
+                                              double normalizedD,
+                                              double normalizedE) {
+        return (RUNTIME_WEIGHT_A * normalizedA
+                + RUNTIME_WEIGHT_B * normalizedB
+                + RUNTIME_WEIGHT_C * normalizedC
+                + RUNTIME_WEIGHT_D * normalizedD
+                + RUNTIME_WEIGHT_E * normalizedE) / RUNTIME_WEIGHT_SUM;
     }
 
     private double safe(Double value) {

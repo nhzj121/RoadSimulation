@@ -28,58 +28,58 @@ import java.util.concurrent.locks.ReentrantLock;
 @Component
 public class SimulationMainLoop {
 
+    private static final long LOOP_INTERVAL_MS = 4_000L;
+
     private final ReentrantLock lifecycleLock = new ReentrantLock(true);
 
     private final DataInitializer dataInitializer;
     private final StateUpdateService stateUpdateService;
-
-    @Autowired
-    private VehicleInitializationService vehicleInitializationService;
+    private final VehicleInitializationService vehicleInitializationService;
+    private final SimulationContext simulationContext;
+    private final SimulationModeGuard simulationModeGuard;
+    private final POIShipmentManager poiShipmentManager;
+    private final SimulationDispatchRouter simulationDispatchRouter;
+    private final GetCostService getCostService;
+    private final CostBaselineNormalizationService costBaselineNormalizationService;
+    private final VehicleRepository vehicleRepository;
+    private final AssignmentRepository assignmentRepository;
+    private final ShipmentItemRepository shipmentItemRepository;
 
     @Autowired(required = false)
     private ProcessingChainServiceV2 processingChainServiceV2;
 
     @Autowired
-    private SimulationContext simulationContext;
-
-    @Autowired
-    private SimulationModeGuard simulationModeGuard;
-
-    @Autowired
-    private POIShipmentManager poiShipmentManager;
-
-    @Autowired
-    private SimulationDispatchRouter simulationDispatchRouter;
-
-    @Autowired
-    private GetCostService getCostService;
-
-    @Autowired
-    private CostBaselineNormalizationService costBaselineNormalizationService;
-
-    @Autowired
-    private VehicleRepository vehicleRepository;
-
-    @Autowired
-    private AssignmentRepository assignmentRepository;
-
-    @Autowired
-    private ShipmentItemRepository shipmentItemRepository;
-
-    @Autowired
     SimulationMainLoop(DataInitializer dataInitializer,
                        StateUpdateService stateUpdateService,
-                       SimulationContext simulationContext) {
+                       VehicleInitializationService vehicleInitializationService,
+                       SimulationContext simulationContext,
+                       SimulationModeGuard simulationModeGuard,
+                       POIShipmentManager poiShipmentManager,
+                       SimulationDispatchRouter simulationDispatchRouter,
+                       GetCostService getCostService,
+                       CostBaselineNormalizationService costBaselineNormalizationService,
+                       VehicleRepository vehicleRepository,
+                       AssignmentRepository assignmentRepository,
+                       ShipmentItemRepository shipmentItemRepository) {
         this.dataInitializer = dataInitializer;
         this.stateUpdateService = stateUpdateService;
+        this.vehicleInitializationService = vehicleInitializationService;
         this.simulationContext = simulationContext;
+        this.simulationModeGuard = simulationModeGuard;
+        this.poiShipmentManager = poiShipmentManager;
+        this.simulationDispatchRouter = simulationDispatchRouter;
+        this.getCostService = getCostService;
+        this.costBaselineNormalizationService = costBaselineNormalizationService;
+        this.vehicleRepository = vehicleRepository;
+        this.assignmentRepository = assignmentRepository;
+        this.shipmentItemRepository = shipmentItemRepository;
     }
 
     /**
-     * 主循环方法 - 每 7 秒执行一次循环（现实时间）
-     * 每次循环推进 MINUTES_PER_LOOP（仿真时间）
+     * 主循环方法 - 每 4 秒尝试执行一次循环（现实时间）。
+     * 每次成功循环推进 {@link SimulationContext#getMinutesPerLoop()} 分钟（仿真时间）。
      */
-    @Scheduled(fixedRate = 4000)
+    @Scheduled(fixedRate = LOOP_INTERVAL_MS)
     public void executeMainLoop() {
         if (shouldAbortLoop()) {
             return;
@@ -96,6 +96,7 @@ public class SimulationMainLoop {
             }
 
             LocalDateTime simNow = simulationContext.getCurrentSimTime();
+            int minutesPerLoop = simulationContext.getMinutesPerLoop();
             int simMinutes = (int) java.time.Duration.between(
                     simulationContext.getSimStart(), simNow).toMinutes();
 
@@ -107,7 +108,7 @@ public class SimulationMainLoop {
                 if (shouldAbortLoop()) {
                     return;
                 }
-                stateUpdateService.resetWindowsOnce(simNow, 30);
+                stateUpdateService.resetWindowsOnce(simNow, minutesPerLoop);
                 if (shouldAbortLoop()) {
                     return;
                 }
@@ -152,13 +153,13 @@ public class SimulationMainLoop {
                 if (shouldAbortLoop()) {
                     return;
                 }
-                processingChainServiceV2.updateProcessingProgress(simNow, 30);
+                processingChainServiceV2.updateProcessingProgress(simNow, minutesPerLoop);
                 if (shouldAbortLoop()) {
                     return;
                 }
             }
 
-            stateUpdateService.tick(simNow, 30, simulationContext.getLoopCount());
+            stateUpdateService.tick(simNow, minutesPerLoop, simulationContext.getLoopCount());
             if (shouldAbortLoop()) {
                 return;
             }
@@ -174,7 +175,7 @@ public class SimulationMainLoop {
     }
 
     public int getMinutesPerLoop() {
-        return 30;
+        return simulationContext.getMinutesPerLoop();
     }
 
     public void start() {

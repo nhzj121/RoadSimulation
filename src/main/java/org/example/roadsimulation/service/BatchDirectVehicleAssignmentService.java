@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -17,6 +18,14 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
+/**
+ * Matches newly generated shipment items to idle vehicles before strategy dispatch.
+ *
+ * <p>{@link #match(List, List)} is the ordinary one-vehicle/one-item direct-matching
+ * boundary. {@link #matchOverdueTailFallback(List, List, List)} is the later shared
+ * tail-fallback boundary; it intentionally does not apply the ordinary 60% minimum
+ * load-factor gate.</p>
+ */
 @Service
 public class BatchDirectVehicleAssignmentService {
 
@@ -28,18 +37,8 @@ public class BatchDirectVehicleAssignmentService {
     private static final double EPS = 1e-9;
 
     public BatchMatchResult match(List<DirectAssignmentRequest> requests, List<Vehicle> vehicles) {
-        List<DirectAssignmentRequest> cleanRequests = requests == null
-                ? Collections.emptyList()
-                : requests.stream()
-                .filter(Objects::nonNull)
-                .filter(request -> request.getShipmentItem() != null)
-                .toList();
-
-        List<Vehicle> cleanVehicles = vehicles == null
-                ? Collections.emptyList()
-                : vehicles.stream()
-                .filter(Objects::nonNull)
-                .toList();
+        List<DirectAssignmentRequest> cleanRequests = cleanRequests(requests);
+        List<Vehicle> cleanVehicles = cleanVehicles(vehicles);
 
         if (cleanRequests.isEmpty()) {
             return new BatchMatchResult(List.of(), List.of());
@@ -49,35 +48,43 @@ public class BatchDirectVehicleAssignmentService {
             return new BatchMatchResult(List.of(), cleanRequests);
         }
 
-        int requestCount = cleanRequests.size();
-        int vehicleCount = cleanVehicles.size();
-        int columnCount = vehicleCount + requestCount;
-        int size = Math.max(requestCount, columnCount);
+        double[][] cost = buildDirectMatchCostMatrix(cleanRequests, cleanVehicles);
+        int[] assignment = solveHungarian(cost);
+        return buildBatchMatchResult(cleanRequests, cleanVehicles, cost, assignment);
+    }
 
-        double[][] cost = new double[size][size];
-        for (int row = 0; row < size; row++) {
-            for (int col = 0; col < size; col++) {
-                cost[row][col] = row < requestCount && col < columnCount
-                        ? INFEASIBLE_COST
-                        : 0.0;
-            }
-        }
+    private double[][] buildDirectMatchCostMatrix(
+            List<DirectAssignmentRequest> requests,
+            List<Vehicle> vehicles
+    ) {
+        int requestCount = requests.size();
+        int vehicleCount = vehicles.size();
+        int matrixSize = vehicleCount + requestCount;
+        double[][] cost = new double[matrixSize][matrixSize];
 
         for (int row = 0; row < requestCount; row++) {
-            DirectAssignmentRequest request = cleanRequests.get(row);
+            Arrays.fill(cost[row], INFEASIBLE_COST);
+            DirectAssignmentRequest request = requests.get(row);
             for (int col = 0; col < vehicleCount; col++) {
-                Vehicle vehicle = cleanVehicles.get(col);
-                PairCost pairCost = calculatePairCost(request, vehicle);
+                PairCost pairCost = calculatePairCost(request, vehicles.get(col));
                 if (pairCost.feasible) {
                     cost[row][col] = pairCost.cost;
                 }
             }
-            for (int col = vehicleCount; col < columnCount; col++) {
-                cost[row][col] = UNMATCHED_COST;
-            }
+            Arrays.fill(cost[row], vehicleCount, matrixSize, UNMATCHED_COST);
         }
 
-        int[] assignment = solveHungarian(cost);
+        return cost;
+    }
+
+    private BatchMatchResult buildBatchMatchResult(
+            List<DirectAssignmentRequest> requests,
+            List<Vehicle> vehicles,
+            double[][] cost,
+            int[] assignment
+    ) {
+        int requestCount = requests.size();
+        int vehicleCount = vehicles.size();
 
         List<VehicleAssignment> matched = new ArrayList<>();
         List<DirectAssignmentRequest> unmatched = new ArrayList<>();
@@ -85,9 +92,9 @@ public class BatchDirectVehicleAssignmentService {
 
         for (int row = 0; row < requestCount; row++) {
             int col = assignment[row];
-            DirectAssignmentRequest request = cleanRequests.get(row);
+            DirectAssignmentRequest request = requests.get(row);
             if (col >= 0 && col < vehicleCount && cost[row][col] < UNMATCHED_COST - EPS) {
-                Vehicle vehicle = cleanVehicles.get(col);
+                Vehicle vehicle = vehicles.get(col);
                 if (vehicle.getId() == null || usedVehicleIds.add(vehicle.getId())) {
                     matched.add(new VehicleAssignment(vehicle, request, cost[row][col]));
                     continue;
@@ -113,10 +120,7 @@ public class BatchDirectVehicleAssignmentService {
         }
 
         List<DirectAssignmentRequest> cleanOptionalRequests = cleanRequests(optionalRequests);
-        List<Vehicle> cleanVehicles = vehicles == null
-                ? Collections.emptyList()
-                : vehicles.stream()
-                .filter(Objects::nonNull)
+        List<Vehicle> cleanVehicles = cleanVehicles(vehicles).stream()
                 .filter(vehicle -> Vehicle.VehicleStatus.IDLE.equals(vehicle.getCurrentStatus()))
                 .toList();
 
@@ -183,6 +187,14 @@ public class BatchDirectVehicleAssignmentService {
                 : requests.stream()
                 .filter(Objects::nonNull)
                 .filter(request -> request.getShipmentItem() != null)
+                .toList();
+    }
+
+    private List<Vehicle> cleanVehicles(List<Vehicle> vehicles) {
+        return vehicles == null
+                ? Collections.emptyList()
+                : vehicles.stream()
+                .filter(Objects::nonNull)
                 .toList();
     }
 

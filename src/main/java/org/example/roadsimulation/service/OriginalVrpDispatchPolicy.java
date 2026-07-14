@@ -7,6 +7,10 @@ import org.springframework.stereotype.Component;
 
 import java.util.Collection;
 
+/**
+ * Configurable acceptance rules used by the ORIGINAL greedy packing loop.
+ * The orchestration and assignment materialization remain in {@code DataInitializer}.
+ */
 @Component
 public class OriginalVrpDispatchPolicy {
 

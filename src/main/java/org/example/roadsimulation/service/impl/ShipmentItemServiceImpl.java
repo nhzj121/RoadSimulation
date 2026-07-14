@@ -10,7 +10,6 @@ import org.example.roadsimulation.entity.ShipmentItem;
 import org.example.roadsimulation.repository.ShipmentItemRepository;
 import org.example.roadsimulation.repository.ShipmentRepository;
 import org.example.roadsimulation.service.ShipmentItemService;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -24,10 +23,13 @@ import java.util.stream.Collectors;
 @Transactional
 @Slf4j
 public class ShipmentItemServiceImpl implements ShipmentItemService {
+
+    private static final double MAX_FRAGMENT_WEIGHT = 1.4;
+    private static final double MAX_FRAGMENT_VOLUME = 14.0;
+
     private final ShipmentItemRepository shipmentItemRepository;
     private final ShipmentRepository shipmentRepository;
 
-    @Autowired
     public ShipmentItemServiceImpl(ShipmentItemRepository shipmentItemRepository,
                                    ShipmentRepository shipmentRepository) {
         this.shipmentItemRepository = shipmentItemRepository;
@@ -103,10 +105,10 @@ public class ShipmentItemServiceImpl implements ShipmentItemService {
             return;
         }
 
-        List<Long> existingShipmentIds = shipmentRepository.findAllById(shipmentIds)
+        Set<Long> existingShipmentIds = shipmentRepository.findAllById(shipmentIds)
                 .stream()
                 .map(Shipment::getId)
-                .toList();
+                .collect(Collectors.toSet());
 
         // 找出不存在的运单ID
         Set<Long> nonExistingIds = shipmentIds.stream()
@@ -359,9 +361,6 @@ public class ShipmentItemServiceImpl implements ShipmentItemService {
             log.warn("货物 {} 缺少有效重量或体积信息，无法粉碎，跳过生成", goods.getSku());
             return fragments;
         }
-
-        final double MAX_FRAGMENT_WEIGHT = 1.4;
-        final double MAX_FRAGMENT_VOLUME = 14.0;
 
         double weightPerUnit = weightPerUnitObj;
         double volumePerUnit = volumePerUnitObj;

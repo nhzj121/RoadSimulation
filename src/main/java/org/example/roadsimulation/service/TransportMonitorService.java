@@ -10,7 +10,6 @@ import org.example.roadsimulation.entity.Vehicle;
 import org.example.roadsimulation.repository.AssignmentRepository;
 import org.example.roadsimulation.repository.ShipmentItemRepository;
 import org.example.roadsimulation.repository.ShipmentRepository;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,6 +24,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+/** Builds the read-only backend transport snapshot exposed by the monitor endpoint. */
 @Service
 public class TransportMonitorService {
 
@@ -34,14 +34,19 @@ public class TransportMonitorService {
             Shipment.ShipmentStatus.IN_TRANSIT
     );
 
-    @Autowired
-    private ShipmentRepository shipmentRepository;
+    private final ShipmentRepository shipmentRepository;
+    private final ShipmentItemRepository shipmentItemRepository;
+    private final AssignmentRepository assignmentRepository;
 
-    @Autowired
-    private ShipmentItemRepository shipmentItemRepository;
-
-    @Autowired
-    private AssignmentRepository assignmentRepository;
+    public TransportMonitorService(
+            ShipmentRepository shipmentRepository,
+            ShipmentItemRepository shipmentItemRepository,
+            AssignmentRepository assignmentRepository
+    ) {
+        this.shipmentRepository = shipmentRepository;
+        this.shipmentItemRepository = shipmentItemRepository;
+        this.assignmentRepository = assignmentRepository;
+    }
 
     @Transactional(readOnly = true)
     public TransportMonitorDTO getActiveMonitor() {

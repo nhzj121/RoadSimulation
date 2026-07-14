@@ -15,28 +15,22 @@ import org.example.roadsimulation.service.StateTransitionService;
 import org.example.roadsimulation.service.TransportLifecycleService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.*;
 
-/**
- * 车辆状态转移服务实现类
- */
+/** Advances vehicle state windows and delegates assignment lifecycle effects. */
 @Service
 public class StateTransitionServiceImpl implements StateTransitionService {
 
     private static final Logger logger = LoggerFactory.getLogger(StateTransitionServiceImpl.class);
     private final Random random = new Random();
 
-    @Autowired
-    private VehicleRepository vehicleRepository;
-    @Autowired
-    private AssignmentRepository assignmentRepository;
-    @Autowired
-    private TransportLifecycleService transportLifecycleService;
+    private final VehicleRepository vehicleRepository;
+    private final AssignmentRepository assignmentRepository;
+    private final TransportLifecycleService transportLifecycleService;
 
     // 状态顺序（必须与矩阵行/列严格对应）
     private static final List<VehicleStatus> STATES = List.of(
@@ -50,6 +44,16 @@ public class StateTransitionServiceImpl implements StateTransitionService {
     );
 
     private double[][] transitionMatrix;
+
+    public StateTransitionServiceImpl(
+            VehicleRepository vehicleRepository,
+            AssignmentRepository assignmentRepository,
+            TransportLifecycleService transportLifecycleService
+    ) {
+        this.vehicleRepository = vehicleRepository;
+        this.assignmentRepository = assignmentRepository;
+        this.transportLifecycleService = transportLifecycleService;
+    }
 
     @PostConstruct
     public void initTransitionMatrix() {

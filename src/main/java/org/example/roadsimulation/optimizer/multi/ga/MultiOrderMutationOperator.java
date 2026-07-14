@@ -8,7 +8,6 @@ import org.example.roadsimulation.optimizer.multi.NodeGene;
 import org.example.roadsimulation.optimizer.multi.VehicleRouteGene;
 import org.example.roadsimulation.optimizer.multi.insertion.FeasibleInsertionService;
 import org.example.roadsimulation.optimizer.multi.insertion.InsertionCandidate;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.*;
@@ -28,7 +27,6 @@ public class MultiOrderMutationOperator {
 
     private final FeasibleInsertionService insertionService;
 
-    @Autowired
     public MultiOrderMutationOperator(FeasibleInsertionService insertionService) {
         this.insertionService = insertionService;
     }

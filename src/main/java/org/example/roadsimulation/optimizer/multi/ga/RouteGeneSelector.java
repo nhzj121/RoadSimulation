@@ -9,11 +9,11 @@ import org.example.roadsimulation.optimizer.multi.NodeGene;
 import org.example.roadsimulation.optimizer.multi.VehicleRouteGene;
 import org.example.roadsimulation.optimizer.multi.cost.CostNormalizationConfig;
 import org.example.roadsimulation.optimizer.multi.insertion.RouteSequenceCostEstimator;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.*;
 
+/** Selects a non-empty parent route for route-level crossover. */
 @Component
 public class RouteGeneSelector {
 
@@ -21,7 +21,6 @@ public class RouteGeneSelector {
 
     private final RouteSequenceCostEstimator routeEstimator;
 
-    @Autowired
     public RouteGeneSelector(RouteSequenceCostEstimator routeEstimator) {
         this.routeEstimator = routeEstimator;
     }

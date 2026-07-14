@@ -21,10 +21,15 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
+/**
+ * Executes one HEURISTIC dispatch cycle: optimize, materialize, register for display,
+ * then run the shared overdue-tail fallback.
+ */
 @Service
 public class HeuristicSimulationDispatchService implements SimulationDispatchService {
 
     private static final Logger log = LoggerFactory.getLogger(HeuristicSimulationDispatchService.class);
+    private static final String TAIL_FALLBACK_SOURCE = "TAIL_FALLBACK_HEURISTIC";
 
     private final ShipmentItemRepository shipmentItemRepository;
     private final VehicleRepository vehicleRepository;
@@ -64,13 +69,13 @@ public class HeuristicSimulationDispatchService implements SimulationDispatchSer
 
         if (pendingItems.isEmpty()) {
             log.info("[Dispatch][HEURISTIC] No pending shipment items.");
-            dataInitializer.dispatchOverdueTailItems("TAIL_FALLBACK_HEURISTIC");
+            dispatchOverdueTailItems();
             return;
         }
 
         if (idleVehicles.isEmpty()) {
             log.info("[Dispatch][HEURISTIC] No idle vehicles.");
-            dataInitializer.dispatchOverdueTailItems("TAIL_FALLBACK_HEURISTIC");
+            dispatchOverdueTailItems();
             return;
         }
 
@@ -92,7 +97,7 @@ public class HeuristicSimulationDispatchService implements SimulationDispatchSer
                 optimizeElapsed,
                 solution.isFeasible(),
                 solution.getCost(),
-                solution.getUnassignedShipmentItemIds() == null ? 0 : solution.getUnassignedShipmentItemIds().size()
+                countUnassignedItems(solution)
         );
 
         long materializeStart = System.currentTimeMillis();
@@ -101,16 +106,11 @@ public class HeuristicSimulationDispatchService implements SimulationDispatchSer
         long materializeElapsed = System.currentTimeMillis() - materializeStart;
 
         long frontendRegisterStart = System.currentTimeMillis();
-        for (Assignment assignment : createdAssignments) {
-            dataInitializer.registerAssignmentForFrontend(assignment);
-        }
+        registerAssignmentsForFrontend(createdAssignments);
         long frontendRegisterElapsed = System.currentTimeMillis() - frontendRegisterStart;
 
         int createdCount = createdAssignments.size();
-
-        int unassignedCount = solution.getUnassignedShipmentItemIds() == null
-                ? 0
-                : solution.getUnassignedShipmentItemIds().size();
+        int unassignedCount = countUnassignedItems(solution);
 
         log.info(
                 "[Dispatch][HEURISTIC] Done. createdAssignments={}, unassignedItems={}, optimizeMs={}, materializeMs={}, frontendRegisterMs={}, totalMs={}",
@@ -121,6 +121,22 @@ public class HeuristicSimulationDispatchService implements SimulationDispatchSer
                 frontendRegisterElapsed,
                 System.currentTimeMillis() - dispatchStart
         );
-        dataInitializer.dispatchOverdueTailItems("TAIL_FALLBACK_HEURISTIC");
+        dispatchOverdueTailItems();
+    }
+
+    private void registerAssignmentsForFrontend(List<Assignment> assignments) {
+        for (Assignment assignment : assignments) {
+            dataInitializer.registerAssignmentForFrontend(assignment);
+        }
+    }
+
+    private int countUnassignedItems(MultiOrderSolution solution) {
+        return solution.getUnassignedShipmentItemIds() == null
+                ? 0
+                : solution.getUnassignedShipmentItemIds().size();
+    }
+
+    private void dispatchOverdueTailItems() {
+        dataInitializer.dispatchOverdueTailItems(TAIL_FALLBACK_SOURCE);
     }
 }

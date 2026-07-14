@@ -9,7 +9,6 @@ import org.example.roadsimulation.optimizer.multi.NodeGene;
 import org.example.roadsimulation.optimizer.multi.VehicleRouteGene;
 import org.example.roadsimulation.optimizer.multi.insertion.RouteSequenceCostEstimator;
 import org.example.roadsimulation.optimizer.node.AssignmentNodeSequenceValidator;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
@@ -33,7 +32,6 @@ public class MultiOrderCostEvaluator {
     private final AssignmentNodeSequenceValidator validator;
     private final RouteSequenceCostEstimator routeEstimator;
 
-    @Autowired
     public MultiOrderCostEvaluator(
             AssignmentNodeSequenceValidator validator,
             RouteSequenceCostEstimator routeEstimator

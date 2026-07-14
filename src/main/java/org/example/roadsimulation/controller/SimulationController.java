@@ -24,10 +24,8 @@ import org.example.roadsimulation.service.GaodeRoutePlanningQueueService;
 import org.example.roadsimulation.service.GetCostService;
 import org.example.roadsimulation.service.TransportLifecycleService;
 import org.example.roadsimulation.service.TransportMonitorService;
-import org.example.roadsimulation.service.impl.VehicleInitializationServiceImpl;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -40,49 +38,55 @@ import java.util.Map;
 @RequestMapping("/api/simulation")
 public class SimulationController {
 
-    private static final Logger logger = LoggerFactory.getLogger(VehicleInitializationServiceImpl.class);
+    private static final Logger logger = LoggerFactory.getLogger(SimulationController.class);
 
-    @Autowired
-    private SimulationMainLoop simulationMainLoop;
+    private final SimulationMainLoop simulationMainLoop;
+    private final AssignmentRepository assignmentRepository;
+    private final ShipmentItemRepository shipmentItemRepository;
+    private final POIRepository poiRepository;
+    private final DataInitializer dataInitializer;
+    private final SimulationRuntimeConfig simulationRuntimeConfig;
+    private final GetCostService getCostService;
+    private final CostBaselineNormalizationService costBaselineNormalizationService;
+    private final TransportMonitorService transportMonitorService;
+    private final TransportLifecycleService transportLifecycleService;
+    private final GaodeRoutePlanningQueueService gaodeRoutePlanningQueueService;
+    private final VehicleRepository vehicleRepository;
+    private final SimulationModeGuard simulationModeGuard;
+    private final boolean startupPreGenerationEnabled;
 
-    @Autowired
-    private AssignmentRepository assignmentRepository;
-
-    @Autowired
-    private ShipmentItemRepository shipmentItemRepository;
-
-    @Autowired
-    private POIRepository poiRepository;
-
-    @Autowired
-    private DataInitializer dataInitializer;
-
-    @Autowired
-    private SimulationRuntimeConfig simulationRuntimeConfig;
-
-    @Autowired
-    private GetCostService getCostService;
-
-    @Autowired
-    private CostBaselineNormalizationService costBaselineNormalizationService;
-
-    @Autowired
-    private TransportMonitorService transportMonitorService;
-
-    @Autowired
-    private TransportLifecycleService transportLifecycleService;
-
-    @Autowired
-    private GaodeRoutePlanningQueueService gaodeRoutePlanningQueueService;
-
-    @Autowired
-    private VehicleRepository vehicleRepository;
-
-    @Autowired
-    private SimulationModeGuard simulationModeGuard;
-
-    @Value("${app.simulation.startup-pre-generation.enabled:false}")
-    private boolean startupPreGenerationEnabled;
+    public SimulationController(
+            SimulationMainLoop simulationMainLoop,
+            AssignmentRepository assignmentRepository,
+            ShipmentItemRepository shipmentItemRepository,
+            POIRepository poiRepository,
+            DataInitializer dataInitializer,
+            SimulationRuntimeConfig simulationRuntimeConfig,
+            GetCostService getCostService,
+            CostBaselineNormalizationService costBaselineNormalizationService,
+            TransportMonitorService transportMonitorService,
+            TransportLifecycleService transportLifecycleService,
+            GaodeRoutePlanningQueueService gaodeRoutePlanningQueueService,
+            VehicleRepository vehicleRepository,
+            SimulationModeGuard simulationModeGuard,
+            @Value("${app.simulation.startup-pre-generation.enabled:false}")
+            boolean startupPreGenerationEnabled
+    ) {
+        this.simulationMainLoop = simulationMainLoop;
+        this.assignmentRepository = assignmentRepository;
+        this.shipmentItemRepository = shipmentItemRepository;
+        this.poiRepository = poiRepository;
+        this.dataInitializer = dataInitializer;
+        this.simulationRuntimeConfig = simulationRuntimeConfig;
+        this.getCostService = getCostService;
+        this.costBaselineNormalizationService = costBaselineNormalizationService;
+        this.transportMonitorService = transportMonitorService;
+        this.transportLifecycleService = transportLifecycleService;
+        this.gaodeRoutePlanningQueueService = gaodeRoutePlanningQueueService;
+        this.vehicleRepository = vehicleRepository;
+        this.simulationModeGuard = simulationModeGuard;
+        this.startupPreGenerationEnabled = startupPreGenerationEnabled;
+    }
 
     @PostMapping("/start")
     public ApiResponse<Map<String, Object>> startSimulation(

@@ -7,8 +7,11 @@ import org.springframework.stereotype.Component;
 
 import java.util.*;
 
+/** Validates ordered node completeness, capacity progression and strict LIFO unloading. */
 @Component
 public class AssignmentNodeSequenceValidator {
+
+    private static final double CAPACITY_TOLERANCE = 1e-6;
 
     public ValidationResult validate(List<AssignmentNode> nodes, Vehicle vehicle) {
         if (vehicle == null) {
@@ -51,19 +54,19 @@ public class AssignmentNodeSequenceValidator {
             currentWeight += safe(node.getWeightDelta());
             currentVolume += safe(node.getVolumeDelta());
 
-            if (currentWeight < -1e-6) {
+            if (currentWeight < -CAPACITY_TOLERANCE) {
                 return ValidationResult.invalid("节点序列导致车辆载重为负");
             }
 
-            if (currentVolume < -1e-6) {
+            if (currentVolume < -CAPACITY_TOLERANCE) {
                 return ValidationResult.invalid("节点序列导致车辆体积为负");
             }
 
-            if (currentWeight > maxLoad + 1e-6) {
+            if (currentWeight > maxLoad + CAPACITY_TOLERANCE) {
                 return ValidationResult.invalid("车辆超重");
             }
 
-            if (currentVolume > maxVolume + 1e-6) {
+            if (currentVolume > maxVolume + CAPACITY_TOLERANCE) {
                 return ValidationResult.invalid("车辆超体积");
             }
 

@@ -3097,7 +3097,6 @@ let routePlanningAbortController = null;
 let assignmentDrawInProgress = false;
 
 // 响应式数据
-const drawnPairIds = ref(new Set()); // 已绘制的配对ID (可以删除)
 const drawnAssignmentIds = ref(new Set()); // 已绘制的Assignment ID
 const drawnVehicleIconIds = ref(new Set()); // Vehicle IDs with rendered, locatable vehicle markers.
 const activeRoutes = ref(new Map()); // 当前活动的路线映射，key为assignmentId
@@ -3146,6 +3145,11 @@ function markerHasValidPosition(marker) {
 
 function syncRegisteredVehicleStats() {
   stats.running = vehicleMonitorDisplayVehicles.value.length;
+}
+
+function clearDrawnVehicleIcons() {
+  drawnVehicleIconIds.value = new Set();
+  syncRegisteredVehicleStats();
 }
 
 function markDrawnVehicleIcon(vehicleId, marker) {
@@ -3208,8 +3212,7 @@ const cleanupAllActiveRoutes = () => {
   });
   activeRoutes.value.clear();
   drawnAssignmentIds.value.clear();
-  drawnVehicleIconIds.value = new Set();
-  syncRegisteredVehicleStats();
+  clearDrawnVehicleIcons();
 };
 
 // Assignment状态跟踪
@@ -5315,8 +5318,7 @@ const clearDrawnRoutes = () => {
     } catch (_) {} // 忽略错误
   }
   vehicleAnimations.length = 0; // 清空vehicleAnimations数组
-  drawnVehicleIconIds.value = new Set();
-  syncRegisteredVehicleStats();
+  clearDrawnVehicleIcons();
 };
 
 // Frontend-only visual cleanup for experiment abort and terminal states.
@@ -7104,9 +7106,7 @@ onUnmounted(() => {
   });
   activeRoutes.value.clear();
   drawnAssignmentIds.value.clear();
-  drawnVehicleIconIds.value = new Set();
-  syncRegisteredVehicleStats();
-  drawnPairIds.value.clear();
+  clearDrawnVehicleIcons();
 
   console.log('[MapContainer] 所有资源已清理');
 });

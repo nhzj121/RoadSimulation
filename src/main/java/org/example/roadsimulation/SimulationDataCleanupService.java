@@ -4,9 +4,7 @@ import org.example.roadsimulation.entity.*;
 import org.example.roadsimulation.repository.*;
 import jakarta.persistence.EntityManager;
 import org.example.roadsimulation.service.TransportLifecycleService;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
@@ -16,48 +14,46 @@ import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.ThreadLocalRandom;
 
-// SimulationDataCleanupService.java
+/**
+ * 清理仿真运行期数据，并在重置边界恢复车辆运行状态。
+ */
 @Component
 public class SimulationDataCleanupService {
 
-    @Autowired
-    private ShipmentRepository shipmentRepository;
+    private final ShipmentRepository shipmentRepository;
+    private final ShipmentItemRepository shipmentItemRepository;
+    private final EnrollmentRepository enrollmentRepository;
+    private final POIRepository poiRepository;
+    private final AssignmentRepository assignmentRepository;
+    private final AssignmentNodeRepository assignmentNodeRepository;
+    private final AssignmentLegRepository assignmentLegRepository;
+    private final VehicleRepository vehicleRepository;
+    private final EntityManager entityManager;
+    private final TransportLifecycleService transportLifecycleService;
 
-    @Autowired
-    private ShipmentItemRepository shipmentItemRepository;
-
-    @Autowired
-    private EnrollmentRepository enrollmentRepository;
-
-    @Autowired
-    private RouteRepository routeRepository;
-
-    @Autowired
-    private POIRepository poiRepository;
-
-    @Autowired
-    private AssignmentRepository assignmentRepository;
-
-    @Autowired
-    private AssignmentNodeRepository assignmentNodeRepository;
-
-    @Autowired
-    private AssignmentLegRepository assignmentLegRepository;
-
-    @Autowired
-    private VehicleRepository vehicleRepository;
-
-    @Autowired
-    private DriverRepository driverRepository;
-
-    @Autowired
-    private PlatformTransactionManager transactionManager;
-
-    @Autowired
-    private EntityManager entityManager;
-
-    @Autowired
-    private TransportLifecycleService transportLifecycleService;
+    public SimulationDataCleanupService(
+            ShipmentRepository shipmentRepository,
+            ShipmentItemRepository shipmentItemRepository,
+            EnrollmentRepository enrollmentRepository,
+            POIRepository poiRepository,
+            AssignmentRepository assignmentRepository,
+            AssignmentNodeRepository assignmentNodeRepository,
+            AssignmentLegRepository assignmentLegRepository,
+            VehicleRepository vehicleRepository,
+            EntityManager entityManager,
+            TransportLifecycleService transportLifecycleService
+    ) {
+        this.shipmentRepository = shipmentRepository;
+        this.shipmentItemRepository = shipmentItemRepository;
+        this.enrollmentRepository = enrollmentRepository;
+        this.poiRepository = poiRepository;
+        this.assignmentRepository = assignmentRepository;
+        this.assignmentNodeRepository = assignmentNodeRepository;
+        this.assignmentLegRepository = assignmentLegRepository;
+        this.vehicleRepository = vehicleRepository;
+        this.entityManager = entityManager;
+        this.transportLifecycleService = transportLifecycleService;
+    }
 
     /**
      * 清理所有模拟数据

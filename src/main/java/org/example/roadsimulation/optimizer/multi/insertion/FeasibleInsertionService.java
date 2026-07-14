@@ -5,7 +5,6 @@ import org.example.roadsimulation.entity.ShipmentItem;
 import org.example.roadsimulation.entity.Vehicle;
 import org.example.roadsimulation.optimizer.node.AssignmentNodeFactory;
 import org.example.roadsimulation.optimizer.node.AssignmentNodeSequenceValidator;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
@@ -31,7 +30,6 @@ public class FeasibleInsertionService {
     private final AssignmentNodeSequenceValidator validator;
     private final RouteSequenceCostEstimator costEstimator;
 
-    @Autowired
     public FeasibleInsertionService(
             AssignmentNodeFactory nodeFactory,
             AssignmentNodeSequenceValidator validator,

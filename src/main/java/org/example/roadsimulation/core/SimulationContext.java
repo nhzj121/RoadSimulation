@@ -29,16 +29,12 @@ public class SimulationContext {
      * 所有仿真时间都基于此起始时间计算
      */
     private static final LocalDateTime SIM_START = LocalDateTime.of(2026, 1, 1, 0, 0);
+    private static final int MINUTES_PER_LOOP = 30;
 
     /**
      * 仿真循环计数器
      */
     private volatile int loopCount = 0;
-
-    /**
-     * 每个循环代表的仿真分钟数
-     */
-    private final int minutesPerLoop = 30;
 
     /**
      * 仿真运行状态
@@ -57,7 +53,7 @@ public class SimulationContext {
      * @return 当前仿真时间
      */
     public LocalDateTime getCurrentSimTime() {
-        return SIM_START.plusMinutes((long) loopCount * minutesPerLoop);
+        return SIM_START.plusMinutes((long) loopCount * MINUTES_PER_LOOP);
     }
 
     /**
@@ -116,7 +112,7 @@ public class SimulationContext {
      * @return 分钟数
      */
     public int getMinutesPerLoop() {
-        return minutesPerLoop;
+        return MINUTES_PER_LOOP;
     }
 
     /**
@@ -146,7 +142,7 @@ public class SimulationContext {
      * @param minutes 快进的分钟数
      */
     public void fastForward(int minutes) {
-        int loopsToAdd = minutes / minutesPerLoop;
+        int loopsToAdd = minutes / MINUTES_PER_LOOP;
         if (loopsToAdd > 0) {
             loopCount += loopsToAdd;
         }

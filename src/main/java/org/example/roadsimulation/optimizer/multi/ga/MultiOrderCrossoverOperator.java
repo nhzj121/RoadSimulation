@@ -9,7 +9,6 @@ import org.example.roadsimulation.optimizer.multi.VehicleRouteGene;
 import org.example.roadsimulation.optimizer.multi.cost.CostNormalizationConfig;
 import org.example.roadsimulation.optimizer.multi.insertion.FeasibleInsertionService;
 import org.example.roadsimulation.optimizer.multi.insertion.InsertionCandidate;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.*;
@@ -28,7 +27,6 @@ public class MultiOrderCrossoverOperator {
     private final RouteGeneSelector routeGeneSelector;
     private final FeasibleInsertionService insertionService;
 
-    @Autowired
     public MultiOrderCrossoverOperator(
             RouteGeneSelector routeGeneSelector,
             FeasibleInsertionService insertionService

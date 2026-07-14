@@ -1,4 +1,4 @@
-import { ref, computed, watch, onUnmounted } from 'vue';
+import { ref, onUnmounted } from 'vue';
 import { vehicleArrivalApi } from '@/api/vehicleArrivalApi';
 import { isVehicleArrived } from '@/utils/geoUtils';
 

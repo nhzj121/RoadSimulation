@@ -18,6 +18,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+/**
+ * HTTP control surface for preparing and driving the visual dispatch comparison state machine.
+ */
 @RestController
 @RequestMapping("/api/simulation/experiments/dispatch-comparison")
 public class DispatchComparisonExperimentController {

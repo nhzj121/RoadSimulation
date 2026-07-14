@@ -62,7 +62,6 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
@@ -73,6 +72,10 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
 
+/**
+ * Orchestrates the two-stage visual comparison run while reusing the normal dispatch,
+ * transport lifecycle, cost calculation, and frontend arrival acknowledgement paths.
+ */
 @Service
 public class DispatchComparisonExperimentServiceImpl implements DispatchComparisonExperimentService {
 
@@ -80,7 +83,19 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
 
     private static final int MAX_EXPERIMENT_SHIPMENTS = 20;
     private static final int MAX_VISUAL_RUN_LOOPS = 360;
+    private static final int EXPERIMENT_MINUTES_PER_LOOP = 30;
+    private static final long VISUAL_RUN_LOOP_INTERVAL_MS = 4000L;
     private static final String FIXED_PLACEMENT_POLICY = "VEHICLE_ID_AND_INITIAL_POI_ID_ROUND_ROBIN";
+    private static final String EXPERIMENT_UPDATED_BY = "DispatchComparisonExperiment";
+    private static final DateTimeFormatter EXPERIMENT_ID_TIMESTAMP_FORMATTER =
+            DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
+    private static final List<RunStatus> ACTIVE_RUN_STATUSES = List.of(
+            RunStatus.RUNNING_ORIGINAL,
+            RunStatus.PAUSED_ORIGINAL,
+            RunStatus.REBUILDING_FOR_HEURISTIC,
+            RunStatus.RUNNING_HEURISTIC,
+            RunStatus.PAUSED_HEURISTIC
+    );
 
     private final ReentrantLock visualRunLock = new ReentrantLock(true);
     private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
@@ -287,13 +302,11 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
         visualRunLock.lock();
         try {
             DispatchComparisonExperimentRun run = activeRunOrThrow();
-            if (run.getStatus() == RunStatus.RUNNING_ORIGINAL) {
-                run.setStatus(RunStatus.PAUSED_ORIGINAL);
-            } else if (run.getStatus() == RunStatus.RUNNING_HEURISTIC) {
-                run.setStatus(RunStatus.PAUSED_HEURISTIC);
-            } else {
+            RunStatus pausedStatus = pausedStatusFor(run.getStatus());
+            if (pausedStatus == null) {
                 return toStatusDTO(run, null);
             }
+            run.setStatus(pausedStatus);
             transactionTemplate.executeWithoutResult(status -> {
                 experimentRunRepository.save(run);
                 updateActiveStrategyStatus(StrategyRunStatus.PAUSED);
@@ -311,13 +324,11 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
         visualRunLock.lock();
         try {
             DispatchComparisonExperimentRun run = activeRunOrThrow();
-            if (run.getStatus() == RunStatus.PAUSED_ORIGINAL) {
-                run.setStatus(RunStatus.RUNNING_ORIGINAL);
-            } else if (run.getStatus() == RunStatus.PAUSED_HEURISTIC) {
-                run.setStatus(RunStatus.RUNNING_HEURISTIC);
-            } else {
+            RunStatus runningStatus = runningStatusFor(run.getStatus());
+            if (runningStatus == null) {
                 return toStatusDTO(run, null);
             }
+            run.setStatus(runningStatus);
             transactionTemplate.executeWithoutResult(status -> {
                 experimentRunRepository.save(run);
                 updateActiveStrategyStatus(StrategyRunStatus.RUNNING);
@@ -458,7 +469,7 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
         return dto;
     }
 
-    @Scheduled(fixedRate = 4000)
+    @Scheduled(fixedRate = VISUAL_RUN_LOOP_INTERVAL_MS)
     public void executeVisualRunLoop() {
         if (!simulationModeGuard.isDispatchComparisonExperimentActive()) {
             return;
@@ -516,7 +527,7 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
             recordCostNormalizationDispatchSnapshot();
         }
 
-        stateUpdateService.tick(simNow, 30, loop);
+        stateUpdateService.tick(simNow, EXPERIMENT_MINUTES_PER_LOOP, loop);
 
         int completed = countCompletedActiveItems();
         int total = activeStrategyShipmentItemIds.size();
@@ -567,7 +578,10 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
         simulationRuntimeConfig.setDispatchStrategy(strategy);
         routePlanningQueueService.resume();
         simulationContext.setRunning(true);
-        stateUpdateService.resetWindowsOnce(simulationContext.getCurrentSimTime(), 30);
+        stateUpdateService.resetWindowsOnce(
+                simulationContext.getCurrentSimTime(),
+                EXPERIMENT_MINUTES_PER_LOOP
+        );
 
         DispatchComparisonStrategyRun strategyRun = new DispatchComparisonStrategyRun();
         strategyRun.setExperimentRun(run);
@@ -612,10 +626,7 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
         simulationContext.reset();
         CostEntity.reset();
         costBaselineNormalizationService.reset();
-        activeRunId = null;
-        activeStrategyRunId = null;
-        activeStrategyShipmentItemIds = List.of();
-        visualArrivedAssignmentIds.clear();
+        clearActiveRunTracking();
         simulationModeGuard.clearDispatchComparisonExperimentActive();
     }
 
@@ -648,7 +659,7 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
             }
             vehicle.setCurrentLoad(0.0);
             vehicle.setCurrentVolumn(0.0);
-            vehicle.setUpdatedBy("DispatchComparisonExperiment");
+            vehicle.setUpdatedBy(EXPERIMENT_UPDATED_BY);
             vehicle.setUpdatedTime(now);
             vehicleRepository.save(vehicle);
         }
@@ -672,7 +683,7 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
 
             Shipment shipment = new Shipment(refNo, origin, destination, source.getTotalWeight(), source.getTotalVolume());
             shipment.setStatus(Shipment.ShipmentStatus.CREATED);
-            shipment.setUpdatedBy("DispatchComparisonExperiment");
+            shipment.setUpdatedBy(EXPERIMENT_UPDATED_BY);
             Shipment savedShipment = shipmentRepository.save(shipment);
 
             ShipmentItem item = new ShipmentItem(
@@ -686,7 +697,7 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
             item.setCreatedTime(simulationContext.getCurrentSimTime());
             item.setGoods(goods);
             item.setStatus(ShipmentItem.ShipmentItemStatus.NOT_ASSIGNED);
-            item.setUpdatedBy("DispatchComparisonExperiment");
+            item.setUpdatedBy(EXPERIMENT_UPDATED_BY);
             ShipmentItem savedItem = shipmentItemRepository.save(item);
             ensureOriginEnrollment(origin, goods, source.getQuantity());
             poiShipmentManager.registerShipment(origin, destination, savedShipment);
@@ -836,7 +847,7 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
         Enrollment enrollment = enrollmentRepository.findByPoiAndGoods(origin, goods)
                 .orElseGet(() -> new Enrollment(origin, goods, 0));
         enrollment.setQuantity((enrollment.getQuantity() == null ? 0 : enrollment.getQuantity()) + quantity);
-        enrollment.setUpdatedBy("DispatchComparisonExperiment");
+        enrollment.setUpdatedBy(EXPERIMENT_UPDATED_BY);
         enrollment.setUpdatedTime(LocalDateTime.now());
         enrollmentRepository.save(enrollment);
     }
@@ -1009,14 +1020,7 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
         if (activeRunId != null) {
             return experimentRunRepository.findById(activeRunId).orElse(null);
         }
-        Collection<RunStatus> statuses = List.of(
-                RunStatus.RUNNING_ORIGINAL,
-                RunStatus.PAUSED_ORIGINAL,
-                RunStatus.REBUILDING_FOR_HEURISTIC,
-                RunStatus.RUNNING_HEURISTIC,
-                RunStatus.PAUSED_HEURISTIC
-        );
-        return experimentRunRepository.findTopByStatusInOrderByCreatedAtDesc(statuses).orElse(null);
+        return experimentRunRepository.findTopByStatusInOrderByCreatedAtDesc(ACTIVE_RUN_STATUSES).orElse(null);
     }
 
     private DispatchComparisonStrategyRun latestActiveStrategyRun() {
@@ -1048,6 +1052,26 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
 
     private boolean isRunningStatus(RunStatus status) {
         return status == RunStatus.RUNNING_ORIGINAL || status == RunStatus.RUNNING_HEURISTIC;
+    }
+
+    private RunStatus pausedStatusFor(RunStatus status) {
+        if (status == RunStatus.RUNNING_ORIGINAL) {
+            return RunStatus.PAUSED_ORIGINAL;
+        }
+        if (status == RunStatus.RUNNING_HEURISTIC) {
+            return RunStatus.PAUSED_HEURISTIC;
+        }
+        return null;
+    }
+
+    private RunStatus runningStatusFor(RunStatus status) {
+        if (status == RunStatus.PAUSED_ORIGINAL) {
+            return RunStatus.RUNNING_ORIGINAL;
+        }
+        if (status == RunStatus.PAUSED_HEURISTIC) {
+            return RunStatus.RUNNING_HEURISTIC;
+        }
+        return null;
     }
 
     private boolean isVehicleDisplayInfoStatus(RunStatus status) {
@@ -1302,9 +1326,16 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
     }
 
     private String buildExperimentId() {
-        return DateTimeFormatter.ofPattern("yyyyMMddHHmmss").format(LocalDateTime.now())
+        return EXPERIMENT_ID_TIMESTAMP_FORMATTER.format(LocalDateTime.now())
                 + "-"
                 + UUID.randomUUID().toString().substring(0, 8);
+    }
+
+    private void clearActiveRunTracking() {
+        activeRunId = null;
+        activeStrategyRunId = null;
+        activeStrategyShipmentItemIds = List.of();
+        visualArrivedAssignmentIds.clear();
     }
 
     private List<ExperimentShipmentTemplate> templates() {

@@ -7,11 +7,9 @@ import org.example.roadsimulation.repository.VehicleRepository;
 import org.example.roadsimulation.service.CargoChunkService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
-import java.util.stream.Collectors;
 
 /**
  * 货物块拆分实现 —— 按车辆类型容量将大订单预拆分为标准化运输块。
@@ -28,8 +26,11 @@ public class CargoChunkServiceImpl implements CargoChunkService {
     /** 车辆载重聚合的精度阈值（吨），容量差在此范围内的视为同类型 */
     private static final double CAPACITY_MERGE_THRESHOLD = 0.5;
 
-    @Autowired
-    private VehicleRepository vehicleRepository;
+    private final VehicleRepository vehicleRepository;
+
+    public CargoChunkServiceImpl(VehicleRepository vehicleRepository) {
+        this.vehicleRepository = vehicleRepository;
+    }
 
     @Override
     public List<CargoChunk> chunkCargo(Goods goods, int totalQty) {
@@ -93,9 +94,8 @@ public class CargoChunkServiceImpl implements CargoChunkService {
         // 5. 处理余数
         if (remaining > 0) {
             // 找能装下remaining的最小车型（保证最高装载率）
-            VehicleCapacity bestFit = null;
             int finalRemaining = remaining;
-            bestFit = vehicleTypes.stream()
+            VehicleCapacity bestFit = vehicleTypes.stream()
                     .filter(vc -> vc.idealQty >= finalRemaining)
                     .min(Comparator.comparingDouble(vc -> vc.maxLoad))
                     .orElse(null);
@@ -173,7 +173,7 @@ public class CargoChunkServiceImpl implements CargoChunkService {
     /**
      * 车辆容量信息（内部类）
      */
-    private static class VehicleCapacity {
+    private static final class VehicleCapacity {
         final double maxLoad;
         final double maxVolume;
         final String vehicleTypeName;

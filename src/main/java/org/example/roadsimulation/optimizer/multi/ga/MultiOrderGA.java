@@ -7,11 +7,11 @@ import org.example.roadsimulation.optimizer.multi.cost.CostNormalizationConfig;
 import org.example.roadsimulation.optimizer.multi.cost.MultiOrderCostEvaluator;
 import org.example.roadsimulation.optimizer.multi.init.InitialPopulationConfig;
 import org.example.roadsimulation.optimizer.multi.init.MultiOrderInitialPopulationBuilder;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.*;
 
+/** Coordinates population construction, evaluation, selection, crossover and mutation. */
 @Component
 public class MultiOrderGA {
 
@@ -20,7 +20,6 @@ public class MultiOrderGA {
     private final MultiOrderCrossoverOperator crossoverOperator;
     private final MultiOrderMutationOperator mutationOperator;
 
-    @Autowired
     public MultiOrderGA(
             MultiOrderInitialPopulationBuilder initialPopulationBuilder,
             MultiOrderCostEvaluator costEvaluator,

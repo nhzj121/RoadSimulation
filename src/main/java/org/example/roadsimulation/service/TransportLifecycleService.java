@@ -23,6 +23,9 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 
+/**
+ * Owns the backend state transitions shared by direct, ORIGINAL and HEURISTIC assignments.
+ */
 @Service
 public class TransportLifecycleService {
 

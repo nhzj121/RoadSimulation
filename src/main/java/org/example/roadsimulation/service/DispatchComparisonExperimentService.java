@@ -8,6 +8,9 @@ import org.example.roadsimulation.dto.DispatchComparisonVisualRunResultDTO;
 import org.example.roadsimulation.dto.DispatchComparisonVisualRunStatusDTO;
 import org.example.roadsimulation.dto.DispatchComparisonVehicleDisplayInfoDTO;
 
+/**
+ * Stateful control surface for the frontend-driven ORIGINAL then HEURISTIC comparison run.
+ */
 public interface DispatchComparisonExperimentService {
 
     DispatchComparisonOptionsDTO getPreparationOptions();

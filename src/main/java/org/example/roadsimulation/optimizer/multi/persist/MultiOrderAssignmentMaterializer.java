@@ -13,13 +13,13 @@ import org.example.roadsimulation.repository.ShipmentItemRepository;
 import org.example.roadsimulation.repository.VehicleRepository;
 import org.example.roadsimulation.service.TransportMetricsService;
 import org.example.roadsimulation.service.TransportLifecycleService;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.*;
 
+/** Materializes a GA solution into executable assignments and ordered assignment nodes. */
 @Service
 public class MultiOrderAssignmentMaterializer {
 
@@ -29,7 +29,6 @@ public class MultiOrderAssignmentMaterializer {
     private final TransportMetricsService transportMetricsService;
     private final TransportLifecycleService transportLifecycleService;
 
-    @Autowired
     public MultiOrderAssignmentMaterializer(
             AssignmentRepository assignmentRepository,
             ShipmentItemRepository shipmentItemRepository,
