@@ -1,6 +1,7 @@
 package org.example.roadsimulation.controller;
 
 import org.example.roadsimulation.SimulationMainLoop;
+import org.example.roadsimulation.core.SimulationTick;
 import org.example.roadsimulation.service.GaodeRoutePlanningQueueService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
@@ -71,6 +72,9 @@ public class TimeModuleController {
         Map<String, Object> res = createResponse("主循环版暂不支持 timeScale（已统一到 SimulationMainLoop）");
         res.put("requestedScale", scale);
         res.put("supported", false);
+        // Phase 1：明确速度倍率只属于前端视觉层，后端业务 tick 永远不受该值影响。
+        res.put("scope", "VISUAL_ONLY");
+        res.put("businessTickChanged", false);
         return res;
     }
 
@@ -88,14 +92,25 @@ public class TimeModuleController {
             return res;
         }
 
-        // 约定：这里把 milliseconds 当作“仿真时间”推进量
-        // 1 分钟 = 60_000 毫秒
-        double minutes = milliseconds / 60000.0;
-        int minutesPerLoop = simulationMainLoop.getMinutesPerLoop();
+        // Phase 1：零值和负值不再隐式推进一轮，保证“请求时间”和“实际业务推进”关系可解释。
+        if (milliseconds <= 0L) {
+            Map<String, Object> res = createResponse("仿真推进量必须大于 0 毫秒");
+            res.put("ok", false);
+            res.put("requestedSimulationMilliseconds", milliseconds);
+            res.put("advancedLoops", 0);
+            res.put("advancedSimulationSeconds", 0L);
+            return res;
+        }
 
-        // 至少推进 1 个 loop
-        int loops = (int) Math.ceil(minutes / minutesPerLoop);
-        loops = Math.max(1, loops);
+        // Phase 1：参数明确表示“仿真毫秒”；先换算成固定 tick，再调用现有 step()。
+        long secondsPerLoop = simulationMainLoop.getSecondsPerLoop();
+        long millisecondsPerLoop = Math.multiplyExact(secondsPerLoop, 1_000L);
+        long requestedLoops = milliseconds / millisecondsPerLoop
+                + (milliseconds % millisecondsPerLoop == 0L ? 0L : 1L);
+        if (requestedLoops > Integer.MAX_VALUE) {
+            throw new IllegalArgumentException("请求推进的仿真时间过大: " + milliseconds);
+        }
+        int loops = (int) requestedLoops;
 
         int before = simulationMainLoop.getLoopCount();
         for (int i = 0; i < loops; i++) {
@@ -105,10 +120,15 @@ public class TimeModuleController {
 
         Map<String, Object> res = createResponse("时间推进完成（使用 step 推进 loop）");
         res.put("ok", true);
+        // Phase 1：保留旧响应字段，新增带单位和时间类型的无歧义字段。
         res.put("requestedMilliseconds", milliseconds);
-        res.put("calculatedMinutes", minutes);
-        res.put("minutesPerLoop", minutesPerLoop);
-        res.put("advancedLoops", loops);
+        res.put("requestedSimulationMilliseconds", milliseconds);
+        res.put("calculatedMinutes", milliseconds / 60_000.0);
+        res.put("minutesPerLoop", simulationMainLoop.getMinutesPerLoop());
+        res.put("secondsPerLoop", secondsPerLoop);
+        res.put("requestedLoops", loops);
+        res.put("advancedLoops", after - before);
+        res.put("advancedSimulationSeconds", (long) (after - before) * secondsPerLoop);
         res.put("loopCountBefore", before);
         res.put("loopCountAfter", after);
         return res;
@@ -123,6 +143,8 @@ public class TimeModuleController {
         status.put("simNow", simulationMainLoop.getCurrentSimTime());
         status.put("loopCount", simulationMainLoop.getLoopCount());
         status.put("minutesPerLoop", simulationMainLoop.getMinutesPerLoop());
+        // Phase 1：状态接口同时公开规范秒数和本轮边界，避免调用方猜测 simNow 的含义。
+        putCanonicalTimeSemantics(status);
         status.put("isRunning", simulationMainLoop.isRunning());
         status.put("routeQueueSize", gaodeRoutePlanningQueueService.getQueueSize());
         status.put("routeQueuePaused", gaodeRoutePlanningQueueService.isPaused());
@@ -133,16 +155,33 @@ public class TimeModuleController {
     private Map<String, Object> createResponse(String message) {
         Map<String, Object> response = new HashMap<>();
         response.put("message", message);
+        // Phase 1：旧 timestamp 是系统墙上时间，仅用于响应审计，不能作为业务推进时间。
         response.put("timestamp", LocalDateTime.now());
+        response.put("timestampSource", "WALL_CLOCK");
 
         // 统一输出仿真时间（不再用 SimulationTime）
         response.put("simNow", simulationMainLoop.getCurrentSimTime());
         response.put("loopCount", simulationMainLoop.getLoopCount());
         response.put("minutesPerLoop", simulationMainLoop.getMinutesPerLoop());
+        // Phase 1：补充规范仿真秒和 tick 窗口；旧字段继续保留以兼容前端。
+        putCanonicalTimeSemantics(response);
         response.put("isRunning", simulationMainLoop.isRunning());
         response.put("routeQueueSize", gaodeRoutePlanningQueueService.getQueueSize());
         response.put("routeQueuePaused", gaodeRoutePlanningQueueService.isPaused());
         response.put("routeQueueGeneration", gaodeRoutePlanningQueueService.getGeneration());
         return response;
+    }
+
+    /**
+     * Phase 1：把统一时间语义集中写入响应，确保所有时间接口使用同一字段定义。
+     */
+    private void putCanonicalTimeSemantics(Map<String, Object> target) {
+        SimulationTick tick = simulationMainLoop.getCurrentTick();
+        target.put("simulationSeconds", simulationMainLoop.getCurrentSimulationSeconds());
+        target.put("secondsPerLoop", simulationMainLoop.getSecondsPerLoop());
+        target.put("tickStart", tick.tickStart());
+        target.put("tickEnd", tick.tickEnd());
+        target.put("timeSource", "SIMULATION_CONTEXT");
+        target.put("speedFactorScope", "VISUAL_ONLY");
     }
 }

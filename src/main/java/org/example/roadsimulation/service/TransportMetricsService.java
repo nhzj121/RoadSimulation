@@ -505,7 +505,10 @@ public class TransportMetricsService {
 
         for (Long id : carriedIds) {
             ShipmentItem item = itemMap.get(id);
-            totalWeight += item == null || item.getWeight() == null ? 0.0 : Math.max(0.0, item.getWeight());
+            // Phase 1：分摊权重统一读取 ShipmentItem 的明确吨制总重量。
+            totalWeight += item == null || item.getWeightTonnes() == null
+                    ? 0.0
+                    : Math.max(0.0, item.getWeightTonnes());
             totalVolume += item == null || item.getVolume() == null ? 0.0 : Math.max(0.0, item.getVolume());
         }
 
@@ -513,7 +516,10 @@ public class TransportMetricsService {
             ShipmentItem item = itemMap.get(id);
             double basis;
             if (totalWeight > 0.0) {
-                basis = item == null || item.getWeight() == null ? 0.0 : Math.max(0.0, item.getWeight());
+                // Phase 1：载重仅作为比例权重，单位仍明确为吨。
+                basis = item == null || item.getWeightTonnes() == null
+                        ? 0.0
+                        : Math.max(0.0, item.getWeightTonnes());
             } else if (totalVolume > 0.0) {
                 basis = item == null || item.getVolume() == null ? 0.0 : Math.max(0.0, item.getVolume());
             } else {

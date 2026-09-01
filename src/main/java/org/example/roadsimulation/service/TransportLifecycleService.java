@@ -1,5 +1,6 @@
 package org.example.roadsimulation.service;
 
+import org.example.roadsimulation.core.SimulationContext;
 import org.example.roadsimulation.entity.Assignment;
 import org.example.roadsimulation.entity.AssignmentNode;
 import org.example.roadsimulation.entity.POI;
@@ -11,6 +12,7 @@ import org.example.roadsimulation.repository.ShipmentItemRepository;
 import org.example.roadsimulation.repository.ShipmentRepository;
 import org.example.roadsimulation.repository.VehicleRepository;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
@@ -26,23 +28,50 @@ import java.util.Set;
 @Service
 public class TransportLifecycleService {
 
-    private static final Duration FRONTEND_ORDER_DRIVING_WINDOW = Duration.ofMinutes(30);
+    // Phase 1：兼容前端的状态窗口也引用唯一后端 tick；它仍不改变当前前端完成权，留待 Phase 4。
+    private static final Duration FRONTEND_ORDER_DRIVING_WINDOW = SimulationContext.TICK_DURATION;
 
     private final ShipmentRepository shipmentRepository;
     private final ShipmentItemRepository shipmentItemRepository;
     private final AssignmentRepository assignmentRepository;
     private final VehicleRepository vehicleRepository;
+    // Phase 1：生产环境中缺省业务时间必须回到唯一的 SimulationContext，而不是系统墙上时间。
+    private final SimulationContext simulationContext;
 
+    /**
+     * Phase 1：保留四参数构造器供现有纯单元测试使用；测试应优先显式传入 simNow。
+     */
     public TransportLifecycleService(
             ShipmentRepository shipmentRepository,
             ShipmentItemRepository shipmentItemRepository,
             AssignmentRepository assignmentRepository,
             VehicleRepository vehicleRepository
     ) {
+        this(
+                shipmentRepository,
+                shipmentItemRepository,
+                assignmentRepository,
+                vehicleRepository,
+                null
+        );
+    }
+
+    /**
+     * Phase 1：Spring 生产构造器注入唯一仿真时钟；不存在前端或系统时间驱动业务状态的入口。
+     */
+    @Autowired
+    public TransportLifecycleService(
+            ShipmentRepository shipmentRepository,
+            ShipmentItemRepository shipmentItemRepository,
+            AssignmentRepository assignmentRepository,
+            VehicleRepository vehicleRepository,
+            SimulationContext simulationContext
+    ) {
         this.shipmentRepository = shipmentRepository;
         this.shipmentItemRepository = shipmentItemRepository;
         this.assignmentRepository = assignmentRepository;
         this.vehicleRepository = vehicleRepository;
+        this.simulationContext = simulationContext;
     }
 
     public record LoadingCompletionResult(
@@ -98,7 +127,8 @@ public class TransportLifecycleService {
                     now,
                     FRONTEND_ORDER_DRIVING_WINDOW
             );
-            managedVehicle.setCurrentLoad(0.0);
+            // Phase 1：运输生命周期中的车辆载重统一通过吨制入口写入。
+            managedVehicle.setCurrentLoadTonnes(0.0);
             managedVehicle.setCurrentVolumn(0.0);
             managedVehicle.setUpdatedBy(actor);
             managedVehicle.setUpdatedTime(LocalDateTime.now());
@@ -203,7 +233,8 @@ public class TransportLifecycleService {
         return new LoadingCompletionResult(
                 assignment.getId(),
                 managedVehicle != null ? managedVehicle.getId() : vehicleId,
-                managedVehicle != null ? safe(managedVehicle.getCurrentLoad()) : 0.0,
+                // Phase 1：前端兼容响应数值仍不变，但来源明确为吨制运行时载重。
+                managedVehicle != null ? safe(managedVehicle.getCurrentLoadTonnes()) : 0.0,
                 managedVehicle != null ? safe(managedVehicle.getCurrentVolumn()) : 0.0
         );
     }
@@ -292,7 +323,8 @@ public class TransportLifecycleService {
                 ? calculateCompletedNodeLoad(assignment)
                 : calculateLoadedItemLoad(assignment);
 
-        managedVehicle.setCurrentLoad(loadAndVolume[0]);
+        // Phase 1：loadAndVolume[0] 的运输语义固定为吨，写入明确的吨制入口。
+        managedVehicle.setCurrentLoadTonnes(loadAndVolume[0]);
         managedVehicle.setCurrentVolumn(loadAndVolume[1]);
         managedVehicle.setUpdatedBy(actor);
         managedVehicle.setUpdatedTime(LocalDateTime.now());
@@ -344,7 +376,8 @@ public class TransportLifecycleService {
                 managedVehicle.setCurrentLongitude(endPOI.getLongitude());
                 managedVehicle.setCurrentLatitude(endPOI.getLatitude());
             }
-            managedVehicle.setCurrentLoad(0.0);
+            // Phase 1：交付完成释放车辆时，吨制运行载重归零。
+            managedVehicle.setCurrentLoadTonnes(0.0);
             managedVehicle.setCurrentVolumn(0.0);
             managedVehicle.setUpdatedBy(actor);
             managedVehicle.setUpdatedTime(LocalDateTime.now());
@@ -384,7 +417,8 @@ public class TransportLifecycleService {
                 managedVehicle.removeAssignment(assignment);
             }
             managedVehicle.transitionToStatus(Vehicle.VehicleStatus.IDLE, resolveTime(null), Duration.ZERO);
-            managedVehicle.setCurrentLoad(0.0);
+            // Phase 1：回滚释放车辆时，吨制运行载重归零。
+            managedVehicle.setCurrentLoadTonnes(0.0);
             managedVehicle.setCurrentVolumn(0.0);
             managedVehicle.setUpdatedBy("Route planning rollback");
             managedVehicle.setUpdatedTime(LocalDateTime.now());
@@ -433,7 +467,8 @@ public class TransportLifecycleService {
         if (vehicle != null) {
             vehicle.removeAssignment(assignment);
             vehicle.transitionToStatus(Vehicle.VehicleStatus.IDLE, now, Duration.ZERO);
-            vehicle.setCurrentLoad(0.0);
+            // Phase 1：取消任务释放车辆时，吨制运行载重归零。
+            vehicle.setCurrentLoadTonnes(0.0);
             vehicle.setCurrentVolumn(0.0);
             vehicle.setUpdatedBy(actor);
             vehicle.setUpdatedTime(LocalDateTime.now());
@@ -613,7 +648,8 @@ public class TransportLifecycleService {
             if (node == null || !node.isCompleted()) {
                 continue;
             }
-            load += safe(node.getWeightDelta());
+            // Phase 1：VRP 节点载重增量的单位明确为吨；负值表示卸货。
+            load += safe(node.getWeightDeltaTonnes());
             volume += safe(node.getVolumeDelta());
         }
         return new double[]{Math.max(0.0, load), Math.max(0.0, volume)};
@@ -628,7 +664,8 @@ public class TransportLifecycleService {
             }
             if (item.getStatus() == ShipmentItem.ShipmentItemStatus.LOADED
                     || item.getStatus() == ShipmentItem.ShipmentItemStatus.IN_TRANSIT) {
-                load += safe(item.getWeight());
+                // Phase 1：ShipmentItem.weight 在运输链中表示该货物项总吨数。
+                load += safe(item.getWeightTonnes());
                 volume += safe(item.getVolume());
             }
         }
@@ -668,6 +705,14 @@ public class TransportLifecycleService {
     }
 
     private LocalDateTime resolveTime(LocalDateTime simNow) {
-        return simNow != null ? simNow : LocalDateTime.now();
+        // Phase 1：显式事件时间优先；生产缺省值来自 SimulationContext，保证业务时间只有一个权威源。
+        if (simNow != null) {
+            return simNow;
+        }
+        if (simulationContext != null) {
+            return simulationContext.getCurrentSimTime();
+        }
+        // Phase 1：仅四参数测试构造器保留墙上时间退路，生产 Spring 构造器不会进入该分支。
+        return LocalDateTime.now();
     }
 }

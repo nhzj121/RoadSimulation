@@ -4,6 +4,7 @@ import jakarta.persistence.*;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
+import org.example.roadsimulation.core.TransportUnits;
 
 import java.time.LocalDateTime;
 
@@ -120,6 +121,7 @@ public class ShipmentItem {
     private Integer qty;
 
     @Min(value = 0, message = "重量不能为负数")
+    // Phase 1（运输语义）：weight 是该 ShipmentItem 的总重量，单位为吨。
     @Column(name = "weight")
     private Double weight;
 
@@ -242,6 +244,17 @@ public class ShipmentItem {
 
     public Double getWeight() { return weight; }
     public void setWeight(Double weight) { this.weight = weight; }
+
+    /** Phase 1：货物项总重量的规范吨制读取入口。 */
+    @Transient
+    public Double getWeightTonnes() {
+        return weight == null ? null : TransportUnits.tonnes(weight);
+    }
+
+    /** Phase 1：货物项总重量的规范吨制写入口，仍写入旧 weight 列。 */
+    public void setWeightTonnes(Double tonnes) {
+        this.weight = tonnes == null ? null : TransportUnits.tonnes(tonnes);
+    }
 
     public Double getVolume() { return volume; }
     public void setVolume(Double volume) { this.volume = volume; }

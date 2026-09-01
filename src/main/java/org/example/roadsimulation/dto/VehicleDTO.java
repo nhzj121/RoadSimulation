@@ -18,9 +18,17 @@ public class VehicleDTO {
 
     private String vehicleType;
 
+    // Phase 1（兼容 JSON 字段）：maxLoadCapacity 的单位明确为吨。
     private Double maxLoadCapacity;
 
+    // Phase 1（兼容 JSON 字段）：currentLoad 的单位明确为吨。
     private Double currentLoad;
+
+    /** Phase 1：面向新调用方的明确吨制容量字段，由旧字段直接投影。 */
+    public Double getMaxLoadCapacityTonnes() { return maxLoadCapacity; }
+
+    /** Phase 1：面向新调用方的明确吨制当前载重字段，由旧字段直接投影。 */
+    public Double getCurrentLoadTonnes() { return currentLoad; }
 
     private String suitableGoods;
 

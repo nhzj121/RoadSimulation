@@ -7,6 +7,7 @@ import org.example.roadsimulation.SimulationDataCleanupService;
 import org.example.roadsimulation.config.DispatchStrategy;
 import org.example.roadsimulation.config.SimulationRuntimeConfig;
 import org.example.roadsimulation.core.SimulationContext;
+import org.example.roadsimulation.core.SimulationTick;
 import org.example.roadsimulation.core.SimulationModeGuard;
 import org.example.roadsimulation.dto.DispatchComparisonOptionsDTO;
 import org.example.roadsimulation.dto.DispatchComparisonPrepareRequest;
@@ -510,13 +511,16 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
             return;
         }
 
-        LocalDateTime simNow = simulationContext.getCurrentSimTime();
+        // Phase 1：实验循环与正常主循环从同一 SimulationContext 获取规范时间窗口。
+        SimulationTick simulationTick = simulationContext.getCurrentTick();
+        LocalDateTime simNow = simulationTick.tickStart();
         if (loop != 0 && loop % 3 == 0) {
             simulationDispatchRouter.dispatch();
             recordCostNormalizationDispatchSnapshot();
         }
 
-        stateUpdateService.tick(simNow, 30, loop);
+        // Phase 1：实验运行传递完整 tick，禁止独立硬编码时间步长或只传一个模糊 simNow。
+        stateUpdateService.tick(simulationTick);
 
         int completed = countCompletedActiveItems();
         int total = activeStrategyShipmentItemIds.size();
@@ -567,7 +571,8 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
         simulationRuntimeConfig.setDispatchStrategy(strategy);
         routePlanningQueueService.resume();
         simulationContext.setRunning(true);
-        stateUpdateService.resetWindowsOnce(simulationContext.getCurrentSimTime(), 30);
+        // Phase 1：策略切换后的窗口重置使用当前规范 tick，避免实验路径保留独立的 30 分钟常量。
+        stateUpdateService.resetWindowsOnce(simulationContext.getCurrentTick());
 
         DispatchComparisonStrategyRun strategyRun = new DispatchComparisonStrategyRun();
         strategyRun.setExperimentRun(run);

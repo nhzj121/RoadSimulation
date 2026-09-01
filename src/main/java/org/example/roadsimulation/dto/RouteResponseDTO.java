@@ -1,6 +1,7 @@
 package org.example.roadsimulation.dto;
 
 import org.example.roadsimulation.entity.Route.RouteStatus;
+import org.example.roadsimulation.core.TransportUnits;
 
 public class RouteResponseDTO {
 
@@ -11,7 +12,9 @@ public class RouteResponseDTO {
     private String startPoiName;
     private Long endPoiId;
     private String endPoiName;
+    // Phase 1（方案 A 兼容字段）：distance 继续表示公里。
     private Double distance;
+    // Phase 1（方案 A 兼容字段）：estimatedTime 继续表示小时。
     private Double estimatedTime;
     private String description;
     private RouteStatus status;
@@ -43,6 +46,26 @@ public class RouteResponseDTO {
     public void setDistance(Double distance) { this.distance = distance; }
     public Double getEstimatedTime() { return estimatedTime; }
     public void setEstimatedTime(Double estimatedTime) { this.estimatedTime = estimatedTime; }
+
+    /** Phase 1：新增的规范距离响应字段，单位固定为米。 */
+    public Double getDistanceMeters() {
+        return distance == null ? null : TransportUnits.kilometersToMeters(distance);
+    }
+
+    /** Phase 1：接受米制赋值时换算到旧公里字段，避免双份数据失配。 */
+    public void setDistanceMeters(Double distanceMeters) {
+        this.distance = distanceMeters == null ? null : TransportUnits.metersToKilometers(distanceMeters);
+    }
+
+    /** Phase 1：新增的规范计划耗时响应字段，单位固定为秒。 */
+    public Long getEstimatedDrivingSeconds() {
+        return estimatedTime == null ? null : TransportUnits.hoursToSeconds(estimatedTime);
+    }
+
+    /** Phase 1：接受秒制赋值时换算到旧小时字段，避免双份数据失配。 */
+    public void setEstimatedDrivingSeconds(Long seconds) {
+        this.estimatedTime = seconds == null ? null : TransportUnits.secondsToHours(seconds);
+    }
     public String getDescription() { return description; }
     public void setDescription(String description) { this.description = description; }
     public RouteStatus getStatus() { return status; }

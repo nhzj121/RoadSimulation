@@ -8,7 +8,11 @@ import java.time.temporal.ChronoUnit;
  * 模拟时间管理类
  * 负责管理模拟时钟、时间推进和时间相关计算
  * 支持暂停/继续、时间缩放、步长推进
+ *
+ * @deprecated Phase 1：该类把现实毫秒乘以 timeScale，会形成第二套业务时钟。
+ * 后端业务必须改用 {@link SimulationContext}；本类仅为未迁移的非业务调用保留。
  */
+@Deprecated(forRemoval = true)
 public class SimulationTime {
     private LocalDateTime currentTime;
     private final LocalDateTime startTime;

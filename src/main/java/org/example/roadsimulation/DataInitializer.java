@@ -1665,8 +1665,10 @@ public class DataInitializer implements CommandLineRunner {
             route.setName(startAbbr + "-" + endAbbr);
             route.setRouteCode(startpoi.getId() + "_" + endPOI.getId());
             route.setRouteType("road");
-            route.setDistance(calculateDistance(startpoi, endPOI));
-            route.setEstimatedTime(calculateEstimatedTime(startpoi, endPOI));
+            // Phase 1：初始化器的 Haversine 辅助方法明确返回公里，写入兼容公里入口。
+            route.setDistanceKilometers(calculateDistance(startpoi, endPOI));
+            // Phase 1：旧初始化辅助方法明确返回小时，写入兼容小时入口；不再让下游猜测单位。
+            route.setEstimatedTimeHours(calculateEstimatedTime(startpoi, endPOI));
             routeRepository.save(route);
             System.out.println("新建路径：" + route.getRouteCode());
             return route;
@@ -3864,8 +3866,9 @@ public class DataInitializer implements CommandLineRunner {
         dto.setId(route.getId());
         dto.setRouteCode(route.getRouteCode());
         dto.setName(route.getName());
-        dto.setDistance(route.getDistance());
-        dto.setEstimatedTime(route.getEstimatedTime());
+        // Phase 1：旧 DTO 字段保持公里/小时兼容，RouteDTO 会同步公开米/秒规范投影。
+        dto.setDistance(route.getDistanceKilometers());
+        dto.setEstimatedTime(route.getEstimatedTimeHours());
         dto.setRouteType(route.getRouteType());
         dto.setStatus(route.getStatus() != null ? route.getStatus().toString() : null);
         dto.setDescription(route.getDescription());

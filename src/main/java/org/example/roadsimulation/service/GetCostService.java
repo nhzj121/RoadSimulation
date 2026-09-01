@@ -1,6 +1,7 @@
 package org.example.roadsimulation.service;
 
 import org.example.roadsimulation.core.SimulationContext;
+import org.example.roadsimulation.core.TransportUnits;
 import org.example.roadsimulation.dto.RuntimeCostDetailDTO;
 import org.example.roadsimulation.dto.RuntimeCostDTO;
 import org.example.roadsimulation.dto.VehicleCostDTO;
@@ -664,7 +665,10 @@ public class GetCostService {
             }
 
             double assignmentActual = safe(assignment.getTotalDrivingDistance());
-            double assignmentBase = assignment.getRoute() == null ? 0.0 : safe(assignment.getRoute().getDistance());
+            // Phase 1：CostG 的兼容口径仍是公里，但通过明确命名的 kilometers 别名读取。
+            double assignmentBase = assignment.getRoute() == null
+                    ? 0.0
+                    : safe(assignment.getRoute().getDistanceKilometers());
 
             if (assignmentActual <= 0.0) {
                 assignmentActual = assignmentBase + safe(assignment.getEmptyDrivingDistance());
@@ -714,18 +718,21 @@ public class GetCostService {
                     || assignment.getStartTime() == null
                     || assignment.getEndTime() == null
                     || assignment.getRoute() == null
-                    || assignment.getRoute().getEstimatedTime() == null
-                    || assignment.getRoute().getEstimatedTime() <= 0.0) {
+                    || assignment.getRoute().getEstimatedTimeHours() == null
+                    || assignment.getRoute().getEstimatedTimeHours() <= 0.0) {
                 continue;
             }
 
-            double actual = Duration.between(assignment.getStartTime(), assignment.getEndTime()).toSeconds() / 3600.0;
+            // Phase 1：实际耗时先以秒读取，再仅在 CostI 兼容边界显式换算为小时。
+            double actual = Duration.between(assignment.getStartTime(), assignment.getEndTime()).toSeconds()
+                    / (double) TransportUnits.SECONDS_PER_HOUR;
             if (actual < 0.0) {
                 continue;
             }
 
             actualHours += actual;
-            estimatedHours += assignment.getRoute().getEstimatedTime();
+            // Phase 1：预计耗时直接读取明确的小时别名，保留旧成本口径的小数精度。
+            estimatedHours += assignment.getRoute().getEstimatedTimeHours();
         }
 
         return new TimeOverrun(actualHours, estimatedHours);

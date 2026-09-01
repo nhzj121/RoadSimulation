@@ -269,8 +269,9 @@ public class AssignmentServiceImpl implements AssignmentService {
             routeDTO.setId(route.getId());
             routeDTO.setRouteCode(route.getRouteCode());
             routeDTO.setName(route.getName());
-            routeDTO.setDistance(route.getDistance());
-            routeDTO.setEstimatedTime(route.getEstimatedTime());
+            // Phase 1：旧 DTO 字段继续输出公里/小时，同时由 RouteDTO 自动派生米/秒规范字段。
+            routeDTO.setDistance(route.getDistanceKilometers());
+            routeDTO.setEstimatedTime(route.getEstimatedTimeHours());
             routeDTO.setRouteType(route.getRouteType());
             routeDTO.setStatus(route.getStatus() != null ? route.getStatus().toString() : null);
             routeDTO.setDescription(route.getDescription());
@@ -305,7 +306,8 @@ public class AssignmentServiceImpl implements AssignmentService {
                 itemDTO.setId(item.getId());
                 itemDTO.setName(item.getName());
                 itemDTO.setQty(item.getQty());
-                itemDTO.setWeight(item.getWeight());
+                // Phase 1：兼容 weight 字段继续输出，但其运输语义明确为 ShipmentItem 总吨数。
+                itemDTO.setWeight(item.getWeightTonnes());
                 itemDTO.setVolume(item.getVolume());
 
                 if (item.getShipment() != null) {
@@ -330,11 +332,11 @@ public class AssignmentServiceImpl implements AssignmentService {
             dto.setProgressPercentage(progress);
         }
 
-        if (route != null && route.getEstimatedTime() != null) {
-            double estimatedHours = route.getEstimatedTime();
+        if (route != null && route.getEstimatedDrivingSeconds() != null) {
+            // Phase 1：剩余时间直接在规范秒域计算，不再先读小时再在业务层乘 3600。
+            long estimatedDrivingSeconds = route.getEstimatedDrivingSeconds();
             double completedPercentage = dto.getProgressPercentage() != null ? dto.getProgressPercentage() / 100 : 0;
-            double remainingHours = estimatedHours * (1 - completedPercentage);
-            dto.setEstimatedRemainingTime((long) (remainingHours * 3600)); // 秒
+            dto.setEstimatedRemainingTime(Math.round(estimatedDrivingSeconds * (1 - completedPercentage)));
         }
 
         return dto;

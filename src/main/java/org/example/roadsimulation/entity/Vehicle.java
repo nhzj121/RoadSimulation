@@ -7,6 +7,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import lombok.Getter;
 import lombok.Setter;
+import org.example.roadsimulation.core.TransportUnits;
 
 import java.math.BigDecimal;
 import java.time.Duration;
@@ -33,6 +34,7 @@ public class Vehicle {
     private LocalDateTime createdTime = LocalDateTime.now();
 
     @Min(value = 0, message = "载重量不能为负数")
+    // Phase 1（方案 A 兼容列）：数值语义明确为吨；规范代码使用 maxLoadCapacityTonnes 访问器。
     @Column(name = "max_load_capacity", precision = 10)
     private Double maxLoadCapacity;
 
@@ -69,6 +71,7 @@ public class Vehicle {
     @Column(name = "status_duration_seconds")
     private Long statusDurationSeconds;
 
+    // Phase 1（方案 A 兼容列）：数值语义明确为吨；规范代码使用 currentLoadTonnes 访问器。
     @Column(name = "current_load", precision = 10)
     private Double currentLoad;
 
@@ -297,6 +300,17 @@ public class Vehicle {
     public Double getMaxLoadCapacity() { return maxLoadCapacity; }
     public void setMaxLoadCapacity(Double maxLoadCapacity) { this.maxLoadCapacity = maxLoadCapacity; }
 
+    /** Phase 1：车辆额定载重的规范吨制读取入口。 */
+    @Transient
+    public Double getMaxLoadCapacityTonnes() {
+        return maxLoadCapacity == null ? null : TransportUnits.tonnes(maxLoadCapacity);
+    }
+
+    /** Phase 1：车辆额定载重的规范吨制写入口，仍写入旧兼容列。 */
+    public void setMaxLoadCapacityTonnes(Double tonnes) {
+        this.maxLoadCapacity = tonnes == null ? null : TransportUnits.tonnes(tonnes);
+    }
+
     public Double getCargoVolume() { return cargoVolume; }
     public void setCargoVolume(Double cargoVolume) { this.cargoVolume = cargoVolume; }
 
@@ -355,6 +369,17 @@ public class Vehicle {
 
     public Double getCurrentLoad() { return currentLoad; }
     public void setCurrentLoad(Double currentLoad) { this.currentLoad = currentLoad; }
+
+    /** Phase 1：车辆运行时载重的规范吨制读取入口。 */
+    @Transient
+    public Double getCurrentLoadTonnes() {
+        return currentLoad == null ? null : TransportUnits.tonnes(currentLoad);
+    }
+
+    /** Phase 1：车辆运行时载重的规范吨制写入口，仍写入旧兼容列。 */
+    public void setCurrentLoadTonnes(Double tonnes) {
+        this.currentLoad = tonnes == null ? null : TransportUnits.tonnes(tonnes);
+    }
 
     public Double getCurrentVolumn() { return currentVolumn; }
     public void setCurrentVolumn(Double currentVolumn) { this.currentVolumn = currentVolumn; }

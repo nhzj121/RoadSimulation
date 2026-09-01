@@ -19,13 +19,21 @@ public class RouteRequestDTO {
     @NotNull(message = "终点POI不能为空")
     private Long endPoiId;
 
-    @NotNull(message = "距离不能为空")
     @Positive(message = "距离必须为正数")
+    // Phase 1（方案 A 兼容字段）：旧请求中的 distance 仍按公里解释；与米字段二选一。
     private Double distance;
 
-    @NotNull(message = "预计时间不能为空")
     @Positive(message = "预计时间必须为正数")
+    // Phase 1（方案 A 兼容字段）：旧请求中的 estimatedTime 仍按小时解释；与秒字段二选一。
     private Double estimatedTime;
+
+    // Phase 1：新请求可显式使用米；与 distance 同时出现时由服务层拒绝，避免歧义。
+    @Positive(message = "距离（米）必须为正数")
+    private Double distanceMeters;
+
+    // Phase 1：新请求可显式使用秒；与 estimatedTime 同时出现时由服务层拒绝，避免歧义。
+    @Positive(message = "预计行驶秒数必须为正数")
+    private Long estimatedDrivingSeconds;
 
     private String description;
 
@@ -54,6 +62,14 @@ public class RouteRequestDTO {
     public void setDistance(Double distance) { this.distance = distance; }
     public Double getEstimatedTime() { return estimatedTime; }
     public void setEstimatedTime(Double estimatedTime) { this.estimatedTime = estimatedTime; }
+    // Phase 1：规范米制请求字段的显式访问器。
+    public Double getDistanceMeters() { return distanceMeters; }
+    public void setDistanceMeters(Double distanceMeters) { this.distanceMeters = distanceMeters; }
+    // Phase 1：规范秒制请求字段的显式访问器。
+    public Long getEstimatedDrivingSeconds() { return estimatedDrivingSeconds; }
+    public void setEstimatedDrivingSeconds(Long estimatedDrivingSeconds) {
+        this.estimatedDrivingSeconds = estimatedDrivingSeconds;
+    }
     public String getDescription() { return description; }
     public void setDescription(String description) { this.description = description; }
     public RouteStatus getStatus() { return status; }

@@ -2,6 +2,7 @@ package org.example.roadsimulation.core;
 
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 
 /**
@@ -31,14 +32,15 @@ public class SimulationContext {
     private static final LocalDateTime SIM_START = LocalDateTime.of(2026, 1, 1, 0, 0);
 
     /**
+     * Phase 1：后端业务时间固定每轮推进 30 个仿真分钟。
+     * 前端 speedFactor 只能改变动画耗时，不能改变这个 Duration。
+     */
+    public static final Duration TICK_DURATION = Duration.ofMinutes(30);
+
+    /**
      * 仿真循环计数器
      */
     private volatile int loopCount = 0;
-
-    /**
-     * 每个循环代表的仿真分钟数
-     */
-    private final int minutesPerLoop = 30;
 
     /**
      * 仿真运行状态
@@ -57,7 +59,23 @@ public class SimulationContext {
      * @return 当前仿真时间
      */
     public LocalDateTime getCurrentSimTime() {
-        return SIM_START.plusMinutes((long) loopCount * minutesPerLoop);
+        // Phase 1：仿真时间只由“循环数 × 固定 tick 秒数”推进，不读取系统时间或前端速度。
+        return SIM_START.plusSeconds(Math.multiplyExact((long) loopCount, getSecondsPerLoop()));
+    }
+
+    /**
+     * Phase 1：返回当前循环对应的不可变仿真时间窗口。
+     * 当前 loopCount 指向待执行轮次，因此 getCurrentSimTime() 等于 tickStart。
+     */
+    public SimulationTick getCurrentTick() {
+        return SimulationTick.of(loopCount, getCurrentSimTime(), TICK_DURATION);
+    }
+
+    /**
+     * Phase 1：从仿真起点累计的秒数；这是跨模块交换时推荐的无歧义时间量。
+     */
+    public long getCurrentSimulationSeconds() {
+        return Math.multiplyExact((long) loopCount, getSecondsPerLoop());
     }
 
     /**
@@ -116,7 +134,22 @@ public class SimulationContext {
      * @return 分钟数
      */
     public int getMinutesPerLoop() {
-        return minutesPerLoop;
+        // Phase 1：兼容旧接口；分钟值从唯一的 TICK_DURATION 派生，不再保存第二份配置。
+        return Math.toIntExact(TICK_DURATION.toMinutes());
+    }
+
+    /**
+     * Phase 1：运输推进的规范 tick 预算，单位固定为仿真秒。
+     */
+    public long getSecondsPerLoop() {
+        return TICK_DURATION.getSeconds();
+    }
+
+    /**
+     * Phase 1：提供固定 Duration，供需要 Java 时间类型的调用方使用。
+     */
+    public Duration getTickDuration() {
+        return TICK_DURATION;
     }
 
     /**
@@ -146,7 +179,8 @@ public class SimulationContext {
      * @param minutes 快进的分钟数
      */
     public void fastForward(int minutes) {
-        int loopsToAdd = minutes / minutesPerLoop;
+        // Phase 1：保留分钟参数用于兼容，但明确只消费完整 tick，余数不会生成隐式半轮状态。
+        int loopsToAdd = minutes / getMinutesPerLoop();
         if (loopsToAdd > 0) {
             loopCount += loopsToAdd;
         }

@@ -9,6 +9,7 @@ import org.example.roadsimulation.entity.POI;
 import org.example.roadsimulation.entity.Route;
 import org.example.roadsimulation.entity.Vehicle;
 import org.example.roadsimulation.entity.Vehicle.VehicleStatus;
+import org.example.roadsimulation.core.TransportUnits;
 import org.example.roadsimulation.repository.AssignmentRepository;
 import org.example.roadsimulation.repository.VehicleRepository;
 import org.example.roadsimulation.service.StateTransitionService;
@@ -173,7 +174,10 @@ public class StateTransitionServiceImpl implements StateTransitionService {
     }
 
     private boolean hasRuntimeLoad(Vehicle vehicle) {
-        return vehicle != null && vehicle.getCurrentLoad() != null && vehicle.getCurrentLoad() > 0.0;
+        // Phase 1：运输状态判断统一读取明确的吨制载重入口，不再依赖无单位字段名。
+        return vehicle != null
+                && vehicle.getCurrentLoadTonnes() != null
+                && vehicle.getCurrentLoadTonnes() > 0.0;
     }
 
     private boolean hasAssignmentNodes(Assignment assignment) {
@@ -355,52 +359,57 @@ public class StateTransitionServiceImpl implements StateTransitionService {
      * 计算某状态驻留时间（对齐主循环粒度）
      */
     private Duration calcStayDuration(VehicleStatus status, Assignment assignment, Vehicle vehicle, int minutesPerLoop) {
-        int minutes;
+        // Phase 1：状态驻留计算内部统一使用秒；minutesPerLoop 只保留为旧接口兼容边界。
+        long seconds;
 
         switch (status) {
             case ORDER_DRIVING: {
-                Integer travel = calcTravelMinutesFromRoute(assignment);
-                minutes = (travel != null) ? Math.max(30, (int) Math.ceil(travel * 0.2)) : 60;
+                Long travelSeconds = calcTravelSecondsFromRoute(assignment);
+                seconds = travelSeconds != null
+                        ? Math.max(1_800L, (long) Math.ceil(travelSeconds * 0.2))
+                        : 3_600L;
                 break;
             }
             case LOADING:
-                minutes = 30;
+                seconds = 1_800L;
                 break;
 
             case TRANSPORT_DRIVING: {
-                Integer travel = calcTravelMinutesFromRoute(assignment);
-                minutes = (travel != null) ? travel : 120;
+                Long travelSeconds = calcTravelSecondsFromRoute(assignment);
+                seconds = travelSeconds != null ? travelSeconds : 7_200L;
                 break;
             }
 
             case UNLOADING:
-                minutes = 30;
+                seconds = 1_800L;
                 break;
 
             case WAITING:
-                minutes = 30;
+                seconds = 1_800L;
                 break;
 
             case BREAKDOWN:
-                minutes = 120;
+                seconds = 7_200L;
                 break;
 
             case IDLE:
             default:
-                minutes = 30;
+                seconds = 1_800L;
         }
 
-        // 1) 先对齐到主循环粒度（保证至少 1 个 loop）
-        int loops = (int) Math.ceil(minutes / (double) minutesPerLoop);
-        loops = Math.max(1, loops);
-        int alignedMinutes = loops * minutesPerLoop;
+        // Phase 1：把旧分钟参数一次性转换为规范仿真秒，并按完整 tick 向上对齐。
+        long tickSeconds = TransportUnits.minutesToSeconds(minutesPerLoop);
+        if (tickSeconds <= 0L) {
+            throw new IllegalArgumentException("minutesPerLoop must produce a positive tick");
+        }
+        long loops = Math.max(1L, (long) Math.ceil(seconds / (double) tickSeconds));
+        long alignedSeconds = Math.multiplyExact(loops, tickSeconds);
 
-        // 2) ✅ 第一种方法：加“最大停留时间上限”，避免 endTime 被拉到很久以后
-        // 你可以把 60 改成 90/120，看你希望转移快慢
-        int maxStayMinutes = 60;
-        alignedMinutes = Math.min(alignedMinutes, maxStayMinutes);
+        // Phase 1：保留现有 60 分钟上限以避免本阶段改变生命周期；Phase 3/4 将由路段进度替代它。
+        long legacyMaxStaySeconds = TransportUnits.minutesToSeconds(60L);
+        alignedSeconds = Math.min(alignedSeconds, legacyMaxStaySeconds);
 
-        return Duration.ofMinutes(alignedMinutes);
+        return Duration.ofSeconds(alignedSeconds);
     }
     @Transactional
     public void resetVehicleStateWindows(LocalDateTime simNow, int minutesPerLoop) {
@@ -425,9 +434,12 @@ public class StateTransitionServiceImpl implements StateTransitionService {
             );
 
             // ✅ 4) 调试阶段：限制最长驻留时间（最多 2 个循环）
-            Duration maxStay = Duration.ofMinutes((long) minutesPerLoop * 2);
+            // Phase 1：窗口上限改用规范秒计算，但保留“最多两个 tick”的既有行为。
+            Duration maxStay = Duration.ofSeconds(
+                    Math.multiplyExact(TransportUnits.minutesToSeconds(minutesPerLoop), 2L)
+            );
             if (stay == null || stay.isZero() || stay.isNegative()) {
-                stay = Duration.ofMinutes(minutesPerLoop); // 最少 1 个循环
+                stay = Duration.ofSeconds(TransportUnits.minutesToSeconds(minutesPerLoop)); // 最少 1 个循环
             }
             if (stay.compareTo(maxStay) > 0) {
                 stay = maxStay;
@@ -450,37 +462,26 @@ public class StateTransitionServiceImpl implements StateTransitionService {
 
 
     /**
-     * route 的 estimatedTime / distance 单位不确定时自适应，避免出现 20+ 小时这种离谱 endTime
+     * Phase 1：计算路线规范计划耗时，返回值单位固定为秒。
+     * 旧 Route 列仍存公里/小时，但转换只能由 Route 的明确单位访问器完成，不再猜测数值单位。
      */
-    private Integer calcTravelMinutesFromRoute(Assignment assignment) {
+    private Long calcTravelSecondsFromRoute(Assignment assignment) {
         if (assignment == null) return null;
 
         Route route = assignment.getRoute();
         if (route == null) return null;
 
-        // 1) estimatedTime 优先
-        Double est = route.getEstimatedTime();
-        if (est != null && est > 0) {
-            // A：小时
-            if (est <= 24) {
-                return Math.max(1, (int) Math.round(est * 60.0));
-            }
-            // B：分钟
-            if (est <= 24 * 60) {
-                return Math.max(1, (int) Math.round(est));
-            }
-            logger.warn("[Route耗时] estimatedTime={} 过大，忽略该字段，routeId={}", est, route.getId());
+        // Phase 1：优先读取明确的秒制计划耗时；任何正值都按小时兼容列换算而来。
+        Long estimatedDrivingSeconds = route.getEstimatedDrivingSeconds();
+        if (estimatedDrivingSeconds != null && estimatedDrivingSeconds > 0L) {
+            return estimatedDrivingSeconds;
         }
 
-        // 2) distance 估算
-        Double dist = route.getDistance();
-        if (dist != null && dist > 0) {
-            // 如果像“米”
-            if (dist > 2000) dist = dist / 1000.0;
-
-            double speedKmph = 40.0;
-            int mins = (int) Math.round((dist / speedKmph) * 60.0);
-            return Math.max(1, mins);
+        // Phase 1：缺少计划耗时时，使用明确米制距离和 40 km/h（米/秒）基准速度估算。
+        Double distanceMeters = route.getDistanceMeters();
+        if (distanceMeters != null && distanceMeters > 0.0) {
+            double fallbackSpeedMetersPerSecond = 40_000.0 / TransportUnits.SECONDS_PER_HOUR;
+            return Math.max(1L, Math.round(distanceMeters / fallbackSpeedMetersPerSecond));
         }
 
         return null;
@@ -514,7 +515,8 @@ public class StateTransitionServiceImpl implements StateTransitionService {
 
         // ✅ 1) 强制截断历史遗留的超长驻留时间（关键修复）
         // 你可以把 60 改成 30（更快看到状态更新），或者 120（更接近现实）
-        Duration maxDur = Duration.ofMinutes(60);
+        // Phase 1：保留旧 60 分钟截断，但以秒常量表达；本阶段不改变运输完成权。
+        Duration maxDur = Duration.ofSeconds(TransportUnits.minutesToSeconds(60L));
 
         Duration curDur = vehicle.getStatusDuration();
         if (curDur != null && curDur.compareTo(maxDur) > 0) {

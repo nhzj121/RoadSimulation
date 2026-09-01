@@ -2,6 +2,8 @@ package org.example.roadsimulation;
 
 import org.example.roadsimulation.core.SimulationContext;
 import org.example.roadsimulation.core.SimulationModeGuard;
+import org.example.roadsimulation.core.SimulationTick;
+import org.example.roadsimulation.core.TransportUnits;
 import org.example.roadsimulation.dto.RuntimeCostDTO;
 import org.example.roadsimulation.entity.CostEntity;
 import org.example.roadsimulation.entity.ShipmentItem;
@@ -95,19 +97,23 @@ public class SimulationMainLoop {
                 return;
             }
 
-            LocalDateTime simNow = simulationContext.getCurrentSimTime();
-            int simMinutes = (int) java.time.Duration.between(
-                    simulationContext.getSimStart(), simNow).toMinutes();
+            // Phase 1：主循环只从 SimulationContext 获取本轮窗口；前端动画速度不参与业务时间计算。
+            SimulationTick currentTick = simulationContext.getCurrentTick();
+            LocalDateTime simNow = currentTick.tickStart();
+            long simSeconds = simulationContext.getCurrentSimulationSeconds();
 
             System.out.println("=== 主循环第 " + simulationContext.getLoopCount() + " 次 ===");
-            System.out.println("模拟时间：" + (simMinutes / 60.0) + " 小时 | simNow=" + simNow);
+            // Phase 1：日志同时输出明确的仿真秒和窗口边界，避免把现实调度间隔误作业务耗时。
+            System.out.println("模拟时间：" + (simSeconds / (double) TransportUnits.SECONDS_PER_HOUR)
+                    + " 小时 | tick=" + currentTick);
 
             if (simulationContext.getLoopCount() == 0) {
                 vehicleInitializationService.initializeAllVehicleStatus();
                 if (shouldAbortLoop()) {
                     return;
                 }
-                stateUpdateService.resetWindowsOnce(simNow, 30);
+                // Phase 1：窗口重置接收同一个规范 tick，不再由调用点重建分钟参数。
+                stateUpdateService.resetWindowsOnce(currentTick);
                 if (shouldAbortLoop()) {
                     return;
                 }
@@ -152,13 +158,15 @@ public class SimulationMainLoop {
                 if (shouldAbortLoop()) {
                     return;
                 }
-                processingChainServiceV2.updateProcessingProgress(simNow, 30);
+                // Phase 1：加工链与运输链使用同一个后端仿真 tick，不再各自硬编码 30。
+                processingChainServiceV2.updateProcessingProgress(simNow, simulationContext.getMinutesPerLoop());
                 if (shouldAbortLoop()) {
                     return;
                 }
             }
 
-            stateUpdateService.tick(simNow, 30, simulationContext.getLoopCount());
+            // Phase 1：状态更新接收本轮唯一 SimulationTick；秒预算将在后续进度阶段真正消费。
+            stateUpdateService.tick(currentTick);
             if (shouldAbortLoop()) {
                 return;
             }
@@ -174,7 +182,29 @@ public class SimulationMainLoop {
     }
 
     public int getMinutesPerLoop() {
-        return 30;
+        // Phase 1：兼容现有 Controller；分钟数来自唯一的 SimulationContext 配置。
+        return simulationContext.getMinutesPerLoop();
+    }
+
+    /**
+     * Phase 1：对外提供规范秒数，供进度服务和状态接口避免再次换算。
+     */
+    public long getSecondsPerLoop() {
+        return simulationContext.getSecondsPerLoop();
+    }
+
+    /**
+     * Phase 1：暴露当前仿真窗口的只读投影，不允许调用方自行构造业务时间。
+     */
+    public SimulationTick getCurrentTick() {
+        return simulationContext.getCurrentTick();
+    }
+
+    /**
+     * Phase 1：从仿真起点累计的规范秒数，与现实运行时长和前端 speedFactor 无关。
+     */
+    public long getCurrentSimulationSeconds() {
+        return simulationContext.getCurrentSimulationSeconds();
     }
 
     public void start() {
