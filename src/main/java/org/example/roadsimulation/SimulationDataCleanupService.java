@@ -45,6 +45,9 @@ public class SimulationDataCleanupService {
     private AssignmentLegRepository assignmentLegRepository;
 
     @Autowired
+    private TransportRandomEventRepository transportRandomEventRepository;
+
+    @Autowired
     private VehicleRepository vehicleRepository;
 
     @Autowired
@@ -70,7 +73,13 @@ public class SimulationDataCleanupService {
 
         try {
             // 删除顺序按实际外键依赖从叶子节点向业务主数据回退：
-            // assignment_leg -> assignment_nodes -> shipment_item -> assignment -> shipment -> enrollment
+            // transport_random_event -> assignment_leg -> assignment_nodes -> shipment_item -> assignment -> shipment -> enrollment
+            long randomEventCount = transportRandomEventRepository.count();
+            transportRandomEventRepository.deleteAllInBatch();
+            transportRandomEventRepository.flush();
+            System.out.println("Deleted " + randomEventCount + " transport_random_event records");
+            clearPersistenceContext();
+
             long assignmentLegCount = assignmentLegRepository.count();
             assignmentLegRepository.deleteAllInBatch();
             assignmentLegRepository.flush();

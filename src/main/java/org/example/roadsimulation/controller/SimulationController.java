@@ -24,6 +24,7 @@ import org.example.roadsimulation.service.GaodeRoutePlanningQueueService;
 import org.example.roadsimulation.service.GetCostService;
 import org.example.roadsimulation.service.TransportLifecycleService;
 import org.example.roadsimulation.service.TransportMonitorService;
+import org.example.roadsimulation.service.TransportRandomEventService;
 import org.example.roadsimulation.service.impl.VehicleInitializationServiceImpl;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -71,6 +72,9 @@ public class SimulationController {
 
     @Autowired
     private TransportLifecycleService transportLifecycleService;
+
+    @Autowired
+    private TransportRandomEventService transportRandomEventService;
 
     @Autowired
     private GaodeRoutePlanningQueueService gaodeRoutePlanningQueueService;
@@ -204,6 +208,11 @@ public class SimulationController {
             Vehicle vehicle = assignment.getAssignedVehicle();
             if (vehicle == null) {
                 throw new RuntimeException("No vehicle assigned to assignment: " + request.getAssignmentId());
+            }
+            if (transportRandomEventService.isTransitionBlocked(
+                    vehicle.getId(), simulationMainLoop.getCurrentSimTime())) {
+                logger.info("Vehicle arrival rejected while random event is active: vehicleId={}", vehicle.getId());
+                return ResponseEntity.status(HttpStatus.CONFLICT).build();
             }
 
             POI endPOI = poiRepository.findById(request.getEndPOIId())

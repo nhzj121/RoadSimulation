@@ -13,6 +13,7 @@ import org.example.roadsimulation.repository.AssignmentRepository;
 import org.example.roadsimulation.repository.VehicleRepository;
 import org.example.roadsimulation.service.StateTransitionService;
 import org.example.roadsimulation.service.TransportLifecycleService;
+import org.example.roadsimulation.service.TransportRandomEventService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -37,6 +38,8 @@ public class StateTransitionServiceImpl implements StateTransitionService {
     private AssignmentRepository assignmentRepository;
     @Autowired
     private TransportLifecycleService transportLifecycleService;
+    @Autowired
+    private TransportRandomEventService transportRandomEventService;
 
     // 状态顺序（必须与矩阵行/列严格对应）
     private static final List<VehicleStatus> STATES = List.of(
@@ -502,6 +505,13 @@ public class StateTransitionServiceImpl implements StateTransitionService {
                     calcStayDuration(VehicleStatus.IDLE, null, vehicle, minutesPerLoop)
             );
             vehicleRepository.save(vehicle);
+            return;
+        }
+
+        // Random transport events are authoritative: active congestion or breakdown
+        // freezes lifecycle progression until the event engine resolves it.
+        if (transportRandomEventService.isTransitionBlocked(vehicle.getId(), simNow)) {
+            logger.info("车辆[{}] 受随机事件影响，本轮状态不推进", vehicle.getLicensePlate());
             return;
         }
 

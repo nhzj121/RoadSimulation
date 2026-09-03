@@ -12,6 +12,7 @@ import org.example.roadsimulation.service.CostBaselineNormalizationService;
 import org.example.roadsimulation.service.GetCostService;
 import org.example.roadsimulation.service.POIShipmentManager;
 import org.example.roadsimulation.service.ProcessingChainServiceV2;
+import org.example.roadsimulation.service.TransportRandomEventService;
 import org.example.roadsimulation.service.VehicleInitializationService;
 import org.example.roadsimulation.service.impl.SimulationDispatchRouter;
 import org.example.roadsimulation.service.impl.StateUpdateService;
@@ -65,6 +66,9 @@ public class SimulationMainLoop {
 
     @Autowired
     private ShipmentItemRepository shipmentItemRepository;
+
+    @Autowired
+    private TransportRandomEventService transportRandomEventService;
 
     @Autowired
     SimulationMainLoop(DataInitializer dataInitializer,
@@ -158,6 +162,7 @@ public class SimulationMainLoop {
                 }
             }
 
+            transportRandomEventService.tick(simNow, 30, simulationContext.getLoopCount());
             stateUpdateService.tick(simNow, 30, simulationContext.getLoopCount());
             if (shouldAbortLoop()) {
                 return;
