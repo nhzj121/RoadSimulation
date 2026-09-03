@@ -15,12 +15,14 @@ public class TransportMonitorDTO {
     private List<AssignmentMonitorDTO> assignments = new ArrayList<>();
     private List<VehicleMonitorDTO> vehicles = new ArrayList<>();
     private List<LinkDTO> links = new ArrayList<>();
+    private List<RandomEventDTO> activeEvents = new ArrayList<>();
 
     @Data
     public static class Summary {
         private int activeShipmentCount;
         private int activeAssignmentCount;
         private int activeVehicleCount;
+        private int activeEventCount;
     }
 
     @Data
@@ -80,6 +82,7 @@ public class TransportMonitorDTO {
         private Double maxVolumeCapacity;
         private List<Long> assignmentIds = new ArrayList<>();
         private List<Long> shipmentIds = new ArrayList<>();
+        private RandomEventDTO activeEvent;
     }
 
     @Data

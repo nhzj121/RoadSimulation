@@ -1,6 +1,7 @@
 package org.example.roadsimulation.service;
 
 import org.example.roadsimulation.dto.TransportMonitorDTO;
+import org.example.roadsimulation.dto.RandomEventDTO;
 import org.example.roadsimulation.entity.Assignment;
 import org.example.roadsimulation.entity.POI;
 import org.example.roadsimulation.entity.Route;
@@ -43,10 +44,19 @@ public class TransportMonitorService {
     @Autowired
     private AssignmentRepository assignmentRepository;
 
+    @Autowired
+    private TransportRandomEventService transportRandomEventService;
+
     @Transactional(readOnly = true)
     public TransportMonitorDTO getActiveMonitor() {
         TransportMonitorDTO dto = new TransportMonitorDTO();
         dto.setGeneratedAt(LocalDateTime.now());
+        List<RandomEventDTO> activeEvents = transportRandomEventService.getActiveEvents().stream()
+                .map(RandomEventDTO::from)
+                .toList();
+        Map<Long, RandomEventDTO> eventByVehicleId = activeEvents.stream()
+                .filter(event -> event.getVehicleId() != null)
+                .collect(Collectors.toMap(RandomEventDTO::getVehicleId, event -> event, (left, right) -> left));
 
         List<Shipment> activeShipments = shipmentRepository.findByStatusIn(ACTIVE_SHIPMENT_STATUSES);
         activeShipments.sort((left, right) -> {
@@ -136,11 +146,14 @@ public class TransportMonitorService {
         dto.setLinks(linkMap.values().stream()
                 .flatMap(perShipment -> perShipment.values().stream())
                 .collect(Collectors.toList()));
+        dto.setActiveEvents(new ArrayList<>(activeEvents));
+        dto.getVehicles().forEach(vehicle -> vehicle.setActiveEvent(eventByVehicleId.get(vehicle.getVehicleId())));
 
         TransportMonitorDTO.Summary summary = new TransportMonitorDTO.Summary();
         summary.setActiveShipmentCount(dto.getShipments().size());
         summary.setActiveAssignmentCount(dto.getAssignments().size());
         summary.setActiveVehicleCount(dto.getVehicles().size());
+        summary.setActiveEventCount(activeEvents.size());
         dto.setSummary(summary);
 
         return dto;
