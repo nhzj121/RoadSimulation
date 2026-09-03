@@ -63,7 +63,7 @@ export function useVehicleArrivalMonitor(config: MonitoringConfig = {}) {
 
         cleanupExpiredRecords();
         return arrivalRecords.value.some(
-            record => record.vehicleId === vehicleId && record.oiId === poiId
+            record => record.vehicleId === vehicleId && record.poiId === poiId
         );
     };
 

@@ -67,6 +67,15 @@
           </div>
 
           <div class="panel-section">
+            <RandomEventPanel
+                :vehicles="eventEligibleVehicles"
+                :active-events="monitorActiveEvents"
+                :disabled="!isSimulationRunning || isExperimentRunActive"
+                @triggered="handleRandomEventTriggered"
+            />
+          </div>
+
+          <div class="panel-section">
             <ElCard shadow="never" class="box-card shipment-control-card">
               <template #header>
                 <div class="card-header">
@@ -951,6 +960,7 @@ import { ref, reactive, computed, onMounted, onUnmounted, markRaw , nextTick} fr
 import { useRouter } from 'vue-router';
 import { poiManagerApi } from "../api/poiManagerApi";
 import { simulationController} from "@/api/simulationController";
+import RandomEventPanel from './RandomEventPanel.vue';
 import request from "../utils/request";
 import AMapLoader from "@amap/amap-jsapi-loader";
 import factoryIcon from '../../public/icons/factory.png';
@@ -3607,6 +3617,8 @@ class VehicleAnimation {
     this.realPausedTime = 0;
     this.animationTime = 0;
     this.speedFactor = 1;
+    this.eventSpeedFactor = 1;
+    this.activeRandomEvent = null;
     this.lastUpdateTime = null;
 
     // 路线数据
@@ -3831,13 +3843,30 @@ class VehicleAnimation {
 
     if (this.lastUpdateTime && !this.isPaused && !this.isCompleted) {
       const delta = (now - this.lastUpdateTime) / 1000;
-      this.animationTime += delta * this.speedFactor;
+      this.animationTime += delta * this.speedFactor * this.eventSpeedFactor;
     }
 
     this.speedFactor = speedFactor;
     this.lastUpdateTime = now;
 
     console.log(`[VehicleAnimation] 更新车辆速度因子: ${this.licensePlate} -> ${speedFactor.toFixed(1)}x`);
+  }
+
+  updateEventImpact(event) {
+    this.activeRandomEvent = event || null;
+    if (!event) {
+      this.eventSpeedFactor = 1;
+      return;
+    }
+    this.eventSpeedFactor = event.eventType === 'VEHICLE_BREAKDOWN'
+        ? 0
+        : Math.max(0, Math.min(1, Number(event.speedFactor ?? 1)));
+    if (event.eventType === 'VEHICLE_BREAKDOWN' && this.statusManager) {
+      this.statusManager.updateVehicleStatus(this.vehicleId, 'BREAKDOWN', {
+        assignment: this.routeData.assignment,
+        position: this.currentPosition
+      });
+    }
   }
 
   // 获取当前路径
@@ -3896,8 +3925,10 @@ class VehicleAnimation {
 
       // 更新状态管理器中的位置
       if (this.statusManager) {
-        this.statusManager.updateVehicleStatus(this.vehicleId,
-            this.currentStage === 1 ? 'ORDER_DRIVING' : 'TRANSPORT_DRIVING', {
+        const eventStatus = this.activeRandomEvent?.eventType === 'VEHICLE_BREAKDOWN'
+            ? 'BREAKDOWN'
+            : (this.currentStage === 1 ? 'ORDER_DRIVING' : 'TRANSPORT_DRIVING');
+        this.statusManager.updateVehicleStatus(this.vehicleId, eventStatus, {
               assignment: this.routeData.assignment,
               position: this.currentPosition
             });
@@ -3921,7 +3952,7 @@ class VehicleAnimation {
     }
 
     const deltaTime = (now - this.lastUpdateTime) / 1000;
-    this.animationTime += deltaTime * this.speedFactor;
+    this.animationTime += deltaTime * this.speedFactor * this.eventSpeedFactor;
     this.lastUpdateTime = now;
 
     const currentSegments = this._getCurrentSegments();
@@ -4299,6 +4330,7 @@ class VehicleAnimationManager {
       '#1abc9c', '#d35400', '#c0392b', '#16a085', '#8e44ad'
     ];
     this.statusManager = statusManager; // 添加状态管理器引用
+    this.eventImpactsByVehicle = new Map();
   }
 
   // 添加动画
@@ -4323,6 +4355,7 @@ class VehicleAnimationManager {
 
     // 设置初始速度因子
     animation.updateSpeedFactor(this.globalSpeedFactor);
+    animation.updateEventImpact(this.eventImpactsByVehicle.get(assignment.vehicleId) || null);
 
     // 如果全局未暂停，则启动动画
     if (!this.isPaused) {
@@ -4382,6 +4415,15 @@ class VehicleAnimationManager {
       animation.updateSpeedFactor(this.globalSpeedFactor);
     });
     console.log(`[VehicleAnimationManager] 设置全局速度因子: ${this.globalSpeedFactor}`);
+  }
+
+  setEventImpacts(events = []) {
+    this.eventImpactsByVehicle = new Map(
+        events.filter(event => event?.vehicleId).map(event => [event.vehicleId, event])
+    );
+    this.animations.forEach(animation => {
+      animation.updateEventImpact(this.eventImpactsByVehicle.get(animation.vehicleId) || null);
+    });
   }
 
   // 移除动画
@@ -4987,11 +5029,20 @@ const monitorShipments = reactive([]);
 const monitorAssignments = reactive([]);
 const monitorVehicles = reactive([]);
 const monitorLinks = reactive([]);
+const monitorActiveEvents = reactive([]);
 const monitorSummary = reactive({
   activeShipmentCount: 0,
   activeAssignmentCount: 0,
-  activeVehicleCount: 0
+  activeVehicleCount: 0,
+  activeEventCount: 0
 });
+const eventEligibleVehicles = computed(() => monitorVehicles.filter(vehicle =>
+    ['ORDER_DRIVING', 'TRANSPORT_DRIVING'].includes(vehicle.status) && !vehicle.activeEvent
+));
+const handleRandomEventTriggered = async () => {
+  await fetchTransportMonitor();
+  await updateVehicleInfo();
+};
 
 const floatingVehicleDisplayAssignment = computed(() => floatingVehicleInfo.assignment || {});
 const floatingVehicleDisplayInfo = computed(() => floatingVehicleInfo.vehicleInfo || {});
@@ -5061,11 +5112,16 @@ const syncTransportMonitorData = (monitorData = {}) => {
   monitorAssignments.splice(0, monitorAssignments.length, ...(monitorData.assignments || []));
   monitorVehicles.splice(0, monitorVehicles.length, ...(monitorData.vehicles || []));
   monitorLinks.splice(0, monitorLinks.length, ...(monitorData.links || []));
+  monitorActiveEvents.splice(0, monitorActiveEvents.length, ...(monitorData.activeEvents || []));
 
   const summary = monitorData.summary || {};
   monitorSummary.activeShipmentCount = summary.activeShipmentCount || 0;
   monitorSummary.activeAssignmentCount = summary.activeAssignmentCount || 0;
   monitorSummary.activeVehicleCount = summary.activeVehicleCount || 0;
+  monitorSummary.activeEventCount = summary.activeEventCount || 0;
+  if (animationManager) {
+    animationManager.setEventImpacts(monitorActiveEvents);
+  }
 
   if (monitorData.summary || monitorData.shipments || monitorData.assignments || monitorData.vehicles) {
     recordDashboardMonitorSnapshot();
@@ -5120,6 +5176,9 @@ const updateVehicleInfo = async () => {
     const monitorData = await fetchTransportMonitor();
     const activeAssignments = Array.isArray(monitorData.assignments) ? monitorData.assignments : [];
     const activeMonitorVehicles = Array.isArray(monitorData.vehicles) ? monitorData.vehicles : [];
+    const activeEventByVehicleId = new Map(
+        (monitorData.activeEvents || []).filter(event => event?.vehicleId).map(event => [event.vehicleId, event])
+    );
     const previousVehicleMap = new Map(vehicles.map(vehicle => [vehicle.id, { ...vehicle }]));
     const toNumber = (value, fallback = 0) => {
       const numberValue = Number(value);
@@ -5162,7 +5221,8 @@ const updateVehicleInfo = async () => {
             lastArrivalPOI: previous.lastArrivalPOI || null,
             recentlyArrived: previous.recentlyArrived || false,
             actionDescription: previous.actionDescription || null,
-            vrpProgress: previous.vrpProgress || null
+            vrpProgress: previous.vrpProgress || null,
+            activeEvent: activeEventByVehicleId.get(assignment.vehicleId) || null
           };
 
           if (animationManager && animationManager.animations.has(assignment.assignmentId)) {
@@ -5204,6 +5264,10 @@ const updateVehicleInfo = async () => {
             }
           }
 
+          if (vehicle.activeEvent?.eventType === 'VEHICLE_BREAKDOWN') {
+            vehicle.status = 'BREAKDOWN';
+          }
+
           // 计算载重/载容百分比
           vehicle.loadPercentage = vehicle.maxLoadCapacity > 0 ?
               Math.min(100, (vehicle.currentLoad / vehicle.maxLoadCapacity) * 100) : 0;
@@ -5222,7 +5286,7 @@ const updateVehicleInfo = async () => {
           return;
         }
         const previous = previousVehicleMap.get(monitorVehicle.vehicleId) || {};
-        const vehicle = {
+          const vehicle = {
           id: monitorVehicle.vehicleId,
           licensePlate: monitorVehicle.licensePlate || `车辆${monitorVehicle.vehicleId}`,
           status: isKnownStatus(monitorVehicle.status)
@@ -5239,8 +5303,12 @@ const updateVehicleInfo = async () => {
           lastArrivalPOI: previous.lastArrivalPOI || null,
           recentlyArrived: previous.recentlyArrived || false,
           actionDescription: previous.actionDescription || null,
-          vrpProgress: previous.vrpProgress || null
-        };
+            vrpProgress: previous.vrpProgress || null,
+            activeEvent: monitorVehicle.activeEvent || activeEventByVehicleId.get(monitorVehicle.vehicleId) || null
+          };
+        if (vehicle.activeEvent?.eventType === 'VEHICLE_BREAKDOWN') {
+          vehicle.status = 'BREAKDOWN';
+        }
         vehicle.loadPercentage = vehicle.maxLoadCapacity > 0 ?
             Math.min(100, (vehicle.currentLoad / vehicle.maxLoadCapacity) * 100) : 0;
         vehicle.volumePercentage = vehicle.maxVolumeCapacity > 0 ?
