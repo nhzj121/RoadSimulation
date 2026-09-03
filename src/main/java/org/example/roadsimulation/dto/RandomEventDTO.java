@@ -29,13 +29,9 @@ public class RandomEventDTO {
         dto.setEventTypeText(eventTypeText(event.getEventType()));
         dto.setStatus(event.getStatus() == null ? null : event.getStatus().name());
         dto.setTriggerSource(event.getTriggerSource() == null ? null : event.getTriggerSource().name());
-        if (event.getVehicle() != null) {
-            dto.setVehicleId(event.getVehicle().getId());
-            dto.setLicensePlate(event.getVehicle().getLicensePlate());
-        }
-        if (event.getAssignment() != null) {
-            dto.setAssignmentId(event.getAssignment().getId());
-        }
+        dto.setVehicleId(event.getVehicleId());
+        dto.setLicensePlate(event.getLicensePlate());
+        dto.setAssignmentId(event.getAssignmentId());
         dto.setStartTime(event.getStartTime());
         dto.setPlannedEndTime(event.getPlannedEndTime());
         dto.setResolvedTime(event.getResolvedTime());

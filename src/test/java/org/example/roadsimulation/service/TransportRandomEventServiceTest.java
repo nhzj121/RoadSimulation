@@ -33,13 +33,14 @@ class TransportRandomEventServiceTest {
     private AssignmentRepository assignmentRepository;
 
     private TransportRandomEventService service;
+    private RandomEventProperties properties;
     private Vehicle vehicle;
     private Assignment assignment;
     private LocalDateTime simNow;
 
     @BeforeEach
     void setUp() {
-        RandomEventProperties properties = new RandomEventProperties();
+        properties = new RandomEventProperties();
         service = new TransportRandomEventService(
                 eventRepository,
                 vehicleRepository,
@@ -57,7 +58,7 @@ class TransportRandomEventServiceTest {
         assignment.setStatus(Assignment.AssignmentStatus.IN_PROGRESS);
         assignment.setAssignedVehicle(vehicle);
 
-        when(vehicleRepository.findById(12L)).thenReturn(Optional.of(vehicle));
+        when(vehicleRepository.findByIdForUpdate(12L)).thenReturn(Optional.of(vehicle));
         when(assignmentRepository.findActiveAssignmentByVehicle(12L)).thenReturn(Optional.of(assignment));
         when(eventRepository.findFirstByVehicleIdAndStatus(12L, TransportRandomEvent.EventStatus.ACTIVE))
                 .thenReturn(Optional.empty());
@@ -102,5 +103,39 @@ class TransportRandomEventServiceTest {
         assertEquals(3600L, event.getDelaySeconds());
         assertEquals(Vehicle.VehicleStatus.TRANSPORT_DRIVING, vehicle.getCurrentStatus());
         assertEquals(Duration.ofSeconds(5400), vehicle.getStatusDuration());
+    }
+
+    @Test
+    void activeEventAccumulatesDelayOnEachSimulationTick() {
+        TransportRandomEvent event = service.triggerManually(
+                TransportRandomEvent.EventType.TRAFFIC_CONGESTION,
+                12L,
+                60,
+                simNow
+        );
+        when(eventRepository.findByStatus(TransportRandomEvent.EventStatus.ACTIVE)).thenReturn(List.of(event));
+
+        service.tick(simNow.plusMinutes(30), 30, 2);
+
+        assertEquals(TransportRandomEvent.EventStatus.ACTIVE, event.getStatus());
+        assertEquals(1800L, event.getDelaySeconds());
+        verify(eventRepository, atLeast(2)).save(event);
+    }
+
+    @Test
+    void disablingNewEventsStillResolvesPersistedDueEvent() {
+        TransportRandomEvent event = service.triggerManually(
+                TransportRandomEvent.EventType.TRAFFIC_CONGESTION,
+                12L,
+                60,
+                simNow
+        );
+        when(eventRepository.findByStatus(TransportRandomEvent.EventStatus.ACTIVE)).thenReturn(List.of(event));
+        properties.setEnabled(false);
+
+        service.tick(simNow.plusMinutes(60), 30, 3);
+
+        assertEquals(TransportRandomEvent.EventStatus.RESOLVED, event.getStatus());
+        assertEquals(3600L, event.getDelaySeconds());
     }
 }

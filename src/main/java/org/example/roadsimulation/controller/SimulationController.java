@@ -33,6 +33,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -181,6 +182,9 @@ public class SimulationController {
                     result.currentVolume()
             );
             return ResponseEntity.ok(ApiResponse.success("assignment loaded", response));
+        } catch (TransportRandomEventService.TransitionBlockedException e) {
+            logger.info("Assignment loaded rejected while random event is active: {}", e.getMessage());
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(ApiResponse.error(e.getMessage()));
         } catch (IllegalArgumentException | IllegalStateException e) {
             logger.warn("Assignment loaded request rejected: {}", e.getMessage());
             return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
@@ -192,6 +196,7 @@ public class SimulationController {
     }
 
     @PostMapping("/vehicle-arrived")
+    @Transactional
     public ResponseEntity<Void> handleVehicleArrived(@RequestBody VehicleArrivedRequest request) {
         try {
             Assignment assignment = assignmentRepository.findById(request.getAssignmentId())
@@ -205,10 +210,12 @@ public class SimulationController {
                 return ResponseEntity.ok().build();
             }
 
-            Vehicle vehicle = assignment.getAssignedVehicle();
-            if (vehicle == null) {
+            Vehicle assignedVehicle = assignment.getAssignedVehicle();
+            if (assignedVehicle == null || assignedVehicle.getId() == null) {
                 throw new RuntimeException("No vehicle assigned to assignment: " + request.getAssignmentId());
             }
+            Vehicle vehicle = vehicleRepository.findByIdForUpdate(assignedVehicle.getId())
+                    .orElseThrow(() -> new RuntimeException("Vehicle not found: " + assignedVehicle.getId()));
             if (transportRandomEventService.isTransitionBlocked(
                     vehicle.getId(), simulationMainLoop.getCurrentSimTime())) {
                 logger.info("Vehicle arrival rejected while random event is active: vehicleId={}", vehicle.getId());

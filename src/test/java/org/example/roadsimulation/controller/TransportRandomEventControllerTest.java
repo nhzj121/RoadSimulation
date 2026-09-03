@@ -5,7 +5,6 @@ import org.example.roadsimulation.dto.ApiResponse;
 import org.example.roadsimulation.dto.RandomEventDTO;
 import org.example.roadsimulation.dto.RandomEventTriggerRequest;
 import org.example.roadsimulation.entity.TransportRandomEvent;
-import org.example.roadsimulation.entity.Vehicle;
 import org.example.roadsimulation.service.TransportRandomEventService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -78,11 +77,9 @@ class TransportRandomEventControllerTest {
 
     private TransportRandomEvent activeEvent(Long vehicleId) {
         TransportRandomEvent event = new TransportRandomEvent();
-        Vehicle vehicle = new Vehicle();
-        vehicle.setId(vehicleId);
-        vehicle.setLicensePlate("川A-0012");
         event.setId(100L);
-        event.setVehicle(vehicle);
+        event.setVehicleId(vehicleId);
+        event.setLicensePlate("川A-0012");
         event.setEventType(TransportRandomEvent.EventType.VEHICLE_BREAKDOWN);
         event.setStatus(TransportRandomEvent.EventStatus.ACTIVE);
         event.setTriggerSource(TransportRandomEvent.TriggerSource.MANUAL);

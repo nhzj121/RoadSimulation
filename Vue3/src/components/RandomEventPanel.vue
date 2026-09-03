@@ -41,7 +41,7 @@
       <div v-for="event in activeEvents" :key="event.eventId" class="active-event-item">
         <strong>{{ event.eventTypeText }}</strong>
         <span>{{ event.licensePlate }}</span>
-        <small>恢复：{{ formatTime(event.plannedEndTime) }}</small>
+        <small>已延误 {{ formatDelay(event.delaySeconds) }} · 恢复 {{ formatTime(event.plannedEndTime) }}</small>
       </div>
     </div>
     <div v-else class="event-empty">当前无活跃事件</div>
@@ -91,6 +91,12 @@ const statusText = (status) => ({
 }[status] || status || '未知')
 
 const formatTime = (value) => value ? String(value).replace('T', ' ').slice(0, 16) : '-'
+const formatDelay = (seconds) => {
+  const totalMinutes = Math.max(0, Math.floor(Number(seconds || 0) / 60))
+  const hours = Math.floor(totalMinutes / 60)
+  const minutes = totalMinutes % 60
+  return hours > 0 ? `${hours}小时${minutes}分` : `${minutes}分`
+}
 </script>
 
 <style scoped>
@@ -124,6 +130,7 @@ const formatTime = (value) => value ? String(value).replace('T', ' ').slice(0, 1
   border-radius: 6px;
   background: #fff4e6;
   font-size: 12px;
+  flex-wrap: wrap;
 }
 
 .active-event-item small {

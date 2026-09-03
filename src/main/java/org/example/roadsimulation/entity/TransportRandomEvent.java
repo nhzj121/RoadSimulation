@@ -35,13 +35,14 @@ public class TransportRandomEvent {
     @Column(name = "trigger_source", nullable = false, length = 20)
     private TriggerSource triggerSource;
 
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "vehicle_id", nullable = false)
-    private Vehicle vehicle;
+    @Column(name = "vehicle_id", nullable = false)
+    private Long vehicleId;
 
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "assignment_id", nullable = false)
-    private Assignment assignment;
+    @Column(name = "license_plate", length = 50)
+    private String licensePlate;
+
+    @Column(name = "assignment_id", nullable = false)
+    private Long assignmentId;
 
     @Column(name = "start_time", nullable = false)
     private LocalDateTime startTime;

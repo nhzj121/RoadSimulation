@@ -23,8 +23,9 @@ class RandomEventDTOTest {
         event.setEventType(TransportRandomEvent.EventType.TRAFFIC_CONGESTION);
         event.setStatus(TransportRandomEvent.EventStatus.ACTIVE);
         event.setTriggerSource(TransportRandomEvent.TriggerSource.MANUAL);
-        event.setVehicle(vehicle);
-        event.setAssignment(assignment);
+        event.setVehicleId(vehicle.getId());
+        event.setLicensePlate(vehicle.getLicensePlate());
+        event.setAssignmentId(assignment.getId());
         event.setStartTime(LocalDateTime.of(2026, 1, 1, 8, 0));
         event.setPlannedEndTime(LocalDateTime.of(2026, 1, 1, 9, 0));
         event.setSpeedFactor(0.4);

@@ -46,11 +46,10 @@ public class TransportRandomEventService {
 
     @Transactional
     public void tick(LocalDateTime simNow, int minutesPerLoop, int loopCount) {
+        Set<Long> resolvedVehicleIds = resolveDueEvents(simNow);
         if (!properties.isEnabled()) {
             return;
         }
-
-        Set<Long> resolvedVehicleIds = resolveDueEvents(simNow);
         if (!properties.isAutoEnabled()) {
             return;
         }
@@ -75,7 +74,7 @@ public class TransportRandomEventService {
         if (eventType == null || vehicleId == null || simNow == null) {
             throw new IllegalArgumentException("eventType, vehicleId and simNow are required");
         }
-        Vehicle vehicle = vehicleRepository.findById(vehicleId)
+        Vehicle vehicle = vehicleRepository.findByIdForUpdate(vehicleId)
                 .orElseThrow(() -> new IllegalArgumentException("vehicle not found: " + vehicleId));
         Assignment assignment = assignmentRepository.findActiveAssignmentByVehicle(vehicleId)
                 .orElseThrow(() -> new IllegalArgumentException("vehicle has no active assignment: " + vehicleId));
@@ -125,10 +124,12 @@ public class TransportRandomEventService {
         Set<Long> resolvedVehicleIds = new HashSet<>();
         for (TransportRandomEvent event : eventRepository.findByStatus(TransportRandomEvent.EventStatus.ACTIVE)) {
             if (event.getPlannedEndTime().isAfter(simNow)) {
+                event.setDelaySeconds(elapsedSeconds(event.getStartTime(), simNow));
+                eventRepository.save(event);
                 continue;
             }
             resolveEvent(event, simNow);
-            resolvedVehicleIds.add(event.getVehicle().getId());
+            resolvedVehicleIds.add(event.getVehicleId());
         }
         return resolvedVehicleIds;
     }
@@ -136,10 +137,11 @@ public class TransportRandomEventService {
     private void resolveEvent(TransportRandomEvent event, LocalDateTime simNow) {
         event.setStatus(TransportRandomEvent.EventStatus.RESOLVED);
         event.setResolvedTime(simNow);
-        event.setDelaySeconds(Math.max(0L, Duration.between(event.getStartTime(), simNow).getSeconds()));
-        Vehicle vehicle = event.getVehicle();
+        event.setDelaySeconds(elapsedSeconds(event.getStartTime(), simNow));
+        Vehicle vehicle = vehicleRepository.findByIdForUpdate(event.getVehicleId()).orElse(null);
         if (event.getEventType() == TransportRandomEvent.EventType.VEHICLE_BREAKDOWN
-                && event.getPreviousVehicleStatus() != null) {
+                && event.getPreviousVehicleStatus() != null
+                && vehicle != null) {
             vehicle.transitionToStatus(
                     event.getPreviousVehicleStatus(),
                     simNow,
@@ -150,8 +152,19 @@ public class TransportRandomEventService {
         eventRepository.save(event);
     }
 
+    private long elapsedSeconds(LocalDateTime startTime, LocalDateTime simNow) {
+        if (startTime == null || simNow == null) {
+            return 0L;
+        }
+        return Math.max(0L, Duration.between(startTime, simNow).getSeconds());
+    }
+
     private void tryAutoTrigger(Assignment assignment, LocalDateTime simNow, int minutesPerLoop, int loopCount) {
-        Vehicle vehicle = assignment.getAssignedVehicle();
+        Long vehicleId = assignment.getAssignedVehicle().getId();
+        Vehicle vehicle = vehicleRepository.findByIdForUpdate(vehicleId).orElse(null);
+        if (!isDriving(vehicle)) {
+            return;
+        }
         if (eventRepository.findFirstByVehicleIdAndStatus(vehicle.getId(), TransportRandomEvent.EventStatus.ACTIVE).isPresent()) {
             return;
         }
@@ -183,8 +196,9 @@ public class TransportRandomEventService {
         event.setEventType(eventType);
         event.setStatus(TransportRandomEvent.EventStatus.ACTIVE);
         event.setTriggerSource(source);
-        event.setVehicle(vehicle);
-        event.setAssignment(assignment);
+        event.setVehicleId(vehicle.getId());
+        event.setLicensePlate(vehicle.getLicensePlate());
+        event.setAssignmentId(assignment.getId());
         event.setStartTime(simNow);
         event.setPlannedEndTime(simNow.plusMinutes(durationMinutes));
         event.setSpeedFactor(speedFactor);
@@ -229,6 +243,12 @@ public class TransportRandomEventService {
     private void validateManualDuration(int durationMinutes) {
         if (durationMinutes < MIN_MANUAL_DURATION_MINUTES || durationMinutes > MAX_MANUAL_DURATION_MINUTES) {
             throw new IllegalArgumentException("durationMinutes must be between 30 and 240");
+        }
+    }
+
+    public static class TransitionBlockedException extends IllegalStateException {
+        public TransitionBlockedException(Long vehicleId) {
+            super("vehicle transition is blocked by an active random event: " + vehicleId);
         }
     }
 }

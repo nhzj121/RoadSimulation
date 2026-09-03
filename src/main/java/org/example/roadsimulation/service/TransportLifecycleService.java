@@ -32,17 +32,20 @@ public class TransportLifecycleService {
     private final ShipmentItemRepository shipmentItemRepository;
     private final AssignmentRepository assignmentRepository;
     private final VehicleRepository vehicleRepository;
+    private final TransportRandomEventService transportRandomEventService;
 
     public TransportLifecycleService(
             ShipmentRepository shipmentRepository,
             ShipmentItemRepository shipmentItemRepository,
             AssignmentRepository assignmentRepository,
-            VehicleRepository vehicleRepository
+            VehicleRepository vehicleRepository,
+            TransportRandomEventService transportRandomEventService
     ) {
         this.shipmentRepository = shipmentRepository;
         this.shipmentItemRepository = shipmentItemRepository;
         this.assignmentRepository = assignmentRepository;
         this.vehicleRepository = vehicleRepository;
+        this.transportRandomEventService = transportRandomEventService;
     }
 
     public record LoadingCompletionResult(
@@ -157,15 +160,20 @@ public class TransportLifecycleService {
             throw new IllegalArgumentException("VRP assignments are not supported by assignment-loaded");
         }
 
-        Vehicle managedVehicle = resolveVehicle(null, assignment);
-        if (managedVehicle == null || managedVehicle.getId() == null) {
+        Vehicle assignedVehicle = assignment.getAssignedVehicle();
+        if (assignedVehicle == null || assignedVehicle.getId() == null) {
             throw new IllegalStateException("No vehicle assigned to assignment: " + assignmentId);
         }
-        if (!vehicleId.equals(managedVehicle.getId())) {
+        if (!vehicleId.equals(assignedVehicle.getId())) {
             throw new IllegalArgumentException("Vehicle does not match assignment: " + vehicleId);
         }
+        Vehicle managedVehicle = vehicleRepository.findByIdForUpdate(vehicleId)
+                .orElseThrow(() -> new IllegalArgumentException("Vehicle not found: " + vehicleId));
 
         LocalDateTime now = resolveTime(simNow);
+        if (transportRandomEventService.isTransitionBlocked(vehicleId, now)) {
+            throw new TransportRandomEventService.TransitionBlockedException(vehicleId);
+        }
         String effectiveActor = actor != null ? actor : "Frontend loading completion";
 
         if (assignment.getStatus() == Assignment.AssignmentStatus.ASSIGNED) {

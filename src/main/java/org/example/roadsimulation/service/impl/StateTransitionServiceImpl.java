@@ -495,6 +495,8 @@ public class StateTransitionServiceImpl implements StateTransitionService {
     @Override
     @Transactional
     public void updateVehicleStateWithContext(Vehicle vehicle, LocalDateTime simNow, int minutesPerLoop) {
+        if (vehicle == null || vehicle.getId() == null) return;
+        vehicle = vehicleRepository.findByIdForUpdate(vehicle.getId()).orElse(null);
         if (vehicle == null) return;
 
         // 0) 初始化状态

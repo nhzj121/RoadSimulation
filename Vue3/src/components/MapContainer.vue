@@ -3607,6 +3607,8 @@ class VehicleAnimation {
     // 动画状态
     this.isPaused = false;
     this.isCompleted = false;
+    this.isStopped = false;
+    this.arrivalRetryTimer = null;
     this.currentStage = 1; // 1: 前往装货点, 2: 运输到卸货点
     this.currentProgress = 0;
     this.currentSegment = 0;
@@ -3743,6 +3745,10 @@ class VehicleAnimation {
       return correctedCargo;
     } catch (error) {
       const message = error.response?.data?.message || error.message;
+      if (error.response?.status === 409) {
+        console.info(`[VehicleAnimation] ${this.licensePlate} loading is blocked by an active random event`);
+        return null;
+      }
       if (typeof message === 'string' && message.includes('Assignment is closed')) {
         console.warn(`[VehicleAnimation] ${this.licensePlate} loading payload sync skipped: ${message}`);
         return localCargo;
@@ -3778,6 +3784,7 @@ class VehicleAnimation {
     }
 
     this.isPaused = false;
+    this.isStopped = false;
     this.lastUpdateTime = now;
 
     // 设置初始位置
@@ -3832,7 +3839,12 @@ class VehicleAnimation {
     }
 
     this.isCompleted = true;
+    this.isStopped = true;
     this.isPaused = false;
+    if (this.arrivalRetryTimer) {
+      clearTimeout(this.arrivalRetryTimer);
+      this.arrivalRetryTimer = null;
+    }
 
     console.log(`[VehicleAnimation] 停止车辆动画: ${this.licensePlate}`);
   }
@@ -4000,8 +4012,19 @@ class VehicleAnimation {
       await this._waitWithSpeedFactor(2000);
 
       const loadedCargo = this._calculateLoadedCargo();
-      this._applyLoadedCargo(loadedCargo);
-      void this._reportLoadingCompleted(loadedCargo);
+      let confirmedCargo = await this._reportLoadingCompleted(loadedCargo);
+      while (!confirmedCargo && !this.isStopped) {
+        if (this.statusManager) {
+          this.statusManager.updateVehicleStatus(this.vehicleId, 'ORDER_DRIVING', {
+            assignment: this.routeData.assignment,
+            position: this.currentPosition
+          });
+        }
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        confirmedCargo = await this._reportLoadingCompleted(loadedCargo);
+      }
+      if (this.isStopped) return;
+      this._applyLoadedCargo(confirmedCargo);
 
       // 切换到第二阶段
       this.currentStage = 2;
@@ -4009,8 +4032,8 @@ class VehicleAnimation {
         this.statusManager.updateVehicleStatus(this.vehicleId, 'TRANSPORT_DRIVING', {
           assignment: this.routeData.assignment,
           position: this.currentPosition,
-          currentLoad: loadedCargo.currentLoad,
-          currentVolume: loadedCargo.currentVolume,
+            currentLoad: confirmedCargo.currentLoad,
+            currentVolume: confirmedCargo.currentVolume,
           isLoaded: true
         });
       }
@@ -4057,19 +4080,14 @@ class VehicleAnimation {
       this.isCompleted = true;
 
       // 调用车辆到达处理函数
-      await handleVehicleArrived(this.assignmentId, this.vehicleId,
-          this.routeData.assignment.endPOIId, this.licensePlate);
-
-      // 延迟清理（1-2秒后）
-      setTimeout(() => {
-        this.cleanup();
-        this.manager.removeAnimation(this.assignmentId);
-      }, 1000 + Math.random() * 1000);
-
-      // 触发完成回调
-      this.onCompleteCallbacks.forEach(callback => callback(this));
-
-      console.log(`[VehicleAnimation] ${this.licensePlate} 卸货完成，任务结束`);
+      void this._acknowledgeArrivalWithRetry(this.routeData.assignment.endPOIId, () => {
+        setTimeout(() => {
+          this.cleanup();
+          this.manager.removeAnimation(this.assignmentId);
+        }, 1000 + Math.random() * 1000);
+        this.onCompleteCallbacks.forEach(callback => callback(this));
+        console.log(`[VehicleAnimation] ${this.licensePlate} 卸货完成，任务结束`);
+      });
     }
   }
 
@@ -4077,6 +4095,26 @@ class VehicleAnimation {
   async _waitWithSpeedFactor(ms) {
     const adjustedMs = ms / this.speedFactor;
     return new Promise(resolve => setTimeout(resolve, adjustedMs));
+  }
+
+  async _acknowledgeArrivalWithRetry(endPOIId, onAcknowledged) {
+    if (this.isStopped) return;
+    const arrivalResult = await handleVehicleArrived(
+        this.assignmentId, this.vehicleId, endPOIId, this.licensePlate
+    );
+    if (arrivalResult === 'acknowledged') {
+      this.arrivalRetryTimer = null;
+      onAcknowledged();
+      return;
+    }
+    if (!this.isStopped && (arrivalResult === 'blocked' || arrivalResult === 'pending')) {
+      this.arrivalRetryTimer = setTimeout(
+          () => void this._acknowledgeArrivalWithRetry(endPOIId, onAcknowledged),
+          1000
+      );
+    } else if (arrivalResult === 'failed') {
+      console.error(`[VehicleAnimation] ${this.licensePlate} arrival failed permanently; route retained for inspection`);
+    }
   }
 
   // 清理资源
@@ -4289,10 +4327,9 @@ class VrpVehicleAnimation extends VehicleAnimation {
       this.isCompleted = true;
 
       // 通知后端到达！
-      await handleVehicleArrived(this.assignmentId, this.vehicleId, nodeInfo.poiId, this.licensePlate);
-
-      // ================= 🌟 核心修复：清理整条路线的视觉残留 =================
-      setTimeout(() => {
+      void this._acknowledgeArrivalWithRetry(nodeInfo.poiId, () => {
+        // ================= 🌟 核心修复：清理整条路线的视觉残留 =================
+        setTimeout(() => {
         // 1. 调用父类的清理（负责清理移动的小车本身）
         this.cleanup();
 
@@ -4311,10 +4348,10 @@ class VrpVehicleAnimation extends VehicleAnimation {
         this.manager.removeAnimation(this.assignmentId);
 
         console.log(`🧹 [VRP 清理] 任务 ${this.assignmentId} 的路线及节点已从地图上移除`);
-      }, 1000); // 延迟 1 秒消失，给用户一个“到达终点”的视觉缓冲期
-      // =========================================================================
-
-      this.onCompleteCallbacks.forEach(callback => callback(this));
+        }, 1000); // 延迟 1 秒消失，给用户一个“到达终点”的视觉缓冲期
+        // =========================================================================
+        this.onCompleteCallbacks.forEach(callback => callback(this));
+      });
     }
   }
 }
@@ -4518,15 +4555,15 @@ const isIgnorableExperimentArrivalError = (error) => {
 const handleVehicleArrived = async (assignmentId, vehicleId, endPOIId, licensePlate) => {
   const arrivalKey = String(assignmentId || '');
   if (!arrivalKey) {
-    return false;
+    return 'failed';
   }
   if (arrivalAckCompleted.has(arrivalKey)) {
     console.info(`[VehicleArrival] duplicate completed arrival ignored: ${arrivalKey}`);
-    return true;
+    return 'acknowledged';
   }
   if (arrivalAckInFlight.has(arrivalKey)) {
     console.info(`[VehicleArrival] duplicate in-flight arrival ignored: ${arrivalKey}`);
-    return true;
+    return 'pending';
   }
   arrivalAckInFlight.add(arrivalKey);
   try {
@@ -4551,16 +4588,16 @@ const handleVehicleArrived = async (assignmentId, vehicleId, endPOIId, licensePl
       await updateVehicleInfo();
       console.log(`车辆 ${licensePlate} 状态已刷新`);
     }, 500);
-    return true;
+    return 'acknowledged';
   } catch (error) {
     if (isIgnorableExperimentArrivalError(error)) {
       console.info('[VehicleArrival] ignored experiment arrival lifecycle error:', arrivalMessageOf(error));
       arrivalAckCompleted.add(arrivalKey);
-      return true;
+      return 'acknowledged';
     }
     console.error('车辆到达处理失败:', error);
     // ElMessage.error(`车辆 ${licensePlate} 状态更新失败: ${arrivalMessageOf(error) || error}`);
-    return false;
+    return error.response?.status === 409 ? 'blocked' : 'failed';
   } finally {
     arrivalAckInFlight.delete(arrivalKey);
   }
