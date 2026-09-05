@@ -4,6 +4,7 @@ import org.example.roadsimulation.DataInitializer;
 import org.example.roadsimulation.dto.*;
 import org.example.roadsimulation.entity.*;
 import org.example.roadsimulation.entity.Assignment.AssignmentStatus;
+import org.example.roadsimulation.repository.AssignmentLegRepository;
 import org.example.roadsimulation.repository.AssignmentRepository;
 import org.example.roadsimulation.service.AssignmentService;
 import org.example.roadsimulation.service.TransportMetricsService;
@@ -27,6 +28,10 @@ public class AssignmentServiceImpl implements AssignmentService {
 
     @Autowired
     private AssignmentRepository assignmentRepository;
+
+    // Phase 2：详情读取从持久化路段表投影计划/执行数据，不通过前端动画状态拼装。
+    @Autowired
+    private AssignmentLegRepository assignmentLegRepository;
 
     @Autowired
     private VehicleService vehicleService;
@@ -240,6 +245,15 @@ public class AssignmentServiceImpl implements AssignmentService {
         dto.setCreatedTime(assignment.getCreatedTime());
         dto.setUpdatedTime(assignment.getUpdatedTime());
         dto.setCurrentActionIndex(assignment.getCurrentActionIndex());
+        // Phase 2：动作索引与路段索引分别投影，禁止调用方继续通过 actionLine 推测当前路段。
+        dto.setCurrentLegIndex(assignment.getCurrentLegIndex());
+        // Phase 2：详情接口只读输出按序路段快照，不在本阶段开放执行字段写接口。
+        List<AssignmentLegExecutionDTO> legDTOs = assignmentLegRepository
+                .findByAssignmentIdOrderBySequenceIndexAsc(assignment.getId())
+                .stream()
+                .map(this::convertLegToExecutionDTO)
+                .toList();
+        dto.setLegs(legDTOs);
 
         // ===== Vehicle 信息 =====
         Vehicle vehicle = assignment.getAssignedVehicle();
@@ -375,6 +389,9 @@ public class AssignmentServiceImpl implements AssignmentService {
         AssignmentResponseDTO dto = new AssignmentResponseDTO();
         dto.setId(assignment.getId());
         dto.setStatus(assignment.getStatus());
+        // Phase 2：CRUD 响应继续保持旧字段，同时新增独立 currentLegIndex。
+        dto.setCurrentActionIndex(assignment.getCurrentActionIndex());
+        dto.setCurrentLegIndex(assignment.getCurrentLegIndex());
         dto.setStartTime(assignment.getStartTime());
         dto.setEndTime(assignment.getEndTime());
         return dto;
@@ -385,6 +402,8 @@ public class AssignmentServiceImpl implements AssignmentService {
         AssignmentBriefDTO dto = new AssignmentBriefDTO();
         dto.setAssignmentId(assignment.getId());
         dto.setStatus(assignment.getStatus() != null ? assignment.getStatus().toString() : "UNKNOWN");
+        // Phase 2：前端简要任务只获得路段索引投影，不获得修改路段状态的权力。
+        dto.setCurrentLegIndex(assignment.getCurrentLegIndex());
         dto.setCreatedTime(assignment.getCreatedTime());
         dto.setStartTime(assignment.getStartTime());
 
@@ -428,6 +447,30 @@ public class AssignmentServiceImpl implements AssignmentService {
             dto.setPairId(dto.getStartPOIId() + "_" + dto.getEndPOIId());
         }
 
+        return dto;
+    }
+
+    /**
+     * Phase 2：把实体路段映射为单位明确的只读执行 DTO。
+     */
+    private AssignmentLegExecutionDTO convertLegToExecutionDTO(AssignmentLeg leg) {
+        AssignmentLegExecutionDTO dto = new AssignmentLegExecutionDTO();
+        dto.setId(leg.getId());
+        dto.setSequenceIndex(leg.getSequenceIndex());
+        // Phase 2：首段 fromPOI 允许为空，因此关联 ID 映射必须保持 null 语义。
+        dto.setFromPoiId(leg.getFromPOI() == null ? null : leg.getFromPOI().getId());
+        dto.setToPoiId(leg.getToPOI() == null ? null : leg.getToPOI().getId());
+        dto.setPlannedDistanceMeters(leg.getPlannedDistanceMeters());
+        dto.setPlannedDrivingSeconds(leg.getPlannedDrivingSeconds());
+        dto.setExecutedDistanceMeters(leg.getExecutedDistanceMeters());
+        dto.setExecutedDrivingSeconds(leg.getExecutedDrivingSeconds());
+        dto.setStartedSimTime(leg.getStartedSimTime());
+        dto.setCompletedSimTime(leg.getCompletedSimTime());
+        dto.setProgressStatus(leg.getProgressStatus().name());
+        dto.setCurrentLoadTonnes(leg.getCurrentLoadTonnes());
+        dto.setVersion(leg.getVersion());
+        // Phase 4：详情接口只读公开权威进度去重序号，不提供任何进度修改入口。
+        dto.setLastProcessedLoopIndex(leg.getLastProcessedLoopIndex());
         return dto;
     }
 

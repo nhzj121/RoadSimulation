@@ -93,6 +93,10 @@ public class AssignmentBriefDTO {
     private Double goodsVolumePerUnit;
 
     // 状态跟踪
+    // Phase 2：列表接口公开当前路段索引，但前端在 Phase 5 前仍不能把它当作动画完成权。
+    @Setter @Getter
+    private Integer currentLegIndex;
+
     @Setter @Getter
     private boolean isDrawn;
     @Setter @Getter

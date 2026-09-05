@@ -14,6 +14,8 @@ import org.example.roadsimulation.service.CostBaselineNormalizationService;
 import org.example.roadsimulation.service.GetCostService;
 import org.example.roadsimulation.service.POIShipmentManager;
 import org.example.roadsimulation.service.ProcessingChainServiceV2;
+import org.example.roadsimulation.service.TransportProgressResult;
+import org.example.roadsimulation.service.TransportProgressService;
 import org.example.roadsimulation.service.VehicleInitializationService;
 import org.example.roadsimulation.service.impl.SimulationDispatchRouter;
 import org.example.roadsimulation.service.impl.StateUpdateService;
@@ -34,6 +36,8 @@ public class SimulationMainLoop {
 
     private final DataInitializer dataInitializer;
     private final StateUpdateService stateUpdateService;
+    // Phase 4：路段进度已从 Shadow 切换为后端行驶完成权威。
+    private final TransportProgressService transportProgressService;
 
     @Autowired
     private VehicleInitializationService vehicleInitializationService;
@@ -71,10 +75,13 @@ public class SimulationMainLoop {
     @Autowired
     SimulationMainLoop(DataInitializer dataInitializer,
                        StateUpdateService stateUpdateService,
-                       SimulationContext simulationContext) {
+                       SimulationContext simulationContext,
+                       TransportProgressService transportProgressService) {
         this.dataInitializer = dataInitializer;
         this.stateUpdateService = stateUpdateService;
         this.simulationContext = simulationContext;
+        // Phase 4：构造器强制注入，避免生产运行时静默漏掉权威进度。
+        this.transportProgressService = transportProgressService;
     }
 
     /**
@@ -167,6 +174,12 @@ public class SimulationMainLoop {
 
             // Phase 1：状态更新接收本轮唯一 SimulationTick；秒预算将在后续进度阶段真正消费。
             stateUpdateService.tick(currentTick);
+            if (shouldAbortLoop()) {
+                return;
+            }
+
+            // Phase 4：先结算到期的装卸动作，再让新激活的行驶路段消费本轮秒预算。
+            advanceTransportProgressSafely(currentTick);
             if (shouldAbortLoop()) {
                 return;
             }
@@ -267,6 +280,34 @@ public class SimulationMainLoop {
             return true;
         }
         return simulationContext.shouldAbortSimulationWork();
+    }
+
+    /**
+     * Phase 4：按任务隔离权威进度故障；一辆车的脏数据不能阻塞其他任务和全局 loop。
+     */
+    private void advanceTransportProgressSafely(SimulationTick tick) {
+        try {
+            java.util.List<TransportProgressResult> results =
+                    transportProgressService.advanceAllActiveAssignments(tick);
+            long completedLegs = results.stream().filter(TransportProgressResult::legCompleted).count();
+            long failures = results.stream()
+                    .filter(result -> result.outcome() == TransportProgressResult.Outcome.FAILED)
+                    .count();
+            if (!results.isEmpty()) {
+                System.out.printf(
+                        "[Phase4 Progress] loop=%d assignments=%d completedLegs=%d failures=%d%n",
+                        tick.loopIndex(),
+                        results.size(),
+                        completedLegs,
+                        failures
+                );
+            }
+        } catch (Exception ex) {
+            System.err.println(
+                    "[Phase4 Progress] 候选查询级故障，本轮不推进任何路段: loop="
+                            + tick.loopIndex() + ", reason=" + ex.getMessage()
+            );
+        }
     }
 
     private void recordCostNormalizationDispatchSnapshot() {

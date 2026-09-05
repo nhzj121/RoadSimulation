@@ -2850,6 +2850,8 @@ public class DataInitializer implements CommandLineRunner {
             AssignmentBriefDTO brief = new AssignmentBriefDTO();
             brief.setAssignmentId(assignment.getId());
             brief.setStatus(assignment.getStatus().toString());
+            // Phase 2：VRP 前端登记同步独立路段索引；本阶段仍不以该值驱动动画。
+            brief.setCurrentLegIndex(assignment.getCurrentLegIndex());
             brief.setCreatedTime(assignment.getCreatedTime());
             brief.setStartTime(assignment.getStartTime());
             brief.setDrawn(false); // 标记为未绘制，等待前端拉取
@@ -3220,6 +3222,131 @@ public class DataInitializer implements CommandLineRunner {
         }
     }
 
+    /**
+     * Phase 4 修复：自动交付按本次卸货 Assignment 的货物项结算库存，普通/VRP 共用。
+     * ShipmentItem.qty 和 Enrollment.quantity 都是件数；不得固定减 1，
+     * 也不得依赖会被第一辆车消耗的 POI-pair 展示映射寻找结算对象。
+     */
+    @Transactional
+    public void settleAssignmentInventory(Assignment assignment) {
+        Map<String, DeliveryStockDebit> debits = new LinkedHashMap<>();
+        for (ShipmentItem item : assignment.getShipmentItems()) {
+            if (item == null || item.getStatus() == ShipmentItem.ShipmentItemStatus.CANCELLED) {
+                continue;
+            }
+            Shipment shipment = item.getShipment();
+            POI origin = shipment == null ? null : shipment.getOriginPOI();
+            Goods goods = item.getGoods();
+            if (origin == null || goods == null) {
+                // Phase 4：不关联库存的历史/实验货物仍可完成运输，不凭空创建 Enrollment。
+                continue;
+            }
+            Integer quantity = item.getQty();
+            if (quantity == null || quantity <= 0 || origin.getId() == null || goods.getId() == null) {
+                throw new IllegalStateException("Invalid inventory debit item: assignmentId="
+                        + assignment.getId() + ", itemId=" + item.getId());
+            }
+            String key = origin.getId() + "_" + goods.getId();
+            DeliveryStockDebit previous = debits.get(key);
+            // Phase 4：同任务同源同货类先聚合，避免一票多项重复读取/删除同一库存记录。
+            int totalQuantity = Math.addExact(previous == null ? 0 : previous.quantity(), quantity);
+            debits.put(key, new DeliveryStockDebit(origin, goods, totalQuantity));
+        }
+
+        for (DeliveryStockDebit debit : debits.values()) {
+            Optional<Enrollment> existing = enrollmentRepository.findByPoiAndGoods(debit.origin(), debit.goods());
+            if (existing.isEmpty()) {
+                // Phase 4：实验场景可以只有运输订单而没有 Enrollment；保持既有无库存场景兼容性。
+                logger.debug("[Phase4 Settlement] no inventory record: assignmentId={}, originId={}, goodsId={}",
+                        assignment.getId(), debit.origin().getId(), debit.goods().getId());
+                continue;
+            }
+            Enrollment enrollment = existing.get();
+            Integer available = enrollment.getQuantity();
+            if (available == null || available < debit.quantity()) {
+                // Phase 4：存在库存但数量不足属于真实数据不一致；不能扣成负数或假装已结算。
+                throw new IllegalStateException("Insufficient inventory for assignment " + assignment.getId()
+                        + ": originId=" + debit.origin().getId() + ", goodsId=" + debit.goods().getId()
+                        + ", available=" + available + ", required=" + debit.quantity());
+            }
+            enrollment.setQuantity(available - debit.quantity());
+            enrollment.setUpdatedBy("Phase4 backend delivery settlement");
+            enrollment.setUpdatedTime(LocalDateTime.now());
+            if (enrollment.getQuantity() == 0) {
+                debit.origin().removeGoodsEnrollment(enrollment);
+                debit.goods().removePOIEnrollment(enrollment);
+                enrollmentRepository.delete(enrollment);
+            } else {
+                enrollmentRepository.save(enrollment);
+            }
+        }
+    }
+
+    /** Phase 4：库存按源 POI / 货类聚合后的确定件数，不使用车辆当前总载重反推。 */
+    private record DeliveryStockDebit(POI origin, Goods goods, int quantity) { }
+
+    /**
+     * Phase 4 修复：核心交付成功后才整理展示配对；同运单其他车辆/未派发货物尚未终态时保留共享映射。
+     * 映射只是缓存，既不决定本次扣哪个库存，也不决定任务是否可以完成。
+     */
+    public void completeAssignmentDeliveryCaches(Assignment assignment) {
+        Map<Long, Shipment> shipments = new LinkedHashMap<>();
+        for (ShipmentItem item : assignment.getShipmentItems()) {
+            if (item != null && item.getShipment() != null && item.getShipment().getId() != null) {
+                shipments.put(item.getShipment().getId(), item.getShipment());
+            }
+        }
+        for (Shipment shipment : shipments.values()) {
+            List<ShipmentItem> items = shipmentItemRepository.findByShipmentId(shipment.getId());
+            boolean allTerminal = !items.isEmpty() && items.stream().allMatch(item ->
+                    item.getStatus() == ShipmentItem.ShipmentItemStatus.DELIVERED
+                            || item.getStatus() == ShipmentItem.ShipmentItemStatus.CANCELLED);
+            POI origin = shipment.getOriginPOI();
+            POI destination = shipment.getDestPOI();
+            if (!allTerminal || origin == null || destination == null) {
+                continue;
+            }
+            String key = generatePoiPairKey(origin, destination);
+            Shipment mapped = poiPairShipmentMapping.get(key);
+            // Phase 4：只移除本运单的映射，不能误删同一 POI 对后来创建的新运单。
+            if (mapped != null && Objects.equals(mapped.getId(), shipment.getId())) {
+                // Phase 4 修复：自动超时会释放源点但保留旧货物，因此同源可能已有另一票活跃运单。
+                // 在修改缓存前查询真实货物状态；只注销本配对，不能顺带解锁仍有待派/在运货物的源点。
+                boolean otherActiveItems = hasOtherActiveShipmentItems(origin, shipment.getId());
+                if (!poiPairShipmentMapping.remove(key, mapped)) {
+                    continue;
+                }
+                markPairAsCompleted(key);
+                startToEndMapping.remove(origin, destination);
+                poiShipmentManager.unregisterShipment(origin, destination);
+                if (!otherActiveItems) {
+                    poiShipmentManager.releasePOI(origin);
+                    if (origin.getEnrollments().isEmpty()) {
+                        poiIsWithGoods.put(origin, false);
+                        trueProbability = trueProbability / 0.95;
+                    }
+                }
+            }
+        }
+    }
+
+    /** Phase 4：以数据库货物项为准，不能把可超时释放的 POI 管理器当成一源一运单的永久保证。 */
+    private boolean hasOtherActiveShipmentItems(POI origin, Long completedShipmentId) {
+        for (Shipment other : shipmentRepository.findByOriginPOI_Id(origin.getId())) {
+            if (Objects.equals(other.getId(), completedShipmentId)) {
+                continue;
+            }
+            boolean active = shipmentItemRepository.findByShipmentId(other.getId()).stream().anyMatch(item ->
+                    item.getStatus() != ShipmentItem.ShipmentItemStatus.DELIVERED
+                            && item.getStatus() != ShipmentItem.ShipmentItemStatus.CANCELLED);
+            if (active) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Phase 4：旧签名仅保留兼容，自动运输结算已改走按 Assignment 的统一入口。 */
     @Transactional
     public void processVehicleDelivery(POI startPOI, Vehicle vehicle, POI endPOI) {
         try {
@@ -3302,6 +3429,7 @@ public class DataInitializer implements CommandLineRunner {
 
     /**
      * VRP 多点配送专属结算大脑 (期末统一清算)
+     * Phase 4：旧签名仅保留兼容；当前自动运输链改走 settleAssignmentInventory 与统一生命周期入口。
      */
     @Transactional
     public void processVrpVehicleDelivery(Assignment assignment, Vehicle vehicle, POI endPOI) {
@@ -3470,6 +3598,8 @@ public class DataInitializer implements CommandLineRunner {
             AssignmentBriefDTO brief = new AssignmentBriefDTO();
             brief.setAssignmentId(assignment.getId());
             brief.setStatus(assignment.getStatus() != null ? assignment.getStatus().toString() : "WAITING");
+            // Phase 2：恢复/登记路径也输出同一 currentLegIndex，避免不同任务来源响应不一致。
+            brief.setCurrentLegIndex(assignment.getCurrentLegIndex());
             brief.setCreatedTime(assignment.getCreatedTime());
             brief.setStartTime(assignment.getStartTime());
             brief.setDrawn(false);
@@ -3665,6 +3795,8 @@ public class DataInitializer implements CommandLineRunner {
         AssignmentBriefDTO brief = new AssignmentBriefDTO();
         brief.setAssignmentId(assignment.getId());
         brief.setStatus(assignment.getStatus() != null ? assignment.getStatus().toString() : "WAITING");
+        // Phase 2：普通任务简要 DTO 明确携带路段索引，与动作索引完全分离。
+        brief.setCurrentLegIndex(assignment.getCurrentLegIndex());
         brief.setCreatedTime(assignment.getCreatedTime());
         brief.setStartTime(assignment.getStartTime());
 
