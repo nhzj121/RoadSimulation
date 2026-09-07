@@ -1,5 +1,7 @@
 package org.example.roadsimulation.service.impl;
 
+import org.example.roadsimulation.core.SimulationTick;
+import org.example.roadsimulation.core.TransportUnits;
 import org.example.roadsimulation.entity.Vehicle;
 import org.example.roadsimulation.entity.Vehicle.VehicleStatus;
 import org.example.roadsimulation.repository.VehicleRepository;
@@ -43,6 +45,23 @@ public class StateUpdateService {
     }
 
     /**
+     * Phase 1：主循环和实验循环使用的规范入口。
+     * SimulationTick 同时携带时间来源、窗口边界和可消费秒数，避免调用方自行拼接参数。
+     */
+    public void tick(SimulationTick tick) {
+        if (tick == null) {
+            throw new IllegalArgumentException("simulation tick must not be null");
+        }
+        if (tick.availableSeconds() % TransportUnits.SECONDS_PER_MINUTE != 0L) {
+            throw new IllegalArgumentException("legacy state transition requires a whole-minute tick");
+        }
+        int minutesPerLoop = Math.toIntExact(
+                tick.availableSeconds() / TransportUnits.SECONDS_PER_MINUTE
+        );
+        tick(tick.tickStart(), minutesPerLoop, tick.loopIndex());
+    }
+
+    /**
      * 主循环每次调用一次（每循环一次）
      *
      * @param simNow         当前仿真时间（由 SimulationMainLoop 计算并传入）
@@ -71,6 +90,22 @@ public class StateUpdateService {
             System.err.println("[StateUpdateService] tick 执行失败: " + e.getMessage());
             e.printStackTrace();
         }
+    }
+
+    /**
+     * Phase 1：使用规范 tick 重置旧状态窗口；本阶段仍保留旧状态机行为。
+     */
+    public void resetWindowsOnce(SimulationTick tick) {
+        if (tick == null) {
+            throw new IllegalArgumentException("simulation tick must not be null");
+        }
+        if (tick.availableSeconds() % TransportUnits.SECONDS_PER_MINUTE != 0L) {
+            throw new IllegalArgumentException("legacy state transition requires a whole-minute tick");
+        }
+        resetWindowsOnce(
+                tick.tickStart(),
+                Math.toIntExact(tick.availableSeconds() / TransportUnits.SECONDS_PER_MINUTE)
+        );
     }
 
     /**

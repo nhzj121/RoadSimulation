@@ -7,6 +7,7 @@ public class ShipmentItemDTO {
     private String name;
     private String sku;
     private Integer qty;
+    // Phase 1（兼容 JSON 字段）：weight 表示 ShipmentItem 总重量，单位为吨。
     private Double weight;
     private Double volume;
 
@@ -47,6 +48,9 @@ public class ShipmentItemDTO {
 
     public Double getWeight() { return weight; }
     public void setWeight(Double weight) { this.weight = weight; }
+
+    /** Phase 1：面向新调用方的明确吨制重量字段，由旧 weight 直接投影。 */
+    public Double getWeightTonnes() { return weight; }
 
     public Double getVolume() { return volume; }
     public void setVolume(Double volume) { this.volume = volume; }

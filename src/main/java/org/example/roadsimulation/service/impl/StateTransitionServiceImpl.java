@@ -4,14 +4,18 @@ import jakarta.annotation.PostConstruct;
 import jakarta.transaction.Transactional;
 import org.example.roadsimulation.entity.Assignment;
 import org.example.roadsimulation.entity.Assignment.AssignmentStatus;
+import org.example.roadsimulation.entity.AssignmentLeg;
 import org.example.roadsimulation.entity.AssignmentNode;
 import org.example.roadsimulation.entity.POI;
 import org.example.roadsimulation.entity.Route;
 import org.example.roadsimulation.entity.Vehicle;
 import org.example.roadsimulation.entity.Vehicle.VehicleStatus;
+import org.example.roadsimulation.core.TransportUnits;
 import org.example.roadsimulation.repository.AssignmentRepository;
+import org.example.roadsimulation.repository.AssignmentLegRepository;
 import org.example.roadsimulation.repository.VehicleRepository;
 import org.example.roadsimulation.service.StateTransitionService;
+import org.example.roadsimulation.service.TransportDeliverySettlementService;
 import org.example.roadsimulation.service.TransportLifecycleService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -37,6 +41,12 @@ public class StateTransitionServiceImpl implements StateTransitionService {
     private AssignmentRepository assignmentRepository;
     @Autowired
     private TransportLifecycleService transportLifecycleService;
+    // Phase 4：驻留动作结束后，下一行驶状态必须从当前 AssignmentLeg 冻结载货快照派生。
+    @Autowired
+    private AssignmentLegRepository assignmentLegRepository;
+    // Phase 4：普通/VRP 卸货统一收口，本状态机不再直接散写库存和终态。
+    @Autowired
+    private TransportDeliverySettlementService transportDeliverySettlementService;
 
     // 状态顺序（必须与矩阵行/列严格对应）
     private static final List<VehicleStatus> STATES = List.of(
@@ -83,16 +93,24 @@ public class StateTransitionServiceImpl implements StateTransitionService {
                     return resolveNextStatusFromNodes(assignment, currentStatus, vehicle);
                 }
                 if (currentStatus == VehicleStatus.ORDER_DRIVING) {
+                    // Phase 4：此分支只作为纯状态选择的兼容结果；实际行驶到达由 LegCompleted 触发。
                     return VehicleStatus.LOADING;
                 }
                 if (currentStatus == VehicleStatus.LOADING) {
-                    return VehicleStatus.TRANSPORT_DRIVING;
+                    // Phase 4：装货后以下一路段 loadState 决定空载/载货行驶，不猜测固定状态。
+                    return resolveDrivingStatusFromCurrentLeg(assignment, vehicle);
                 }
                 if (currentStatus == VehicleStatus.TRANSPORT_DRIVING) {
+                    // Phase 4：此分支不再由驻留时间调用；只保留旧的纯函数兼容行为。
                     return VehicleStatus.UNLOADING;
                 }
                 if (currentStatus == VehicleStatus.UNLOADING) {
                     return VehicleStatus.UNLOADING;
+                }
+                if (currentStatus == VehicleStatus.BREAKDOWN || currentStatus == VehicleStatus.WAITING
+                        || currentStatus == VehicleStatus.IDLE) {
+                    // Phase 4：暂停状态恢复时回到当前路段的确定行驶状态。
+                    return resolveDrivingStatusFromCurrentLeg(assignment, vehicle);
                 }
                 return resolveNextStatusFromAssignmentNode(assignment, currentStatus);
 
@@ -153,9 +171,12 @@ public class StateTransitionServiceImpl implements StateTransitionService {
             return statusForNodeAction(pendingNode);
         }
 
-        if (currentStatus == VehicleStatus.LOADING || currentStatus == VehicleStatus.UNLOADING
+        // Phase 4 修复：故障恢复也必须服从当前路段载货快照，不能固定回到 TRANSPORT_DRIVING。
+        if (currentStatus == VehicleStatus.BREAKDOWN
+                || currentStatus == VehicleStatus.LOADING || currentStatus == VehicleStatus.UNLOADING
                 || currentStatus == VehicleStatus.IDLE || currentStatus == VehicleStatus.WAITING) {
-            return hasRuntimeLoad(vehicle) ? VehicleStatus.TRANSPORT_DRIVING : VehicleStatus.ORDER_DRIVING;
+            // Phase 4：进入下一路段时使用路段计划快照，实时载重只作为缺失路段时的兼容回退。
+            return resolveDrivingStatusFromCurrentLeg(assignment, vehicle);
         }
 
         return VehicleStatus.TRANSPORT_DRIVING;
@@ -173,7 +194,29 @@ public class StateTransitionServiceImpl implements StateTransitionService {
     }
 
     private boolean hasRuntimeLoad(Vehicle vehicle) {
-        return vehicle != null && vehicle.getCurrentLoad() != null && vehicle.getCurrentLoad() > 0.0;
+        // Phase 1：运输状态判断统一读取明确的吨制载重入口，不再依赖无单位字段名。
+        return vehicle != null
+                && vehicle.getCurrentLoadTonnes() != null
+                && vehicle.getCurrentLoadTonnes() > 0.0;
+    }
+
+    /**
+     * Phase 4：将 AssignmentLeg.loadState 编码为车辆行驶状态不变量。
+     */
+    private VehicleStatus resolveDrivingStatusFromCurrentLeg(Assignment assignment, Vehicle vehicle) {
+        if (assignment != null && assignment.getId() != null) {
+            Optional<AssignmentLeg> currentLeg = assignmentLegRepository.findByAssignmentIdAndSequenceIndex(
+                    assignment.getId(),
+                    assignment.getCurrentLegIndex()
+            );
+            if (currentLeg.isPresent()) {
+                return currentLeg.get().getLoadState() == AssignmentLeg.LoadState.LOADED
+                        ? VehicleStatus.TRANSPORT_DRIVING
+                        : VehicleStatus.ORDER_DRIVING;
+            }
+        }
+        // Phase 4：仅为旧/异常数据保留回退；正常 Phase 4 任务必须存在当前路段。
+        return hasRuntimeLoad(vehicle) ? VehicleStatus.TRANSPORT_DRIVING : VehicleStatus.ORDER_DRIVING;
     }
 
     private boolean hasAssignmentNodes(Assignment assignment) {
@@ -284,12 +327,13 @@ public class StateTransitionServiceImpl implements StateTransitionService {
                                 "StateTransitionService"
                         );
                         if (!transportLifecycleService.hasPendingNodes(assignment)) {
-                            transportLifecycleService.completeDelivery(
+                            // Phase 4：最后节点动作结束后由统一结算入口扣库存并完成任务。
+                            transportDeliverySettlementService.settleAfterBackendUnloading(
                                     assignment,
                                     vehicle,
                                     resolveEndPOI(assignment),
                                     simNow,
-                                    "StateTransitionService"
+                                    "Phase4 StateTransitionService"
                             );
                         }
                     }
@@ -297,27 +341,36 @@ public class StateTransitionServiceImpl implements StateTransitionService {
                 return;
             }
             if (s == VehicleStatus.UNLOADING) {
-                logger.info("[任务推进-等待前端到达] assignmentId={} vehicleStatus={} simNow={}",
+                // Phase 4：普通任务不再等待前端 vehicle-arrived；后端卸货窗口到期后直接结算。
+                logger.info("[任务推进-后端卸货完成] assignmentId={} vehicleStatus={} simNow={}",
                         assignment.getId(), s, simNow);
+                transportDeliverySettlementService.settleAfterBackendUnloading(
+                        assignment,
+                        vehicle,
+                        resolveEndPOI(assignment),
+                        simNow,
+                        "Phase4 StateTransitionService"
+                );
                 return;
             }
 
             List<Long> line = assignment.getActionLine();
-            if (line == null || line.isEmpty()) {
-                logger.info("[任务推进-跳过] assignmentId={} actionLine empty, do nothing", assignment.getId());
-                return;
-            }
-
             if (s == VehicleStatus.LOADING) {
+                // Phase 4：普通任务可能没有旧 actionLine，但 LOADING 到期仍必须完成装货和载重同步。
                 transportLifecycleService.markLoadingCompleted(
                         assignment,
                         simNow,
                         "StateTransitionService"
                 );
                 Integer before = assignment.getCurrentActionIndex();
-                logger.info("[任务推进-装货完成] assignmentId={} moveToNextAction beforeIndex={} simNow={}",
-                        assignment.getId(), before, simNow);
-                assignment.moveToNextAction(simNow);
+                if (line != null && !line.isEmpty()) {
+                    logger.info("[任务推进-装货完成] assignmentId={} moveToNextAction beforeIndex={} simNow={}",
+                            assignment.getId(), before, simNow);
+                    assignment.moveToNextAction(simNow);
+                } else {
+                    // Phase 4：currentLegIndex 已独立控制行驶路段；缺少旧 actionLine 不再阻断装货。
+                    logger.info("[Phase4] assignmentId={} has no legacy actionLine; loading still completed", assignment.getId());
+                }
                 assignmentRepository.save(assignment);
                 logger.info("[任务推进] aId={} actionIdx {} → {} (simNow={})",
                         assignment.getId(),
@@ -325,13 +378,10 @@ public class StateTransitionServiceImpl implements StateTransitionService {
                         assignment.getCurrentActionIndex(),
                         simNow
                 );
-            } else if (s == VehicleStatus.TRANSPORT_DRIVING) {
-                transportLifecycleService.markTransportStarted(
-                        assignment,
-                        simNow,
-                        "StateTransitionService"
-                );
-                logger.info("[任务推进-运输中] assignmentId={} item status marked IN_TRANSIT", assignment.getId());
+            } else if (s == VehicleStatus.ORDER_DRIVING || s == VehicleStatus.TRANSPORT_DRIVING) {
+                // Phase 4：行驶状态不应再进入“驻留结束”分支；若出现则只记录而不修改任务。
+                logger.warn("[Phase4] driving state reached legacy onStateFinished unexpectedly: assignmentId={}, status={}",
+                        assignment.getId(), s);
             } else if (s == VehicleStatus.WAITING || s == VehicleStatus.BREAKDOWN) {
                 logger.info("[任务推进-等待/异常] assignmentId={} vehicleStatus={} 保持任务状态", assignment.getId(), s);
             } else {
@@ -355,52 +405,57 @@ public class StateTransitionServiceImpl implements StateTransitionService {
      * 计算某状态驻留时间（对齐主循环粒度）
      */
     private Duration calcStayDuration(VehicleStatus status, Assignment assignment, Vehicle vehicle, int minutesPerLoop) {
-        int minutes;
+        // Phase 1：状态驻留计算内部统一使用秒；minutesPerLoop 只保留为旧接口兼容边界。
+        long seconds;
 
         switch (status) {
             case ORDER_DRIVING: {
-                Integer travel = calcTravelMinutesFromRoute(assignment);
-                minutes = (travel != null) ? Math.max(30, (int) Math.ceil(travel * 0.2)) : 60;
+                Long travelSeconds = calcTravelSecondsFromRoute(assignment);
+                seconds = travelSeconds != null
+                        ? Math.max(1_800L, (long) Math.ceil(travelSeconds * 0.2))
+                        : 3_600L;
                 break;
             }
             case LOADING:
-                minutes = 30;
+                seconds = 1_800L;
                 break;
 
             case TRANSPORT_DRIVING: {
-                Integer travel = calcTravelMinutesFromRoute(assignment);
-                minutes = (travel != null) ? travel : 120;
+                Long travelSeconds = calcTravelSecondsFromRoute(assignment);
+                seconds = travelSeconds != null ? travelSeconds : 7_200L;
                 break;
             }
 
             case UNLOADING:
-                minutes = 30;
+                seconds = 1_800L;
                 break;
 
             case WAITING:
-                minutes = 30;
+                seconds = 1_800L;
                 break;
 
             case BREAKDOWN:
-                minutes = 120;
+                seconds = 7_200L;
                 break;
 
             case IDLE:
             default:
-                minutes = 30;
+                seconds = 1_800L;
         }
 
-        // 1) 先对齐到主循环粒度（保证至少 1 个 loop）
-        int loops = (int) Math.ceil(minutes / (double) minutesPerLoop);
-        loops = Math.max(1, loops);
-        int alignedMinutes = loops * minutesPerLoop;
+        // Phase 1：把旧分钟参数一次性转换为规范仿真秒，并按完整 tick 向上对齐。
+        long tickSeconds = TransportUnits.minutesToSeconds(minutesPerLoop);
+        if (tickSeconds <= 0L) {
+            throw new IllegalArgumentException("minutesPerLoop must produce a positive tick");
+        }
+        long loops = Math.max(1L, (long) Math.ceil(seconds / (double) tickSeconds));
+        long alignedSeconds = Math.multiplyExact(loops, tickSeconds);
 
-        // 2) ✅ 第一种方法：加“最大停留时间上限”，避免 endTime 被拉到很久以后
-        // 你可以把 60 改成 90/120，看你希望转移快慢
-        int maxStayMinutes = 60;
-        alignedMinutes = Math.min(alignedMinutes, maxStayMinutes);
+        // Phase 1：保留现有 60 分钟上限以避免本阶段改变生命周期；Phase 3/4 将由路段进度替代它。
+        long legacyMaxStaySeconds = TransportUnits.minutesToSeconds(60L);
+        alignedSeconds = Math.min(alignedSeconds, legacyMaxStaySeconds);
 
-        return Duration.ofMinutes(alignedMinutes);
+        return Duration.ofSeconds(alignedSeconds);
     }
     @Transactional
     public void resetVehicleStateWindows(LocalDateTime simNow, int minutesPerLoop) {
@@ -425,9 +480,12 @@ public class StateTransitionServiceImpl implements StateTransitionService {
             );
 
             // ✅ 4) 调试阶段：限制最长驻留时间（最多 2 个循环）
-            Duration maxStay = Duration.ofMinutes((long) minutesPerLoop * 2);
+            // Phase 1：窗口上限改用规范秒计算，但保留“最多两个 tick”的既有行为。
+            Duration maxStay = Duration.ofSeconds(
+                    Math.multiplyExact(TransportUnits.minutesToSeconds(minutesPerLoop), 2L)
+            );
             if (stay == null || stay.isZero() || stay.isNegative()) {
-                stay = Duration.ofMinutes(minutesPerLoop); // 最少 1 个循环
+                stay = Duration.ofSeconds(TransportUnits.minutesToSeconds(minutesPerLoop)); // 最少 1 个循环
             }
             if (stay.compareTo(maxStay) > 0) {
                 stay = maxStay;
@@ -450,37 +508,26 @@ public class StateTransitionServiceImpl implements StateTransitionService {
 
 
     /**
-     * route 的 estimatedTime / distance 单位不确定时自适应，避免出现 20+ 小时这种离谱 endTime
+     * Phase 1：计算路线规范计划耗时，返回值单位固定为秒。
+     * 旧 Route 列仍存公里/小时，但转换只能由 Route 的明确单位访问器完成，不再猜测数值单位。
      */
-    private Integer calcTravelMinutesFromRoute(Assignment assignment) {
+    private Long calcTravelSecondsFromRoute(Assignment assignment) {
         if (assignment == null) return null;
 
         Route route = assignment.getRoute();
         if (route == null) return null;
 
-        // 1) estimatedTime 优先
-        Double est = route.getEstimatedTime();
-        if (est != null && est > 0) {
-            // A：小时
-            if (est <= 24) {
-                return Math.max(1, (int) Math.round(est * 60.0));
-            }
-            // B：分钟
-            if (est <= 24 * 60) {
-                return Math.max(1, (int) Math.round(est));
-            }
-            logger.warn("[Route耗时] estimatedTime={} 过大，忽略该字段，routeId={}", est, route.getId());
+        // Phase 1：优先读取明确的秒制计划耗时；任何正值都按小时兼容列换算而来。
+        Long estimatedDrivingSeconds = route.getEstimatedDrivingSeconds();
+        if (estimatedDrivingSeconds != null && estimatedDrivingSeconds > 0L) {
+            return estimatedDrivingSeconds;
         }
 
-        // 2) distance 估算
-        Double dist = route.getDistance();
-        if (dist != null && dist > 0) {
-            // 如果像“米”
-            if (dist > 2000) dist = dist / 1000.0;
-
-            double speedKmph = 40.0;
-            int mins = (int) Math.round((dist / speedKmph) * 60.0);
-            return Math.max(1, mins);
+        // Phase 1：缺少计划耗时时，使用明确米制距离和 40 km/h（米/秒）基准速度估算。
+        Double distanceMeters = route.getDistanceMeters();
+        if (distanceMeters != null && distanceMeters > 0.0) {
+            double fallbackSpeedMetersPerSecond = 40_000.0 / TransportUnits.SECONDS_PER_HOUR;
+            return Math.max(1L, Math.round(distanceMeters / fallbackSpeedMetersPerSecond));
         }
 
         return null;
@@ -505,16 +552,44 @@ public class StateTransitionServiceImpl implements StateTransitionService {
             return;
         }
 
+        // Phase 4：先解析任务再检查驻留时间；行驶状态的 statusEndTime 不再拥有完成权。
+        Assignment assignment = vehicle.getCurrentAssignment();
+
+        if (assignment != null && assignment.getStatus() == AssignmentStatus.ASSIGNED) {
+            // Phase 4：派车后在后端首次 tick 立即开始任务，并保持 ORDER_DRIVING 等待路段推进。
+            transportLifecycleService.startAssignmentExecution(
+                    assignment,
+                    vehicle,
+                    simNow,
+                    "Phase4 StateTransitionService"
+            );
+            return;
+        }
+
+        if (assignment != null
+                && assignment.getStatus() == AssignmentStatus.IN_PROGRESS
+                && isDrivingStatus(vehicle.getCurrentStatus())) {
+            // Phase 4：ORDER_DRIVING/TRANSPORT_DRIVING 只能由 AssignmentLeg 进度结束，时间窗口到期也不转状态。
+            if (vehicle.getStatusStartTime() == null) {
+                vehicle.setStatusStartTime(simNow);
+                vehicle.setStatusDuration(Duration.ZERO);
+                vehicleRepository.save(vehicle);
+            }
+            return;
+        }
+
         if (vehicle.getStatusStartTime() == null) {
+            // Phase 4：只有装卸、等待、故障等非行驶状态继续使用后端驻留窗口。
             vehicle.setStatusStartTime(simNow);
-            vehicle.setStatusDuration(calcStayDuration(vehicle.getCurrentStatus(), vehicle.getCurrentAssignment(), vehicle, minutesPerLoop));
+            vehicle.setStatusDuration(calcStayDuration(vehicle.getCurrentStatus(), assignment, vehicle, minutesPerLoop));
             vehicleRepository.save(vehicle);
             return;
         }
 
         // ✅ 1) 强制截断历史遗留的超长驻留时间（关键修复）
         // 你可以把 60 改成 30（更快看到状态更新），或者 120（更接近现实）
-        Duration maxDur = Duration.ofMinutes(60);
+        // Phase 1：保留旧 60 分钟截断，但以秒常量表达；本阶段不改变运输完成权。
+        Duration maxDur = Duration.ofSeconds(TransportUnits.minutesToSeconds(60L));
 
         Duration curDur = vehicle.getStatusDuration();
         if (curDur != null && curDur.compareTo(maxDur) > 0) {
@@ -540,8 +615,7 @@ public class StateTransitionServiceImpl implements StateTransitionService {
             return;
         }
 
-        // 3) 获取任务上下文
-        Assignment assignment = vehicle.getCurrentAssignment();
+        // 3) 处理无任务车辆；活动行驶任务已在 Phase 4 门禁中提前返回
         if (assignment == null) {
             if (vehicle.getCurrentStatus() != VehicleStatus.IDLE) {
                 vehicle.transitionToStatus(
@@ -579,6 +653,13 @@ public class StateTransitionServiceImpl implements StateTransitionService {
         vehicle.transitionToStatus(next, simNow, stay);
 
         vehicleRepository.save(vehicle);
+    }
+
+    /**
+     * Phase 4：行驶状态集中判断，防止某一分支遗漏后重新开放旧时间完成权。
+     */
+    private boolean isDrivingStatus(VehicleStatus status) {
+        return status == VehicleStatus.ORDER_DRIVING || status == VehicleStatus.TRANSPORT_DRIVING;
     }
 
 

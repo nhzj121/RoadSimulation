@@ -64,6 +64,8 @@ public class RouteServiceImpl implements RouteService {
         // 校验起点和终点 POI 是否存在
         validatePOIExists(requestDTO.getStartPoiId(), "起点POI");
         validatePOIExists(requestDTO.getEndPoiId(), "终点POI");
+        // Phase 1：创建时必须在旧单位或规范单位中各提供一种，且禁止同一量同时提供两种单位。
+        validateRouteMeasureInputs(requestDTO, true);
 
         // 创建路线实体
         Route route = new Route();
@@ -102,6 +104,9 @@ public class RouteServiceImpl implements RouteService {
     @Transactional
     public RouteResponseDTO updateRoute(Long id, RouteRequestDTO requestDTO) {
         Route route = findRouteById(id);
+
+        // Phase 1：更新允许不修改距离/时间，但一旦提供就不能混用旧单位和规范单位。
+        validateRouteMeasureInputs(requestDTO, false);
 
         // 校验路线编号唯一性（排除当前路线）
         if (requestDTO.getRouteCode() != null
@@ -235,8 +240,11 @@ public class RouteServiceImpl implements RouteService {
         Route route = findRouteById(id);
         route.setStatus(RouteStatus.CONGESTED);
 
-        // 拥堵时自动增加预计时间（+20%）
-        route.setEstimatedTime(route.getEstimatedTime() * 1.2);
+        // Phase 1：拥堵调整在规范秒域完成，再由 Route 写回兼容小时列。
+        Long baseSeconds = route.getEstimatedDrivingSeconds();
+        if (baseSeconds != null) {
+            route.setEstimatedDrivingSeconds(Math.round(baseSeconds * 1.2));
+        }
 
         Route updatedRoute = routeRepository.save(route);
         return convertToDTO(updatedRoute);
@@ -301,6 +309,9 @@ public class RouteServiceImpl implements RouteService {
                 throw new IllegalArgumentException("路线编号已存在: " + dto.getRouteCode());
             }
 
+            // Phase 1：批量创建与单条创建使用相同的单位互斥及必填规则。
+            validateRouteMeasureInputs(dto, true);
+
             Route route = new Route();
             updateRouteFromDTO(route, dto);
             setRoutePOIs(route, dto);
@@ -339,8 +350,18 @@ public class RouteServiceImpl implements RouteService {
     private void updateRouteFromDTO(Route route, RouteRequestDTO dto) {
         if (dto.getRouteCode() != null) route.setRouteCode(dto.getRouteCode());
         if (dto.getName() != null) route.setName(dto.getName());
-        if (dto.getDistance() != null) route.setDistance(dto.getDistance());
-        if (dto.getEstimatedTime() != null) route.setEstimatedTime(dto.getEstimatedTime());
+        // Phase 1：服务内部优先处理明确米制字段；旧公里字段只作为兼容输入。
+        if (dto.getDistanceMeters() != null) {
+            route.setDistanceMeters(dto.getDistanceMeters());
+        } else if (dto.getDistance() != null) {
+            route.setDistanceKilometers(dto.getDistance());
+        }
+        // Phase 1：服务内部优先处理明确秒制字段；旧小时字段只作为兼容输入。
+        if (dto.getEstimatedDrivingSeconds() != null) {
+            route.setEstimatedDrivingSeconds(dto.getEstimatedDrivingSeconds());
+        } else if (dto.getEstimatedTime() != null) {
+            route.setEstimatedTimeHours(dto.getEstimatedTime());
+        }
         if (dto.getDescription() != null) route.setDescription(dto.getDescription());
         if (dto.getStatus() != null) route.setStatus(dto.getStatus());
         if (dto.getRouteType() != null) route.setRouteType(dto.getRouteType());
@@ -364,8 +385,9 @@ public class RouteServiceImpl implements RouteService {
         dto.setId(route.getId());
         dto.setRouteCode(route.getRouteCode());
         dto.setName(route.getName());
-        dto.setDistance(route.getDistance());
-        dto.setEstimatedTime(route.getEstimatedTime());
+        // Phase 1：旧响应字段继续输出公里/小时；DTO 会额外派生米/秒字段。
+        dto.setDistance(route.getDistanceKilometers());
+        dto.setEstimatedTime(route.getEstimatedTimeHours());
         dto.setDescription(route.getDescription());
         dto.setStatus(route.getStatus());
         dto.setRouteType(route.getRouteType());
@@ -391,5 +413,37 @@ public class RouteServiceImpl implements RouteService {
         dto.setTotalCost(route.calculateTotalCost(8.0));
 
         return dto;
+    }
+
+    /**
+     * Phase 1：校验方案 A 的双入口契约。
+     * 同一个物理量只能选择旧单位或规范单位，避免出现“哪个字段生效”的隐式优先级。
+     */
+    private void validateRouteMeasureInputs(RouteRequestDTO dto, boolean required) {
+        if (dto == null) {
+            throw new IllegalArgumentException("路线请求不能为空");
+        }
+
+        boolean hasLegacyDistance = dto.getDistance() != null;
+        boolean hasCanonicalDistance = dto.getDistanceMeters() != null;
+        if (hasLegacyDistance && hasCanonicalDistance) {
+            throw new IllegalArgumentException("distance（公里）与 distanceMeters（米）不能同时提供");
+        }
+        if (required && !hasLegacyDistance && !hasCanonicalDistance) {
+            throw new IllegalArgumentException("必须提供 distance（公里）或 distanceMeters（米）");
+        }
+
+        boolean hasLegacyDuration = dto.getEstimatedTime() != null;
+        boolean hasCanonicalDuration = dto.getEstimatedDrivingSeconds() != null;
+        if (hasLegacyDuration && hasCanonicalDuration) {
+            throw new IllegalArgumentException(
+                    "estimatedTime（小时）与 estimatedDrivingSeconds（秒）不能同时提供"
+            );
+        }
+        if (required && !hasLegacyDuration && !hasCanonicalDuration) {
+            throw new IllegalArgumentException(
+                    "必须提供 estimatedTime（小时）或 estimatedDrivingSeconds（秒）"
+            );
+        }
     }
 }

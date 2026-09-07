@@ -7,6 +7,7 @@ import org.example.roadsimulation.SimulationDataCleanupService;
 import org.example.roadsimulation.config.DispatchStrategy;
 import org.example.roadsimulation.config.SimulationRuntimeConfig;
 import org.example.roadsimulation.core.SimulationContext;
+import org.example.roadsimulation.core.SimulationTick;
 import org.example.roadsimulation.core.SimulationModeGuard;
 import org.example.roadsimulation.dto.DispatchComparisonOptionsDTO;
 import org.example.roadsimulation.dto.DispatchComparisonPrepareRequest;
@@ -49,6 +50,8 @@ import org.example.roadsimulation.service.DispatchComparisonExperimentService;
 import org.example.roadsimulation.service.GaodeRoutePlanningQueueService;
 import org.example.roadsimulation.service.GetCostService;
 import org.example.roadsimulation.service.POIShipmentManager;
+import org.example.roadsimulation.service.TransportProgressResult;
+import org.example.roadsimulation.service.TransportProgressService;
 import org.example.roadsimulation.service.VehicleInitializationService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -106,6 +109,8 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
     private final SimulationDataCleanupService cleanupService;
     private final SimulationDispatchRouter simulationDispatchRouter;
     private final StateUpdateService stateUpdateService;
+    // Phase 4：实验循环与普通循环共用后端权威进度及生命周期规则，保证策略评价口径一致。
+    private final TransportProgressService transportProgressService;
     private final GetCostService getCostService;
     private final CostBaselineNormalizationService costBaselineNormalizationService;
     private final GaodeRoutePlanningQueueService routePlanningQueueService;
@@ -115,6 +120,7 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
     private volatile Long activeRunId;
     private volatile Long activeStrategyRunId;
     private volatile List<Long> activeStrategyShipmentItemIds = List.of();
+    // Phase 4：前端到达 ACK 仅用于展示诊断，不得参与实验策略的业务完成判定。
     private final Set<Long> visualArrivedAssignmentIds = ConcurrentHashMap.newKeySet();
 
     public DispatchComparisonExperimentServiceImpl(
@@ -139,6 +145,7 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
             SimulationDataCleanupService cleanupService,
             SimulationDispatchRouter simulationDispatchRouter,
             StateUpdateService stateUpdateService,
+            TransportProgressService transportProgressService,
             GetCostService getCostService,
             CostBaselineNormalizationService costBaselineNormalizationService,
             GaodeRoutePlanningQueueService routePlanningQueueService,
@@ -165,6 +172,8 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
         this.cleanupService = cleanupService;
         this.simulationDispatchRouter = simulationDispatchRouter;
         this.stateUpdateService = stateUpdateService;
+        // Phase 3：构造器强制注入，避免实验运行缺失路段执行数据却仍生成成本快照。
+        this.transportProgressService = transportProgressService;
         this.getCostService = getCostService;
         this.costBaselineNormalizationService = costBaselineNormalizationService;
         this.routePlanningQueueService = routePlanningQueueService;
@@ -510,13 +519,19 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
             return;
         }
 
-        LocalDateTime simNow = simulationContext.getCurrentSimTime();
+        // Phase 1：实验循环与正常主循环从同一 SimulationContext 获取规范时间窗口。
+        SimulationTick simulationTick = simulationContext.getCurrentTick();
+        LocalDateTime simNow = simulationTick.tickStart();
         if (loop != 0 && loop % 3 == 0) {
             simulationDispatchRouter.dispatch();
             recordCostNormalizationDispatchSnapshot();
         }
 
-        stateUpdateService.tick(simNow, 30, loop);
+        // Phase 1：实验运行传递完整 tick，禁止独立硬编码时间步长或只传一个模糊 simNow。
+        stateUpdateService.tick(simulationTick);
+
+        // Phase 4：实验循环与普通主循环共用同一后端权威路段/生命周期。
+        advanceTransportProgressSafely(simulationTick);
 
         int completed = countCompletedActiveItems();
         int total = activeStrategyShipmentItemIds.size();
@@ -567,7 +582,8 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
         simulationRuntimeConfig.setDispatchStrategy(strategy);
         routePlanningQueueService.resume();
         simulationContext.setRunning(true);
-        stateUpdateService.resetWindowsOnce(simulationContext.getCurrentSimTime(), 30);
+        // Phase 1：策略切换后的窗口重置使用当前规范 tick，避免实验路径保留独立的 30 分钟常量。
+        stateUpdateService.resetWindowsOnce(simulationContext.getCurrentTick());
 
         DispatchComparisonStrategyRun strategyRun = new DispatchComparisonStrategyRun();
         strategyRun.setExperimentRun(run);
@@ -651,6 +667,31 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
             vehicle.setUpdatedBy("DispatchComparisonExperiment");
             vehicle.setUpdatedTime(now);
             vehicleRepository.save(vehicle);
+        }
+    }
+
+    /**
+     * Phase 4：实验中的后端进度按任务隔离失败，已完成的其他路段仍然保留。
+     */
+    private void advanceTransportProgressSafely(SimulationTick tick) {
+        try {
+            List<TransportProgressResult> results = transportProgressService.advanceAllActiveAssignments(tick);
+            long completedLegs = results.stream().filter(TransportProgressResult::legCompleted).count();
+            if (!results.isEmpty()) {
+                log.info(
+                        "[Phase4 Progress Experiment] loop={}, assignments={}, completedLegs={}",
+                        tick.loopIndex(),
+                        results.size(),
+                        completedLegs
+                );
+            }
+        } catch (Exception ex) {
+            log.error(
+                    "[Phase4 Progress Experiment] candidate query failed for this loop. loop={}, reason={}",
+                    tick.loopIndex(),
+                    ex.getMessage(),
+                    ex
+            );
         }
     }
 
@@ -897,8 +938,9 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
         List<Long> assignmentIds = currentStrategyAssignmentIds();
         List<Long> activeAssignmentIds = currentStrategyRuntimeActiveAssignmentIds();
 
+        // Phase 4：完成权收回后，实验只依赖后端交付结果与运行中任务集合；
+        // visualArrivedAssignmentIds 保留为 UI 延迟诊断，不再阻塞 ORIGINAL 切换或 HEURISTIC 收尾。
         return !assignmentIds.isEmpty()
-                && visualArrivedAssignmentIds.containsAll(assignmentIds)
                 && activeAssignmentIds.isEmpty();
     }
 

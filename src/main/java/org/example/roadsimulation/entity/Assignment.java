@@ -61,6 +61,10 @@ public class Assignment {
     @Column(name = "current_action_index", columnDefinition = "integer default 0")
     private Integer currentActionIndex;
 
+    // Phase 2：运输路段索引与装卸动作索引语义分离；本阶段只持久化，不参与现有生命周期推进。
+    @Column(name = "current_leg_index", nullable = false, columnDefinition = "integer default 0")
+    private Integer currentLegIndex = 0;
+
     @Column(name = "start_time")
     private LocalDateTime startTime;
 
@@ -219,6 +223,14 @@ public class Assignment {
     public void setStatus(AssignmentStatus status) { this.status = status; }
     public Integer getCurrentActionIndex() { return currentActionIndex; }
     public void setCurrentActionIndex(Integer currentActionIndex) { this.currentActionIndex = currentActionIndex; }
+    // Phase 2：旧任务出现 null 时按首路段读取；新写入拒绝负索引，避免数组越界语义进入数据库。
+    public Integer getCurrentLegIndex() { return currentLegIndex == null ? 0 : currentLegIndex; }
+    public void setCurrentLegIndex(Integer currentLegIndex) {
+        if (currentLegIndex != null && currentLegIndex < 0) {
+            throw new IllegalArgumentException("currentLegIndex must be non-negative: " + currentLegIndex);
+        }
+        this.currentLegIndex = currentLegIndex == null ? 0 : currentLegIndex;
+    }
     public LocalDateTime getStartTime() { return startTime; }
     public void setStartTime(LocalDateTime startTime) { this.startTime = startTime; }
     public LocalDateTime getEndTime() { return endTime; }

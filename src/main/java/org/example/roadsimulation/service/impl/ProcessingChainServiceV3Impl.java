@@ -631,8 +631,9 @@ public class ProcessingChainServiceV3Impl implements ProcessingChainServiceV2 {
             route.setName("加工运输路线");
             route.setStartPOI(poiRepository.findById(startPoiId).orElse(toPOI));
             route.setEndPOI(toPOI);
-            route.setDistance(10.0);
-            route.setEstimatedTime(30.0);
+            // Phase 1：内部创建路线使用明确米/秒入口；旧列最终仍兼容保存为 10 km、0.5 h。
+            route.setDistanceMeters(10_000.0);
+            route.setEstimatedDrivingSeconds(1_800L);
             route.setStatus(Route.RouteStatus.ACTIVE);
             route = routeRepository.save(route);
         }
@@ -659,8 +660,9 @@ public class ProcessingChainServiceV3Impl implements ProcessingChainServiceV2 {
         route.setId(dto.getId());
         route.setRouteCode(dto.getRouteCode());
         route.setName(dto.getName());
-        route.setDistance(dto.getDistance());
-        route.setEstimatedTime(dto.getEstimatedTime());
+        // Phase 1：DTO→实体转换使用规范米/秒投影，Route 再负责写回兼容公里/小时列。
+        route.setDistanceMeters(dto.getDistanceMeters());
+        route.setEstimatedDrivingSeconds(dto.getEstimatedDrivingSeconds());
         return route;
     }
 

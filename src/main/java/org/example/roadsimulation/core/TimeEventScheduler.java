@@ -10,6 +10,9 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * 时间事件调度器
  * 负责调度和管理基于模拟时间的事件
  */
+// Phase 1：旧事件调度器仅为源码兼容保留；业务时间由 SimulationContext/SimulationTick 唯一推进。
+@Deprecated(forRemoval = true)
+@SuppressWarnings("removal")
 public class TimeEventScheduler {
     private final SimulationTime simulationTime;
     private final Map<LocalDateTime, List<TimeEvent>> scheduledEvents;

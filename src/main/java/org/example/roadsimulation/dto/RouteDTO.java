@@ -3,6 +3,7 @@ package org.example.roadsimulation.dto;
 import lombok.Data;
 import lombok.Getter;
 import lombok.Setter;
+import org.example.roadsimulation.core.TransportUnits;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -18,9 +19,39 @@ public class RouteDTO {
     @Setter @Getter
     private String name;
     @Setter @Getter
+    // Phase 1（兼容字段）：旧前端继续读取公里；新运输展示应读取 distanceMeters。
     private Double distance; // 公里
     @Setter @Getter
+    // Phase 1（兼容字段）：旧前端继续读取小时；新运输展示应读取 estimatedDrivingSeconds。
     private Double estimatedTime; // 小时
+
+    /**
+     * Phase 1：RouteDTO 的规范距离投影，单位为米，不保存第二份可能失真的状态。
+     */
+    public Double getDistanceMeters() {
+        return distance == null ? null : TransportUnits.kilometersToMeters(distance);
+    }
+
+    /**
+     * Phase 1：接受米制输入时同步写回旧公里字段，保持方案 A 的 JSON 兼容性。
+     */
+    public void setDistanceMeters(Double distanceMeters) {
+        this.distance = distanceMeters == null ? null : TransportUnits.metersToKilometers(distanceMeters);
+    }
+
+    /**
+     * Phase 1：RouteDTO 的规范计划耗时投影，单位为秒。
+     */
+    public Long getEstimatedDrivingSeconds() {
+        return estimatedTime == null ? null : TransportUnits.hoursToSeconds(estimatedTime);
+    }
+
+    /**
+     * Phase 1：接受秒制输入时同步写回旧小时字段，保持方案 A 的 JSON 兼容性。
+     */
+    public void setEstimatedDrivingSeconds(Long seconds) {
+        this.estimatedTime = seconds == null ? null : TransportUnits.secondsToHours(seconds);
+    }
     @Setter @Getter
     private String routeType;
     @Setter @Getter

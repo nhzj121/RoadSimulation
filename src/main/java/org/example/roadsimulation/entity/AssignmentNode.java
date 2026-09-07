@@ -96,4 +96,19 @@ public class AssignmentNode {
         this.weightDelta = weightDelta != null ? weightDelta : 0.0;
         this.volumeDelta = volumeDelta != null ? volumeDelta : 0.0;
     }
+
+    /**
+     * Phase 1：节点载重变化的规范吨制别名；旧 weightDelta 字段保持不变以兼容数据库。
+     */
+    @Transient
+    public Double getWeightDeltaTonnes() {
+        return weightDelta;
+    }
+
+    /**
+     * Phase 1：用吨写入节点载重变化；负数代表卸货，因此此处不能使用非负载重校验。
+     */
+    public void setWeightDeltaTonnes(Double weightDeltaTonnes) {
+        this.weightDelta = weightDeltaTonnes != null ? weightDeltaTonnes : 0.0;
+    }
 }

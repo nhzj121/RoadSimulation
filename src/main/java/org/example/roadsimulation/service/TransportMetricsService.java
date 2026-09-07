@@ -95,8 +95,17 @@ public class TransportMetricsService {
                 .filter(Objects::nonNull)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
 
+        // Phase 2：同一轮模拟内允许在执行前重建计划，但绝不能删除已经产生执行进度的路段。
+        List<AssignmentLeg> existingLegs = assignmentLegRepository
+                .findByAssignmentIdOrderBySequenceIndexAsc(assignmentId);
+        assertLegsAreSafeToRebuild(assignmentId, existingLegs);
+
         List<AssignmentLeg> legs = buildLegs(assignment, allowFallback);
+        // Phase 2：仍保留 Phase 0 的“执行前整组重建”行为；保护检查使该删除不会覆盖运行中数据。
         assignmentLegRepository.deleteByAssignmentId(assignmentId);
+        // Phase 2 修复：新路段复用从 0 开始的 sequenceIndex。必须先将旧路段删除落库，
+        // 否则 Hibernate 可能在事务提交时先执行 INSERT，触发 assignment_id + sequence_index 唯一键冲突。
+        assignmentLegRepository.flush();
         assignmentLegRepository.saveAll(legs);
 
         aggregateAssignment(assignment, legs);
@@ -252,15 +261,59 @@ public class TransportMetricsService {
         leg.setFromNode(fromNode);
         leg.setToNode(toNode);
         leg.setSequenceIndex(sequenceIndex);
-        leg.setDistanceMeters(routeMetric.distanceMeters);
-        leg.setDrivingSeconds(routeMetric.drivingSeconds);
+        // Phase 2：现有列明确写入计划值，实际值使用独立 executed_* 列并从零开始。
+        leg.setPlannedDistanceMeters(routeMetric.distanceMeters);
+        leg.setPlannedDrivingSeconds(routeMetric.drivingSeconds);
+        leg.setExecutedDistanceMeters(0.0);
+        leg.setExecutedDrivingSeconds(0L);
+        leg.setProgressStatus(AssignmentLeg.ProgressStatus.PENDING);
+        leg.setStartedSimTime(null);
+        leg.setCompletedSimTime(null);
+        // Phase 3：新规划路段尚未消费循环；执行开始后 Phase 2 的重建保护会禁止覆盖该标记。
+        leg.setLastProcessedLoopIndex(null);
         leg.setLoadState(carriedItems == null || carriedItems.isEmpty()
                 ? AssignmentLeg.LoadState.EMPTY
                 : AssignmentLeg.LoadState.LOADED);
+        // Phase 2：把进入该路段时携带货物的总吨数冻结为路段载重快照。
+        leg.setCurrentLoadTonnes(calculateCurrentLoadTonnes(carriedItems));
         leg.setCarriedShipmentItemIdList(carriedItems == null
                 ? List.of()
                 : new ArrayList<>(carriedItems.keySet()));
         return leg;
+    }
+
+    /**
+     * Phase 2：指标规划只允许覆盖尚未执行的路段。
+     * assignment_leg 虽会在整轮模拟 reset 时删除，但同一轮中的计划重建不能清除真实执行数据。
+     */
+    private void assertLegsAreSafeToRebuild(Long assignmentId, List<AssignmentLeg> existingLegs) {
+        if (existingLegs == null || existingLegs.isEmpty()) {
+            return;
+        }
+        for (AssignmentLeg leg : existingLegs) {
+            if (leg != null && leg.hasExecutionStarted()) {
+                throw new IllegalStateException(
+                        "Cannot rebuild assignment legs after execution started: assignmentId="
+                                + assignmentId + ", legId=" + leg.getId()
+                );
+            }
+        }
+    }
+
+    /**
+     * Phase 2：计算路段起点的载重快照，单位固定为吨；缺失或非法负值按零处理。
+     */
+    private double calculateCurrentLoadTonnes(Map<Long, ShipmentItem> carriedItems) {
+        if (carriedItems == null || carriedItems.isEmpty()) {
+            return 0.0;
+        }
+        double totalTonnes = 0.0;
+        for (ShipmentItem item : carriedItems.values()) {
+            if (item != null && item.getWeightTonnes() != null && item.getWeightTonnes() > 0.0) {
+                totalTonnes += item.getWeightTonnes();
+            }
+        }
+        return totalTonnes;
     }
 
     private void applyNodeAction(LinkedHashMap<Long, ShipmentItem> carriedItems, AssignmentNode node) {
@@ -375,8 +428,9 @@ public class TransportMetricsService {
         long loadedSeconds = 0L;
 
         for (AssignmentLeg leg : legs) {
-            double distance = safe(leg.getDistanceMeters());
-            long seconds = safe(leg.getDrivingSeconds());
+            // Phase 2：现有聚合仍统计计划路线，不得提前混入尚未由 Phase 3 推进的 executed_* 值。
+            double distance = safe(leg.getPlannedDistanceMeters());
+            long seconds = safe(leg.getPlannedDrivingSeconds());
             if (AssignmentLeg.LoadState.LOADED.equals(leg.getLoadState())) {
                 loadedDistance += distance;
                 loadedSeconds += seconds;
@@ -422,8 +476,9 @@ public class TransportMetricsService {
         long loadedSeconds = 0L;
 
         for (AssignmentLeg leg : legs) {
-            double distance = safe(leg.getDistanceMeters());
-            long seconds = safe(leg.getDrivingSeconds());
+            // Phase 2：车辆基线指标继续聚合计划值，确保本阶段不改变已有评价结果。
+            double distance = safe(leg.getPlannedDistanceMeters());
+            long seconds = safe(leg.getPlannedDrivingSeconds());
             if (AssignmentLeg.LoadState.LOADED.equals(leg.getLoadState())) {
                 loadedDistance += distance;
                 loadedSeconds += seconds;
@@ -483,8 +538,9 @@ public class TransportMetricsService {
 
             for (Long itemId : carriedIds) {
                 double ratio = weights.getOrDefault(itemId, 0.0) / totalWeight;
-                allocatedDistance.merge(itemId, safe(leg.getDistanceMeters()) * ratio, Double::sum);
-                allocatedSeconds.merge(itemId, Math.round(safe(leg.getDrivingSeconds()) * ratio), Long::sum);
+                // Phase 2：货物分摊保持计划口径；实际分摊将在后端进度成为权威后切换。
+                allocatedDistance.merge(itemId, safe(leg.getPlannedDistanceMeters()) * ratio, Double::sum);
+                allocatedSeconds.merge(itemId, Math.round(safe(leg.getPlannedDrivingSeconds()) * ratio), Long::sum);
             }
         }
 
@@ -505,7 +561,10 @@ public class TransportMetricsService {
 
         for (Long id : carriedIds) {
             ShipmentItem item = itemMap.get(id);
-            totalWeight += item == null || item.getWeight() == null ? 0.0 : Math.max(0.0, item.getWeight());
+            // Phase 1：分摊权重统一读取 ShipmentItem 的明确吨制总重量。
+            totalWeight += item == null || item.getWeightTonnes() == null
+                    ? 0.0
+                    : Math.max(0.0, item.getWeightTonnes());
             totalVolume += item == null || item.getVolume() == null ? 0.0 : Math.max(0.0, item.getVolume());
         }
 
@@ -513,7 +572,10 @@ public class TransportMetricsService {
             ShipmentItem item = itemMap.get(id);
             double basis;
             if (totalWeight > 0.0) {
-                basis = item == null || item.getWeight() == null ? 0.0 : Math.max(0.0, item.getWeight());
+                // Phase 1：载重仅作为比例权重，单位仍明确为吨。
+                basis = item == null || item.getWeightTonnes() == null
+                        ? 0.0
+                        : Math.max(0.0, item.getWeightTonnes());
             } else if (totalVolume > 0.0) {
                 basis = item == null || item.getVolume() == null ? 0.0 : Math.max(0.0, item.getVolume());
             } else {

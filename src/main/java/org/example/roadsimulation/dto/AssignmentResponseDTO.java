@@ -10,6 +10,8 @@ public class AssignmentResponseDTO {
     private Long id;
     private AssignmentStatus status;
     private Integer currentActionIndex;
+    // Phase 2：CRUD 响应显式返回独立路段索引，保持与详情/列表投影一致。
+    private Integer currentLegIndex;
     private LocalDateTime startTime;
     private LocalDateTime endTime;
     private List<Long> actionLine;
@@ -33,6 +35,9 @@ public class AssignmentResponseDTO {
     public void setStatus(AssignmentStatus status) { this.status = status; }
     public Integer getCurrentActionIndex() { return currentActionIndex; }
     public void setCurrentActionIndex(Integer currentActionIndex) { this.currentActionIndex = currentActionIndex; }
+    // Phase 2：路段索引只做数据投影，本阶段没有通过该 DTO 修改执行进度的入口。
+    public Integer getCurrentLegIndex() { return currentLegIndex; }
+    public void setCurrentLegIndex(Integer currentLegIndex) { this.currentLegIndex = currentLegIndex; }
     public LocalDateTime getStartTime() { return startTime; }
     public void setStartTime(LocalDateTime startTime) { this.startTime = startTime; }
     public LocalDateTime getEndTime() { return endTime; }

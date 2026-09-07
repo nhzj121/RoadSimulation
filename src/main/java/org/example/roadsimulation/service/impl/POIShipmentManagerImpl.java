@@ -114,7 +114,8 @@ public class POIShipmentManagerImpl implements POIShipmentManager {
             record.setLastUpdated(java.time.LocalDateTime.now());
         }
         pairShipmentMap.remove(key);
-        sourceToDestMap.remove(source.getId());
+        // Phase 4 修复：旧运单超时后同源可能已有新目的地，注销旧配对不得清除新运单的索引。
+        sourceToDestMap.remove(source.getId(), dest.getId());
         logger.debug("注销POI配对运单: {} → {}", source.getName(), dest.getName());
     }
 

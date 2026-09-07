@@ -59,6 +59,14 @@ public class AssignmentDTO {
     @Setter @Getter
     private Integer currentActionIndex;
 
+    // Phase 2：当前路段索引独立于 currentActionIndex，详情接口不得再让调用方推算二者关系。
+    @Setter @Getter
+    private Integer currentLegIndex;
+
+    // Phase 2：按 sequenceIndex 排序的路段计划/执行快照；本阶段只读，不改变生命周期。
+    @Setter @Getter
+    private List<AssignmentLegExecutionDTO> legs;
+
     @Setter @Getter
     private Boolean isDrawn; // 是否已被前端绘制
 

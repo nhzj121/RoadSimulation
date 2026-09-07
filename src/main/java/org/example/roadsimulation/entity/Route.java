@@ -5,6 +5,7 @@ import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
+import org.example.roadsimulation.core.TransportUnits;
 
 import java.time.LocalDateTime;
 import java.util.HashSet;
@@ -50,11 +51,13 @@ public class Route {
     //@NotNull(message = "距离不能为空")
     @Min(value = 0, message = "距离不能为负数")
     @Column(name = "distance")
+    // Phase 1（方案 A 兼容边界）：旧列继续存“公里”；运输内部必须调用 getDistanceMeters()。
     private Double distance; // 路线距离（公里）
 
     //@NotNull(message = "预计时间不能为空")
     @Min(value = 0, message = "预计时间不能为负数")
     @Column(name = "estimated_time")
+    // Phase 1（方案 A 兼容边界）：旧列继续存“小时”；运输内部必须调用 getEstimatedDrivingSeconds()。
     private Double estimatedTime; // 预计行驶时间（小时）
 
     @Column(name = "description", length = 500)
@@ -121,6 +124,58 @@ public class Route {
 
     public Double getEstimatedTime() { return estimatedTime; }
     public void setEstimatedTime(Double estimatedTime) { this.estimatedTime = estimatedTime; }
+
+    /**
+     * Phase 1：旧数据库字段 {@code distance} 的显式单位别名，供兼容层使用。
+     */
+    public Double getDistanceKilometers() { return distance; }
+
+    /**
+     * Phase 1：旧数据库字段 {@code distance} 的显式单位写入口，数值仍按公里保存。
+     */
+    public void setDistanceKilometers(Double distanceKilometers) { this.distance = distanceKilometers; }
+
+    /**
+     * Phase 1：运输内部规范距离，单位固定为米；null 继续表示尚无规划距离。
+     */
+    @Transient
+    public Double getDistanceMeters() {
+        return distance == null ? null : TransportUnits.kilometersToMeters(distance);
+    }
+
+    /**
+     * Phase 1：允许内部代码用米写入，同时在方案 A 下自动换算回旧的公里列。
+     */
+    public void setDistanceMeters(Double distanceMeters) {
+        this.distance = distanceMeters == null ? null : TransportUnits.metersToKilometers(distanceMeters);
+    }
+
+    /**
+     * Phase 1：旧数据库字段 {@code estimatedTime} 的显式单位别名，供兼容层使用。
+     */
+    public Double getEstimatedTimeHours() { return estimatedTime; }
+
+    /**
+     * Phase 1：旧数据库字段 {@code estimatedTime} 的显式单位写入口，数值仍按小时保存。
+     */
+    public void setEstimatedTimeHours(Double estimatedTimeHours) { this.estimatedTime = estimatedTimeHours; }
+
+    /**
+     * Phase 1：运输内部规范计划耗时，单位固定为秒；null 继续表示尚无计划耗时。
+     */
+    @Transient
+    public Long getEstimatedDrivingSeconds() {
+        return estimatedTime == null ? null : TransportUnits.hoursToSeconds(estimatedTime);
+    }
+
+    /**
+     * Phase 1：允许内部代码用秒写入，同时在方案 A 下自动换算回旧的小时列。
+     */
+    public void setEstimatedDrivingSeconds(Long estimatedDrivingSeconds) {
+        this.estimatedTime = estimatedDrivingSeconds == null
+                ? null
+                : TransportUnits.secondsToHours(estimatedDrivingSeconds);
+    }
 
     public String getDescription() { return description; }
     public void setDescription(String description) { this.description = description; }
