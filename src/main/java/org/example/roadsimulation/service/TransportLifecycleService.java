@@ -8,10 +8,12 @@ import org.example.roadsimulation.entity.POI;
 import org.example.roadsimulation.entity.Shipment;
 import org.example.roadsimulation.entity.ShipmentItem;
 import org.example.roadsimulation.entity.Vehicle;
+import org.example.roadsimulation.event.ShipmentDeliveredEvent;
 import org.example.roadsimulation.repository.AssignmentRepository;
 import org.example.roadsimulation.repository.ShipmentItemRepository;
 import org.example.roadsimulation.repository.ShipmentRepository;
 import org.example.roadsimulation.repository.VehicleRepository;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
@@ -40,6 +42,7 @@ public class TransportLifecycleService {
     private final VehicleRepository vehicleRepository;
     // Phase 1：生产环境中缺省业务时间必须回到唯一的 SimulationContext，而不是系统墙上时间。
     private final SimulationContext simulationContext;
+    private final ApplicationEventPublisher eventPublisher;
 
     /**
      * Phase 1：保留四参数构造器供现有纯单元测试使用；测试应优先显式传入 simNow。
@@ -55,6 +58,7 @@ public class TransportLifecycleService {
                 shipmentItemRepository,
                 assignmentRepository,
                 vehicleRepository,
+                null,
                 null
         );
     }
@@ -68,13 +72,15 @@ public class TransportLifecycleService {
             ShipmentItemRepository shipmentItemRepository,
             AssignmentRepository assignmentRepository,
             VehicleRepository vehicleRepository,
-            SimulationContext simulationContext
+            SimulationContext simulationContext,
+            ApplicationEventPublisher eventPublisher
     ) {
         this.shipmentRepository = shipmentRepository;
         this.shipmentItemRepository = shipmentItemRepository;
         this.assignmentRepository = assignmentRepository;
         this.vehicleRepository = vehicleRepository;
         this.simulationContext = simulationContext;
+        this.eventPublisher = eventPublisher;
     }
 
     public record LoadingCompletionResult(
@@ -460,6 +466,16 @@ public class TransportLifecycleService {
         }
 
         refreshShipments(touchedShipments);
+
+        if (eventPublisher != null && !touchedShipments.isEmpty()) {
+            eventPublisher.publishEvent(new ShipmentDeliveredEvent(
+                    touchedShipments.stream()
+                            .map(Shipment::getId)
+                            .filter(Objects::nonNull)
+                            .toList(),
+                    now
+            ));
+        }
     }
 
     @Transactional
