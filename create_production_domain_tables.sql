@@ -2,7 +2,8 @@
 -- Demand-driven production domain
 -- ============================================================
 -- This migration introduces the new production planning model.
--- Existing processing-chain tables remain untouched for backward compatibility.
+-- The processing-chain definition tables remain; legacy shipment processing
+-- columns are cleaned up separately by drop_legacy_processing_execution.sql.
 
 SET NAMES utf8mb4;
 

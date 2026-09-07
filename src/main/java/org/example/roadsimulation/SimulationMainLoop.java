@@ -13,7 +13,6 @@ import org.example.roadsimulation.repository.VehicleRepository;
 import org.example.roadsimulation.service.CostBaselineNormalizationService;
 import org.example.roadsimulation.service.GetCostService;
 import org.example.roadsimulation.service.POIShipmentManager;
-import org.example.roadsimulation.service.ProcessingChainServiceV2;
 import org.example.roadsimulation.service.ProductionExecutionService;
 import org.example.roadsimulation.service.TransportProgressResult;
 import org.example.roadsimulation.service.TransportProgressService;
@@ -42,9 +41,6 @@ public class SimulationMainLoop {
 
     @Autowired
     private VehicleInitializationService vehicleInitializationService;
-
-    @Autowired(required = false)
-    private ProcessingChainServiceV2 processingChainServiceV2;
 
     @Autowired
     private ProductionExecutionService productionExecutionService;
@@ -174,20 +170,6 @@ public class SimulationMainLoop {
             );
             if (shouldAbortLoop()) {
                 return;
-            }
-
-            // 兼容旧的 ProcessingChainServiceV2 数据；新功能应使用 ProductionPlan / ProductionBatch。
-            if (processingChainServiceV2 != null) {
-                if (shouldAbortLoop()) {
-                    return;
-                }
-                processingChainServiceV2.updateProcessingProgress(
-                        simNow,
-                        simulationContext.getMinutesPerLoop()
-                );
-                if (shouldAbortLoop()) {
-                    return;
-                }
             }
 
             // Phase 1：状态更新接收本轮唯一 SimulationTick；秒预算将在后续进度阶段真正消费。

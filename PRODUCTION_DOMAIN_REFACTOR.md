@@ -1,6 +1,6 @@
 # Demand-driven production domain
 
-This branch introduces a production domain that is decoupled from the legacy processing shipment model.
+This branch introduces a production domain and removes the legacy shipment-as-processing-order model.
 
 ## Domain model
 
@@ -26,6 +26,25 @@ This branch introduces a production domain that is decoupled from the legacy pro
 10. The final stage completion marks the batch complete.
 
 ## API
+
+### Manage chain definitions
+
+Only static definitions are exposed here. Creating and executing plans is handled by the production-plan API below.
+
+```http
+POST   /api/v1/processing-chains
+GET    /api/v1/processing-chains
+GET    /api/v1/processing-chains/{id}
+GET    /api/v1/processing-chains/{id}/stages
+PATCH  /api/v1/processing-chains/{id}/status?status=ACTIVE
+DELETE /api/v1/processing-chains/{id}
+
+POST   /api/v1/processing-chains/{chainId}/stages
+PUT    /api/v1/processing-chains/stages/{stageId}
+DELETE /api/v1/processing-chains/stages/{stageId}
+```
+
+### Create a random plan
 
 ### Create a random plan
 
@@ -69,4 +88,7 @@ GET /api/v1/production-plans/batches/{batchId}
 
 Run `create_production_domain_tables.sql` for environments that do not rely on Hibernate `ddl-auto=update`.
 
-The legacy `ProcessingChainServiceV2` remains active for existing data. New demand-driven processing should use the production domain above.
+The legacy processing execution model has been removed from the codebase. `Shipment` and `ShipmentItem`
+now represent transport only, while production execution is represented by `ProductionBatch` and
+`ProcessingStageExecution`. Because `ddl-auto=update` does not drop obsolete columns, existing databases
+should remove the old `shipment` / `shipment_item` processing columns in a separate migration after a backup.

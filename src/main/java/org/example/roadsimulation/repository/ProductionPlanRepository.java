@@ -9,5 +9,6 @@ import java.util.Optional;
 @Repository
 public interface ProductionPlanRepository extends JpaRepository<ProductionPlan, Long> {
     Optional<ProductionPlan> findByPlanNo(String planNo);
+    boolean existsByChainId(Long chainId);
     boolean existsByPlanNo(String planNo);
 }

@@ -9,4 +9,5 @@ import java.util.List;
 @Repository
 public interface ProductionPlanNodeRepository extends JpaRepository<ProductionPlanNode, Long> {
     List<ProductionPlanNode> findByPlanIdOrderByStageOrderAsc(Long planId);
+    boolean existsByStageId(Long stageId);
 }

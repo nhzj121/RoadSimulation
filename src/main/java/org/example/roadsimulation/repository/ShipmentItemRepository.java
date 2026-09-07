@@ -56,15 +56,4 @@ public interface ShipmentItemRepository extends JpaRepository<ShipmentItem, Long
     @Query("SELECT si FROM ShipmentItem si LEFT JOIN FETCH si.assignment WHERE si.goods.id = :goodsId")
     List<ShipmentItem> findByGoodsIdWithAssignment(@Param("goodsId") Long goodsId);
 
-    // ==================== 加工物料项查询方法 ====================
-    
-    List<ShipmentItem> findByShipmentIdOrderByStageOrder(Long shipmentId);
-    
-    Optional<ShipmentItem> findByShipmentIdAndStageOrder(Long shipmentId, Integer stageOrder);
-    
-    List<ShipmentItem> findByStageId(Long stageId);
-    
-    List<ShipmentItem> findByProcessingStatus(ShipmentItem.ProcessingItemStatus status);
-    
-    long countByStageId(Long stageId);
 }

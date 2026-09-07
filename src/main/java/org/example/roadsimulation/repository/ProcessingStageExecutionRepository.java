@@ -13,4 +13,5 @@ public interface ProcessingStageExecutionRepository extends JpaRepository<Proces
     List<ProcessingStageExecution> findByStatus(ProcessingStageExecution.ExecutionStatus status);
     Optional<ProcessingStageExecution> findByBatchIdAndStageOrder(Long batchId, Integer stageOrder);
     Optional<ProcessingStageExecution> findByInboundShipmentId(Long inboundShipmentId);
+    boolean existsByStageId(Long stageId);
 }

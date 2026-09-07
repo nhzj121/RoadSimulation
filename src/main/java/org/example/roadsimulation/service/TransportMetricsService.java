@@ -28,8 +28,6 @@ public class TransportMetricsService {
     private final ShipmentItemRepository shipmentItemRepository;
     private final ShipmentRepository shipmentRepository;
     private final VehicleRepository vehicleRepository;
-    private final ProcessingStageRepository processingStageRepository;
-    private final ProcessingChainRepository processingChainRepository;
     private final GaodeRoutePlanningQueueService routePlanningQueueService;
 
     public TransportMetricsService(
@@ -38,8 +36,6 @@ public class TransportMetricsService {
             ShipmentItemRepository shipmentItemRepository,
             ShipmentRepository shipmentRepository,
             VehicleRepository vehicleRepository,
-            ProcessingStageRepository processingStageRepository,
-            ProcessingChainRepository processingChainRepository,
             GaodeRoutePlanningQueueService routePlanningQueueService
     ) {
         this.assignmentLegRepository = assignmentLegRepository;
@@ -47,8 +43,6 @@ public class TransportMetricsService {
         this.shipmentItemRepository = shipmentItemRepository;
         this.shipmentRepository = shipmentRepository;
         this.vehicleRepository = vehicleRepository;
-        this.processingStageRepository = processingStageRepository;
-        this.processingChainRepository = processingChainRepository;
         this.routePlanningQueueService = routePlanningQueueService;
     }
 
@@ -87,14 +81,6 @@ public class TransportMetricsService {
                 .filter(Objects::nonNull)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
 
-        Set<Long> affectedStageIds = assignment.getShipmentItems().stream()
-                .filter(Objects::nonNull)
-                .map(ShipmentItem::getStage)
-                .filter(Objects::nonNull)
-                .map(ProcessingStage::getId)
-                .filter(Objects::nonNull)
-                .collect(Collectors.toCollection(LinkedHashSet::new));
-
         // Phase 2：同一轮模拟内允许在执行前重建计划，但绝不能删除已经产生执行进度的路段。
         List<AssignmentLeg> existingLegs = assignmentLegRepository
                 .findByAssignmentIdOrderBySequenceIndexAsc(assignmentId);
@@ -119,22 +105,6 @@ public class TransportMetricsService {
 
         for (Long shipmentId : affectedShipmentIds) {
             aggregateShipment(shipmentId);
-        }
-        for (Long stageId : affectedStageIds) {
-            aggregateProcessingStage(stageId);
-        }
-
-        Set<Long> affectedChainIds = affectedStageIds.stream()
-                .map(id -> processingStageRepository.findById(id).orElse(null))
-                .filter(Objects::nonNull)
-                .map(ProcessingStage::getProcessingChain)
-                .filter(Objects::nonNull)
-                .map(ProcessingChain::getId)
-                .filter(Objects::nonNull)
-                .collect(Collectors.toCollection(LinkedHashSet::new));
-
-        for (Long chainId : affectedChainIds) {
-            aggregateProcessingChain(chainId);
         }
     }
 
@@ -624,62 +594,6 @@ public class TransportMetricsService {
         shipmentRepository.save(shipment);
     }
 
-    private void aggregateProcessingStage(Long stageId) {
-        ProcessingStage stage = processingStageRepository.findById(stageId).orElse(null);
-        if (stage == null) {
-            return;
-        }
-
-        List<ShipmentItem> items = shipmentItemRepository.findByStageId(stageId);
-        double transportDistance = 0.0;
-        long transportSeconds = 0L;
-        long waitingSeconds = 0L;
-        long processingSeconds = 0L;
-
-        for (ShipmentItem item : items) {
-            transportDistance += safe(item.getAllocatedDistanceMeters());
-            transportSeconds += safe(item.getAllocatedDrivingSeconds());
-            waitingSeconds += safe(item.getWaitingAssignmentSeconds())
-                    + safe(item.getLoadingWaitSeconds())
-                    + safe(item.getUnloadingWaitSeconds());
-            processingSeconds += calculateProcessingSeconds(stage, item);
-        }
-
-        stage.setTransportDistanceMeters(transportDistance);
-        stage.setTransportDrivingSeconds(transportSeconds);
-        stage.setWaitingSeconds(waitingSeconds);
-        stage.setProcessingSeconds(processingSeconds);
-        stage.setTotalElapsedSeconds(transportSeconds + waitingSeconds + processingSeconds);
-        processingStageRepository.save(stage);
-    }
-
-    private void aggregateProcessingChain(Long chainId) {
-        ProcessingChain chain = processingChainRepository.findById(chainId).orElse(null);
-        if (chain == null) {
-            return;
-        }
-
-        List<ProcessingStage> stages = processingStageRepository.findByProcessingChainIdOrderByStageOrderAsc(chainId);
-        double transportDistance = 0.0;
-        long transportSeconds = 0L;
-        long waitingSeconds = 0L;
-        long processingSeconds = 0L;
-
-        for (ProcessingStage stage : stages) {
-            transportDistance += safe(stage.getTransportDistanceMeters());
-            transportSeconds += safe(stage.getTransportDrivingSeconds());
-            waitingSeconds += safe(stage.getWaitingSeconds());
-            processingSeconds += safe(stage.getProcessingSeconds());
-        }
-
-        chain.setTransportDistanceMeters(transportDistance);
-        chain.setTransportDrivingSeconds(transportSeconds);
-        chain.setWaitingSeconds(waitingSeconds);
-        chain.setProcessingSeconds(processingSeconds);
-        chain.setTotalElapsedSeconds(transportSeconds + waitingSeconds + processingSeconds);
-        processingChainRepository.save(chain);
-    }
-
     private long calculateAssignmentWaitingSeconds(Assignment assignment) {
         long total = 0L;
         for (ShipmentItem item : assignment.getShipmentItems()) {
@@ -694,14 +608,6 @@ public class TransportMetricsService {
         }
         long seconds = Duration.between(item.getCreatedTime(), assignment.getCreatedTime()).getSeconds();
         return Math.max(0L, seconds);
-    }
-
-    private long calculateProcessingSeconds(ProcessingStage stage, ShipmentItem item) {
-        if (item.getProcessingStartTime() != null && item.getProcessingEndTime() != null) {
-            return Math.max(0L, Duration.between(item.getProcessingStartTime(), item.getProcessingEndTime()).getSeconds());
-        }
-        Integer minutes = stage.getProcessingTimeMinutes();
-        return minutes == null ? 0L : Math.max(0L, minutes.longValue() * 60L);
     }
 
     private double haversineMeters(Double lat1, Double lon1, Double lat2, Double lon2) {
