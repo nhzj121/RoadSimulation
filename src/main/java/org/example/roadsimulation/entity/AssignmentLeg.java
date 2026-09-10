@@ -74,7 +74,7 @@ public class AssignmentLeg {
     @Column(name = "executed_distance_meters", nullable = false, columnDefinition = "double default 0")
     private Double executedDistanceMeters = 0.0;
 
-    // Phase 2：实际累计有效行驶秒数单独持久化，不能与计划 drivingSeconds 混用。
+    // Phase 7D：实际累计仿真行驶秒数单独持久化；受环境影响后可高于或低于基准计划秒数。
     @Column(name = "executed_driving_seconds", nullable = false, columnDefinition = "bigint default 0")
     private Long executedDrivingSeconds = 0L;
 
@@ -190,13 +190,10 @@ public class AssignmentLeg {
         this.executedDistanceMeters = value;
     }
 
-    // Phase 2：实际有效行驶秒数只允许非负值，且不能超过已知计划秒数。
+    // Phase 7D：实际行驶秒数只要求非负；plannedDrivingSeconds 是正常环境基准，不再是上限。
     public Long getExecutedDrivingSeconds() { return executedDrivingSeconds == null ? 0L : executedDrivingSeconds; }
     public void setExecutedDrivingSeconds(Long executedDrivingSeconds) {
         long value = requireNonNegative(executedDrivingSeconds, "executedDrivingSeconds");
-        if (drivingSeconds != null && value > drivingSeconds) {
-            throw new IllegalArgumentException("executedDrivingSeconds cannot exceed plannedDrivingSeconds");
-        }
         this.executedDrivingSeconds = value;
     }
 
@@ -306,9 +303,7 @@ public class AssignmentLeg {
         if (distanceMeters != null && executedMeters > distanceMeters + 1.0e-6) {
             throw new IllegalStateException("executedDistanceMeters cannot exceed plannedDistanceMeters");
         }
-        if (drivingSeconds != null && executedSeconds > drivingSeconds) {
-            throw new IllegalStateException("executedDrivingSeconds cannot exceed plannedDrivingSeconds");
-        }
+        // Phase 7D：不再比较实际秒数与基准计划秒数；拥堵或天气可使实际累计时间合法超出计划。
         if (startedSimTime != null && completedSimTime != null && completedSimTime.isBefore(startedSimTime)) {
             throw new IllegalStateException("completedSimTime cannot be before startedSimTime");
         }
@@ -325,8 +320,9 @@ public class AssignmentLeg {
             if (distanceMeters != null && Math.abs(executedMeters - distanceMeters) > 1.0e-6) {
                 throw new IllegalStateException("COMPLETED leg must end at plannedDistanceMeters");
             }
-            if (drivingSeconds != null && executedSeconds != drivingSeconds) {
-                throw new IllegalStateException("COMPLETED leg must end at plannedDrivingSeconds");
+            if (distanceMeters != null && distanceMeters > 0.0 && executedSeconds == 0L) {
+                // Phase 7D：正距离完成路段至少要消费一个完整仿真秒，继续拒绝零耗时瞬移。
+                throw new IllegalStateException("COMPLETED positive-distance leg requires executed driving time");
             }
         }
     }

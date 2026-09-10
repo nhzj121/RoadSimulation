@@ -64,7 +64,9 @@ public class NodeServiceObservationPublisher {
         if (assignmentId == null || vehicleId == null || poiId == null || occurredAt == null
                 || legIndex == null || legIndex < 0) {
             // Phase 7B：缺少身份的事件不能成为可信账本事实；业务推进本身不因此被拒绝。
-            reject("service start lacks stable identity", assignmentId, nodeId);
+            // Phase 7E：拒绝事件时保留事件类型和仿真时刻，供评价 reason 定位首错。
+            reject(NodeServiceObservation.Type.SERVICE_STARTED,
+                    "service start lacks stable identity", assignmentId, nodeId, occurredAt);
             return;
         }
         String eventKey = nodeId != null
@@ -93,12 +95,16 @@ public class NodeServiceObservationPublisher {
     ) {
         Long assignmentId = idOf(assignment);
         if (assignmentId == null || actionType == null || occurredAt == null) {
-            reject("service completion lacks stable identity", assignmentId, idOf(node));
+            // Phase 7E：完成事件校验失败也记录其本来应具有的事件类型。
+            reject(NodeServiceObservation.Type.SERVICE_COMPLETED,
+                    "service completion lacks stable identity", assignmentId, idOf(node), occurredAt);
             return;
         }
         Double processedTonnes = processedTonnes(assignment, node);
         if (processedTonnes == null) {
-            reject("service completion lacks valid processed tonnes", assignmentId, idOf(node));
+            // Phase 7E：无效吨数不再只留下通用健康计数。
+            reject(NodeServiceObservation.Type.SERVICE_COMPLETED,
+                    "service completion lacks valid processed tonnes", assignmentId, idOf(node), occurredAt);
             return;
         }
         publish(new NodeServiceObservation(
@@ -120,7 +126,15 @@ public class NodeServiceObservationPublisher {
             eventPublisher.publishEvent(observation);
         } catch (RuntimeException ex) {
             // Phase 7B：发布失败不回滚已存在的运输事实，但必须令本运行节点指标失败封闭。
-            recordFailure();
+            // Phase 7E：发布器把原始标量事件和异常摘要交给健康状态锁存。
+            recordFailure(
+                    "PUBLISH",
+                    observation.type(),
+                    observation.assignmentId(),
+                    observation.assignmentNodeId(),
+                    observation.occurredAt(),
+                    failureReason(ex)
+            );
             log.error(
                     "[Phase7B NodeServiceLedger] observation publish failed: type={}, assignmentId={}, nodeId={}",
                     observation.type(), observation.assignmentId(), observation.assignmentNodeId(), ex
@@ -128,19 +142,39 @@ public class NodeServiceObservationPublisher {
         }
     }
 
-    private void reject(String reason, Long assignmentId, Long nodeId) {
+    private void reject(
+            NodeServiceObservation.Type eventType,
+            String reason,
+            Long assignmentId,
+            Long nodeId,
+            LocalDateTime occurredAt
+    ) {
         // Phase 7B：身份或吨数缺失代表账本可能少记，评价层必须失败封闭而不是显示偏低值。
-        recordFailure();
+        // Phase 7E：VALIDATION 与真正的数据库投影故障分开记录，避免误判排查方向。
+        recordFailure("VALIDATION", eventType, assignmentId, nodeId, occurredAt, reason);
         log.error(
                 "[Phase7B NodeServiceLedger] observation rejected: reason={}, assignmentId={}, nodeId={}",
                 reason, assignmentId, nodeId
         );
     }
 
-    private void recordFailure() {
+    private void recordFailure(
+            String stage,
+            NodeServiceObservation.Type eventType,
+            Long assignmentId,
+            Long nodeId,
+            LocalDateTime occurredAt,
+            String reason
+    ) {
         if (health != null) {
-            health.recordProjectionFailure();
+            health.recordProjectionFailure(stage, eventType, assignmentId, nodeId, occurredAt, reason);
         }
+    }
+
+    /** Phase 7E：错误类型与消息足以排查，避免把完整堆栈复制进每轮评价快照。 */
+    private String failureReason(RuntimeException ex) {
+        String message = ex.getMessage();
+        return ex.getClass().getSimpleName() + (message == null || message.isBlank() ? "" : ": " + message);
     }
 
     private NodeServiceEpisode.ActionType actionType(Vehicle.VehicleStatus status) {

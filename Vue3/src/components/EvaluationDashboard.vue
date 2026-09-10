@@ -51,8 +51,36 @@
             <span>最大服务等待 {{ formatPlainNumber(snapshot.thresholds.maxServiceWaitSeconds, 0) }} s</span>
             <span>契约 v{{ snapshot.contractVersion }}</span>
           </div>
-          <div v-if="snapshot.errorCodes.length" class="evaluation-error-codes">
-            本轮错误：{{ snapshot.errorCodes.join('、') }}
+          <div
+            v-if="evaluationWarnings.length"
+            class="evaluation-warning-stack"
+            aria-live="polite"
+          >
+            <!-- Phase 7E-R：机器码、用户提示和事实详情分层展示，避免一行红字承担全部诊断职责。 -->
+            <article
+              v-for="warning in evaluationWarnings"
+              :key="warning.key"
+              class="evaluation-warning"
+              :class="`evaluation-warning--${warning.level}`"
+            >
+              <div class="evaluation-warning-heading">
+                <span>{{ warningLevelText(warning.level) }}</span>
+                <strong>{{ warning.title }}</strong>
+                <code v-if="warning.code">{{ warning.code }}</code>
+              </div>
+              <p>{{ warning.message }}</p>
+              <details v-if="warning.details.length" class="evaluation-warning-details">
+                <summary>查看详细信息（{{ warning.details.length }}）</summary>
+                <ul>
+                  <li
+                    v-for="(detail, detailIndex) in warning.details"
+                    :key="`${warning.key}-${detailIndex}`"
+                  >
+                    {{ detail }}
+                  </li>
+                </ul>
+              </details>
+            </article>
           </div>
         </section>
 
@@ -101,13 +129,28 @@
               v-for="metricId in group.metricIds"
               :key="metricId"
               class="evaluation-metric-row"
+              :class="metricRowClass(metricById(metricId))"
             >
-              <span>{{ metricById(metricId)?.displayName || metricId }}</span>
-              <strong>{{ formatMetric(metricById(metricId)) }}</strong>
-              <span class="evaluation-metric-state" :class="metricStatusClass(metricById(metricId))">
-                {{ metricStatusText(metricById(metricId)) }}
-                <small v-if="metricById(metricId)?.reason">{{ metricById(metricId)?.reason }}</small>
-              </span>
+              <span class="evaluation-metric-name">{{ metricById(metricId)?.displayName || metricId }}</span>
+              <strong class="evaluation-metric-value">{{ formatMetric(metricById(metricId)) }}</strong>
+              <div class="evaluation-metric-state">
+                <span
+                  class="evaluation-metric-status-pill"
+                  :class="metricStatusClass(metricById(metricId))"
+                >
+                  {{ metricStatusText(metricById(metricId)) }}
+                </span>
+                <details
+                  v-if="hasLongMetricReason(metricById(metricId))"
+                  class="evaluation-metric-reason-details"
+                >
+                  <summary>查看说明</summary>
+                  <small>{{ metricById(metricId)?.reason }}</small>
+                </details>
+                <small v-else-if="metricById(metricId)?.reason" class="evaluation-metric-reason">
+                  {{ metricById(metricId)?.reason }}
+                </small>
+              </div>
             </div>
           </div>
         </section>
@@ -123,7 +166,12 @@
             <div v-for="summary in deferredSummaries" :key="summary.key" class="evaluation-deferred-card">
               <span>{{ summary.title }}</span>
               <strong>{{ summary.available }}/{{ summary.total }} 项可用</strong>
-              <small>{{ summary.reason }}</small>
+              <div class="evaluation-deferred-counts">
+                <span v-if="summary.pending">{{ summary.pending }} 项待接入</span>
+                <span v-if="summary.unsupported">{{ summary.unsupported }} 项不支持</span>
+                <span v-if="summary.invalid">{{ summary.invalid }} 项无效</span>
+              </div>
+              <small :title="summary.reason">{{ summary.reason }}</small>
             </div>
           </div>
         </section>
@@ -150,6 +198,17 @@ import type {
   EvaluationMetricValueStatus,
   EvaluationSnapshot
 } from '../types/evaluation';
+
+type EvaluationWarningLevel = 'error' | 'warning';
+
+interface EvaluationWarning {
+  key: string;
+  level: EvaluationWarningLevel;
+  title: string;
+  message: string;
+  code: string | null;
+  details: string[];
+}
 
 /** Phase 6C：由父级切回地图；评价页本身不控制仿真生命周期。 */
 const emit = defineEmits<{ (event: 'back'): void }>();
@@ -213,8 +272,94 @@ const coreMetricGroups = Object.freeze([
       'taskEmptyPickupDistanceKm',
       'taskTonneKm'
     ]
+  },
+  {
+    key: 'environment',
+    title: '外部环境',
+    description: '可复现场景、后端实际推进因子及节点装卸观察事实。',
+    metricIds: [
+      'environmentNetworkAverageSpeedKph',
+      'environmentCongestionIndex',
+      'environmentRoadPassabilityRatio',
+      'environmentClosedRoadCount',
+      'environmentAbnormalEventCount',
+      'environmentWeatherRiskLevel',
+      'environmentTravelTimeFactor',
+      'environmentNodeAverageServiceSeconds',
+      'environmentNodeThroughputTonnes',
+      'environmentRoadRealtimeSpeedKph',
+      'environmentEnergyFactor',
+      'environmentDistanceFactor',
+      'environmentNodeQueueLength'
+    ]
   }
 ]);
+
+/** Phase 7E：从同一快照提取 INVALID 指标，不在前端推断或改写后端诊断。 */
+const invalidMetricDiagnostics = computed(() =>
+  Object.values(snapshot.value?.metrics || {})
+    .filter(metric => metric.status === 'INVALID')
+);
+
+/** Phase 7E-R：机器错误码保留原样，同时提供稳定中文解释；未知码也必须如实显示。 */
+const evaluationWarnings = computed<EvaluationWarning[]>(() => {
+  const current = snapshot.value;
+  if (!current) return [];
+
+  const warningCopy: Record<string, Omit<EvaluationWarning, 'key' | 'code' | 'details'>> = {
+    EVALUATION_INVALID_FACT: {
+      level: 'error',
+      title: '评价事实无效',
+      message: '部分指标依赖的事实违反可信性约束。本轮运输不一定失败，但对应评价值不能继续使用。'
+    },
+    EVALUATION_READY_METRIC_UNAVAILABLE: {
+      level: 'error',
+      title: '已就绪指标缺失',
+      message: '按契约应当生成的指标没有形成有效值，需要检查本轮事实采集或指标计算。'
+    },
+    EVALUATION_FACT_COLLECTION_FAILED: {
+      level: 'error',
+      title: '评价事实采集失败',
+      message: '评价层未能取得一致的本轮事实，当前快照不应作为运行结果依据。'
+    },
+    TRANSPORT_PROGRESS_ASSIGNMENT_FAILED: {
+      level: 'warning',
+      title: '部分运输任务推进失败',
+      message: '本轮其余任务仍继续推进，请结合失败任务数和后端日志定位具体任务。'
+    }
+  };
+
+  const warnings = current.errorCodes.map((code): EvaluationWarning => {
+    const known = warningCopy[code];
+    const details = code === 'EVALUATION_INVALID_FACT'
+      ? invalidMetricDiagnostics.value.map(metric =>
+        `${metric.displayName}：${metric.reason || '评价事实无效'}`)
+      : [];
+    return {
+      key: code,
+      code,
+      level: known?.level || 'warning',
+      title: known?.title || '未分类运行警告',
+      message: known?.message || '后端返回了尚未配置中文解释的机器错误码，请结合运行日志检查。',
+      details
+    };
+  });
+
+  // Phase 7E-R：防御旧快照未携带机器码的情况；只补展示，不在前端改写后端快照。
+  if (invalidMetricDiagnostics.value.length
+      && !current.errorCodes.includes('EVALUATION_INVALID_FACT')) {
+    warnings.push({
+      key: 'INVALID_METRIC_WITHOUT_ERROR_CODE',
+      code: null,
+      level: 'error',
+      title: '发现无效评价指标',
+      message: '快照包含无效指标，但没有对应机器错误码。',
+      details: invalidMetricDiagnostics.value.map(metric =>
+        `${metric.displayName}：${metric.reason || '评价事实无效'}`)
+    });
+  }
+  return warnings;
+});
 
 /** Phase 6C：单请求互斥，慢请求期间不叠加第二次读取。 */
 async function pollLatestEvaluationSnapshot(): Promise<void> {
@@ -295,10 +440,23 @@ function metricStatusText(metric: EvaluationMetricValue | null): string {
   const labels: Record<EvaluationMetricValueStatus, string> = {
     AVAILABLE: '可用',
     NOT_AVAILABLE: '暂不可用',
+    NOT_SUPPORTED: '不支持',
     NOT_APPLICABLE: '不适用',
     INVALID: '无效'
   };
   return labels[metric.status];
+}
+
+function metricRowClass(metric: EvaluationMetricValue | null): string {
+  return `evaluation-metric-row--${(metric?.status || 'MISSING').toLowerCase().replace('_', '-')}`;
+}
+
+function hasLongMetricReason(metric: EvaluationMetricValue | null): boolean {
+  return Boolean(metric?.reason && metric.reason.length > 56);
+}
+
+function warningLevelText(level: EvaluationWarningLevel): string {
+  return level === 'error' ? '异常' : '警告';
 }
 
 function metricStatusClass(metric: EvaluationMetricValue | null): string {
@@ -360,9 +518,15 @@ const deferredSummaries = computed(() => {
 
 function summarizeDeferred(key: string, title: string, metrics: EvaluationMetricValue[]) {
   const available = metrics.filter(metric => metric.status === 'AVAILABLE').length;
-  const reason = metrics.find(metric => metric.status !== 'AVAILABLE')?.reason
+  const pending = metrics.filter(metric => metric.status === 'NOT_AVAILABLE').length;
+  const unsupported = metrics.filter(metric => metric.status === 'NOT_SUPPORTED').length;
+  const invalid = metrics.filter(metric => metric.status === 'INVALID').length;
+  // Phase 7E-R：详情优先暴露真实异常，其次是待接入事实；明确不支持不再伪装成开发缺口。
+  const reason = metrics.find(metric => metric.status === 'INVALID')?.reason
+    || metrics.find(metric => metric.status === 'NOT_AVAILABLE')?.reason
+    || metrics.find(metric => metric.status === 'NOT_SUPPORTED')?.reason
     || (metrics.length ? '本轮事实已可用' : '快照中没有对应字段');
-  return { key, title, available, total: metrics.length, reason };
+  return { key, title, available, pending, unsupported, invalid, total: metrics.length, reason };
 }
 
 function readErrorMessage(error: unknown): string {
@@ -518,7 +682,84 @@ function readErrorMessage(error: unknown): string {
 .evaluation-meta-grid strong { display: block; margin-top: 6px; }
 .evaluation-thresholds { margin-top: 14px; color: #64748b; font-size: 12px; }
 .evaluation-thresholds span { padding: 5px 8px; border-radius: 6px; background: #f1f5f9; }
-.evaluation-error-codes { margin-top: 12px; color: #bd4545; font-size: 12px; }
+/* Phase 7E-R：运行警告使用独立卡片承载严重程度、机器码和可展开诊断。 */
+.evaluation-warning-stack {
+  display: grid;
+  gap: 9px;
+  margin-top: 14px;
+}
+
+.evaluation-warning {
+  padding: 11px 13px;
+  border: 1px solid #f0d5a4;
+  border-left: 4px solid #d9a441;
+  border-radius: 9px;
+  background: #fffbf2;
+  color: #76541c;
+}
+
+.evaluation-warning--error {
+  border-color: #f1c5c5;
+  border-left-color: #d85b5b;
+  background: #fff6f6;
+  color: #8f3535;
+}
+
+.evaluation-warning-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.evaluation-warning-heading > span {
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(217, 164, 65, 0.16);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.evaluation-warning--error .evaluation-warning-heading > span {
+  background: rgba(216, 91, 91, 0.13);
+}
+
+.evaluation-warning-heading code {
+  color: inherit;
+  font-size: 11px;
+  opacity: 0.72;
+}
+
+.evaluation-warning p {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.evaluation-warning-details,
+.evaluation-metric-reason-details {
+  margin-top: 7px;
+  font-size: 12px;
+}
+
+.evaluation-warning-details summary,
+.evaluation-metric-reason-details summary {
+  width: fit-content;
+  cursor: pointer;
+  font-weight: 600;
+  user-select: none;
+}
+
+.evaluation-warning-details ul {
+  margin: 7px 0 0;
+  padding-left: 18px;
+}
+
+.evaluation-warning-details li {
+  margin-top: 4px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
 
 .evaluation-objective-grid,
 .evaluation-deferred-grid {
@@ -560,6 +801,7 @@ function readErrorMessage(error: unknown): string {
   overflow: hidden;
   border: 1px solid #e6ecf3;
   border-radius: 10px;
+  background: #fff;
 }
 
 .evaluation-metric-row {
@@ -572,19 +814,86 @@ function readErrorMessage(error: unknown): string {
   border-top: 1px solid #edf1f5;
   box-sizing: border-box;
   font-size: 13px;
+  transition: background-color 0.16s ease;
 }
 
 .evaluation-metric-row:first-child { border-top: 0; }
-.evaluation-metric-row--head { min-height: 34px; background: #f2f6fa; color: #718096; font-size: 12px; }
-.evaluation-metric-state { color: #438460; }
-.evaluation-metric-state small { display: block; margin-top: 2px; color: #8994a3; }
-.evaluation-metric-state--not-available,
-.evaluation-metric-state--not-applicable { color: #a2731d; }
+.evaluation-metric-row:not(.evaluation-metric-row--head):nth-child(odd) { background: #fafbfd; }
+.evaluation-metric-row:not(.evaluation-metric-row--head):hover { background: #f3f7fb; }
+.evaluation-metric-row--invalid { background: #fff8f8 !important; }
+.evaluation-metric-row--not-supported { background: #f8fafc !important; }
+
+.evaluation-metric-row--head {
+  min-height: 36px;
+  background: #edf3f8;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.evaluation-metric-name { color: #34465a; }
+.evaluation-metric-value { color: #1f3652; font-variant-numeric: tabular-nums; }
+.evaluation-metric-state { min-width: 0; }
+
+.evaluation-metric-status-pill {
+  display: inline-flex;
+  align-items: center;
+  min-width: 52px;
+  justify-content: center;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #edf7f1;
+  color: #438460;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.evaluation-metric-state--not-available {
+  background: #fff7e6;
+  color: #a2731d;
+}
+
+.evaluation-metric-state--not-supported {
+  background: #eef2f6;
+  color: #64748b;
+}
+
+.evaluation-metric-state--not-applicable {
+  background: #f4f0fa;
+  color: #795b9f;
+}
+
 .evaluation-metric-state--invalid,
-.evaluation-metric-state--missing { color: #bd4545; }
+.evaluation-metric-state--missing {
+  background: #fff0f0;
+  color: #bd4545;
+}
+
+.evaluation-metric-reason,
+.evaluation-metric-reason-details small {
+  display: block;
+  margin-top: 5px;
+  color: #8994a3;
+  font-size: 11px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.evaluation-metric-reason-details {
+  color: #64748b;
+}
 
 .evaluation-deferred-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .evaluation-deferred-card strong { font-size: 19px; }
+.evaluation-deferred-counts { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 8px; }
+.evaluation-deferred-counts span {
+  padding: 3px 7px;
+  border-radius: 6px;
+  background: #eef3f8;
+  color: #66778a;
+  font-size: 11px;
+}
 
 .evaluation-empty-state {
   padding: 70px 20px;
@@ -607,7 +916,8 @@ function readErrorMessage(error: unknown): string {
   .evaluation-meta-grid,
   .evaluation-objective-grid,
   .evaluation-deferred-grid { grid-template-columns: 1fr; }
-  .evaluation-metric-row { grid-template-columns: 1fr; gap: 3px; padding: 12px; }
+  .evaluation-metric-row { grid-template-columns: 1fr; gap: 7px; padding: 12px; }
   .evaluation-metric-row--head { display: none; }
+  .evaluation-metric-value { font-size: 16px; }
 }
 </style>

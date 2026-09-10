@@ -8,6 +8,8 @@ package org.example.roadsimulation.evaluation;
 public enum EvaluationMetricValueStatus {
     AVAILABLE,
     NOT_AVAILABLE,
+    // Phase 7E-R：指标被当前版本明确排除，不再与“等待事实接入”混为一谈。
+    NOT_SUPPORTED,
     NOT_APPLICABLE,
     INVALID
 }

@@ -51,8 +51,10 @@ public class EvaluationSnapshotCalculator {
     private final NodeServiceEpisodeRepository nodeServiceEpisodeRepository;
     // Phase 7B：观察写入失败时显式令节点指标 INVALID，禁止少记事件后继续显示“正常”数值。
     private final NodeServiceLedgerHealth nodeServiceLedgerHealth;
+    // Phase 7C：环境场景提供器是无状态只读依赖，不接触运输推进和路线规划。
+    private final ReproducibleEnvironmentScenarioService environmentScenarioService;
 
-    /** Phase 6B/7B：保留旧构造器供既有测试逐步迁移；生产 Spring 使用八参数构造器。 */
+    /** Phase 6B/7B/7C：保留旧构造器供既有测试逐步迁移；生产 Spring 使用九参数构造器。 */
     public EvaluationSnapshotCalculator(
             EvaluationMetricCatalog catalog,
             EvaluationMetricPolicy policy,
@@ -68,6 +70,7 @@ public class EvaluationSnapshotCalculator {
                 assignmentRepository,
                 assignmentLegRepository,
                 shipmentItemRepository,
+                null,
                 null,
                 null
         );
@@ -90,6 +93,30 @@ public class EvaluationSnapshotCalculator {
                 assignmentLegRepository,
                 shipmentItemRepository,
                 nodeServiceEpisodeRepository,
+                null,
+                null
+        );
+    }
+
+    public EvaluationSnapshotCalculator(
+            EvaluationMetricCatalog catalog,
+            EvaluationMetricPolicy policy,
+            VehicleRepository vehicleRepository,
+            AssignmentRepository assignmentRepository,
+            AssignmentLegRepository assignmentLegRepository,
+            ShipmentItemRepository shipmentItemRepository,
+            NodeServiceEpisodeRepository nodeServiceEpisodeRepository,
+            NodeServiceLedgerHealth nodeServiceLedgerHealth
+    ) {
+        this(
+                catalog,
+                policy,
+                vehicleRepository,
+                assignmentRepository,
+                assignmentLegRepository,
+                shipmentItemRepository,
+                nodeServiceEpisodeRepository,
+                nodeServiceLedgerHealth,
                 null
         );
     }
@@ -103,9 +130,10 @@ public class EvaluationSnapshotCalculator {
             AssignmentLegRepository assignmentLegRepository,
             ShipmentItemRepository shipmentItemRepository,
             NodeServiceEpisodeRepository nodeServiceEpisodeRepository,
-            NodeServiceLedgerHealth nodeServiceLedgerHealth
+            NodeServiceLedgerHealth nodeServiceLedgerHealth,
+            ReproducibleEnvironmentScenarioService environmentScenarioService
     ) {
-        // Phase 6B：构造器注入保证生产环境不会静默缺少任一事实仓库或口径对象。
+        // Phase 7C：生产构造器显式包含场景提供器，旧构造器仅供旧测试兼容。
         this.catalog = catalog;
         this.policy = policy;
         this.vehicleRepository = vehicleRepository;
@@ -114,6 +142,7 @@ public class EvaluationSnapshotCalculator {
         this.shipmentItemRepository = shipmentItemRepository;
         this.nodeServiceEpisodeRepository = nodeServiceEpisodeRepository;
         this.nodeServiceLedgerHealth = nodeServiceLedgerHealth;
+        this.environmentScenarioService = environmentScenarioService;
     }
 
     /** Phase 6B 兼容入口：缺少明确 tick 时节点本轮吞吐量会保持不可用。 */
@@ -145,6 +174,8 @@ public class EvaluationSnapshotCalculator {
         calculateCargoFacts(metrics, shipmentItems, legFacts);
         calculateTaskFacts(metrics, assignments, legs, legFacts);
         calculateGlobalFacts(metrics, legFacts);
+        // Phase 7C：场景只在评价侧读取；这里不向任何运输实体或路径服务回写结果。
+        calculateEnvironmentFacts(metrics, tick);
         calculateNodeServiceFacts(metrics, nodeServiceEpisodes, tick);
 
         // Phase 6B：车辆里程类值来自同一份路段事实；这里在路段校验后统一覆盖占位结果。
@@ -167,6 +198,51 @@ public class EvaluationSnapshotCalculator {
         return metrics.finish();
     }
 
+    private void calculateEnvironmentFacts(MetricAccumulator metrics, SimulationTick tick) {
+        List<EvaluationMetricId> dependent = List.of(
+                ENV_NETWORK_AVERAGE_SPEED_KPH,
+                ENV_CONGESTION_INDEX,
+                ENV_ROAD_PASSABILITY_RATIO,
+                ENV_CLOSED_ROAD_COUNT,
+                ENV_ABNORMAL_EVENT_COUNT,
+                ENV_WEATHER_RISK_LEVEL,
+                ENV_TRAVEL_TIME_FACTOR
+        );
+        if (tick == null) {
+            // Phase 7C：环境是逐 tick 事实，兼容 calculate() 入口不能用 revision 或墙上时间补造。
+            dependent.forEach(id -> metrics.missing(id, "缺少当前 simulation tick，无法生成环境快照"));
+            return;
+        }
+        if (environmentScenarioService == null) {
+            // Phase 7C：仅旧测试构造器允许缺少依赖；生产 Spring 构造器不会进入此分支。
+            dependent.forEach(id -> metrics.missing(id, "可复现环境场景提供器不可用"));
+            return;
+        }
+
+        final EnvironmentScenarioSnapshot snapshot;
+        try {
+            snapshot = environmentScenarioService.snapshotFor(tick);
+            // Phase 7D：Shadow 与进度影响模式都可评价，但快照必须属于当前完整 tick。
+            if (snapshot.loopIndex() != tick.loopIndex()
+                    || !snapshot.validFrom().equals(tick.tickStart())
+                    || !snapshot.validTo().equals(tick.tickEnd())) {
+                throw new IllegalStateException("environment snapshot does not match current tick");
+            }
+        } catch (RuntimeException ex) {
+            // Phase 7C：环境局部失败只令七项环境指标 INVALID；其它业务事实仍可形成 PARTIAL 快照。
+            dependent.forEach(id -> metrics.invalid(id, "本轮环境快照生成或校验失败"));
+            return;
+        }
+
+        metrics.available(ENV_NETWORK_AVERAGE_SPEED_KPH, snapshot.networkAverageSpeedKph());
+        metrics.available(ENV_CONGESTION_INDEX, snapshot.congestionIndex());
+        metrics.available(ENV_ROAD_PASSABILITY_RATIO, snapshot.roadPassabilityRatio());
+        metrics.available(ENV_CLOSED_ROAD_COUNT, snapshot.closedRoadCount());
+        metrics.available(ENV_ABNORMAL_EVENT_COUNT, snapshot.abnormalEventCount());
+        metrics.available(ENV_WEATHER_RISK_LEVEL, snapshot.weatherRiskLevel());
+        metrics.available(ENV_TRAVEL_TIME_FACTOR, snapshot.travelTimeFactor());
+    }
+
     private void calculateNodeServiceFacts(
             MetricAccumulator metrics,
             List<NodeServiceEpisode> episodes,
@@ -180,8 +256,11 @@ public class EvaluationSnapshotCalculator {
         }
         if (nodeServiceLedgerHealth != null && nodeServiceLedgerHealth.hasProjectionFailures()) {
             // Phase 7B：发生过漏记风险后整轮失败封闭，不以残缺账本计算偏低的平均值或吞吐量。
-            metrics.invalid(ENV_NODE_AVERAGE_SERVICE_SECONDS, "当前运行存在节点服务账本投影失败");
-            metrics.invalid(ENV_NODE_THROUGHPUT_TONNES, "当前运行存在节点服务账本投影失败");
+            // Phase 7E：沿用指标 reason 字段返回首错上下文，顶层机器错误码仍保持稳定。
+            String reason = "当前运行存在节点服务账本投影失败；"
+                    + nodeServiceLedgerHealth.describeFirstFailure();
+            metrics.invalid(ENV_NODE_AVERAGE_SERVICE_SECONDS, reason);
+            metrics.invalid(ENV_NODE_THROUGHPUT_TONNES, reason);
             return;
         }
 
@@ -247,12 +326,23 @@ public class EvaluationSnapshotCalculator {
     public Map<String, EvaluationMetricValue> failedMetricValues(String reason) {
         MetricAccumulator metrics = new MetricAccumulator(catalog);
         for (EvaluationMetricDefinition definition : catalog.all()) {
-            EvaluationMetricValueStatus status = definition.readiness() == EvaluationMetricReadiness.NOT_APPLICABLE
-                    ? EvaluationMetricValueStatus.NOT_APPLICABLE
-                    : EvaluationMetricValueStatus.NOT_AVAILABLE;
-            metrics.replace(definition.id(), EvaluationMetricValue.unavailable(definition, status, reason));
+            EvaluationMetricValueStatus status = unresolvedStatus(definition);
+            // Phase 7E-R：整体采集失败不能覆盖“不适用/不支持”的稳定契约原因。
+            String metricReason = status == EvaluationMetricValueStatus.NOT_AVAILABLE
+                    ? reason
+                    : definition.readinessReason();
+            metrics.replace(definition.id(), EvaluationMetricValue.unavailable(definition, status, metricReason));
         }
         return metrics.finish().metrics();
+    }
+
+    private static EvaluationMetricValueStatus unresolvedStatus(EvaluationMetricDefinition definition) {
+        // Phase 7E-R：初始化和失败快照必须使用同一状态映射，防止同一指标跨入口改变语义。
+        return switch (definition.readiness()) {
+            case NOT_APPLICABLE -> EvaluationMetricValueStatus.NOT_APPLICABLE;
+            case NOT_SUPPORTED -> EvaluationMetricValueStatus.NOT_SUPPORTED;
+            default -> EvaluationMetricValueStatus.NOT_AVAILABLE;
+        };
     }
 
     private VehicleFacts calculateVehicleFacts(
@@ -777,9 +867,7 @@ public class EvaluationSnapshotCalculator {
         private MetricAccumulator(EvaluationMetricCatalog catalog) {
             this.catalog = catalog;
             for (EvaluationMetricDefinition definition : catalog.all()) {
-                EvaluationMetricValueStatus status = definition.readiness() == EvaluationMetricReadiness.NOT_APPLICABLE
-                        ? EvaluationMetricValueStatus.NOT_APPLICABLE
-                        : EvaluationMetricValueStatus.NOT_AVAILABLE;
+                EvaluationMetricValueStatus status = unresolvedStatus(definition);
                 String reason = definition.readiness() == EvaluationMetricReadiness.READY
                         ? "本轮尚未生成该 READY 指标"
                         : definition.readinessReason();

@@ -10,5 +10,7 @@ public enum EvaluationMetricReadiness {
     REQUIRES_FACT_CAPTURE,
     REQUIRES_ENVIRONMENT,
     REQUIRES_ENERGY_MODEL,
+    // Phase 7E-R：当前版本主动不提供该能力，后续只有新契约才能重新启用。
+    NOT_SUPPORTED,
     NOT_APPLICABLE
 }

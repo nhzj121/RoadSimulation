@@ -32,7 +32,18 @@ public class NodeServiceLedgerProjector {
             writer.project(observation);
         } catch (RuntimeException ex) {
             // Phase 7B：评价账本是观察侧；运输事务此时已经提交，禁止反向补偿业务状态。
-            health.recordProjectionFailure();
+            // Phase 7E：业务提交后的真实写入异常保留事件标识、仿真时刻和首个异常摘要。
+            String message = ex.getMessage();
+            String reason = ex.getClass().getSimpleName()
+                    + (message == null || message.isBlank() ? "" : ": " + message);
+            health.recordProjectionFailure(
+                    "PROJECTION",
+                    observation.type(),
+                    observation.assignmentId(),
+                    observation.assignmentNodeId(),
+                    observation.occurredAt(),
+                    reason
+            );
             log.error(
                     "[Phase7B NodeServiceLedger] projection failed: type={}, assignmentId={}, nodeId={}",
                     observation.type(), observation.assignmentId(), observation.assignmentNodeId(), ex

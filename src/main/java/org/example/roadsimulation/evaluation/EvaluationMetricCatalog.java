@@ -24,8 +24,8 @@ import static org.example.roadsimulation.evaluation.EvaluationMetricTimeScope.*;
 public final class EvaluationMetricCatalog {
 
     /** Phase 6A：快照和前端用于识别指标语义版本的稳定编号。 */
-    // Phase 7B：1.1 开始提供节点服务时长与本轮装卸处理量两个真实账本指标。
-    public static final String CONTRACT_VERSION = "1.1";
+    // Phase 7E-R：1.4 明确区分“事实待接入”与“当前版本不支持”。
+    public static final String CONTRACT_VERSION = "1.4";
 
     private static final String EVERY_TICK = "每个 simulation tick 的业务推进完成后更新";
     private static final String ZERO_DENOMINATOR = "分母大于 0；否则返回 NOT_AVAILABLE";
@@ -339,40 +339,45 @@ public final class EvaluationMetricCatalog {
 
     private List<EvaluationMetricDefinition> environmentDefinitions() {
         return List.of(
-                environment(ENV_NETWORK_AVERAGE_SPEED_KPH, "路网平均通行速度", "km/h",
+                readyEnvironment(ENV_NETWORK_AVERAGE_SPEED_KPH, "路网平均通行速度", "km/h",
                         "scenario normal network speed / travel time factor", "场景正常路网速度", "本轮旅行时间因子",
-                        "Phase 7 可复现环境场景"),
+                        "Phase 7C EnvironmentScenarioSnapshot.normalNetworkSpeedKph",
+                        "Phase 7C EnvironmentScenarioSnapshot.travelTimeFactor"),
                 environment(ENV_ROAD_REALTIME_SPEED_KPH, "各道路实时速度", "km/h",
                         "current speed per road segment", "单路段当前速度", "不适用",
-                        "Phase 7 道路速度事实"),
-                environment(ENV_CONGESTION_INDEX, "拥堵指数", "index",
+                        "已按确认口径暂缓：缺少稳定道路段身份与逐路段速度集合"),
+                readyEnvironment(ENV_CONGESTION_INDEX, "拥堵指数", "index",
                         "scenario-defined congestion index", "路网拥堵程度", "不适用",
-                        "Phase 7 deterministic congestion facts"),
-                environment(ENV_ROAD_PASSABILITY_RATIO, "道路可通行率", "ratio",
+                        "Phase 7C EnvironmentScenarioSnapshot.congestionIndex"),
+                readyEnvironment(ENV_ROAD_PASSABILITY_RATIO, "道路可通行率", "ratio",
                         "passable logical execution segments / modeled logical execution segments",
-                        "可通行逻辑执行路段数", "场景建模的逻辑执行路段数", "Phase 7 scenario passability facts"),
-                environment(ENV_CLOSED_ROAD_COUNT, "封闭路段数量", "road",
-                        "count(road.passable=false)", "封闭路段数", "不适用",
-                        "Phase 7 road passability facts"),
-                environment(ENV_ABNORMAL_EVENT_COUNT, "异常事件数", "event",
+                        "可通行逻辑执行路段数", "场景建模的逻辑执行路段数",
+                        "Phase 7C EnvironmentScenarioSnapshot.modeledRoadCount",
+                        "Phase 7C EnvironmentScenarioSnapshot.closedRoadCount"),
+                readyEnvironment(ENV_CLOSED_ROAD_COUNT, "封闭路段数量", "road",
+                        "scenario-defined closed logical execution segment count", "封闭逻辑执行路段数", "不适用",
+                        "Phase 7C EnvironmentScenarioSnapshot.closedRoadCount"),
+                readyEnvironment(ENV_ABNORMAL_EVENT_COUNT, "异常事件数", "event",
                         "count(active environment events)", "本轮生效的事故、施工等事件数", "不适用",
-                        "Phase 7 scenario events"),
-                environment(ENV_WEATHER_RISK_LEVEL, "天气风险等级", "level",
+                        "Phase 7C EnvironmentScenarioSnapshot.abnormalEventCount"),
+                readyEnvironment(ENV_WEATHER_RISK_LEVEL, "天气风险等级", "level",
                         "scenario-defined weather risk level", "本轮天气风险等级", "不适用",
-                        "Phase 7 weather facts"),
-                environment(ENV_TRAVEL_TIME_FACTOR, "旅行时间放大系数", "ratio",
+                        "Phase 7C EnvironmentScenarioSnapshot.weatherRiskLevel"),
+                readyEnvironment(ENV_TRAVEL_TIME_FACTOR, "旅行时间放大系数", "ratio",
                         "current travel time / normal travel time", "环境影响后的旅行时间", "正常旅行时间",
-                        "Phase 7 immutable per-tick environment factors"),
-                environment(ENV_DISTANCE_FACTOR, "距离修正系数", "ratio",
+                        "Phase 7C EnvironmentScenarioSnapshot.travelTimeFactor"),
+                unsupported(ENV_DISTANCE_FACTOR, "距离修正系数", "ratio", TICK_END_INSTANT,
                         "current feasible distance / frozen shortest distance", "当前可行路径距离",
-                        "无环境扰动时理论最短距离", "Phase 7 route availability and frozen route baseline"),
+                        "无环境扰动时理论最短距离",
+                        "当前版本不支持动态绕行；禁止改写同步路线规划、路线几何和前端路线展示",
+                        "动态执行路径", "冻结最短距离基线"),
                 environment(ENV_ENERGY_FACTOR, "环境能耗修正系数", "ratio",
                         "current energy per km / normal energy per km", "环境下单位里程能耗",
                         "正常单位里程能耗", "Phase 7 environment factor and Phase 8 energy baseline"),
-                // Phase 7B：项目仍无服务容量和准入竞争；排队指标继续明确不可用，禁止用 WAITING 替代。
-                fact(ENV_NODE_QUEUE_LENGTH, "节点装卸排队长度", "vehicle", TICK_END_INSTANT,
+                // Phase 7E-R：节点排队被明确排除；平均服务时间和吞吐量仍由现有服务账本支持。
+                unsupported(ENV_NODE_QUEUE_LENGTH, "节点装卸排队长度", "vehicle", TICK_END_INSTANT,
                         "count(node service episodes with status=QUEUED)", "全系统当前排队车辆数", "不适用",
-                        "存在明确节点服务容量、入队和开始服务事件后计算",
+                        "当前版本不支持节点容量竞争与排队；禁止用 Vehicle.WAITING 伪造队列",
                         "节点服务容量模型", "节点排队事件账本"),
                 // Phase 7B：平均值覆盖当前运行内所有已经闭合的 LOAD/UNLOAD 服务事件。
                 ready(ENV_NODE_AVERAGE_SERVICE_SECONDS, "节点平均服务时间", "s",
@@ -451,11 +456,56 @@ public final class EvaluationMetricCatalog {
                 ? Set.of(EvaluationMetricDependency.ENVIRONMENT_SCENARIO,
                 EvaluationMetricDependency.ENERGY_AND_CARBON_MODEL)
                 : Set.of(EvaluationMetricDependency.ENVIRONMENT_SCENARIO);
+        // Phase 7C：剩余三项的缺失原因分别落到真实依赖，不能继续笼统声称“尚无环境模型”。
+        String availability = switch (id) {
+            case ENV_ROAD_REALTIME_SPEED_KPH -> "稳定道路段身份与逐路段速度集合存在时计算";
+            case ENV_ENERGY_FACTOR -> "环境能耗因子与正常单位里程能耗基线同时存在时计算";
+            default -> "相应的环境事实存在时计算";
+        };
+        String readinessReason = switch (id) {
+            case ENV_ROAD_REALTIME_SPEED_KPH -> "已确认暂缓逐路段速度集合，网络级场景不能冒充道路级事实";
+            case ENV_ENERGY_FACTOR -> "等待 Phase 8 能耗基线；Phase 7C 不以旅行时间因子冒充能耗因子";
+            default -> "当前环境事实粒度不足";
+        };
         return definition(id, name, unit, TICK_END_INSTANT, formula, numerator, denominator,
-                "Phase 7 提供可复现环境场景事实后计算",
+                availability,
                 EvaluationMetricReadiness.REQUIRES_ENVIRONMENT,
                 EvaluationMetricValueStatus.NOT_AVAILABLE,
-                dependencies, "等待 Phase 7 的可复现外部环境模型", sources);
+                dependencies, readinessReason, sources);
+    }
+
+    private EvaluationMetricDefinition readyEnvironment(
+            EvaluationMetricId id,
+            String name,
+            String unit,
+            String formula,
+            String numerator,
+            String denominator,
+            String... sources
+    ) {
+        // Phase 7C：只把已有确定性 tick 快照直接支撑的标量指标提升为 READY。
+        return definition(id, name, unit, TICK_END_INSTANT, formula, numerator, denominator,
+                DIRECT_VALUE, EvaluationMetricReadiness.READY, EvaluationMetricValueStatus.NOT_AVAILABLE,
+                Set.of(EvaluationMetricDependency.ENVIRONMENT_SCENARIO),
+                "Phase 7D 已具有可复现且与实际推进同源的逐 tick 环境事实", sources);
+    }
+
+    private EvaluationMetricDefinition unsupported(
+            EvaluationMetricId id,
+            String name,
+            String unit,
+            EvaluationMetricTimeScope scope,
+            String formula,
+            String numerator,
+            String denominator,
+            String reason,
+            String... sources
+    ) {
+        // Phase 7E-R：不支持是稳定契约结论，不声明尚待满足的事实或环境依赖。
+        return definition(id, name, unit, scope, formula, numerator, denominator,
+                "当前契约版本明确不计算该指标",
+                EvaluationMetricReadiness.NOT_SUPPORTED, EvaluationMetricValueStatus.NOT_SUPPORTED,
+                Set.of(), reason, sources);
     }
 
     private EvaluationMetricDefinition notApplicable(

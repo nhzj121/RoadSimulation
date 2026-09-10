@@ -16,6 +16,8 @@ export type EvaluationMetricCategory =
 export type EvaluationMetricValueStatus =
   | 'AVAILABLE'
   | 'NOT_AVAILABLE'
+  // Phase 7E-R：后端明确声明当前契约不提供该指标，不代表采集失败。
+  | 'NOT_SUPPORTED'
   | 'NOT_APPLICABLE'
   | 'INVALID';
 
