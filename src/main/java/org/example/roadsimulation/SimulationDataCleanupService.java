@@ -4,6 +4,7 @@ import org.example.roadsimulation.entity.*;
 import org.example.roadsimulation.repository.*;
 import jakarta.persistence.EntityManager;
 import org.example.roadsimulation.service.TransportLifecycleService;
+import org.example.roadsimulation.evaluation.NodeServiceLedgerHealth;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -44,6 +45,14 @@ public class SimulationDataCleanupService {
     @Autowired
     private AssignmentLegRepository assignmentLegRepository;
 
+    // Phase 7B：节点服务事件属于单次仿真运行事实，完整 reset 必须先于任务和节点删除。
+    @Autowired
+    private NodeServiceEpisodeRepository nodeServiceEpisodeRepository;
+
+    // Phase 7B：完整 reset 在账本删除成功后同时恢复观察侧健康状态。
+    @Autowired
+    private NodeServiceLedgerHealth nodeServiceLedgerHealth;
+
     @Autowired
     private VehicleRepository vehicleRepository;
 
@@ -70,6 +79,13 @@ public class SimulationDataCleanupService {
 
         try {
             // 删除顺序按实际外键依赖从叶子节点向业务主数据回退：
+            // Phase 7B：node_service_episode 使用标量标识但仍先清理，避免新运行继承上一轮评价样本。
+            long nodeServiceEpisodeCount = nodeServiceEpisodeRepository.count();
+            nodeServiceEpisodeRepository.deleteAllInBatch();
+            nodeServiceEpisodeRepository.flush();
+            System.out.println("Deleted " + nodeServiceEpisodeCount + " node_service_episode records");
+            clearPersistenceContext();
+
             // assignment_leg -> assignment_nodes -> shipment_item -> assignment -> shipment -> enrollment
             long assignmentLegCount = assignmentLegRepository.count();
             assignmentLegRepository.deleteAllInBatch();
@@ -108,6 +124,9 @@ public class SimulationDataCleanupService {
             enrollmentRepository.flush();
             System.out.println("已删除 " + enrollmentCount + " 条Enrollment记录");
             clearPersistenceContext();
+
+            // Phase 7B：只有全部运行数据清理成功后才允许新运行重新发布节点指标。
+            nodeServiceLedgerHealth.reset();
 
             long endTime = System.currentTimeMillis();
             System.out.println("模拟数据清理完成，耗时 " + (endTime - startTime) + "ms");

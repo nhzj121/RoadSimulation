@@ -50,7 +50,7 @@ public class AssignmentNode {
     @JoinColumn(name = "shipment_item_id")
     private ShipmentItem shipmentItem;
 
-    // 实际到达/完成时间
+    // Phase 7B：仅表示路段到达本节点的仿真时间；服务完成时间进入 NodeServiceEpisode 独立账本。
     private LocalDateTime actualArrivalTime;
 
     // 定义节点动作类型的枚举

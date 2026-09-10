@@ -1,6 +1,8 @@
 package org.example.roadsimulation.service;
 
 import org.example.roadsimulation.core.SimulationContext;
+import org.example.roadsimulation.evaluation.NodeServiceEpisode;
+import org.example.roadsimulation.evaluation.NodeServiceObservationPublisher;
 import org.example.roadsimulation.entity.Assignment;
 import org.example.roadsimulation.entity.AssignmentLeg;
 import org.example.roadsimulation.entity.AssignmentNode;
@@ -40,6 +42,8 @@ public class TransportLifecycleService {
     private final VehicleRepository vehicleRepository;
     // Phase 1：生产环境中缺省业务时间必须回到唯一的 SimulationContext，而不是系统墙上时间。
     private final SimulationContext simulationContext;
+    // Phase 7B：观察器只复制已完成的生命周期事实，绝不参与状态选择或路段推进。
+    private final NodeServiceObservationPublisher nodeServiceObservationPublisher;
 
     /**
      * Phase 1：保留四参数构造器供现有纯单元测试使用；测试应优先显式传入 simNow。
@@ -55,14 +59,14 @@ public class TransportLifecycleService {
                 shipmentItemRepository,
                 assignmentRepository,
                 vehicleRepository,
+                null,
                 null
         );
     }
 
     /**
-     * Phase 1：Spring 生产构造器注入唯一仿真时钟；不存在前端或系统时间驱动业务状态的入口。
+     * Phase 1/7B：保留五参数构造器供既有纯单元测试使用；测试未显式注入观察器时不发布事件。
      */
-    @Autowired
     public TransportLifecycleService(
             ShipmentRepository shipmentRepository,
             ShipmentItemRepository shipmentItemRepository,
@@ -70,11 +74,34 @@ public class TransportLifecycleService {
             VehicleRepository vehicleRepository,
             SimulationContext simulationContext
     ) {
+        this(
+                shipmentRepository,
+                shipmentItemRepository,
+                assignmentRepository,
+                vehicleRepository,
+                simulationContext,
+                null
+        );
+    }
+
+    /**
+     * Phase 7B：Spring 生产构造器同时注入唯一仿真时钟和提交后节点服务观察器。
+     */
+    @Autowired
+    public TransportLifecycleService(
+            ShipmentRepository shipmentRepository,
+            ShipmentItemRepository shipmentItemRepository,
+            AssignmentRepository assignmentRepository,
+            VehicleRepository vehicleRepository,
+            SimulationContext simulationContext,
+            NodeServiceObservationPublisher nodeServiceObservationPublisher
+    ) {
         this.shipmentRepository = shipmentRepository;
         this.shipmentItemRepository = shipmentItemRepository;
         this.assignmentRepository = assignmentRepository;
         this.vehicleRepository = vehicleRepository;
         this.simulationContext = simulationContext;
+        this.nodeServiceObservationPublisher = nodeServiceObservationPublisher;
     }
 
     public record LoadingCompletionResult(
@@ -165,6 +192,16 @@ public class TransportLifecycleService {
         }
         refreshShipments(touchedShipments);
         syncVehicleRuntimeLoad(assignment, null, actor);
+        if (!hasNodes(assignment) && nodeServiceObservationPublisher != null) {
+            // Phase 7B：普通任务没有 AssignmentNode，装货窗口到期即形成唯一 LOAD 完成事件。
+            nodeServiceObservationPublisher.serviceCompleted(
+                    assignment,
+                    assignment.getAssignedVehicle(),
+                    null,
+                    NodeServiceEpisode.ActionType.LOAD,
+                    resolveTime(simNow)
+            );
+        }
     }
 
     @Transactional
@@ -304,7 +341,10 @@ public class TransportLifecycleService {
         }
 
         node.setCompleted(true);
-        node.setActualArrivalTime(now);
+        // Phase 7B：旧字段固定回归“到达时间”语义；历史任务缺少开始观察时才以完成时刻兜底。
+        if (node.getActualArrivalTime() == null) {
+            node.setActualArrivalTime(now);
+        }
         advanceNodeIndex(assignment);
         assignment.setUpdatedBy(actor);
         assignment.setUpdatedTime(LocalDateTime.now());
@@ -312,6 +352,13 @@ public class TransportLifecycleService {
 
         syncVehicleRuntimeLoad(assignment, vehicle, actor);
         refreshShipments(touchedShipments);
+        NodeServiceEpisode.ActionType completedAction = nodeServiceAction(node.getActionType());
+        if (completedAction != null && nodeServiceObservationPublisher != null) {
+            // Phase 7B：VRP 每个 LOAD/UNLOAD 节点各自闭合，不把 PASS_BY 驻留计入装卸服务。
+            nodeServiceObservationPublisher.serviceCompleted(
+                    assignment, vehicle, node, completedAction, now
+            );
+        }
     }
 
     @Transactional
@@ -374,10 +421,21 @@ public class TransportLifecycleService {
 
         Vehicle.VehicleStatus nextStatus = resolveArrivalActionStatus(leg, allLegsCompleted);
         LocalDateTime actionStart = resolveTime(nextActionStart);
+        AssignmentNode arrivalNode = leg.getToNode();
+        if (arrivalNode != null && arrivalNode.getActualArrivalTime() == null) {
+            // Phase 7B：到达事实必须在路段完成边界记录，不能再等装卸窗口结束后覆盖。
+            arrivalNode.setActualArrivalTime(actionStart);
+        }
         managedVehicle.transitionToStatus(nextStatus, actionStart, BACKEND_NODE_ACTION_WINDOW);
         managedVehicle.setUpdatedBy(actor);
         managedVehicle.setUpdatedTime(LocalDateTime.now());
         vehicleRepository.save(managedVehicle);
+        if (nodeServiceObservationPublisher != null) {
+            // Phase 7B：发布发生在既有状态写入之后；账本监听器只会在当前事务提交后落库。
+            nodeServiceObservationPublisher.serviceStarted(
+                    assignment, leg, managedVehicle, nextStatus, actionStart
+            );
+        }
     }
 
     /**
@@ -460,6 +518,16 @@ public class TransportLifecycleService {
         }
 
         refreshShipments(touchedShipments);
+        if (!hasNodes(assignment) && nodeServiceObservationPublisher != null) {
+            // Phase 7B：普通任务卸货没有节点对象，由唯一交付完成边界闭合 UNLOAD 服务事件。
+            nodeServiceObservationPublisher.serviceCompleted(
+                    assignment,
+                    managedVehicle != null ? managedVehicle : vehicle,
+                    null,
+                    NodeServiceEpisode.ActionType.UNLOAD,
+                    now
+            );
+        }
     }
 
     @Transactional
@@ -669,6 +737,16 @@ public class TransportLifecycleService {
 
     private boolean hasNodes(Assignment assignment) {
         return assignment != null && assignment.getNodes() != null && !assignment.getNodes().isEmpty();
+    }
+
+    private NodeServiceEpisode.ActionType nodeServiceAction(AssignmentNode.NodeActionType actionType) {
+        if (actionType == AssignmentNode.NodeActionType.LOAD) {
+            return NodeServiceEpisode.ActionType.LOAD;
+        }
+        if (actionType == AssignmentNode.NodeActionType.UNLOAD) {
+            return NodeServiceEpisode.ActionType.UNLOAD;
+        }
+        return null;
     }
 
     private AssignmentNode resolveCurrentNode(Assignment assignment) {

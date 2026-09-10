@@ -4,10 +4,13 @@ import org.example.roadsimulation.core.SimulationTick;
 import org.example.roadsimulation.entity.Assignment;
 import org.example.roadsimulation.entity.AssignmentLeg;
 import org.example.roadsimulation.entity.Vehicle;
+import org.example.roadsimulation.evaluation.EnvironmentScenarioSnapshot;
+import org.example.roadsimulation.evaluation.ReproducibleEnvironmentScenarioService;
 import org.example.roadsimulation.repository.AssignmentLegRepository;
 import org.example.roadsimulation.repository.AssignmentRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -22,7 +25,7 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * Phase 4：后端权威运输路段进度服务。
+ * Phase 7D：支持可复现环境影响的后端权威运输路段进度服务。
  *
  * <p>本服务仍只计算“走到哪里”，但在路段新完成时会把唯一事件交给
  * {@link TransportLifecycleService}。货物、任务和车辆动作仍由生命周期服务执行，
@@ -42,12 +45,32 @@ public class TransportProgressService {
     // Phase 4：路段完成后只通知生命周期服务，不在本类散写车辆/货物状态。
     private final TransportLifecycleService transportLifecycleService;
     private final TransactionTemplate assignmentProgressTransaction;
+    // Phase 7D：生产推进必须读取与评价侧同源的确定性环境快照，不读取前端或路线动画状态。
+    private final ReproducibleEnvironmentScenarioService environmentScenarioService;
 
     public TransportProgressService(
             AssignmentRepository assignmentRepository,
             AssignmentLegRepository assignmentLegRepository,
             TransportLifecycleService transportLifecycleService,
             PlatformTransactionManager transactionManager
+    ) {
+        // Phase 7D：四参数构造器只保留旧单元测试的无环境基线口径；生产 Spring 使用五参数构造器。
+        this(
+                assignmentRepository,
+                assignmentLegRepository,
+                transportLifecycleService,
+                transactionManager,
+                null
+        );
+    }
+
+    @Autowired
+    public TransportProgressService(
+            AssignmentRepository assignmentRepository,
+            AssignmentLegRepository assignmentLegRepository,
+            TransportLifecycleService transportLifecycleService,
+            PlatformTransactionManager transactionManager,
+            ReproducibleEnvironmentScenarioService environmentScenarioService
     ) {
         this.assignmentRepository = assignmentRepository;
         this.assignmentLegRepository = assignmentLegRepository;
@@ -60,11 +83,12 @@ public class TransportProgressService {
                 Objects.requireNonNull(transactionManager, "transactionManager must not be null")
         );
         this.assignmentProgressTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        this.environmentScenarioService = environmentScenarioService;
     }
 
     /**
-     * Phase 4：推进当前数据库中所有 IN_PROGRESS 且仍有未完成路段的任务。
-     * 外部环境在 Phase 7 才引入；本阶段固定使用规划距离/规划秒数，不使用随机倍率。
+     * Phase 7D：推进当前数据库中所有 IN_PROGRESS 且仍有未完成路段的任务。
+     * 同一个 tick 只解析一次确定性环境快照，所有候选任务共享完全相同的旅行时间因子。
      */
     public List<TransportProgressResult> advanceAllActiveAssignments(SimulationTick tick) {
         requireTick(tick);
@@ -76,22 +100,25 @@ public class TransportProgressService {
             return List.of();
         }
 
+        // Phase 7D：先固定本轮因子再逐任务开事务，禁止某个任务因调用顺序获得不同环境。
+        double travelTimeFactor = resolveTravelTimeFactor(tick);
+
         List<TransportProgressResult> results = new ArrayList<>();
         for (Long assignmentId : assignmentIds) {
             if (assignmentId != null) {
                 try {
                     // Phase 4：TransactionTemplate 保证每个 Assignment 的路段+动作事件独立提交或回滚。
                     TransportProgressResult result = assignmentProgressTransaction.execute(
-                            status -> advanceAssignment(assignmentId, tick)
+                            status -> advanceAssignmentWithFactor(assignmentId, tick, travelTimeFactor)
                     );
                     if (result == null) {
                         throw new IllegalStateException("Authoritative progress transaction returned no result");
                     }
                     results.add(result);
                 } catch (RuntimeException ex) {
-                    // Phase 4：单任务失败作为数据返回，其它车辆仍可在本轮继续推进。
+                    // Phase 7D：单任务失败仍作为数据返回；环境接入不能破坏原有的逐任务故障隔离。
                     log.error(
-                            "[Phase4 Progress] assignment failed but remaining assignments continue. assignmentId={}, loop={}, reason={}",
+                            "[Phase7D Progress] assignment failed but remaining assignments continue. assignmentId={}, loop={}, reason={}",
                             assignmentId,
                             tick.loopIndex(),
                             ex.getMessage(),
@@ -125,6 +152,20 @@ public class TransportProgressService {
             throw new IllegalArgumentException("assignmentId must not be null");
         }
         requireTick(tick);
+        // Phase 7D：诊断/单任务公开入口同样按当前 tick 解析因子，不能绕过环境影响。
+        return advanceAssignmentWithFactor(assignmentId, tick, resolveTravelTimeFactor(tick));
+    }
+
+    private TransportProgressResult advanceAssignmentWithFactor(
+            Long assignmentId,
+            SimulationTick tick,
+            double travelTimeFactor
+    ) {
+        if (assignmentId == null) {
+            throw new IllegalArgumentException("assignmentId must not be null");
+        }
+        requireTick(tick);
+        requireTravelTimeFactor(travelTimeFactor);
 
         Assignment assignment = assignmentRepository.findById(assignmentId)
                 .orElseThrow(() -> new IllegalArgumentException("Assignment not found: " + assignmentId));
@@ -231,11 +272,11 @@ public class TransportProgressService {
             transportLifecycleService.markTransportStarted(
                     assignment,
                     tick.tickStart(),
-                    "Phase4 TransportProgressService"
+                    "Phase7D TransportProgressService"
             );
         }
 
-        TransportProgressResult result = advanceCurrentLeg(assignment, legs, leg, tick);
+        TransportProgressResult result = advanceCurrentLeg(assignment, legs, leg, tick, travelTimeFactor);
         // Phase 4：显式 save 保留清晰写入边界；@Version 拒绝重复请求的静默覆盖。
         assignmentLegRepository.save(leg);
         if (result.legCompleted()) {
@@ -247,7 +288,7 @@ public class TransportProgressService {
                     vehicle,
                     tick.tickEnd(),
                     result.allLegsCompleted(),
-                    "Phase4 TransportProgressService"
+                    "Phase7D TransportProgressService"
             );
         }
         return result;
@@ -257,7 +298,8 @@ public class TransportProgressService {
             Assignment assignment,
             List<AssignmentLeg> legs,
             AssignmentLeg leg,
-            SimulationTick tick
+            SimulationTick tick,
+            double travelTimeFactor
     ) {
         double plannedDistance = requirePlannedDistance(assignment.getId(), leg);
         long plannedSeconds = requirePlannedSeconds(assignment.getId(), leg);
@@ -272,23 +314,25 @@ public class TransportProgressService {
                             + assignment.getId() + ", legIndex=" + leg.getSequenceIndex()
             );
         }
-        if (executedSeconds > plannedSeconds) {
-            throw new IllegalStateException("Executed seconds exceed plan before authoritative advancement");
+        if (!Double.isFinite(executedDistance)
+                || executedDistance < 0.0
+                || executedDistance > plannedDistance + 1.0e-6) {
+            throw new IllegalStateException("Invalid executed distance before authoritative advancement");
         }
 
-        long remainingLegSeconds = plannedSeconds - executedSeconds;
-        long consumedSeconds = Math.min(tick.availableSeconds(), remainingLegSeconds);
+        ProgressSlice slice = plannedDistance == 0.0
+                ? advanceZeroDistanceCompatibilityLeg(plannedSeconds, executedSeconds, tick.availableSeconds())
+                : advancePositiveDistanceLeg(
+                        plannedDistance,
+                        plannedSeconds,
+                        executedDistance,
+                        tick.availableSeconds(),
+                        travelTimeFactor
+                );
+        long consumedSeconds = slice.consumedSeconds();
         long newExecutedSeconds = Math.addExact(executedSeconds, consumedSeconds);
-        boolean completed = newExecutedSeconds == plannedSeconds;
-
-        double newExecutedDistance;
-        if (completed) {
-            // Phase 3：完成时直接落在计划终点，消除浮点除法造成的尾差和越界。
-            newExecutedDistance = plannedDistance;
-        } else {
-            // Phase 3：时间是唯一累计资源，距离每次由累计秒数反算，避免两个累计量各自截断后漂移。
-            newExecutedDistance = plannedDistance * newExecutedSeconds / (double) plannedSeconds;
-        }
+        boolean completed = slice.completed();
+        double newExecutedDistance = slice.newExecutedDistanceMeters();
         // Phase 3 修复：累计距离的单调性不使用“允许回退”的浮点容差；哪怕极小回退也必须拒绝写库。
         if (newExecutedDistance < executedDistance) {
             throw new IllegalStateException("Authoritative advancement would move executed distance backwards");
@@ -319,11 +363,12 @@ public class TransportProgressService {
         if (allLegsCompleted) {
             // Phase 4：所有行驶路段完成只代表“已到达”；任务仍需经过后端 UNLOADING 才变为 COMPLETED。
             log.info(
-                    "[Phase4 Progress] assignmentId={} finished all legs at loop={}, status={}, arrivalTime={}",
+                    "[Phase7D Progress] assignmentId={} finished all legs at loop={}, status={}, arrivalTime={}, travelTimeFactor={}",
                     assignment.getId(),
                     tick.loopIndex(),
                     assignment.getStatus(),
-                    leg.getCompletedSimTime()
+                    leg.getCompletedSimTime(),
+                    travelTimeFactor
             );
         }
 
@@ -339,6 +384,68 @@ public class TransportProgressService {
                 completed,
                 allLegsCompleted
         );
+    }
+
+    private ProgressSlice advancePositiveDistanceLeg(
+            double plannedDistance,
+            long plannedSeconds,
+            double executedDistance,
+            long availableSeconds,
+            double travelTimeFactor
+    ) {
+        // Phase 7D：正距离路段必须有正基准时长，否则无法定义正常环境下的基准速度。
+        if (plannedSeconds <= 0L) {
+            throw new IllegalStateException("Positive-distance leg requires positive planned seconds");
+        }
+
+        double remainingDistance = Math.max(plannedDistance - executedDistance, 0.0);
+        double remainingBaselineSeconds = plannedSeconds * remainingDistance / plannedDistance;
+        double actualSecondsToFinish = remainingBaselineSeconds * travelTimeFactor;
+        if (!Double.isFinite(actualSecondsToFinish) || actualSecondsToFinish < 0.0) {
+            throw new IllegalStateException("Environment-adjusted remaining driving time is invalid");
+        }
+
+        // Phase 7D：完成判定与持久化秒数使用同一整数化结果，避免浮点边界多跑或少跑一轮。
+        long wholeSecondsToFinish = ceilToWholeSimulationSeconds(actualSecondsToFinish);
+        boolean completed = wholeSecondsToFinish <= availableSeconds;
+        long consumedSeconds = completed ? wholeSecondsToFinish : availableSeconds;
+
+        double newExecutedDistance;
+        if (completed) {
+            // Phase 7D：完成仍精确落在冻结计划终点，实际秒数不再被截断回计划秒数。
+            newExecutedDistance = plannedDistance;
+        } else {
+            double baselineSecondsCompleted = consumedSeconds / travelTimeFactor;
+            double distanceIncrement = plannedDistance * baselineSecondsCompleted / plannedSeconds;
+            newExecutedDistance = Math.min(plannedDistance, executedDistance + distanceIncrement);
+        }
+        return new ProgressSlice(consumedSeconds, newExecutedDistance, completed);
+    }
+
+    private ProgressSlice advanceZeroDistanceCompatibilityLeg(
+            long plannedSeconds,
+            long executedSeconds,
+            long availableSeconds
+    ) {
+        // Phase 7D：零距离正耗时是旧数据兼容的“时间型路段”，不代表道路行驶，故不套用环境因子。
+        if (executedSeconds > plannedSeconds) {
+            throw new IllegalStateException("Zero-distance compatibility leg exceeds planned seconds");
+        }
+        long remainingSeconds = plannedSeconds - executedSeconds;
+        long consumedSeconds = Math.min(availableSeconds, remainingSeconds);
+        return new ProgressSlice(consumedSeconds, 0.0, consumedSeconds == remainingSeconds);
+    }
+
+    private long ceilToWholeSimulationSeconds(double seconds) {
+        if (!Double.isFinite(seconds) || seconds < 0.0 || seconds > Long.MAX_VALUE) {
+            throw new IllegalStateException("Environment-adjusted completion time is outside long-second range");
+        }
+        long floor = (long) Math.floor(seconds);
+        // Phase 7D：吸收浮点乘除在整数秒附近产生的极小尾差，同时绝不把真实小数秒向下截断。
+        if (seconds - floor <= 1.0e-9) {
+            return floor;
+        }
+        return Math.addExact(floor, 1L);
     }
 
     private List<AssignmentLeg> orderedAndValidatedLegs(Long assignmentId) {
@@ -456,9 +563,45 @@ public class TransportProgressService {
         throw new IllegalStateException("Active assignment leg has no load state: legId=" + leg.getId());
     }
 
+    private double resolveTravelTimeFactor(SimulationTick tick) {
+        requireTick(tick);
+        if (environmentScenarioService == null) {
+            // Phase 7D：旧四参数测试构造器保持 factor=1 基线；生产构造器必须注入环境服务。
+            return 1.0;
+        }
+
+        EnvironmentScenarioSnapshot snapshot = environmentScenarioService.snapshotFor(tick);
+        if (snapshot == null
+                || snapshot.loopIndex() != tick.loopIndex()
+                || !snapshot.validFrom().equals(tick.tickStart())
+                || !snapshot.validTo().equals(tick.tickEnd())) {
+            throw new IllegalStateException("Environment snapshot does not match current progress tick");
+        }
+        if (!snapshot.progressInfluenceEnabled()) {
+            // Phase 7D：生产推进不得把 Shadow 快照静默当作 factor=1，否则评价与执行会再次分叉。
+            throw new IllegalStateException("Environment snapshot is not enabled for transport progress");
+        }
+        return requireTravelTimeFactor(snapshot.travelTimeFactor());
+    }
+
+    private double requireTravelTimeFactor(double travelTimeFactor) {
+        if (!Double.isFinite(travelTimeFactor) || travelTimeFactor <= 0.0) {
+            throw new IllegalStateException("travelTimeFactor must be positive and finite");
+        }
+        return travelTimeFactor;
+    }
+
     private void requireTick(SimulationTick tick) {
         if (tick == null) {
             throw new IllegalArgumentException("simulation tick must not be null");
         }
+    }
+
+    /** Phase 7D：单轮数学结果把实际消费秒数、累计距离和完成事件绑定为一个不可分对象。 */
+    private record ProgressSlice(
+            long consumedSeconds,
+            double newExecutedDistanceMeters,
+            boolean completed
+    ) {
     }
 }
