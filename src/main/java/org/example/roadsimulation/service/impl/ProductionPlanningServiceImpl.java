@@ -19,6 +19,7 @@ import org.example.roadsimulation.repository.ProcessingStageExecutionRepository;
 import org.example.roadsimulation.repository.ProductionBatchRepository;
 import org.example.roadsimulation.repository.ProductionPlanNodeRepository;
 import org.example.roadsimulation.repository.ProductionPlanRepository;
+import org.example.roadsimulation.service.ProcessingChainSkuValidator;
 import org.example.roadsimulation.service.ProductionPlanningService;
 import org.example.roadsimulation.service.TransportDemandService;
 import org.springframework.stereotype.Service;
@@ -94,7 +95,7 @@ public class ProductionPlanningServiceImpl implements ProductionPlanningService 
         ProductionPlan plan = new ProductionPlan();
         plan.setPlanNo(generatePlanNo());
         plan.setChain(chain);
-        plan.setFinalSku(resolveOutputSku(stages.get(stages.size() - 1)));
+        plan.setFinalSku(ProcessingChainSkuValidator.resolveOutputSku(stages.get(stages.size() - 1)));
         plan.setFinalDemandWeight(finalDemand);
         plan.setSourcePOI(sourcePOI);
         plan.setRandomSeed(request.randomSeed());
@@ -207,8 +208,8 @@ public class ProductionPlanningServiceImpl implements ProductionPlanningService 
             node.setPlan(plan);
             node.setStage(stage);
             node.setStageOrder(stage.getStageOrder());
-            node.setInputSku(resolveInputSku(stage));
-            node.setOutputSku(resolveOutputSku(stage));
+            node.setInputSku(ProcessingChainSkuValidator.resolveInputSku(stage));
+            node.setOutputSku(ProcessingChainSkuValidator.resolveOutputSku(stage));
             node.setPlannedInputWeight(round(inputs[i]));
             node.setPlannedOutputWeight(round(outputs[i]));
             node.setStatus(ProductionPlanNode.NodeStatus.PLANNED);
@@ -246,7 +247,7 @@ public class ProductionPlanningServiceImpl implements ProductionPlanningService 
                     .orElseThrow(() -> new IllegalArgumentException("来源 POI 不存在: " + sourcePoiId));
         }
 
-        String inputSku = resolveInputSku(firstStage);
+        String inputSku = ProcessingChainSkuValidator.resolveInputSku(firstStage);
         if (inputSku == null || inputSku.isBlank()) {
             throw new IllegalStateException("第一道工序缺少输入 SKU，无法推断原材料来源 POI");
         }
@@ -270,6 +271,7 @@ public class ProductionPlanningServiceImpl implements ProductionPlanningService 
     }
 
     private void validateStages(List<ProcessingStage> stages) {
+        ProcessingChainSkuValidator.validateStages(stages);
         if (stages.isEmpty()) {
             throw new IllegalStateException("加工链没有工序");
         }
@@ -297,20 +299,6 @@ public class ProductionPlanningServiceImpl implements ProductionPlanningService 
 
     private double outputRatio(ProcessingStage stage) {
         return stage.getOutputWeightRatio() == null ? 1.0 : stage.getOutputWeightRatio();
-    }
-
-    private String resolveInputSku(ProcessingStage stage) {
-        if (stage.getInputGoods() != null && stage.getInputGoods().getSku() != null) {
-            return stage.getInputGoods().getSku();
-        }
-        return stage.getInputGoodsSku();
-    }
-
-    private String resolveOutputSku(ProcessingStage stage) {
-        if (stage.getOutputGoods() != null && stage.getOutputGoods().getSku() != null) {
-            return stage.getOutputGoods().getSku();
-        }
-        return stage.getOutputGoodsSku();
     }
 
     private double round(double value) {

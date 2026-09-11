@@ -8,9 +8,11 @@ import org.example.roadsimulation.repository.ProcessingStageRepository;
 import org.example.roadsimulation.repository.ProductionPlanNodeRepository;
 import org.example.roadsimulation.repository.ProductionPlanRepository;
 import org.example.roadsimulation.service.ProcessingChainDefinitionService;
+import org.example.roadsimulation.service.ProcessingChainSkuValidator;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -51,6 +53,7 @@ public class ProcessingChainDefinitionServiceImpl implements ProcessingChainDefi
                 validateStage(stage, null);
                 stage.setProcessingChain(chain);
             });
+            ProcessingChainSkuValidator.validateStages(chain.getStages());
         }
         return processingChainRepository.save(chain);
     }
@@ -102,6 +105,9 @@ public class ProcessingChainDefinitionServiceImpl implements ProcessingChainDefi
         }
 
         stage.setProcessingChain(chain);
+        ProcessingChainSkuValidator.validateStages(
+                chain.getStages() == null ? List.of(stage) : concatStages(chain.getStages(), stage)
+        );
         return processingStageRepository.save(stage);
     }
 
@@ -146,6 +152,12 @@ public class ProcessingChainDefinitionServiceImpl implements ProcessingChainDefi
         if (details.getMaxCapacityPerCycle() != null) stage.setMaxCapacityPerCycle(details.getMaxCapacityPerCycle());
         if (details.getMinBatchSize() != null) stage.setMinBatchSize(details.getMinBatchSize());
 
+        ProcessingChain chain = stage.getProcessingChain();
+        ProcessingChainSkuValidator.validateStages(
+                chain == null || chain.getStages() == null
+                        ? List.of(stage)
+                        : replaceStage(chain.getStages(), stage)
+        );
         return processingStageRepository.save(stage);
     }
 
@@ -201,6 +213,7 @@ public class ProcessingChainDefinitionServiceImpl implements ProcessingChainDefi
         if (stage.getInputWeightRatio() != null) {
             requirePositiveRatio(stage.getInputWeightRatio(), "输入产出系数");
         }
+        ProcessingChainSkuValidator.validateStage(stage);
     }
 
     private boolean hasStageOrderConflict(ProcessingChain chain, Integer stageOrder, Long excludedStageId) {
@@ -214,5 +227,23 @@ public class ProcessingChainDefinitionServiceImpl implements ProcessingChainDefi
         if (value == null || value <= 0) {
             throw new IllegalArgumentException(name + "必须大于 0");
         }
+    }
+
+    private List<ProcessingStage> concatStages(List<ProcessingStage> stages, ProcessingStage stage) {
+        List<ProcessingStage> result = new ArrayList<>(stages);
+        result.add(stage);
+        return result;
+    }
+
+    private List<ProcessingStage> replaceStage(List<ProcessingStage> stages, ProcessingStage stage) {
+        List<ProcessingStage> result = new ArrayList<>();
+        for (ProcessingStage item : stages) {
+            if (Objects.equals(item.getId(), stage.getId())) {
+                result.add(stage);
+            } else {
+                result.add(item);
+            }
+        }
+        return result;
     }
 }
