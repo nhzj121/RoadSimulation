@@ -41,7 +41,7 @@
       <div v-for="event in activeEvents" :key="event.eventId" class="active-event-item">
         <strong>{{ event.eventTypeText }}</strong>
         <span>{{ event.licensePlate }}</span>
-        <small>已延误 {{ formatDelay(event.delaySeconds) }} · 恢复 {{ formatTime(event.plannedEndTime) }}</small>
+        <small>已持续 {{ formatDelay(event.delaySeconds) }} · 结束 {{ formatTime(event.plannedEndTime) }}</small>
       </div>
     </div>
     <div v-else class="event-empty">当前无活跃事件</div>

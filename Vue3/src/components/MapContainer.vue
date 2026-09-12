@@ -67,6 +67,10 @@
           </div>
 
           <div class="panel-section">
+            <WeatherPanel ref="weatherPanel" :weather="monitorWeather" :disabled="resetInProgress || hasPreparedExperimentScenario || isExperimentRunActive" />
+          </div>
+
+          <div class="panel-section">
             <RandomEventPanel
                 :vehicles="eventEligibleVehicles"
                 :active-events="monitorActiveEvents"
@@ -961,6 +965,7 @@ import { useRouter } from 'vue-router';
 import { poiManagerApi } from "../api/poiManagerApi";
 import { simulationController} from "@/api/simulationController";
 import RandomEventPanel from './RandomEventPanel.vue';
+import WeatherPanel from './WeatherPanel.vue';
 import request from "../utils/request";
 import AMapLoader from "@amap/amap-jsapi-loader";
 import factoryIcon from '../../public/icons/factory.png';
@@ -3138,8 +3143,9 @@ const isActiveSimulationGeneration = (generation) => {
   return isSimulationRunning.value && !resetInProgress.value && generation === simulationGeneration.value;
 };
 
+let restoringWeatherView = false;
 const isTransportAnimationActive = () => {
-  return (isSimulationRunning.value || isExperimentRunExecuting.value) && !resetInProgress.value;
+  return (restoringWeatherView || isSimulationRunning.value || isExperimentRunExecuting.value) && !resetInProgress.value;
 };
 
 const isActiveTransportGeneration = (generation) => {
@@ -3621,6 +3627,10 @@ class VehicleAnimation {
     this.speedFactor = 1;
     this.eventSpeedFactor = 1;
     this.activeRandomEvent = null;
+    this.drivingSnapshot = null;
+    this.authoritativeEnvironment = Boolean(this.manager?.authoritativeEnvironment);
+    this.acknowledgedPhase = null;
+    this.phaseAckPending = false;
     this.lastUpdateTime = null;
 
     // 路线数据
@@ -3777,7 +3787,7 @@ class VehicleAnimation {
 
     if (this.realStartTime === null) {
       this.realStartTime = now;
-      this.animationTime = 0;
+      if (!this.drivingSnapshot) this.animationTime = 0;
     } else if (this.isPaused) {
       const pauseDuration = now - this.realPausedTime;
       this.realStartTime += pauseDuration;
@@ -3881,6 +3891,75 @@ class VehicleAnimation {
     }
   }
 
+  updateDrivingSnapshot(snapshot) {
+    if (!snapshot?.drivingPhaseKey || Number(snapshot.assignmentId) !== Number(this.assignmentId)) {
+      this.drivingSnapshot = null;
+      return;
+    }
+    const previous = this.drivingSnapshot;
+    this.drivingSnapshot = snapshot;
+    if (Array.isArray(this.stages)) {
+      this.runtimeLoad = Number(snapshot.currentLoad || 0);
+      this.runtimeVolume = Number(snapshot.currentVolume || 0);
+    }
+    this.eventSpeedFactor = Math.max(0, Math.min(1, Number(snapshot.effectiveSpeedFactor ?? 1)));
+    if (Array.isArray(this.stages)) {
+      const leg = Number(snapshot.drivingLegIndex);
+      if (Number.isInteger(leg) && leg >= 0 && leg < this.stages.length) this.currentStageIndex = leg;
+    } else {
+      this.currentStage = snapshot.drivingStatus === 'ORDER_DRIVING' ? 1 : 2;
+    }
+    const progress = Math.max(0, Math.min(1, Number(snapshot.drivingProgress || 0)));
+    if (!previous || previous.drivingPhaseKey !== snapshot.drivingPhaseKey || previous.drivingProgress !== snapshot.drivingProgress) {
+      this.animationTime = progress * this._getCurrentSegments().totalLength / this.baseSpeed;
+      this.currentProgress = progress;
+      this.currentPosition = this._getPositionByDistance(progress * this._getCurrentSegments().totalLength, this._getCurrentPath(), this._getCurrentSegments());
+      this._updateMarkerPosition();
+    }
+  }
+
+  _animateAuthoritative(deltaTime) {
+    const snapshot = this.drivingSnapshot;
+    const driving = ['ORDER_DRIVING', 'TRANSPORT_DRIVING'].includes(snapshot.status);
+    const progress = Math.max(0, Math.min(1, Number(snapshot.drivingProgress || 0)));
+    const segments = this._getCurrentSegments();
+    const path = this._getCurrentPath();
+    if (!path?.length || !segments.totalLength) return;
+    if (driving) this.animationTime += deltaTime * this.speedFactor * this.eventSpeedFactor;
+    // A small visual interpolation cannot authorize delivery; the server owns completion.
+    const visualLimit = progress >= 1 ? 1 : Math.min(0.999, progress + 0.03);
+    const fraction = snapshot.status === 'BREAKDOWN' ? progress
+        : Math.min(visualLimit, Math.max(progress, this.animationTime * this.baseSpeed / segments.totalLength));
+    this.currentProgress = fraction;
+    this.currentPosition = this._getPositionByDistance(fraction * segments.totalLength, path, segments);
+    this._updateMarkerPosition();
+    if ((driving || (!Array.isArray(this.stages) && snapshot.status === 'UNLOADING')) && progress >= 1 && this.acknowledgedPhase !== snapshot.drivingPhaseKey && !this.phaseAckPending) {
+      void this._acknowledgeDrivingPhase(snapshot);
+    }
+  }
+
+  async _acknowledgeDrivingPhase(snapshot) {
+    this.phaseAckPending = true;
+    try {
+      if (Array.isArray(this.stages) || snapshot.drivingStatus === 'TRANSPORT_DRIVING') {
+        const endPOIId = Array.isArray(this.stages)
+            ? this.stages[snapshot.drivingLegIndex]?.nodeInfo?.poiId
+            : this.routeData.assignment.endPOIId;
+        if (endPOIId == null) return;
+        await request.post('/api/simulation/vehicle-arrived', {
+          assignmentId: this.assignmentId, endPOIId,
+          phaseKey: snapshot.drivingPhaseKey, legIndex: snapshot.drivingLegIndex
+        });
+      }
+      this.acknowledgedPhase = snapshot.drivingPhaseKey;
+    } catch (error) {
+      if (error?.response?.status !== 409) console.warn('驾驶阶段确认失败', error);
+    } finally {
+      // Bound retry frequency independently of animation frame rate.
+      setTimeout(() => { this.phaseAckPending = false; }, 1500);
+    }
+  }
+
   // 获取当前路径
   _getCurrentPath() {
     return this.currentStage === 1 ? this.stage1Path : this.stage2Path;
@@ -3937,9 +4016,9 @@ class VehicleAnimation {
 
       // 更新状态管理器中的位置
       if (this.statusManager) {
-        const eventStatus = this.activeRandomEvent?.eventType === 'VEHICLE_BREAKDOWN'
+        const eventStatus = this.drivingSnapshot?.status || (this.activeRandomEvent?.eventType === 'VEHICLE_BREAKDOWN'
             ? 'BREAKDOWN'
-            : (this.currentStage === 1 ? 'ORDER_DRIVING' : 'TRANSPORT_DRIVING');
+            : (this.currentStage === 1 ? 'ORDER_DRIVING' : 'TRANSPORT_DRIVING'));
         this.statusManager.updateVehicleStatus(this.vehicleId, eventStatus, {
               assignment: this.routeData.assignment,
               position: this.currentPosition
@@ -3964,6 +4043,12 @@ class VehicleAnimation {
     }
 
     const deltaTime = (now - this.lastUpdateTime) / 1000;
+    if (this.authoritativeEnvironment || this.drivingSnapshot) {
+      this.lastUpdateTime = now;
+      if (this.drivingSnapshot) this._animateAuthoritative(deltaTime);
+      this.animationFrameId = requestAnimationFrame(() => this._animate());
+      return;
+    }
     this.animationTime += deltaTime * this.speedFactor * this.eventSpeedFactor;
     this.lastUpdateTime = now;
 
@@ -4218,7 +4303,7 @@ class VrpVehicleAnimation extends VehicleAnimation {
 
       if (this.statusManager) {
         const progress = this._syncRuntimeState();
-        this.statusManager.updateVehicleStatus(this.vehicleId, this._getTravelStatus(), {
+        this.statusManager.updateVehicleStatus(this.vehicleId, this.drivingSnapshot?.status || (this.activeRandomEvent?.eventType === 'VEHICLE_BREAKDOWN' ? 'BREAKDOWN' : this._getTravelStatus()), {
           assignment: this.routeData.assignment,
           position: this.currentPosition,
           currentLoad: this.runtimeLoad,
@@ -4368,6 +4453,8 @@ class VehicleAnimationManager {
     ];
     this.statusManager = statusManager; // 添加状态管理器引用
     this.eventImpactsByVehicle = new Map();
+    this.drivingSnapshotsByVehicle = new Map();
+    this.authoritativeEnvironment = false;
   }
 
   // 添加动画
@@ -4389,10 +4476,12 @@ class VehicleAnimationManager {
       animation = new VehicleAnimation(assignment, routeData, this.statusManager);
     }
     this.animations.set(assignment.assignmentId, animation);
+    animation.authoritativeEnvironment = this.authoritativeEnvironment;
 
     // 设置初始速度因子
     animation.updateSpeedFactor(this.globalSpeedFactor);
     animation.updateEventImpact(this.eventImpactsByVehicle.get(assignment.vehicleId) || null);
+    animation.updateDrivingSnapshot(this.drivingSnapshotsByVehicle.get(assignment.vehicleId) || null);
 
     // 如果全局未暂停，则启动动画
     if (!this.isPaused) {
@@ -4460,6 +4549,15 @@ class VehicleAnimationManager {
     );
     this.animations.forEach(animation => {
       animation.updateEventImpact(this.eventImpactsByVehicle.get(animation.vehicleId) || null);
+    });
+  }
+
+  setDrivingSnapshots(vehicles = [], authoritative = false) {
+    this.authoritativeEnvironment = authoritative;
+    this.drivingSnapshotsByVehicle = new Map(vehicles.map(vehicle => [vehicle.vehicleId, vehicle]));
+    this.animations.forEach(animation => {
+      animation.authoritativeEnvironment = authoritative;
+      animation.updateDrivingSnapshot(this.drivingSnapshotsByVehicle.get(animation.vehicleId) || null);
     });
   }
 
@@ -4626,20 +4724,24 @@ const startSimulation = async () => {
     console.log("开始仿真");
 
     // 启动后端仿真
-    await simulationController.startSimulation({
+    const weatherOptions = await weatherPanel.value.prepareStart();
+    const startResult = await simulationController.startSimulation({
+      ...weatherOptions,
       useHeuristic: useHeuristicDispatch.value,
       strategy: useHeuristicDispatch.value ? 'HEURISTIC' : 'ORIGINAL'
     });
+    if (!startResult?.success) throw new Error(startResult?.message || '启动失败');
     isSimulationRunning.value = true;
+    await weatherPanel.value.refresh();
 
     await updateVehicleInfo();
 
     // 启动动画管理器
-    if (animationManager.hasAnimations()) {
+    if (animationManager?.hasAnimations()) {
       // 有现有动画，恢复它们
       animationManager.resumeAll();
       console.log("恢复现有动画");
-    } else {
+    } else if (animationManager) {
       // 没有动画，重新加载Assignment
       console.log("重新加载Assignment");
 
@@ -4663,7 +4765,7 @@ const startSimulation = async () => {
     isSimulationRunning.value = false;
     invalidateSimulationGeneration();
   }
-  arrivalMonitor.startMonitoring(getVehiclePositions, getPOIList);
+  if (isSimulationRunning.value && animationManager) arrivalMonitor.startMonitoring(getVehiclePositions, getPOIList);
 };
 
 /**
@@ -4681,14 +4783,13 @@ const pauseSimulation = async () => {
   try {
     console.log("已暂停仿真");
 
+    const result = await simulationController.stopSimulation();
+    if (!result?.success) throw new Error(result?.message || '后端暂停失败');
     // 暂停动画管理器
     isSimulationRunning.value = false;
     stopSimulationTimer();
     invalidateSimulationGeneration();
-    animationManager.pauseAll();
-
-    // 暂停后端仿真
-    await simulationController.stopSimulation();
+    animationManager?.pauseAll();
 
     ElMessage.success('仿真已暂停');
   } catch (error) {
@@ -4776,6 +4877,7 @@ const resetSimulation = async () => {
       }
 
       ElMessage.success('仿真已重置');
+      await weatherPanel.value?.refresh();
     }
 
   } catch (error) {
@@ -5067,6 +5169,8 @@ const monitorAssignments = reactive([]);
 const monitorVehicles = reactive([]);
 const monitorLinks = reactive([]);
 const monitorActiveEvents = reactive([]);
+const monitorWeather = ref(null);
+const weatherPanel = ref(null);
 const monitorSummary = reactive({
   activeShipmentCount: 0,
   activeAssignmentCount: 0,
@@ -5145,6 +5249,7 @@ const calculateUsagePercent = (current, max) => {
 const firstDefined = (...values) => values.find(value => value !== undefined && value !== null);
 
 const syncTransportMonitorData = (monitorData = {}) => {
+  monitorWeather.value = monitorData.weather || null;
   monitorShipments.splice(0, monitorShipments.length, ...(monitorData.shipments || []));
   monitorAssignments.splice(0, monitorAssignments.length, ...(monitorData.assignments || []));
   monitorVehicles.splice(0, monitorVehicles.length, ...(monitorData.vehicles || []));
@@ -5158,6 +5263,7 @@ const syncTransportMonitorData = (monitorData = {}) => {
   monitorSummary.activeEventCount = summary.activeEventCount || 0;
   if (animationManager) {
     animationManager.setEventImpacts(monitorActiveEvents);
+    animationManager.setDrivingSnapshots(monitorData.vehicles || [], Boolean(monitorData.weather?.runId));
   }
 
   if (monitorData.summary || monitorData.shipments || monitorData.assignments || monitorData.vehicles) {
@@ -5319,6 +5425,14 @@ const updateVehicleInfo = async () => {
 
     if (activeMonitorVehicles && Array.isArray(activeMonitorVehicles)) {
       activeMonitorVehicles.forEach(monitorVehicle => {
+        if (monitorVehicle.drivingPhaseKey && vehicleMap.has(monitorVehicle.vehicleId)) {
+          const vehicle = vehicleMap.get(monitorVehicle.vehicleId);
+          vehicle.status = monitorVehicle.status;
+          vehicle.currentLoad = Math.max(0, toNumber(monitorVehicle.currentLoad));
+          vehicle.currentVolume = Math.max(0, toNumber(monitorVehicle.currentVolume));
+          vehicle.loadPercentage = vehicle.maxLoadCapacity > 0 ? Math.min(100, vehicle.currentLoad / vehicle.maxLoadCapacity * 100) : 0;
+          vehicle.volumePercentage = vehicle.maxVolumeCapacity > 0 ? Math.min(100, vehicle.currentVolume / vehicle.maxVolumeCapacity * 100) : 0;
+        }
         if (!monitorVehicle.vehicleId || vehicleMap.has(monitorVehicle.vehicleId)) {
           return;
         }
@@ -5605,6 +5719,7 @@ const clearRouteByAssignmentId = (assignmentId, vehicleId = null) => {
 // 获取当前活跃的Assignment（用于初始加载）
 const fetchCurrentAssignments = async (runGeneration = simulationGeneration.value) => {
   try {
+    if (!map || !animationManager) return;
     if (!isActiveTransportGeneration(runGeneration)) return;
     const response = await request.get('/api/assignments/active');
     if (!isActiveTransportGeneration(runGeneration)) return;
@@ -7131,6 +7246,31 @@ const initVehicleStatusManager = () => {
   });
 };
 
+// Refresh reconstructs the view from backend snapshots, without restarting the run.
+const restoreWeatherRunView = async () => {
+  await updateVehicleInfo();
+  if (!monitorWeather.value?.runId || isExperimentRunActive.value) return;
+  const config = await simulationController.getConfig();
+  if (!config?.success) throw new Error(config?.message || '读取仿真状态失败');
+  const running = Boolean(config.data?.running);
+  const generation = beginSimulationGeneration();
+  isSimulationRunning.value = running;
+  restoringWeatherView = true;
+  animationManager.isPaused = !running;
+  try {
+    await fetchCurrentAssignments(generation);
+  } finally {
+    restoringWeatherView = false;
+  }
+  if (running && isActiveTransportGeneration(generation)) {
+    animationManager.startAll();
+    startSimulationTimer();
+    arrivalMonitor.startMonitoring(getVehiclePositions, getPOIList);
+  } else {
+    animationManager.pauseAll();
+  }
+};
+
 onMounted(() => {
   fetchCurrentExperimentScenario().catch(error => {
     console.error('读取当前实验场景失败:', error);
@@ -7143,7 +7283,7 @@ onMounted(() => {
     version: "2.0",
     plugins: ["AMap.Scale", "AMap.Driving", "AMap.Marker", "AMap.Polyline", "AMap.InfoWindow", "AMap.MoveAnimation"],
   })
-      .then((AMap) => {
+      .then(async (AMap) => {
         AMapLib = AMap; // 保存 AMap 构造体以便后续创建覆盖物
         map = new AMap.Map("container", {
           viewMode: "3D",
@@ -7164,6 +7304,7 @@ onMounted(() => {
 
         // 初始加载POI数据
         updatePOIData();
+        await restoreWeatherRunView();
       })
       .catch((e) => {
         console.log(e);
