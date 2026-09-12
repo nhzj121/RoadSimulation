@@ -46,11 +46,14 @@ public class TransportMonitorService {
 
     @Autowired
     private TransportRandomEventService transportRandomEventService;
+    @Autowired private WeatherEnvironmentService weatherEnvironmentService;
+    @Autowired private DrivingProgressService drivingProgressService;
 
     @Transactional(readOnly = true)
     public TransportMonitorDTO getActiveMonitor() {
         TransportMonitorDTO dto = new TransportMonitorDTO();
         dto.setGeneratedAt(LocalDateTime.now());
+        if (weatherEnvironmentService != null) dto.setWeather(weatherEnvironmentService.current());
         List<RandomEventDTO> activeEvents = transportRandomEventService.getActiveEvents().stream()
                 .map(RandomEventDTO::from)
                 .toList();
@@ -148,6 +151,19 @@ public class TransportMonitorService {
                 .collect(Collectors.toList()));
         dto.setActiveEvents(new ArrayList<>(activeEvents));
         dto.getVehicles().forEach(vehicle -> vehicle.setActiveEvent(eventByVehicleId.get(vehicle.getVehicleId())));
+        if (drivingProgressService != null && drivingProgressService.enabled()) dto.getVehicles().forEach(vehicle -> {
+            var p = drivingProgressService.latest(vehicle.getVehicleId());
+            vehicle.setAssignmentId(vehicle.getAssignmentIds().isEmpty() ? null : vehicle.getAssignmentIds().get(0));
+            vehicle.setEffectiveSpeedFactor(drivingProgressService.effectiveFactor(vehicle.getVehicleId(), drivingProgressService.now()));
+            if (p != null && java.util.Objects.equals(p.getAssignmentId(), vehicle.getAssignmentId())) {
+                vehicle.setDrivingPhaseKey(p.getPhaseKey()); vehicle.setDrivingStatus(p.getDrivingStatus().name());
+                vehicle.setDrivingLegIndex(p.getLegIndex());
+                vehicle.setDrivingProgress(p.getInitialWorkSeconds() == 0 ? 1 : 1 - p.getRemainingWorkSeconds()/p.getInitialWorkSeconds());
+                vehicle.setRemainingDrivingSeconds(p.getRemainingWorkSeconds());vehicle.setAffectedSeconds(p.getAffectedSeconds());
+                vehicle.setLostWorkSeconds(p.getLostWorkSeconds());vehicle.setModelCompletedTime(p.getModelCompletedTime());
+                vehicle.setObservedCompletedTime(p.getObservedCompletedTime());
+            }
+        });
 
         TransportMonitorDTO.Summary summary = new TransportMonitorDTO.Summary();
         summary.setActiveShipmentCount(dto.getShipments().size());

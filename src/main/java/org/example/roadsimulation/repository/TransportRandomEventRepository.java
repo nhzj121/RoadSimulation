@@ -10,6 +10,8 @@ import java.util.Optional;
 
 @Repository
 public interface TransportRandomEventRepository extends JpaRepository<TransportRandomEvent, Long> {
+    List<TransportRandomEvent> findByRunId(String runId);
+    List<TransportRandomEvent> findByVehicleId(Long vehicleId);
     Optional<TransportRandomEvent> findFirstByVehicleIdAndStatus(
             Long vehicleId,
             TransportRandomEvent.EventStatus status

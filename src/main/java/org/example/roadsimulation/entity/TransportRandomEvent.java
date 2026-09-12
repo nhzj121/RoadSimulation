@@ -19,6 +19,9 @@ import java.time.LocalDateTime;
 @Setter
 public class TransportRandomEvent {
 
+    @Column(name = "run_id", length = 36)
+    private String runId;
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;

@@ -10,6 +10,7 @@ import java.util.List;
 public class TransportMonitorDTO {
 
     private LocalDateTime generatedAt;
+    private WeatherCurrentDTO weather;
     private Summary summary = new Summary();
     private List<ShipmentMonitorDTO> shipments = new ArrayList<>();
     private List<AssignmentMonitorDTO> assignments = new ArrayList<>();
@@ -72,6 +73,17 @@ public class TransportMonitorDTO {
 
     @Data
     public static class VehicleMonitorDTO {
+        private Long assignmentId;
+        private Double effectiveSpeedFactor;
+        private Double drivingProgress;
+        private Double remainingDrivingSeconds;
+        private Double affectedSeconds;
+        private Double lostWorkSeconds;
+        private String drivingPhaseKey;
+        private String drivingStatus;
+        private Integer drivingLegIndex;
+        private LocalDateTime modelCompletedTime;
+        private LocalDateTime observedCompletedTime;
         private Long vehicleId;
         private String licensePlate;
         private String status;

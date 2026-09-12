@@ -21,6 +21,10 @@ import java.util.Set;
 
 @Service
 public class TransportRandomEventService {
+    @org.springframework.beans.factory.annotation.Autowired
+    private DrivingProgressService drivingProgressService;
+    @org.springframework.beans.factory.annotation.Autowired
+    private WeatherEnvironmentService weatherEnvironmentService;
     private static final int MIN_MANUAL_DURATION_MINUTES = 30;
     private static final int MAX_MANUAL_DURATION_MINUTES = 240;
 
@@ -100,6 +104,8 @@ public class TransportRandomEventService {
             return false;
         }
         return eventRepository.findFirstByVehicleIdAndStatus(vehicleId, TransportRandomEvent.EventStatus.ACTIVE)
+                .filter(event -> drivingProgressService == null || !drivingProgressService.enabled()
+                        || event.getEventType() == TransportRandomEvent.EventType.VEHICLE_BREAKDOWN)
                 .filter(event -> event.getPlannedEndTime().isAfter(simNow))
                 .isPresent();
     }
@@ -136,8 +142,8 @@ public class TransportRandomEventService {
 
     private void resolveEvent(TransportRandomEvent event, LocalDateTime simNow) {
         event.setStatus(TransportRandomEvent.EventStatus.RESOLVED);
-        event.setResolvedTime(simNow);
-        event.setDelaySeconds(elapsedSeconds(event.getStartTime(), simNow));
+        event.setResolvedTime(event.getPlannedEndTime());
+        event.setDelaySeconds(elapsedSeconds(event.getStartTime(), event.getPlannedEndTime()));
         Vehicle vehicle = vehicleRepository.findByIdForUpdate(event.getVehicleId()).orElse(null);
         if (event.getEventType() == TransportRandomEvent.EventType.VEHICLE_BREAKDOWN
                 && event.getPreviousVehicleStatus() != null
@@ -147,6 +153,13 @@ public class TransportRandomEventService {
                     simNow,
                     Duration.ofSeconds(Math.max(0L, Optional.ofNullable(event.getRemainingStatusSeconds()).orElse(0L)))
             );
+            if (drivingProgressService != null && drivingProgressService.enabled()) {
+                var progress = drivingProgressService.latest(vehicle.getId());
+                if (progress != null && java.util.Objects.equals(progress.getAssignmentId(), event.getAssignmentId())) {
+                    vehicle.setStatusStartTime(progress.getPhaseStart());
+                    vehicle.setStatusDuration(Duration.ofSeconds((long) progress.getInitialWorkSeconds()));
+                }
+            }
             vehicleRepository.save(vehicle);
         }
         eventRepository.save(event);
@@ -192,7 +205,11 @@ public class TransportRandomEventService {
             LocalDateTime simNow,
             long seed
     ) {
+        if (drivingProgressService != null) drivingProgressService.settle(vehicle, simNow);
+        if (source == TransportRandomEvent.TriggerSource.MANUAL && weatherEnvironmentService != null)
+            weatherEnvironmentService.manualIntervention();
         TransportRandomEvent event = new TransportRandomEvent();
+        event.setRunId(weatherEnvironmentService == null ? null : weatherEnvironmentService.runId());
         event.setEventType(eventType);
         event.setStatus(TransportRandomEvent.EventStatus.ACTIVE);
         event.setTriggerSource(source);

@@ -1,0 +1,11 @@
+{
+  "name": "晴天基线",
+  "preset": "BASELINE",
+  "seed": 20260911,
+  "generatorVersion": "weather-v1",
+  "autoEvents": false,
+  "afterTimeline": "SUNNY",
+  "timeSlices": [
+    {"startMinute": 0, "endMinute": 1440, "weatherType": "SUNNY", "speedFactor": 1.0}
+  ]
+}

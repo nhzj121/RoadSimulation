@@ -25,6 +25,8 @@ import java.util.Set;
 
 @Service
 public class TransportLifecycleService {
+    @org.springframework.beans.factory.annotation.Autowired
+    private DrivingProgressService drivingProgressService;
 
     private static final Duration FRONTEND_ORDER_DRIVING_WINDOW = Duration.ofMinutes(30);
 
@@ -172,6 +174,12 @@ public class TransportLifecycleService {
 
         LocalDateTime now = resolveTime(simNow);
         if (transportRandomEventService.isTransitionBlocked(vehicleId, now)) {
+            throw new TransportRandomEventService.TransitionBlockedException(vehicleId);
+        }
+        if (drivingProgressService != null && drivingProgressService.enabled()
+                && (managedVehicle.getCurrentStatus() != Vehicle.VehicleStatus.TRANSPORT_DRIVING)
+                && (managedVehicle.getCurrentStatus() != Vehicle.VehicleStatus.LOADING
+                    || managedVehicle.getStatusEndTime() == null || now.isBefore(managedVehicle.getStatusEndTime()))) {
             throw new TransportRandomEventService.TransitionBlockedException(vehicleId);
         }
         String effectiveActor = actor != null ? actor : "Frontend loading completion";

@@ -76,6 +76,9 @@ public class SimulationController {
 
     @Autowired
     private TransportRandomEventService transportRandomEventService;
+    @Autowired private org.example.roadsimulation.service.WeatherEnvironmentService weatherEnvironmentService;
+    @Autowired private org.example.roadsimulation.service.DrivingProgressService drivingProgressService;
+    @Autowired private org.example.roadsimulation.service.StateTransitionService stateTransitionService;
 
     @Autowired
     private GaodeRoutePlanningQueueService gaodeRoutePlanningQueueService;
@@ -97,11 +100,17 @@ public class SimulationController {
             return ApiResponse.error("dispatch comparison experiment is active");
         }
         DispatchStrategy dispatchStrategy = resolveDispatchStrategy(request);
-        simulationRuntimeConfig.setDispatchStrategy(dispatchStrategy);
-        gaodeRoutePlanningQueueService.resume();
-
-        simulationMainLoop.start();
-
+        try {
+            simulationMainLoop.startWithWeather(request == null ? null : request.getScenarioId(),
+                    request == null ? null : request.getExternalExperimentId(), () -> {
+                        simulationRuntimeConfig.setDispatchStrategy(dispatchStrategy);
+                        gaodeRoutePlanningQueueService.resume();
+                    });
+        } catch (IllegalArgumentException e) {
+            throw new org.springframework.web.server.ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage());
+        } catch (IllegalStateException e) {
+            throw new org.springframework.web.server.ResponseStatusException(HttpStatus.CONFLICT, e.getMessage());
+        }
         DataInitializer.StartupShipmentGenerationResult startupShipmentResult =
                 new DataInitializer.StartupShipmentGenerationResult(15);
         if (startupPreGenerationEnabled) {
@@ -216,6 +225,46 @@ public class SimulationController {
             }
             Vehicle vehicle = vehicleRepository.findByIdForUpdate(assignedVehicle.getId())
                     .orElseThrow(() -> new RuntimeException("Vehicle not found: " + assignedVehicle.getId()));
+            if (request.getVehicleId() != null && !request.getVehicleId().equals(vehicle.getId()))
+                return ResponseEntity.badRequest().build();
+            if (drivingProgressService != null && drivingProgressService.enabled()) {
+                var now = simulationMainLoop.getCurrentSimTime();
+                var nodes = assignment.getNodes();
+                if (nodes != null && !nodes.isEmpty()) {
+                    if (request.getLegIndex() == null || request.getPhaseKey() == null)
+                        return ResponseEntity.badRequest().build();
+                    var node = nodes.stream().filter(n -> java.util.Objects.equals(n.getSequenceIndex(), request.getLegIndex())).findFirst().orElse(null);
+                    if (node == null || !java.util.Objects.equals(node.getPoi().getId(), request.getEndPOIId()))
+                        return ResponseEntity.badRequest().build();
+                    if (node.isCompleted()) return ResponseEntity.ok().build();
+                    var p = drivingProgressService.latest(vehicle.getId());
+                    if (p == null || !p.getPhaseKey().equals(request.getPhaseKey())
+                            || !java.util.Objects.equals(p.getAssignmentId(), assignment.getId())
+                            || !java.util.Objects.equals(p.getLegIndex(), request.getLegIndex()))
+                        return ResponseEntity.status(HttpStatus.CONFLICT).build();
+                    if (!drivingProgressService.canAdvance(vehicle, now)) return ResponseEntity.status(HttpStatus.CONFLICT).build();
+                    if (org.example.roadsimulation.service.DrivingProgressService.driving(vehicle.getCurrentStatus()))
+                        stateTransitionService.updateVehicleStateWithContext(vehicle, now, 30);
+                    return ResponseEntity.ok().build();
+                }
+                if (vehicle.getCurrentStatus() != Vehicle.VehicleStatus.TRANSPORT_DRIVING
+                        && vehicle.getCurrentStatus() != Vehicle.VehicleStatus.UNLOADING)
+                    return ResponseEntity.status(HttpStatus.CONFLICT).build();
+                var p = drivingProgressService.settle(vehicle, now);
+                if (p == null) p = drivingProgressService.latest(vehicle.getId());
+                if (p == null || !java.util.Objects.equals(p.getAssignmentId(), assignment.getId())
+                        || p.getDrivingStatus() != Vehicle.VehicleStatus.TRANSPORT_DRIVING
+                        || p.getRemainingWorkSeconds() > 1e-7
+                        || (request.getPhaseKey() != null && !request.getPhaseKey().equals(p.getPhaseKey())))
+                    return ResponseEntity.status(HttpStatus.CONFLICT).build();
+                Long destination = assignment.getDestPOI() != null ? assignment.getDestPOI().getId()
+                        : assignment.getRoute() != null && assignment.getRoute().getEndPOI() != null
+                        ? assignment.getRoute().getEndPOI().getId() : null;
+                if (!java.util.Objects.equals(destination, request.getEndPOIId())) return ResponseEntity.badRequest().build();
+                if (vehicle.getCurrentStatus() == Vehicle.VehicleStatus.TRANSPORT_DRIVING)
+                    stateTransitionService.updateVehicleStateWithContext(vehicle, now, 30);
+                return ResponseEntity.ok().build();
+            }
             if (transportRandomEventService.isTransitionBlocked(
                     vehicle.getId(), simulationMainLoop.getCurrentSimTime())) {
                 logger.info("Vehicle arrival rejected while random event is active: vehicleId={}", vehicle.getId());
@@ -318,6 +367,12 @@ public class SimulationController {
     }
 
     public static class StartSimulationRequest {
+        private Long scenarioId;
+        private String externalExperimentId;
+        public Long getScenarioId() { return scenarioId; }
+        public void setScenarioId(Long value) { scenarioId = value; }
+        public String getExternalExperimentId() { return externalExperimentId; }
+        public void setExternalExperimentId(String value) { externalExperimentId = value; }
         private Boolean useHeuristic;
         private String strategy;
 
@@ -339,6 +394,12 @@ public class SimulationController {
     }
 
     public static class VehicleArrivedRequest {
+        private Integer legIndex;
+        private String phaseKey;
+        public Integer getLegIndex() { return legIndex; }
+        public void setLegIndex(Integer value) { legIndex = value; }
+        public String getPhaseKey() { return phaseKey; }
+        public void setPhaseKey(String value) { phaseKey = value; }
         private Long assignmentId;
         private Long vehicleId;
         private Long endPOIId;

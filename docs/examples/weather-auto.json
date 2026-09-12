@@ -1,0 +1,28 @@
+{
+  "name": "固定种子自动天气 20260911",
+  "preset": "AUTO",
+  "seed": 20260911,
+  "generatorVersion": "weather-v1",
+  "autoEvents": true,
+  "generationIntervalMinutes": 120,
+  "generationHorizonMinutes": 1440,
+  "weights": [50, 25, 10, 15],
+  "speedFactors": {"SUNNY": 1.0, "RAIN": 0.8, "SNOW": 0.5, "FOG": 0.6},
+  "congestion": {"hourlyProbability": 0.08, "minDurationMinutes": 30, "maxDurationMinutes": 90, "speedFactor": 0.4},
+  "breakdown": {"hourlyProbability": 0.02, "minDurationMinutes": 60, "maxDurationMinutes": 120, "speedFactor": 0.0},
+  "afterTimeline": "SUNNY",
+  "timeSlices": [
+    {"startMinute": 0, "endMinute": 120, "weatherType": "RAIN", "speedFactor": 0.8},
+    {"startMinute": 120, "endMinute": 240, "weatherType": "SUNNY", "speedFactor": 1.0},
+    {"startMinute": 240, "endMinute": 360, "weatherType": "SUNNY", "speedFactor": 1.0},
+    {"startMinute": 360, "endMinute": 480, "weatherType": "FOG", "speedFactor": 0.6},
+    {"startMinute": 480, "endMinute": 600, "weatherType": "FOG", "speedFactor": 0.6},
+    {"startMinute": 600, "endMinute": 720, "weatherType": "SUNNY", "speedFactor": 1.0},
+    {"startMinute": 720, "endMinute": 840, "weatherType": "RAIN", "speedFactor": 0.8},
+    {"startMinute": 840, "endMinute": 960, "weatherType": "SUNNY", "speedFactor": 1.0},
+    {"startMinute": 960, "endMinute": 1080, "weatherType": "SUNNY", "speedFactor": 1.0},
+    {"startMinute": 1080, "endMinute": 1200, "weatherType": "SUNNY", "speedFactor": 1.0},
+    {"startMinute": 1200, "endMinute": 1320, "weatherType": "SUNNY", "speedFactor": 1.0},
+    {"startMinute": 1320, "endMinute": 1440, "weatherType": "RAIN", "speedFactor": 0.8}
+  ]
+}

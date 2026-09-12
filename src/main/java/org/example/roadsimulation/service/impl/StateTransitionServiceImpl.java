@@ -40,6 +40,9 @@ public class StateTransitionServiceImpl implements StateTransitionService {
     private TransportLifecycleService transportLifecycleService;
     @Autowired
     private TransportRandomEventService transportRandomEventService;
+    @Autowired private org.example.roadsimulation.service.DrivingProgressService drivingProgressService;
+    @Autowired @org.springframework.context.annotation.Lazy
+    private org.example.roadsimulation.DataInitializer deliverySettlement;
 
     // 状态顺序（必须与矩阵行/列严格对应）
     private static final List<VehicleStatus> STATES = List.of(
@@ -287,6 +290,10 @@ public class StateTransitionServiceImpl implements StateTransitionService {
                                 "StateTransitionService"
                         );
                         if (!transportLifecycleService.hasPendingNodes(assignment)) {
+                            if (drivingProgressService != null && drivingProgressService.enabled()) {
+                                deliverySettlement.settleWeatherDelivery(assignment, vehicle, resolveEndPOI(assignment));
+                                return;
+                            }
                             transportLifecycleService.completeDelivery(
                                     assignment,
                                     vehicle,
@@ -300,6 +307,10 @@ public class StateTransitionServiceImpl implements StateTransitionService {
                 return;
             }
             if (s == VehicleStatus.UNLOADING) {
+                if (drivingProgressService != null && drivingProgressService.enabled()) {
+                    deliverySettlement.settleWeatherDelivery(assignment, vehicle, resolveEndPOI(assignment));
+                    return;
+                }
                 logger.info("[任务推进-等待前端到达] assignmentId={} vehicleStatus={} simNow={}",
                         assignment.getId(), s, simNow);
                 return;
@@ -401,7 +412,10 @@ public class StateTransitionServiceImpl implements StateTransitionService {
         // 2) ✅ 第一种方法：加“最大停留时间上限”，避免 endTime 被拉到很久以后
         // 你可以把 60 改成 90/120，看你希望转移快慢
         int maxStayMinutes = 60;
-        alignedMinutes = Math.min(alignedMinutes, maxStayMinutes);
+        if (drivingProgressService == null || !drivingProgressService.enabled()
+                || !org.example.roadsimulation.service.DrivingProgressService.driving(status)) {
+            alignedMinutes = Math.min(alignedMinutes, maxStayMinutes);
+        }
 
         return Duration.ofMinutes(alignedMinutes);
     }
@@ -432,7 +446,8 @@ public class StateTransitionServiceImpl implements StateTransitionService {
             if (stay == null || stay.isZero() || stay.isNegative()) {
                 stay = Duration.ofMinutes(minutesPerLoop); // 最少 1 个循环
             }
-            if (stay.compareTo(maxStay) > 0) {
+            if (stay.compareTo(maxStay) > 0 && (drivingProgressService == null || !drivingProgressService.enabled()
+                    || !org.example.roadsimulation.service.DrivingProgressService.driving(v.getCurrentStatus()))) {
                 stay = maxStay;
             }
 
@@ -517,6 +532,10 @@ public class StateTransitionServiceImpl implements StateTransitionService {
             return;
         }
 
+        boolean progressManaged = drivingProgressService != null && drivingProgressService.enabled()
+                && org.example.roadsimulation.service.DrivingProgressService.driving(vehicle.getCurrentStatus());
+        if (progressManaged && !drivingProgressService.canAdvance(vehicle, simNow)) return;
+
         if (vehicle.getStatusStartTime() == null) {
             vehicle.setStatusStartTime(simNow);
             vehicle.setStatusDuration(calcStayDuration(vehicle.getCurrentStatus(), vehicle.getCurrentAssignment(), vehicle, minutesPerLoop));
@@ -529,7 +548,7 @@ public class StateTransitionServiceImpl implements StateTransitionService {
         Duration maxDur = Duration.ofMinutes(60);
 
         Duration curDur = vehicle.getStatusDuration();
-        if (curDur != null && curDur.compareTo(maxDur) > 0) {
+        if (!progressManaged && curDur != null && curDur.compareTo(maxDur) > 0) {
             vehicle.setStatusDuration(maxDur);
             vehicleRepository.save(vehicle);
 
@@ -543,7 +562,7 @@ public class StateTransitionServiceImpl implements StateTransitionService {
 
         // 2) 时间门槛：没到 endTime 不允许转移
         LocalDateTime endTime = vehicle.getStatusEndTime();
-        if (endTime != null && simNow.isBefore(endTime)) {
+        if (!progressManaged && endTime != null && simNow.isBefore(endTime)) {
             logger.info("车辆[{}] 未到转移时间：current={} simNow={} endTime={}",
                     vehicle.getLicensePlate(),
                     vehicle.getCurrentStatus(),

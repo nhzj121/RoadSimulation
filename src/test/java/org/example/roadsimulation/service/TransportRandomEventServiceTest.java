@@ -66,7 +66,10 @@ class TransportRandomEventServiceTest {
     }
 
     @Test
-    void manualCongestionBlocksProgressWithoutReplacingDrivingStatus() {
+    void manualCongestionUsesDrivingWorkInsteadOfBlanketTransitionBlock() {
+        DrivingProgressService progress = mock(DrivingProgressService.class);
+        when(progress.enabled()).thenReturn(true);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "drivingProgressService", progress);
         TransportRandomEvent event = service.triggerManually(
                 TransportRandomEvent.EventType.TRAFFIC_CONGESTION,
                 12L,
@@ -80,7 +83,7 @@ class TransportRandomEventServiceTest {
         assertEquals(simNow.plusMinutes(60), event.getPlannedEndTime());
         assertEquals(0.4, event.getSpeedFactor(), 1e-9);
         assertEquals(Vehicle.VehicleStatus.TRANSPORT_DRIVING, vehicle.getCurrentStatus());
-        assertTrue(service.isTransitionBlocked(12L, simNow.plusMinutes(30)));
+        assertFalse(service.isTransitionBlocked(12L, simNow.plusMinutes(30)));
     }
 
     @Test

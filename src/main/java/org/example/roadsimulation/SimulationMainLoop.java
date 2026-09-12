@@ -70,6 +70,9 @@ public class SimulationMainLoop {
     @Autowired
     private TransportRandomEventService transportRandomEventService;
 
+    @Autowired private org.example.roadsimulation.service.DrivingProgressService drivingProgressService;
+    @Autowired private org.example.roadsimulation.service.WeatherEnvironmentService weatherEnvironmentService;
+
     @Autowired
     SimulationMainLoop(DataInitializer dataInitializer,
                        StateUpdateService stateUpdateService,
@@ -162,8 +165,10 @@ public class SimulationMainLoop {
                 }
             }
 
+            drivingProgressService.tick(simNow);
             transportRandomEventService.tick(simNow, 30, simulationContext.getLoopCount());
             stateUpdateService.tick(simNow, 30, simulationContext.getLoopCount());
+            drivingProgressService.tick(simNow);
             if (shouldAbortLoop()) {
                 return;
             }
@@ -186,6 +191,23 @@ public class SimulationMainLoop {
         simulationContext.finishReset();
         simulationContext.setRunning(true);
         System.out.println("仿真主循环已启动");
+    }
+
+    public void startWithWeather(Long scenarioId, String externalExperimentId) {
+        startWithWeather(scenarioId, externalExperimentId, () -> {});
+    }
+
+    public void startWithWeather(Long scenarioId, String externalExperimentId, Runnable configureBeforeStart) {
+        lifecycleLock.lock();
+        try {
+            if (simulationContext.isResetting()) throw new IllegalStateException("Simulation reset in progress");
+            weatherEnvironmentService.start(scenarioId, externalExperimentId);
+            // Publish dispatch configuration before the scheduler can observe running=true.
+            configureBeforeStart.run();
+            start();
+        } finally {
+            lifecycleLock.unlock();
+        }
     }
 
     public void stop() {
@@ -220,6 +242,7 @@ public class SimulationMainLoop {
     public void awaitLoopIdleAndResetContext() {
         lifecycleLock.lock();
         try {
+            weatherEnvironmentService.archiveAndReset(simulationContext.getCurrentSimTime());
             simulationContext.reset();
             CostEntity.reset();
             costBaselineNormalizationService.reset();
