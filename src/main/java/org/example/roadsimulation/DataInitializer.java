@@ -3309,7 +3309,11 @@ public class DataInitializer implements CommandLineRunner {
             // 1. 遍历车上的每一票货物 (ShipmentItem)
             Set<ShipmentItem> items = assignment.getShipmentItems();
             for (ShipmentItem item : items) {
-
+                // Cancelled cargo is excluded from delivery by the lifecycle service;
+                // inventory settlement must use the same rule.
+                if (item == null || item.getStatus() == ShipmentItem.ShipmentItemStatus.CANCELLED) {
+                    continue;
+                }
                 // 追溯这票货物的源头，精准扣减库存
                 Shipment shipment = item.getShipment();
                 if (shipment != null) {
