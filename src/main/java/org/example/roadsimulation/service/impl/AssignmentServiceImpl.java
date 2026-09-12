@@ -40,6 +40,9 @@ public class AssignmentServiceImpl implements AssignmentService {
     @Autowired
     private TransportLifecycleService transportLifecycleService;
 
+    @Autowired
+    private org.example.roadsimulation.service.DrivingProgressService drivingProgressService;
+
     // ==================== CRUD ====================
 
     @Override
@@ -218,7 +221,17 @@ public class AssignmentServiceImpl implements AssignmentService {
 
     @Override
     public List<AssignmentBriefDTO> getActiveAssignments() {
-        return dataInitializer.getActiveAssignments();
+        List<AssignmentBriefDTO> result = new ArrayList<>(dataInitializer.getActiveAssignments());
+        if (drivingProgressService != null && drivingProgressService.enabled()) {
+            Set<Long> known = result.stream().map(AssignmentBriefDTO::getAssignmentId).collect(java.util.stream.Collectors.toSet());
+            // Restore only executing tasks; pending route planning must still complete normal registration.
+            for (Assignment assignment : assignmentRepository.findActiveAssignments()) {
+                if (assignment.getStatus() == AssignmentStatus.IN_PROGRESS && known.add(assignment.getId())) {
+                    result.add(convertToBriefDTO(assignment));
+                }
+            }
+        }
+        return result;
     }
 
     @Override
@@ -424,6 +437,23 @@ public class AssignmentServiceImpl implements AssignmentService {
 
         if (dto.getStartPOIId() != null && dto.getEndPOIId() != null) {
             dto.setPairId(dto.getStartPOIId() + "_" + dto.getEndPOIId());
+        }
+
+        if (assignment.getNodes() != null && !assignment.getNodes().isEmpty()) {
+            dto.setVrp(true);
+            dto.setNodes(assignment.getNodes().stream()
+                    .filter(node -> node != null && node.getPoi() != null && node.getActionType() != null)
+                    .sorted(java.util.Comparator.comparing(AssignmentNode::getSequenceIndex, java.util.Comparator.nullsLast(Integer::compareTo)))
+                    .map(node -> {
+                        var target = new AssignmentBriefDTO.NodeDTO();
+                        target.setSequenceIndex(node.getSequenceIndex());
+                        target.setPoiId(node.getPoi().getId()); target.setPoiName(node.getPoi().getName());
+                        target.setLng(node.getPoi().getLongitude()); target.setLat(node.getPoi().getLatitude());
+                        target.setPoiType(node.getPoi().getPoiType() == null ? null : node.getPoi().getPoiType().name());
+                        target.setActionType(node.getActionType().name());
+                        target.setWeightDelta(node.getWeightDelta()); target.setVolumeDelta(node.getVolumeDelta());
+                        return target;
+                    }).toList());
         }
 
         return dto;

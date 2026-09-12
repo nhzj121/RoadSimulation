@@ -154,7 +154,10 @@ public class TransportMonitorService {
         if (drivingProgressService != null && drivingProgressService.enabled()) dto.getVehicles().forEach(vehicle -> {
             var p = drivingProgressService.latest(vehicle.getVehicleId());
             vehicle.setAssignmentId(vehicle.getAssignmentIds().isEmpty() ? null : vehicle.getAssignmentIds().get(0));
-            vehicle.setEffectiveSpeedFactor(drivingProgressService.effectiveFactor(vehicle.getVehicleId(), drivingProgressService.now()));
+            // A repair may reach its planned end before the next state-machine tick observes it.
+            // Until BREAKDOWN is actually cleared, the displayed vehicle must remain stopped.
+            vehicle.setEffectiveSpeedFactor("BREAKDOWN".equals(vehicle.getStatus()) ? 0.0
+                    : drivingProgressService.effectiveFactor(vehicle.getVehicleId(), drivingProgressService.now()));
             if (p != null && java.util.Objects.equals(p.getAssignmentId(), vehicle.getAssignmentId())) {
                 vehicle.setDrivingPhaseKey(p.getPhaseKey()); vehicle.setDrivingStatus(p.getDrivingStatus().name());
                 vehicle.setDrivingLegIndex(p.getLegIndex());

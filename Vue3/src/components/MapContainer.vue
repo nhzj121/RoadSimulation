@@ -149,6 +149,7 @@
           </div>
 
           <div class="vehicle-floating-info-body">
+            <VehicleImpactDetails :vehicle="floatingVehicleMonitor" :weather="monitorWeather" />
             <div class="vehicle-floating-status-row">
               <span class="vehicle-floating-status-dot" :style="{ backgroundColor: floatingVehicleInfo.statusColor }"></span>
               <span>{{ floatingVehicleInfo.statusText || floatingVehicleInfo.currentStatus || '-' }}</span>
@@ -961,6 +962,7 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted, markRaw , nextTick} from "vue";
+import VehicleImpactDetails from './VehicleImpactDetails.vue';
 import { useRouter } from 'vue-router';
 import { poiManagerApi } from "../api/poiManagerApi";
 import { simulationController} from "@/api/simulationController";
@@ -5187,6 +5189,7 @@ const handleRandomEventTriggered = async () => {
 
 const floatingVehicleDisplayAssignment = computed(() => floatingVehicleInfo.assignment || {});
 const floatingVehicleDisplayInfo = computed(() => floatingVehicleInfo.vehicleInfo || {});
+const floatingVehicleMonitor = computed(() => monitorVehicles.find(vehicle => String(vehicle.vehicleId) === String(floatingVehicleInfo.vehicleId)) || null);
 const floatingVehicleTitle = computed(() =>
     floatingVehicleDisplayInfo.value.licensePlate ||
     floatingVehicleDisplayAssignment.value.licensePlate ||
@@ -6051,8 +6054,8 @@ const drawMultiStageRouteForVrpAssignment = async (assignment, runGeneration = s
       return null;
     }
 
-    let currentLng = assignment.vehicleStartLng;
-    let currentLat = assignment.vehicleStartLat;
+    let currentLng = assignment.vehicleStartLng ?? assignment.startLng;
+    let currentLat = assignment.vehicleStartLat ?? assignment.startLat;
     const stages = [];
     const elements = [];
     routeData = {
@@ -6278,6 +6281,7 @@ const normalizeMapPosition = (position) => {
 };
 
 const vehicleMonitorDisplayVehicles = computed(() => vehicles.filter(vehicle => {
+  if (monitorWeather.value?.runId && monitorVehicles.some(v => String(v.vehicleId) === String(vehicle.id))) return true;
   const iconId = getVehicleIconId(vehicle?.id);
   if (!iconId || !drawnVehicleIconIds.value.has(iconId)) {
     return false;
