@@ -266,6 +266,12 @@ public class TransportMetricsService {
         leg.setPlannedDrivingSeconds(routeMetric.drivingSeconds);
         leg.setExecutedDistanceMeters(0.0);
         leg.setExecutedDrivingSeconds(0L);
+        // Phase 8：新规划路段尚未产生任何实际能耗；首次权威距离增量时再冻结模型与车辆档位。
+        leg.setExecutedEnergyLiters(0.0);
+        leg.setExecutedEmissionKg(0.0);
+        leg.setEmissionModelId(null);
+        leg.setVehicleEmissionClassCode(null);
+        leg.setEnergyFactStatus(AssignmentLeg.EnergyFactStatus.PENDING);
         leg.setProgressStatus(AssignmentLeg.ProgressStatus.PENDING);
         leg.setStartedSimTime(null);
         leg.setCompletedSimTime(null);

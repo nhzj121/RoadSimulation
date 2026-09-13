@@ -58,6 +58,8 @@ public enum EvaluationMetricId {
     TASK_COMPLETION_RATIO("taskCompletionRatio", EvaluationMetricCategory.TASK),
     TASK_AVERAGE_RESPONSE_SECONDS("taskAverageResponseSeconds", EvaluationMetricCategory.TASK),
     TASK_AVERAGE_START_WAIT_SECONDS("taskAverageStartWaitSeconds", EvaluationMetricCategory.TASK),
+    // Phase 9A-0：服务约束需要任务整体等待 P95，不能用两个平均值伪造分位数。
+    TASK_P95_SERVICE_WAIT_SECONDS("taskP95ServiceWaitSeconds", EvaluationMetricCategory.TASK),
     TASK_OVERDUE_COUNT("taskOverdueCount", EvaluationMetricCategory.TASK),
     TASK_ON_TIME_COMPLETION_RATIO("taskOnTimeCompletionRatio", EvaluationMetricCategory.TASK),
     TASK_AVERAGE_LOAD_RATIO("taskAverageLoadRatio", EvaluationMetricCategory.TASK),

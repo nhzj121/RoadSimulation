@@ -52,6 +52,21 @@ public class AssignmentLegExecutionDTO {
     // Phase 2：进入路段时携带的载重快照，单位为吨。
     private Double currentLoadTonnes;
 
+    // Phase 8：按实际路段推进累计的柴油当量能耗，单位 L；只读公开用于诊断。
+    private Double executedEnergyLiters;
+
+    // Phase 8：按实际能耗累计的直接运行碳排，单位 kgCO2e；只读公开用于诊断。
+    private Double executedEmissionKg;
+
+    // Phase 8：路段首次产生能耗时冻结的版本化代理模型标识。
+    private String emissionModelId;
+
+    // Phase 8：由车辆额定载重解析得到的 L1/L2/M/H 代理档位。
+    private String vehicleEmissionClassCode;
+
+    // Phase 8：PENDING/VALID/INVALID，仅描述能耗事实完整性，不是运输状态。
+    private String energyFactStatus;
+
     // Phase 2：JPA 乐观锁版本，用于发现主循环与 HTTP 并发覆盖。
     private Long version;
 

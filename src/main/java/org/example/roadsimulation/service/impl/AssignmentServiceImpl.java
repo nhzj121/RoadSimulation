@@ -468,6 +468,12 @@ public class AssignmentServiceImpl implements AssignmentService {
         dto.setCompletedSimTime(leg.getCompletedSimTime());
         dto.setProgressStatus(leg.getProgressStatus().name());
         dto.setCurrentLoadTonnes(leg.getCurrentLoadTonnes());
+        // Phase 8：任务详情只读投影能耗事实；这些字段不参与前端路线或车辆动画。
+        dto.setExecutedEnergyLiters(leg.getExecutedEnergyLiters());
+        dto.setExecutedEmissionKg(leg.getExecutedEmissionKg());
+        dto.setEmissionModelId(leg.getEmissionModelId());
+        dto.setVehicleEmissionClassCode(leg.getVehicleEmissionClassCode());
+        dto.setEnergyFactStatus(leg.getEnergyFactStatus().name());
         dto.setVersion(leg.getVersion());
         // Phase 4：详情接口只读公开权威进度去重序号，不提供任何进度修改入口。
         dto.setLastProcessedLoopIndex(leg.getLastProcessedLoopIndex());

@@ -25,6 +25,8 @@ public record EvaluationSnapshot(
         int failedAssignmentCount,
         List<String> errorCodes,
         EvaluationThresholdSnapshot thresholds,
+        // Phase 8：冻结本轮采用的完整代理模型参数，支持前端显示版本和实验复现。
+        EnergyEmissionModelSnapshot energyEmissionModel,
         Map<String, EvaluationMetricValue> metrics
 ) {
     public EvaluationSnapshot {
@@ -48,11 +50,12 @@ public record EvaluationSnapshot(
             throw new IllegalArgumentException("errorCodes must not contain blank values");
         }
         Objects.requireNonNull(thresholds, "thresholds are required");
+        Objects.requireNonNull(energyEmissionModel, "energyEmissionModel is required");
 
         // Phase 6B：复制并冻结有序映射，确保同一 revision 被多次读取时不会发生内容漂移。
         LinkedHashMap<String, EvaluationMetricValue> copiedMetrics =
                 new LinkedHashMap<>(Objects.requireNonNull(metrics, "metrics are required"));
-        // Phase 6B：每个快照必须完整携带 69 项契约，缺项不能伪装成可供前端消费的快照。
+        // Phase 9A-0：每个快照必须完整携带当前 70 项契约，缺项不能伪装成可供前端消费的快照。
         if (copiedMetrics.size() != EvaluationMetricId.values().length
                 || copiedMetrics.entrySet().stream().anyMatch(entry -> entry.getValue() == null
                 || !entry.getKey().equals(entry.getValue().metricId()))) {

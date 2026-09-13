@@ -41,6 +41,23 @@ export interface EvaluationThresholdSnapshot {
   maxServiceWaitSeconds: number;
 }
 
+/** Phase 8：后端冻结的柴油当量能耗与直接运行排放模型参数。 */
+export interface EnergyEmissionModelSnapshot {
+  modelId: string;
+  energyUnit: string;
+  baseFuelLitersPerKm: number;
+  directEmissionKgPerLiter: number;
+  loadFactorBeta: number;
+  environmentFactorGamma: number;
+  l1MaxCapacityTonnes: number;
+  l2MaxCapacityTonnes: number;
+  mediumMaxCapacityTonnes: number;
+  l1VehicleFactor: number;
+  l2VehicleFactor: number;
+  mediumVehicleFactor: number;
+  heavyVehicleFactor: number;
+}
+
 export interface EvaluationSnapshot {
   contractVersion: string;
   simulationRunId: string;
@@ -53,7 +70,60 @@ export interface EvaluationSnapshot {
   failedAssignmentCount: number;
   errorCodes: string[];
   thresholds: EvaluationThresholdSnapshot;
+  energyEmissionModel: EnergyEmissionModelSnapshot;
   metrics: Record<string, EvaluationMetricValue>;
+}
+
+/** Phase 9C：跨 reset 保留的评价运行摘要。 */
+export interface EvaluationRunSummary {
+  simulationRunId: string;
+  runKind: EvaluationRunKind;
+  contractVersion: string;
+  firstLoopIndex: number;
+  lastLoopIndex: number;
+  snapshotCount: number;
+  firstSimTime: string;
+  lastSimTime: string;
+  latestStatus: EvaluationSnapshotStatus;
+}
+
+/** Phase 9C：趋势点保留后端状态和原因，前端不得把缺失值补成 0。 */
+export interface EvaluationTrendPoint {
+  loopIndex: number;
+  snapshotRevision: number;
+  simTime: string;
+  snapshotStatus: EvaluationSnapshotStatus;
+  metrics: Record<string, EvaluationMetricValue>;
+}
+
+export interface EvaluationTrend {
+  run: EvaluationRunSummary;
+  metricIds: string[];
+  points: EvaluationTrendPoint[];
+}
+
+
+/** Phase 9C：rightMinusLeft/relativeChangeRatio 仅在左右最终值均 AVAILABLE 时存在。 */
+export interface EvaluationMetricComparison {
+  metricId: string;
+  displayName: string;
+  category: EvaluationMetricCategory;
+  unit: string;
+  leftStatus: EvaluationMetricValueStatus;
+  leftValue: number | null;
+  rightStatus: EvaluationMetricValueStatus;
+  rightValue: number | null;
+  rightMinusLeft: number | null;
+  relativeChangeRatio: number | null;
+}
+
+
+export interface EvaluationRunComparison {
+  leftRun: EvaluationRunSummary;
+  rightRun: EvaluationRunSummary;
+  leftFinalSnapshot: EvaluationSnapshot;
+  rightFinalSnapshot: EvaluationSnapshot;
+  metrics: EvaluationMetricComparison[];
 }
 
 /** Phase 6C：EvaluationController 使用的实际 ApiResponse 结构。 */

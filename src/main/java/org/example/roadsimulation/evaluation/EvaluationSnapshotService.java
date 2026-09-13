@@ -4,6 +4,7 @@ import org.example.roadsimulation.core.SimulationTick;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -22,21 +23,67 @@ import java.util.concurrent.atomic.AtomicReference;
 public class EvaluationSnapshotService {
 
     public static final String FACT_COLLECTION_FAILED = "EVALUATION_FACT_COLLECTION_FAILED";
+    // Phase 9C：历史保存失败与事实计算失败分开编码，便于前端和运维判断影响范围。
+    public static final String HISTORY_PERSIST_FAILED = "EVALUATION_HISTORY_PERSIST_FAILED";
     private static final Logger log = LoggerFactory.getLogger(EvaluationSnapshotService.class);
 
     private final Object lifecycleMonitor = new Object();
     private final AtomicReference<EvaluationSnapshot> latestSnapshot = new AtomicReference<>();
     private final EvaluationSnapshotCalculator calculator;
     private final EvaluationMetricPolicy policy;
+    // Phase 8：快照除指标值外同时公开实际生效的完整能耗与碳排模型参数。
+    private final VehicleEnergyEmissionModel energyEmissionModel;
+    // Phase 9A-1：只读等待投影在业务 tick 完成后执行，不介入运输生命周期。
+    private final WaitFactLedgerProjector waitFactLedgerProjector;
+    // Phase 9B-2：交付 SLA 账本只观察需求和已提交的 UNLOAD 事实，不接管任务完成。
+    private final DeliverySlaLedgerProjector deliverySlaLedgerProjector;
+    // Phase 9C：历史服务只保存已经构造完成的评价快照，不读取或修改运输业务实体。
+    private final EvaluationSnapshotHistoryService historyService;
     private RunState activeRun;
 
     public EvaluationSnapshotService(
             EvaluationSnapshotCalculator calculator,
             EvaluationMetricPolicy policy
     ) {
+        this(calculator, policy, VehicleEnergyEmissionModel.defaultModel(), null, null, null);
+    }
+
+    public EvaluationSnapshotService(
+            EvaluationSnapshotCalculator calculator,
+            EvaluationMetricPolicy policy,
+            VehicleEnergyEmissionModel energyEmissionModel
+    ) {
+        this(calculator, policy, energyEmissionModel, null, null, null);
+    }
+
+    public EvaluationSnapshotService(
+            EvaluationSnapshotCalculator calculator,
+            EvaluationMetricPolicy policy,
+            VehicleEnergyEmissionModel energyEmissionModel,
+            WaitFactLedgerProjector waitFactLedgerProjector,
+            DeliverySlaLedgerProjector deliverySlaLedgerProjector
+    ) {
+        this(calculator, policy, energyEmissionModel,
+                waitFactLedgerProjector, deliverySlaLedgerProjector, null);
+    }
+
+    @Autowired
+    public EvaluationSnapshotService(
+            EvaluationSnapshotCalculator calculator,
+            EvaluationMetricPolicy policy,
+            VehicleEnergyEmissionModel energyEmissionModel,
+            WaitFactLedgerProjector waitFactLedgerProjector,
+            DeliverySlaLedgerProjector deliverySlaLedgerProjector,
+            EvaluationSnapshotHistoryService historyService
+    ) {
         // Phase 6B：快照服务只依赖只读计算器与阈值，不持有或修改运输实体。
         this.calculator = calculator;
         this.policy = policy;
+        // Phase 8：旧测试构造器使用默认模型，生产环境注入属性绑定后的版本化模型。
+        this.energyEmissionModel = energyEmissionModel;
+        this.waitFactLedgerProjector = waitFactLedgerProjector;
+        this.deliverySlaLedgerProjector = deliverySlaLedgerProjector;
+        this.historyService = historyService;
     }
 
     /** Phase 6B：普通仿真首次 start/step 创建 UUID；暂停后恢复不会重建运行。 */
@@ -108,11 +155,20 @@ public class EvaluationSnapshotService {
             }
 
             long revision = ++activeRun.revision;
+            // Phase 9A-1：先观察本轮结束事实，再计算同一轮快照；投影器内部隔离评价侧异常。
+            if (waitFactLedgerProjector != null) {
+                waitFactLedgerProjector.project(activeRun.runId, tick);
+            }
+            if (deliverySlaLedgerProjector != null) {
+                // Phase 9B-2：必须在等待投影之后执行，以复用同轮规范化的需求创建仿真时间。
+                deliverySlaLedgerProjector.project(activeRun.runId, tick);
+            }
             EvaluationSnapshotCalculator.Calculation calculation;
             boolean collectionFailed = false;
             try {
                 // Phase 7B：把当前窗口显式交给计算器，节点吞吐量不从墙上时间或 revision 反推。
-                calculation = calculator.calculate(tick);
+                // Phase 9A-2：显式传递当前 runId，等待事实不能按“最新一轮”隐式猜测。
+                calculation = calculator.calculate(tick, activeRun.runId);
             } catch (Exception ex) {
                 collectionFailed = true;
                 log.error("[Phase6B Evaluation] fact collection failed at loop={}", tick.loopIndex(), ex);
@@ -142,8 +198,20 @@ public class EvaluationSnapshotService {
                             policy.getFullLoadRatioThreshold(),
                             policy.getMaxServiceWaitSeconds()
                     ),
+                    // Phase 8：元数据与计算器、推进服务共享同一 Spring 模型实例和启动配置。
+                    energyEmissionModel.snapshot(),
                     calculation.metrics()
             );
+            if (historyService != null) {
+                try {
+                    // Phase 9C：先形成不可变快照再持久化，历史层不能介入本轮指标计算。
+                    historyService.store(snapshot);
+                } catch (RuntimeException ex) {
+                    log.error("[Phase9C EvaluationHistory] persist failed: runId={}, revision={}",
+                            snapshot.simulationRunId(), snapshot.snapshotRevision(), ex);
+                    snapshot = markHistoryPersistenceFailure(snapshot);
+                }
+            }
             // Phase 6B：单次原子替换使并发 GET 只能看到旧完整快照或新完整快照。
             latestSnapshot.set(snapshot);
             return snapshot;
@@ -153,6 +221,30 @@ public class EvaluationSnapshotService {
     /** Phase 6B：HTTP 层只读取内存对象，不触发数据库查询和二次计算。 */
     public Optional<EvaluationSnapshot> latest() {
         return Optional.ofNullable(latestSnapshot.get());
+    }
+
+    /** Phase 9C：历史写入异常只降低评价快照状态，不改变运输业务执行结果。 */
+    private EvaluationSnapshot markHistoryPersistenceFailure(EvaluationSnapshot snapshot) {
+        LinkedHashSet<String> errorCodes = new LinkedHashSet<>(snapshot.errorCodes());
+        errorCodes.add(HISTORY_PERSIST_FAILED);
+        EvaluationSnapshotStatus status = snapshot.snapshotStatus() == EvaluationSnapshotStatus.FAILED
+                ? EvaluationSnapshotStatus.FAILED
+                : EvaluationSnapshotStatus.PARTIAL;
+        return new EvaluationSnapshot(
+                snapshot.contractVersion(),
+                snapshot.simulationRunId(),
+                snapshot.runKind(),
+                snapshot.loopIndex(),
+                snapshot.snapshotRevision(),
+                snapshot.simTime(),
+                status,
+                snapshot.processedAssignmentCount(),
+                snapshot.failedAssignmentCount(),
+                List.copyOf(errorCodes),
+                snapshot.thresholds(),
+                snapshot.energyEmissionModel(),
+                snapshot.metrics()
+        );
     }
 
     private EvaluationSnapshotStatus resolveStatus(
