@@ -103,6 +103,19 @@ class TransportRandomEventControllerTest {
                 .andExpect(status().isOk());
     }
 
+    @Test void realJsonRequestRejectsFractionalAndStringMinuteTokens() throws Exception {
+        var mvc = org.springframework.test.web.servlet.setup.MockMvcBuilders.standaloneSetup(controller).build();
+        for (String invalidValue : List.of("30.5", "30.0", "\"30\"")) {
+            mvc.perform(post("/api/simulation/random-events/trigger")
+                            .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                            .content("{\"eventType\":\"VEHICLE_BREAKDOWN\",\"vehicleId\":12,"
+                                    + "\"breakdownLevel\":\"ASSISTANCE_REQUIRED\","
+                                    + "\"rescueWaitMinutes\":" + invalidValue + ",\"repairMinutes\":90}"))
+                    .andExpect(status().isBadRequest());
+        }
+        verifyNoInteractions(eventService);
+    }
+
     private TransportRandomEvent activeEvent(Long vehicleId) {
         TransportRandomEvent event = new TransportRandomEvent();
         event.setId(100L);

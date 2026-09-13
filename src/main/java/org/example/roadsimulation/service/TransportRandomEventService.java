@@ -86,23 +86,9 @@ public class TransportRandomEventService {
     public TransportRandomEvent triggerManually(TransportRandomEvent.EventType eventType, Long vehicleId,
             Integer durationMinutes, TransportRandomEvent.BreakdownLevel level, Integer rescueWaitMinutes,
             Integer repairMinutes, LocalDateTime simNow) {
-        if (!properties.isEnabled()) {
-            throw new IllegalStateException("random events are disabled");
-        }
         if (eventType == null || vehicleId == null || simNow == null) {
             throw new IllegalArgumentException("eventType, vehicleId and simNow are required");
         }
-        Vehicle vehicle = vehicleRepository.findByIdForUpdate(vehicleId)
-                .orElseThrow(() -> new IllegalArgumentException("vehicle not found: " + vehicleId));
-        Assignment assignment = assignmentRepository.findActiveAssignmentByVehicle(vehicleId)
-                .orElseThrow(() -> new IllegalArgumentException("vehicle has no active assignment: " + vehicleId));
-        if (!isDriving(vehicle)) {
-            throw new IllegalStateException("vehicle is not in a driving state: " + vehicle.getCurrentStatus());
-        }
-        if (eventRepository.findFirstByVehicleIdAndStatus(vehicleId, TransportRandomEvent.EventStatus.ACTIVE).isPresent()) {
-            throw new IllegalStateException("vehicle already has an active random event: " + vehicleId);
-        }
-
         boolean v2=level!=null||rescueWaitMinutes!=null||repairMinutes!=null;
         if(eventType==TransportRandomEvent.EventType.TRAFFIC_CONGESTION && v2)
             throw new IllegalArgumentException("congestion cannot use breakdown fields");
@@ -115,6 +101,19 @@ public class TransportRandomEventService {
         if(v2) validateBreakdown(level,wait,repair);
         int effectiveDuration = v2?wait+repair:(durationMinutes == null ? defaultDuration(eventType) : durationMinutes);
         validateManualDuration(effectiveDuration);
+        if (!properties.isEnabled()) {
+            throw new IllegalStateException("random events are disabled");
+        }
+        Vehicle vehicle = vehicleRepository.findByIdForUpdate(vehicleId)
+                .orElseThrow(() -> new IllegalArgumentException("vehicle not found: " + vehicleId));
+        Assignment assignment = assignmentRepository.findActiveAssignmentByVehicle(vehicleId)
+                .orElseThrow(() -> new IllegalArgumentException("vehicle has no active assignment: " + vehicleId));
+        if (!isDriving(vehicle)) {
+            throw new IllegalStateException("vehicle is not in a driving state: " + vehicle.getCurrentStatus());
+        }
+        if (eventRepository.findFirstByVehicleIdAndStatus(vehicleId, TransportRandomEvent.EventStatus.ACTIVE).isPresent()) {
+            throw new IllegalStateException("vehicle already has an active random event: " + vehicleId);
+        }
         double speedFactor = eventType == TransportRandomEvent.EventType.TRAFFIC_CONGESTION
                 ? properties.getCongestion().getSpeedFactor()
                 : 0.0;
@@ -135,7 +134,8 @@ public class TransportRandomEventService {
         return eventRepository.findFirstByVehicleIdAndStatus(vehicleId, TransportRandomEvent.EventStatus.ACTIVE)
                 .filter(event -> drivingProgressService == null || !drivingProgressService.enabled()
                         || event.getEventType() == TransportRandomEvent.EventType.VEHICLE_BREAKDOWN)
-                .filter(event -> event.getPlannedEndTime().isAfter(simNow))
+                .filter(event -> event.getEventType() == TransportRandomEvent.EventType.VEHICLE_BREAKDOWN
+                        || event.getPlannedEndTime().isAfter(simNow))
                 .isPresent();
     }
 
@@ -342,9 +342,15 @@ public class TransportRandomEventService {
     private String recoveryGuardFailure(TransportRandomEvent event,Vehicle vehicle){
         if(event.getOriginalAssignmentStatus()==null&&event.getOriginalLegIndex()==null)return null;
         if(vehicle.getCurrentStatus()!=Vehicle.VehicleStatus.BREAKDOWN)return "VEHICLE_STATUS_CHANGED";
+        Assignment original = assignmentRepository.findById(event.getAssignmentId()).orElse(null);
+        if (original == null) return "ASSIGNMENT_CHANGED";
+        if (original.getAssignedVehicle() == null
+                || !java.util.Objects.equals(original.getAssignedVehicle().getId(), event.getVehicleId())) {
+            return "ASSIGNMENT_CHANGED";
+        }
+        if(original.getStatus()!=event.getOriginalAssignmentStatus())return "ASSIGNMENT_STATUS_CHANGED";
         Assignment current=assignmentRepository.findActiveAssignmentByVehicle(event.getVehicleId()).orElse(null);
         if(current==null||!java.util.Objects.equals(current.getId(),event.getAssignmentId()))return "ASSIGNMENT_CHANGED";
-        if(current.getStatus()!=event.getOriginalAssignmentStatus())return "ASSIGNMENT_STATUS_CHANGED";
         Integer currentLeg = event.getOriginalDrivingPhaseKey() != null && drivingProgressService != null
                 ? drivingProgressService.legIndex(current) : current.getCurrentActionIndex();
         if(!java.util.Objects.equals(currentLeg,event.getOriginalLegIndex()))return "ASSIGNMENT_STAGE_CHANGED";

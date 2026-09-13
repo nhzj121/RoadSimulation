@@ -1,6 +1,7 @@
 package org.example.roadsimulation.dto;
 import lombok.Data;
 import java.util.*;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 
 @Data
 public class WeatherScenarioDTO {
@@ -22,6 +23,14 @@ public class WeatherScenarioDTO {
     private List<TimeSlice> timeSlices = new ArrayList<>();
     public record TimeSlice(long startMinute, long endMinute, WeatherType weatherType, double speedFactor) {}
     public record EventParameters(double hourlyProbability, int minDurationMinutes, int maxDurationMinutes, double speedFactor) {}
-    public record BreakdownPolicy(String version, double minorProbability, int minorRepairMin, int minorRepairMax,
-                                  int rescueWaitMin, int rescueWaitMax, int assistanceRepairMin, int assistanceRepairMax) {}
+    public record BreakdownPolicy(
+            String version,
+            double minorProbability,
+            @JsonDeserialize(using = StrictIntegerDeserializer.class) int minorRepairMin,
+            @JsonDeserialize(using = StrictIntegerDeserializer.class) int minorRepairMax,
+            @JsonDeserialize(using = StrictIntegerDeserializer.class) int rescueWaitMin,
+            @JsonDeserialize(using = StrictIntegerDeserializer.class) int rescueWaitMax,
+            @JsonDeserialize(using = StrictIntegerDeserializer.class) int assistanceRepairMin,
+            @JsonDeserialize(using = StrictIntegerDeserializer.class) int assistanceRepairMax
+    ) {}
 }

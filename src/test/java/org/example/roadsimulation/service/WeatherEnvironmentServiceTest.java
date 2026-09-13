@@ -86,6 +86,16 @@ class WeatherEnvironmentServiceTest {
         assertEquals(new WeatherScenarioDTO.BreakdownPolicy("breakdown-v2", .7, 30, 60, 30, 60, 60, 120),
                 fresh.getBreakdownPolicy());
     }
+    @Test void scenarioJsonRejectsNonIntegerPolicyMinuteTokens() {
+        var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        String json = """
+                {"version":"breakdown-v2","minorProbability":0.7,"minorRepairMin":30.5,
+                 "minorRepairMax":60,"rescueWaitMin":30,"rescueWaitMax":60,
+                 "assistanceRepairMin":60,"assistanceRepairMax":120}
+                """;
+        assertThrows(com.fasterxml.jackson.core.JsonProcessingException.class,
+                () -> mapper.readValue(json, WeatherScenarioDTO.BreakdownPolicy.class));
+    }
     @Test void weatherBoundariesAreHalfOpenAndEndFallsBackToSunny() {
         var d=WeatherEnvironmentService.preset(new WeatherScenarioDTO());
         assertEquals(SUNNY,WeatherEnvironmentService.sliceAt(d,3599).weatherType());

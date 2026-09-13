@@ -63,3 +63,27 @@ classes. Result: **45 tests run, 0 failures, 0 errors, 0 skipped; BUILD SUCCESS*
 The build retains pre-existing warnings about duplicate springdoc dependency declarations and
 Mockito dynamic agent attachment. No dependencies, ports, credentials, databases, or server
 processes were changed.
+
+## Review round 1
+
+Three contract regressions and one integration edge were added test-first. RED showed that
+Jackson accepted fractional minute values, malformed mixed fields reached vehicle lookup,
+and a completed captured assignment was reported as `ASSIGNMENT_CHANGED`. A separate boundary
+test showed an ACTIVE breakdown stopped blocking exactly at `plannedEndTime` before its recovery
+tick.
+
+Minute fields now use a field-scoped strict deserializer: only JSON integer tokens are accepted
+for request `durationMinutes`, `rescueWaitMinutes`, and `repairMinutes`, and for all six integer
+range fields in `breakdownPolicy`. Floating tokens including `30.0` and numeric strings are
+rejected without changing global Jackson coercion. Request shape, mutual exclusion, defaults,
+and duration limits are computed before enabled-state, vehicle, assignment, driving-state, or
+active-event checks.
+
+Recovery loads the captured assignment by ID first, verifies its vehicle and status, then checks
+the currently active assignment identity. Thus COMPLETED/CANCELLED status changes remain
+`ASSIGNMENT_STATUS_CHANGED` rather than being masked by the active-assignment query. An ACTIVE
+breakdown continues blocking legacy arrival/state transitions at and after its planned end until
+the event tick resolves it; congestion keeps its existing planned-end boundary behavior.
+
+Review-round focused GREEN: **28 tests, 0 failures/errors/skips**. Final directed regression
+GREEN: **50 tests, 0 failures/errors/skips; BUILD SUCCESS**.

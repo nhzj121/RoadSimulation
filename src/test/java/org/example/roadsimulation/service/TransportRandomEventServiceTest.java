@@ -59,11 +59,12 @@ class TransportRandomEventServiceTest {
         assignment.setStatus(Assignment.AssignmentStatus.IN_PROGRESS);
         assignment.setAssignedVehicle(vehicle);
 
-        when(vehicleRepository.findByIdForUpdate(12L)).thenReturn(Optional.of(vehicle));
+        lenient().when(vehicleRepository.findByIdForUpdate(12L)).thenReturn(Optional.of(vehicle));
         lenient().when(assignmentRepository.findActiveAssignmentByVehicle(12L)).thenReturn(Optional.of(assignment));
-        when(eventRepository.findFirstByVehicleIdAndStatus(12L, TransportRandomEvent.EventStatus.ACTIVE))
+        lenient().when(assignmentRepository.findById(88L)).thenReturn(Optional.of(assignment));
+        lenient().when(eventRepository.findFirstByVehicleIdAndStatus(12L, TransportRandomEvent.EventStatus.ACTIVE))
                 .thenReturn(Optional.empty());
-        when(eventRepository.save(any(TransportRandomEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        lenient().when(eventRepository.save(any(TransportRandomEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
     }
 
     @Test
@@ -124,6 +125,17 @@ class TransportRandomEventServiceTest {
         assertEquals(TransportRandomEvent.EventStatus.ACTIVE, event.getStatus());
         assertEquals(1800L, event.getDelaySeconds());
         verify(eventRepository, atLeast(2)).save(event);
+    }
+
+    @Test void activeBreakdownStillBlocksAtPlannedEndUntilRecoveryTick() {
+        TransportRandomEvent event = service.triggerManually(
+                TransportRandomEvent.EventType.VEHICLE_BREAKDOWN, 12L, 60, simNow);
+        when(eventRepository.findFirstByVehicleIdAndStatus(12L, TransportRandomEvent.EventStatus.ACTIVE))
+                .thenReturn(Optional.of(event));
+        assertTrue(service.isTransitionBlocked(12L, event.getPlannedEndTime()));
+
+        event.setEventType(TransportRandomEvent.EventType.TRAFFIC_CONGESTION);
+        assertFalse(service.isTransitionBlocked(12L, event.getPlannedEndTime()));
     }
 
     @Test
@@ -232,5 +244,22 @@ class TransportRandomEventServiceTest {
         TransportRandomEvent legacy = service.triggerManually(TransportRandomEvent.EventType.VEHICLE_BREAKDOWN, 12L, 60, simNow);
         assertNull(legacy.getBreakdownRuleVersion());
         assertEquals(assignment.getStatus(), legacy.getOriginalAssignmentStatus());
+    }
+
+    @Test void malformedShapeIsRejectedBeforeVehicleBusinessConflict() {
+        assertThrows(IllegalArgumentException.class, () -> service.triggerManually(
+                TransportRandomEvent.EventType.VEHICLE_BREAKDOWN, 12L, 60,
+                TransportRandomEvent.BreakdownLevel.MINOR, 0, 60, simNow));
+        verify(vehicleRepository, never()).findByIdForUpdate(anyLong());
+    }
+
+    @Test void completedOriginalAssignmentReportsStatusRatherThanGenericAssignmentChange() {
+        TransportRandomEvent event = service.triggerManually(TransportRandomEvent.EventType.VEHICLE_BREAKDOWN,
+                12L, TransportRandomEvent.BreakdownLevel.MINOR, 0, 60, simNow);
+        when(eventRepository.findByStatus(TransportRandomEvent.EventStatus.ACTIVE)).thenReturn(List.of(event));
+        assignment.setStatus(Assignment.AssignmentStatus.COMPLETED);
+        when(assignmentRepository.findById(88L)).thenReturn(Optional.of(assignment));
+        service.tick(simNow.plusMinutes(60), 60, 1);
+        assertEquals("ASSIGNMENT_STATUS_CHANGED", event.getRecoveryOutcome());
     }
 }
