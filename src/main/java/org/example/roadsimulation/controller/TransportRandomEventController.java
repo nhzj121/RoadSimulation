@@ -32,12 +32,14 @@ public class TransportRandomEventController {
             if (request == null) {
                 throw new IllegalArgumentException("request body is required");
             }
-            TransportRandomEvent event = eventService.triggerManually(
-                    request.getEventType(),
-                    request.getVehicleId(),
-                    request.getDurationMinutes(),
-                    simulationContext.getCurrentSimTime()
-            );
+            boolean v2 = request.getBreakdownLevel() != null || request.getRescueWaitMinutes() != null
+                    || request.getRepairMinutes() != null;
+            TransportRandomEvent event = v2
+                    ? eventService.triggerManually(request.getEventType(), request.getVehicleId(), request.getDurationMinutes(),
+                            request.getBreakdownLevel(), request.getRescueWaitMinutes(), request.getRepairMinutes(),
+                            simulationContext.getCurrentSimTime())
+                    : eventService.triggerManually(request.getEventType(), request.getVehicleId(),
+                            request.getDurationMinutes(), simulationContext.getCurrentSimTime());
             return ResponseEntity.ok(ApiResponse.success("random event triggered", RandomEventDTO.from(event)));
         } catch (IllegalArgumentException ex) {
             return ResponseEntity.badRequest().body(ApiResponse.error(ex.getMessage()));

@@ -25,6 +25,8 @@ public class TransportRandomEventService {
     private DrivingProgressService drivingProgressService;
     @org.springframework.beans.factory.annotation.Autowired
     private WeatherEnvironmentService weatherEnvironmentService;
+    @org.springframework.beans.factory.annotation.Autowired
+    private BreakdownDecisionPolicy breakdownDecisionPolicy;
     private static final int MIN_MANUAL_DURATION_MINUTES = 30;
     private static final int MAX_MANUAL_DURATION_MINUTES = 240;
 
@@ -72,6 +74,18 @@ public class TransportRandomEventService {
             Integer durationMinutes,
             LocalDateTime simNow
     ) {
+        return triggerManually(eventType, vehicleId, durationMinutes, null, null, null, simNow);
+    }
+
+    public TransportRandomEvent triggerManually(TransportRandomEvent.EventType eventType, Long vehicleId,
+            TransportRandomEvent.BreakdownLevel level, Integer rescueWaitMinutes, Integer repairMinutes, LocalDateTime simNow) {
+        return triggerManually(eventType, vehicleId, null, level, rescueWaitMinutes, repairMinutes, simNow);
+    }
+
+    @Transactional
+    public TransportRandomEvent triggerManually(TransportRandomEvent.EventType eventType, Long vehicleId,
+            Integer durationMinutes, TransportRandomEvent.BreakdownLevel level, Integer rescueWaitMinutes,
+            Integer repairMinutes, LocalDateTime simNow) {
         if (!properties.isEnabled()) {
             throw new IllegalStateException("random events are disabled");
         }
@@ -89,13 +103,28 @@ public class TransportRandomEventService {
             throw new IllegalStateException("vehicle already has an active random event: " + vehicleId);
         }
 
-        int effectiveDuration = durationMinutes == null ? defaultDuration(eventType) : durationMinutes;
+        boolean v2=level!=null||rescueWaitMinutes!=null||repairMinutes!=null;
+        if(eventType==TransportRandomEvent.EventType.TRAFFIC_CONGESTION && v2)
+            throw new IllegalArgumentException("congestion cannot use breakdown fields");
+        if(v2 && eventType!=TransportRandomEvent.EventType.VEHICLE_BREAKDOWN)
+            throw new IllegalArgumentException("breakdown fields require VEHICLE_BREAKDOWN");
+        if(v2 && durationMinutes!=null) throw new IllegalArgumentException("durationMinutes cannot be combined with breakdown fields");
+        if(v2 && level==null) throw new IllegalArgumentException("breakdownLevel is required for breakdown-v2");
+        int wait=v2?(rescueWaitMinutes==null?(level==TransportRandomEvent.BreakdownLevel.MINOR?0:30):rescueWaitMinutes):0;
+        int repair=v2?(repairMinutes==null?(level==TransportRandomEvent.BreakdownLevel.MINOR?60:90):repairMinutes):0;
+        if(v2) validateBreakdown(level,wait,repair);
+        int effectiveDuration = v2?wait+repair:(durationMinutes == null ? defaultDuration(eventType) : durationMinutes);
         validateManualDuration(effectiveDuration);
         double speedFactor = eventType == TransportRandomEvent.EventType.TRAFFIC_CONGESTION
                 ? properties.getCongestion().getSpeedFactor()
                 : 0.0;
-        return createEvent(eventType, vehicle, assignment, effectiveDuration, speedFactor,
+        TransportRandomEvent event=createEvent(eventType, vehicle, assignment, effectiveDuration, speedFactor,
                 TransportRandomEvent.TriggerSource.MANUAL, simNow, properties.getSeed());
+        if (v2) {
+            applyBreakdownMetadata(event, level, wait, repair, simNow);
+            eventRepository.save(event);
+        }
+        return event;
     }
 
     @Transactional(readOnly = true)
@@ -129,6 +158,13 @@ public class TransportRandomEventService {
     private Set<Long> resolveDueEvents(LocalDateTime simNow) {
         Set<Long> resolvedVehicleIds = new HashSet<>();
         for (TransportRandomEvent event : eventRepository.findByStatus(TransportRandomEvent.EventStatus.ACTIVE)) {
+            if (event.getStatus() != TransportRandomEvent.EventStatus.ACTIVE) {
+                continue;
+            }
+            if(event.getBreakdownRuleVersion()!=null && event.getEventType()==TransportRandomEvent.EventType.VEHICLE_BREAKDOWN
+                    && !simNow.isBefore(event.getRepairStartTime()) && simNow.isBefore(event.getPlannedEndTime())) {
+                event.setBreakdownPhase(TransportRandomEvent.BreakdownPhase.REPAIRING);
+            }
             if (event.getPlannedEndTime().isAfter(simNow)) {
                 event.setDelaySeconds(elapsedSeconds(event.getStartTime(), simNow));
                 eventRepository.save(event);
@@ -145,23 +181,29 @@ public class TransportRandomEventService {
         event.setResolvedTime(event.getPlannedEndTime());
         event.setDelaySeconds(elapsedSeconds(event.getStartTime(), event.getPlannedEndTime()));
         Vehicle vehicle = vehicleRepository.findByIdForUpdate(event.getVehicleId()).orElse(null);
+        if (event.getEventType() == TransportRandomEvent.EventType.VEHICLE_BREAKDOWN && vehicle == null) {
+            event.setRecoveryOutcome("VEHICLE_MISSING");
+        }
         if (event.getEventType() == TransportRandomEvent.EventType.VEHICLE_BREAKDOWN
                 && event.getPreviousVehicleStatus() != null
                 && vehicle != null) {
-            vehicle.transitionToStatus(
+            String guardFailure=recoveryGuardFailure(event,vehicle);
+            if(guardFailure==null) vehicle.transitionToStatus(
                     event.getPreviousVehicleStatus(),
                     simNow,
                     Duration.ofSeconds(Math.max(0L, Optional.ofNullable(event.getRemainingStatusSeconds()).orElse(0L)))
             );
-            if (drivingProgressService != null && drivingProgressService.enabled()) {
+            if(guardFailure==null && drivingProgressService != null && drivingProgressService.enabled()) {
                 var progress = drivingProgressService.latest(vehicle.getId());
                 if (progress != null && java.util.Objects.equals(progress.getAssignmentId(), event.getAssignmentId())) {
                     vehicle.setStatusStartTime(progress.getPhaseStart());
                     vehicle.setStatusDuration(Duration.ofSeconds((long) progress.getInitialWorkSeconds()));
                 }
             }
-            vehicleRepository.save(vehicle);
+            if(guardFailure==null) vehicleRepository.save(vehicle);
+            event.setRecoveryOutcome(guardFailure==null?"RESTORED":guardFailure);
         }
+        if(event.getBreakdownRuleVersion()!=null){event.setBreakdownPhase(TransportRandomEvent.BreakdownPhase.RECOVERED);event.setRecoveryProcessedTime(simNow);}
         eventRepository.save(event);
     }
 
@@ -189,10 +231,22 @@ public class TransportRandomEventService {
                 congestion.getMinDurationMinutes(), congestion.getMaxDurationMinutes(),
                 breakdown.getMinDurationMinutes(), breakdown.getMaxDurationMinutes(),
                 congestion.getSpeedFactor()
-        ).ifPresent(decision -> createEvent(
-                decision.eventType(), vehicle, assignment, decision.durationMinutes(), decision.speedFactor(),
-                TransportRandomEvent.TriggerSource.AUTO, simNow, properties.getSeed()
-        ));
+        ).ifPresent(decision -> {
+            if (decision.eventType() == TransportRandomEvent.EventType.VEHICLE_BREAKDOWN
+                    && weatherEnvironmentService != null && weatherEnvironmentService.breakdownPolicy() != null) {
+                BreakdownDecisionPolicy.Decision breakdownDecision = breakdownDecisionPolicy.decide(
+                        properties.getSeed(), loopCount, vehicle.getId(), weatherEnvironmentService.breakdownPolicy());
+                TransportRandomEvent event = createEvent(decision.eventType(), vehicle, assignment,
+                        breakdownDecision.rescueWaitMinutes() + breakdownDecision.repairMinutes(), 0,
+                        TransportRandomEvent.TriggerSource.AUTO, simNow, properties.getSeed());
+                applyBreakdownMetadata(event, breakdownDecision.level(), breakdownDecision.rescueWaitMinutes(),
+                        breakdownDecision.repairMinutes(), simNow);
+                eventRepository.save(event);
+            } else {
+                createEvent(decision.eventType(), vehicle, assignment, decision.durationMinutes(), decision.speedFactor(),
+                        TransportRandomEvent.TriggerSource.AUTO, simNow, properties.getSeed());
+            }
+        });
     }
 
     private TransportRandomEvent createEvent(
@@ -205,7 +259,8 @@ public class TransportRandomEventService {
             LocalDateTime simNow,
             long seed
     ) {
-        if (drivingProgressService != null) drivingProgressService.settle(vehicle, simNow);
+        org.example.roadsimulation.entity.DrivingProgress settledProgress = drivingProgressService == null
+                ? null : drivingProgressService.settle(vehicle, simNow);
         if (source == TransportRandomEvent.TriggerSource.MANUAL && weatherEnvironmentService != null)
             weatherEnvironmentService.manualIntervention();
         TransportRandomEvent event = new TransportRandomEvent();
@@ -232,6 +287,9 @@ public class TransportRandomEventService {
                     ? 0L
                     : Math.max(0L, Duration.between(simNow, statusEndTime).getSeconds());
             event.setRemainingStatusSeconds(remainingSeconds);
+            event.setOriginalAssignmentStatus(assignment.getStatus());
+            event.setOriginalLegIndex(settledProgress == null ? assignment.getCurrentActionIndex() : settledProgress.getLegIndex());
+            event.setOriginalDrivingPhaseKey(settledProgress == null ? null : settledProgress.getPhaseKey());
             vehicle.transitionToStatus(Vehicle.VehicleStatus.BREAKDOWN, simNow, Duration.ofMinutes(durationMinutes));
             vehicleRepository.save(vehicle);
         }
@@ -261,6 +319,40 @@ public class TransportRandomEventService {
         if (durationMinutes < MIN_MANUAL_DURATION_MINUTES || durationMinutes > MAX_MANUAL_DURATION_MINUTES) {
             throw new IllegalArgumentException("durationMinutes must be between 30 and 240");
         }
+    }
+
+    private void validateBreakdown(TransportRandomEvent.BreakdownLevel level,int wait,int repair){
+        if(repair<30||repair>180||wait<0||wait>180||wait+repair>240||
+                (level==TransportRandomEvent.BreakdownLevel.MINOR&&wait!=0)||
+                (level==TransportRandomEvent.BreakdownLevel.ASSISTANCE_REQUIRED&&wait<30))
+            throw new IllegalArgumentException("invalid breakdown phase durations");
+    }
+
+    private void applyBreakdownMetadata(TransportRandomEvent event, TransportRandomEvent.BreakdownLevel level,
+            int rescueWaitMinutes, int repairMinutes, LocalDateTime simNow) {
+        event.setBreakdownLevel(level);
+        event.setBreakdownPhase(rescueWaitMinutes == 0
+                ? TransportRandomEvent.BreakdownPhase.REPAIRING
+                : TransportRandomEvent.BreakdownPhase.WAITING_RESCUE);
+        event.setRescueWaitMinutes(rescueWaitMinutes);
+        event.setRepairMinutes(repairMinutes);
+        event.setRepairStartTime(simNow.plusMinutes(rescueWaitMinutes));
+        event.setBreakdownRuleVersion(BreakdownDecisionPolicy.VERSION);
+    }
+    private String recoveryGuardFailure(TransportRandomEvent event,Vehicle vehicle){
+        if(event.getOriginalAssignmentStatus()==null&&event.getOriginalLegIndex()==null)return null;
+        if(vehicle.getCurrentStatus()!=Vehicle.VehicleStatus.BREAKDOWN)return "VEHICLE_STATUS_CHANGED";
+        Assignment current=assignmentRepository.findActiveAssignmentByVehicle(event.getVehicleId()).orElse(null);
+        if(current==null||!java.util.Objects.equals(current.getId(),event.getAssignmentId()))return "ASSIGNMENT_CHANGED";
+        if(current.getStatus()!=event.getOriginalAssignmentStatus())return "ASSIGNMENT_STATUS_CHANGED";
+        Integer currentLeg = event.getOriginalDrivingPhaseKey() != null && drivingProgressService != null
+                ? drivingProgressService.legIndex(current) : current.getCurrentActionIndex();
+        if(!java.util.Objects.equals(currentLeg,event.getOriginalLegIndex()))return "ASSIGNMENT_STAGE_CHANGED";
+        if(event.getOriginalDrivingPhaseKey()!=null && drivingProgressService!=null){
+            var latest=drivingProgressService.latest(event.getVehicleId());
+            if(latest==null||!java.util.Objects.equals(latest.getPhaseKey(),event.getOriginalDrivingPhaseKey()))return "DRIVING_PHASE_CHANGED";
+        }
+        return null;
     }
 
     public static class TransitionBlockedException extends IllegalStateException {

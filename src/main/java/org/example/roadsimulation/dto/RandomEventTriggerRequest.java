@@ -8,4 +8,7 @@ public class RandomEventTriggerRequest {
     private TransportRandomEvent.EventType eventType;
     private Long vehicleId;
     private Integer durationMinutes;
+    private TransportRandomEvent.BreakdownLevel breakdownLevel;
+    private Integer rescueWaitMinutes;
+    private Integer repairMinutes;
 }

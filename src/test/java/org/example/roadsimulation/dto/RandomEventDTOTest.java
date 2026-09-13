@@ -31,6 +31,11 @@ class RandomEventDTOTest {
         event.setSpeedFactor(0.4);
         event.setDelaySeconds(0L);
         event.setDescription("交通拥堵，车辆减速行驶");
+        event.setBreakdownLevel(TransportRandomEvent.BreakdownLevel.ASSISTANCE_REQUIRED);
+        event.setBreakdownPhase(TransportRandomEvent.BreakdownPhase.WAITING_RESCUE);
+        event.setRescueWaitMinutes(30);
+        event.setRepairMinutes(90);
+        event.setBreakdownRuleVersion("breakdown-v2");
 
         RandomEventDTO dto = RandomEventDTO.from(event);
 
@@ -40,5 +45,10 @@ class RandomEventDTOTest {
         assertEquals(12L, dto.getVehicleId());
         assertEquals(88L, dto.getAssignmentId());
         assertEquals(0.4, dto.getSpeedFactor(), 1e-9);
+        assertEquals("ASSISTANCE_REQUIRED", dto.getBreakdownLevel());
+        assertEquals("WAITING_RESCUE", dto.getBreakdownPhase());
+        assertEquals(30, dto.getRescueWaitMinutes());
+        assertEquals(90, dto.getRepairMinutes());
+        assertEquals("breakdown-v2", dto.getBreakdownRuleVersion());
     }
 }

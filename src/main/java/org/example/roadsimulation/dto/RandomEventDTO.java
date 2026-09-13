@@ -21,6 +21,14 @@ public class RandomEventDTO {
     private Double speedFactor;
     private Long delaySeconds;
     private String description;
+    private String breakdownLevel;
+    private String breakdownPhase;
+    private Integer rescueWaitMinutes;
+    private Integer repairMinutes;
+    private LocalDateTime repairStartTime;
+    private LocalDateTime recoveryProcessedTime;
+    private String recoveryOutcome;
+    private String breakdownRuleVersion;
 
     public static RandomEventDTO from(TransportRandomEvent event) {
         RandomEventDTO dto = new RandomEventDTO();
@@ -38,6 +46,14 @@ public class RandomEventDTO {
         dto.setSpeedFactor(event.getSpeedFactor());
         dto.setDelaySeconds(event.getDelaySeconds());
         dto.setDescription(event.getDescription());
+        dto.setBreakdownLevel(event.getBreakdownLevel()==null?null:event.getBreakdownLevel().name());
+        dto.setBreakdownPhase(event.getBreakdownPhase()==null?null:event.getBreakdownPhase().name());
+        dto.setRescueWaitMinutes(event.getRescueWaitMinutes());
+        dto.setRepairMinutes(event.getRepairMinutes());
+        dto.setRepairStartTime(event.getRepairStartTime());
+        dto.setRecoveryProcessedTime(event.getRecoveryProcessedTime());
+        dto.setRecoveryOutcome(event.getRecoveryOutcome());
+        dto.setBreakdownRuleVersion(event.getBreakdownRuleVersion());
         return dto;
     }
 

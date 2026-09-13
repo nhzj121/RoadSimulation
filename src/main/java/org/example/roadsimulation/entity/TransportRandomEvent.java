@@ -75,6 +75,24 @@ public class TransportRandomEvent {
     @Column(length = 255)
     private String description;
 
+    @Enumerated(EnumType.STRING) @Column(name="breakdown_level", length=30)
+    private BreakdownLevel breakdownLevel;
+    @Enumerated(EnumType.STRING) @Column(name="breakdown_phase", length=30)
+    private BreakdownPhase breakdownPhase;
+    @Column(name="rescue_wait_minutes") private Integer rescueWaitMinutes;
+    @Column(name="repair_minutes") private Integer repairMinutes;
+    @Column(name="repair_start_time") private LocalDateTime repairStartTime;
+    @Column(name="recovery_processed_time") private LocalDateTime recoveryProcessedTime;
+    @Column(name="recovery_outcome", length=80) private String recoveryOutcome;
+    @Column(name="breakdown_rule_version", length=40) private String breakdownRuleVersion;
+    @Enumerated(EnumType.STRING) @Column(name="original_assignment_status", length=20)
+    private Assignment.AssignmentStatus originalAssignmentStatus;
+    @Column(name="original_leg_index") private Integer originalLegIndex;
+    @Column(name="original_driving_phase_key", length=240) private String originalDrivingPhaseKey;
+
+    public enum BreakdownLevel { MINOR, ASSISTANCE_REQUIRED }
+    public enum BreakdownPhase { WAITING_RESCUE, REPAIRING, RECOVERED }
+
     public enum EventType {
         TRAFFIC_CONGESTION,
         VEHICLE_BREAKDOWN

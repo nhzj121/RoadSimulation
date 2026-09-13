@@ -16,6 +16,8 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 class TransportRandomEventControllerTest {
 
@@ -73,6 +75,32 @@ class TransportRandomEventControllerTest {
         assertTrue(response.isSuccess());
         assertEquals(1, response.getData().size());
         assertEquals("VEHICLE_BREAKDOWN", response.getData().get(0).getEventType());
+    }
+
+    @Test void v2RequestPassesIndependentBreakdownFields() {
+        RandomEventTriggerRequest request = new RandomEventTriggerRequest();
+        request.setEventType(TransportRandomEvent.EventType.VEHICLE_BREAKDOWN);
+        request.setVehicleId(12L);
+        request.setBreakdownLevel(TransportRandomEvent.BreakdownLevel.ASSISTANCE_REQUIRED);
+        request.setRescueWaitMinutes(30);
+        request.setRepairMinutes(90);
+        when(eventService.triggerManually(request.getEventType(), 12L, null, request.getBreakdownLevel(), 30, 90, simNow))
+                .thenReturn(activeEvent(12L));
+        assertEquals(HttpStatus.OK, controller.trigger(request).getStatusCode());
+        verify(eventService).triggerManually(request.getEventType(), 12L, null, request.getBreakdownLevel(), 30, 90, simNow);
+    }
+
+    @Test void realJsonRequestBindsV2Fields() throws Exception {
+        when(eventService.triggerManually(TransportRandomEvent.EventType.VEHICLE_BREAKDOWN, 12L, null,
+                TransportRandomEvent.BreakdownLevel.ASSISTANCE_REQUIRED, 30, 90, simNow)).thenReturn(activeEvent(12L));
+        var mvc = org.springframework.test.web.servlet.setup.MockMvcBuilders.standaloneSetup(controller).build();
+        mvc.perform(post("/api/simulation/random-events/trigger")
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("""
+                        {"eventType":"VEHICLE_BREAKDOWN","vehicleId":12,
+                         "breakdownLevel":"ASSISTANCE_REQUIRED","rescueWaitMinutes":30,"repairMinutes":90}
+                        """))
+                .andExpect(status().isOk());
     }
 
     private TransportRandomEvent activeEvent(Long vehicleId) {

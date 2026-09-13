@@ -38,6 +38,7 @@ class WeatherEnvironmentServiceTest {
         var exported = service.load(scene.getId());
         assertEquals(scene.getTimeSlices(), exported.getTimeSlices());
         service.start(1L, "experiment-A");
+        assertEquals("breakdown-v2", service.breakdownPolicy().version());
         String firstRun = service.runId();
         assertTrue(service.current().locked()); assertTrue(config.isAutoEnabled()); assertEquals(314159, config.getSeed());
         service.start(1L, "experiment-A"); assertEquals(firstRun, service.runId());
@@ -45,6 +46,7 @@ class WeatherEnvironmentServiceTest {
         service.manualIntervention(); assertTrue(service.current().manuallyIntervened());
         var beforePause = service.current(); clock.setRunning(false); assertEquals(beforePause, service.current());
         service.archiveAndReset(clock.getCurrentSimTime());
+        assertNull(service.breakdownPolicy());
         assertNull(service.runId()); assertFalse(config.isAutoEnabled()); assertEquals(20260903L, config.getSeed());
         org.mockito.Mockito.verify(events).findByRunId(firstRun);
         org.mockito.Mockito.verify(events, org.mockito.Mockito.never()).findAll();
@@ -70,6 +72,19 @@ class WeatherEnvironmentServiceTest {
         assertEquals(x.getTimeSlices(),WeatherEnvironmentService.preset(b).getTimeSlices());
         assertEquals(12,x.getTimeSlices().size());assertTrue(x.isAutoEvents());
         WeatherEnvironmentService.validate(x);
+        assertEquals("breakdown-v2", x.getBreakdownPolicy().version());
+    }
+    @Test void importedLegacySceneStaysLegacyWhilePresetGetsV2Policy() {
+        var legacy = new WeatherScenarioDTO();
+        legacy.setName("legacy");
+        legacy.setBreakdownPolicy(null);
+        legacy.setTimeSlices(List.of(new WeatherScenarioDTO.TimeSlice(0, 60, SUNNY, 1)));
+        WeatherEnvironmentService.validate(legacy);
+        assertNull(legacy.getBreakdownPolicy());
+
+        var fresh = WeatherEnvironmentService.preset(new WeatherScenarioDTO());
+        assertEquals(new WeatherScenarioDTO.BreakdownPolicy("breakdown-v2", .7, 30, 60, 30, 60, 60, 120),
+                fresh.getBreakdownPolicy());
     }
     @Test void weatherBoundariesAreHalfOpenAndEndFallsBackToSunny() {
         var d=WeatherEnvironmentService.preset(new WeatherScenarioDTO());

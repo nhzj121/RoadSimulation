@@ -59,4 +59,12 @@ class DrivingProgressServiceTest {
         var other=service.settle(v,start.plusMinutes(120));
         assertNotEquals(p.getPhaseKey(),other.getPhaseKey());assertEquals(1800,other.getRemainingWorkSeconds());
     }
+    @Test void assistanceBreakdownCrossedAtMinute150OnlyCountsWorkOutsideRepairWindow() {
+        var p=work(7200);
+        DrivingProgressService.integrate(p,start,start.plusMinutes(30),.8);
+        DrivingProgressService.integrate(p,start.plusMinutes(30),start.plusMinutes(120),0);
+        DrivingProgressService.integrate(p,start.plusMinutes(120),start.plusMinutes(150),.8);
+        assertEquals(4320,p.getRemainingWorkSeconds(),1e-7);
+        assertEquals(6120,p.getLostWorkSeconds(),1e-7);
+    }
 }

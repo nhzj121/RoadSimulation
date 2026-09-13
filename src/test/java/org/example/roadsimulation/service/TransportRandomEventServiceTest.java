@@ -4,6 +4,7 @@ import org.example.roadsimulation.config.RandomEventProperties;
 import org.example.roadsimulation.entity.Assignment;
 import org.example.roadsimulation.entity.TransportRandomEvent;
 import org.example.roadsimulation.entity.Vehicle;
+import org.example.roadsimulation.dto.WeatherScenarioDTO;
 import org.example.roadsimulation.repository.AssignmentRepository;
 import org.example.roadsimulation.repository.TransportRandomEventRepository;
 import org.example.roadsimulation.repository.VehicleRepository;
@@ -59,7 +60,7 @@ class TransportRandomEventServiceTest {
         assignment.setAssignedVehicle(vehicle);
 
         when(vehicleRepository.findByIdForUpdate(12L)).thenReturn(Optional.of(vehicle));
-        when(assignmentRepository.findActiveAssignmentByVehicle(12L)).thenReturn(Optional.of(assignment));
+        lenient().when(assignmentRepository.findActiveAssignmentByVehicle(12L)).thenReturn(Optional.of(assignment));
         when(eventRepository.findFirstByVehicleIdAndStatus(12L, TransportRandomEvent.EventStatus.ACTIVE))
                 .thenReturn(Optional.empty());
         when(eventRepository.save(any(TransportRandomEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
@@ -140,5 +141,96 @@ class TransportRandomEventServiceTest {
 
         assertEquals(TransportRandomEvent.EventStatus.RESOLVED, event.getStatus());
         assertEquals(3600L, event.getDelaySeconds());
+    }
+
+    @Test void assistanceBreakdownAdvancesHalfOpenPhasesAndIsIdempotent() {
+        TransportRandomEvent event = service.triggerManually(TransportRandomEvent.EventType.VEHICLE_BREAKDOWN,
+                12L, TransportRandomEvent.BreakdownLevel.ASSISTANCE_REQUIRED, 30, 90, simNow);
+        when(eventRepository.findByStatus(TransportRandomEvent.EventStatus.ACTIVE)).thenReturn(List.of(event));
+        assertEquals(TransportRandomEvent.BreakdownPhase.WAITING_RESCUE, event.getBreakdownPhase());
+        service.tick(simNow.plusMinutes(30), 30, 1);
+        assertEquals(TransportRandomEvent.BreakdownPhase.REPAIRING, event.getBreakdownPhase());
+        assertEquals(simNow.plusMinutes(30), event.getRepairStartTime());
+        service.tick(simNow.plusMinutes(150), 150, 2);
+        service.tick(simNow.plusMinutes(150), 150, 2);
+        assertEquals(TransportRandomEvent.BreakdownPhase.RECOVERED, event.getBreakdownPhase());
+        assertEquals(simNow.plusMinutes(150), event.getRecoveryProcessedTime());
+        assertEquals(simNow.plusMinutes(120), event.getResolvedTime());
+        assertEquals("RESTORED", event.getRecoveryOutcome());
+    }
+
+    @Test void recoveryDoesNotOverwriteChangedAssignmentStageOrVehicleState() {
+        TransportRandomEvent event = service.triggerManually(TransportRandomEvent.EventType.VEHICLE_BREAKDOWN,
+                12L, TransportRandomEvent.BreakdownLevel.MINOR, 0, 60, simNow);
+        when(eventRepository.findByStatus(TransportRandomEvent.EventStatus.ACTIVE)).thenReturn(List.of(event));
+        assignment.setCurrentActionIndex(2);
+        vehicle.transitionToStatus(Vehicle.VehicleStatus.IDLE, simNow.plusMinutes(10), Duration.ZERO);
+        service.tick(simNow.plusMinutes(60), 60, 1);
+        assertEquals(Vehicle.VehicleStatus.IDLE, vehicle.getCurrentStatus());
+        assertEquals("VEHICLE_STATUS_CHANGED", event.getRecoveryOutcome());
+    }
+
+    @Test void recoveryDoesNotOverwriteChangedAssignmentStatus() {
+        TransportRandomEvent event = service.triggerManually(TransportRandomEvent.EventType.VEHICLE_BREAKDOWN,
+                12L, TransportRandomEvent.BreakdownLevel.MINOR, 0, 60, simNow);
+        when(eventRepository.findByStatus(TransportRandomEvent.EventStatus.ACTIVE)).thenReturn(List.of(event));
+        assignment.setStatus(Assignment.AssignmentStatus.COMPLETED);
+        service.tick(simNow.plusMinutes(60), 60, 1);
+        assertEquals(Vehicle.VehicleStatus.BREAKDOWN, vehicle.getCurrentStatus());
+        assertEquals("ASSIGNMENT_STATUS_CHANGED", event.getRecoveryOutcome());
+    }
+
+    @Test void recoveryDoesNotOverwriteChangedAssignmentLeg() {
+        assignment.setCurrentActionIndex(1);
+        TransportRandomEvent event = service.triggerManually(TransportRandomEvent.EventType.VEHICLE_BREAKDOWN,
+                12L, TransportRandomEvent.BreakdownLevel.MINOR, 0, 60, simNow);
+        when(eventRepository.findByStatus(TransportRandomEvent.EventStatus.ACTIVE)).thenReturn(List.of(event));
+        assignment.setCurrentActionIndex(2);
+        service.tick(simNow.plusMinutes(60), 60, 1);
+        assertEquals(Vehicle.VehicleStatus.BREAKDOWN, vehicle.getCurrentStatus());
+        assertEquals("ASSIGNMENT_STAGE_CHANGED", event.getRecoveryOutcome());
+    }
+
+    @Test void automaticBreakdownUsesV2PolicyWithoutChangingOccurrencePolicy() {
+        properties.setAutoEnabled(true);
+        properties.getBreakdown().setHourlyProbability(1);
+        properties.getCongestion().setHourlyProbability(0);
+        when(eventRepository.findByStatus(TransportRandomEvent.EventStatus.ACTIVE)).thenReturn(List.of());
+        when(assignmentRepository.findActiveAssignments()).thenReturn(List.of(assignment));
+        WeatherEnvironmentService weather = mock(WeatherEnvironmentService.class);
+        var policy = new WeatherScenarioDTO.BreakdownPolicy("breakdown-v2", 1, 30, 60, 30, 60, 60, 120);
+        when(weather.breakdownPolicy()).thenReturn(policy);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "weatherEnvironmentService", weather);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "breakdownDecisionPolicy", new BreakdownDecisionPolicy());
+
+        service.tick(simNow, 60, 4);
+
+        var saved = org.mockito.ArgumentCaptor.forClass(TransportRandomEvent.class);
+        verify(eventRepository, atLeastOnce()).save(saved.capture());
+        TransportRandomEvent event = saved.getAllValues().get(saved.getAllValues().size() - 1);
+        assertEquals("breakdown-v2", event.getBreakdownRuleVersion());
+        assertEquals(TransportRandomEvent.BreakdownLevel.MINOR, event.getBreakdownLevel());
+        assertEquals(0, event.getRescueWaitMinutes());
+        assertTrue(event.getRepairMinutes() >= 30 && event.getRepairMinutes() <= 60);
+    }
+
+    @Test void missingVehicleGetsExplicitRecoveryOutcome() {
+        TransportRandomEvent event = service.triggerManually(TransportRandomEvent.EventType.VEHICLE_BREAKDOWN,
+                12L, TransportRandomEvent.BreakdownLevel.MINOR, 0, 60, simNow);
+        when(eventRepository.findByStatus(TransportRandomEvent.EventStatus.ACTIVE)).thenReturn(List.of(event));
+        when(vehicleRepository.findByIdForUpdate(12L)).thenReturn(Optional.empty());
+        service.tick(simNow.plusMinutes(60), 60, 1);
+        assertEquals("VEHICLE_MISSING", event.getRecoveryOutcome());
+        assertEquals(TransportRandomEvent.BreakdownPhase.RECOVERED, event.getBreakdownPhase());
+    }
+
+    @Test void validatesNewBreakdownParametersAndLegacyCompatibility() {
+        assertThrows(IllegalArgumentException.class, () -> service.triggerManually(
+                TransportRandomEvent.EventType.VEHICLE_BREAKDOWN, 12L, TransportRandomEvent.BreakdownLevel.MINOR, 30, 60, simNow));
+        assertThrows(IllegalArgumentException.class, () -> service.triggerManually(
+                TransportRandomEvent.EventType.TRAFFIC_CONGESTION, 12L, TransportRandomEvent.BreakdownLevel.MINOR, 0, 60, simNow));
+        TransportRandomEvent legacy = service.triggerManually(TransportRandomEvent.EventType.VEHICLE_BREAKDOWN, 12L, 60, simNow);
+        assertNull(legacy.getBreakdownRuleVersion());
+        assertEquals(assignment.getStatus(), legacy.getOriginalAssignmentStatus());
     }
 }

@@ -44,6 +44,7 @@ public class WeatherEnvironmentService {
         d.setGeneratorVersion("weather-v1");
         d.setAfterTimeline("SUNNY");
         d.setAutoEvents("AUTO".equals(preset));
+        d.setBreakdownPolicy(new WeatherScenarioDTO.BreakdownPolicy("breakdown-v2",.7,30,60,30,60,60,120));
         if (d.getName()==null || d.getName().isBlank()) d.setName(preset);
         switch (preset) {
             case "BASELINE" -> d.getTimeSlices().add(new WeatherScenarioDTO.TimeSlice(0,1440,SUNNY,1));
@@ -99,6 +100,7 @@ public class WeatherEnvironmentService {
                 throw new IllegalArgumentException("Weather speed factors must be in (0,1]");
         }
         validateEvent(d.getCongestion(),false); validateEvent(d.getBreakdown(),true);
+        BreakdownDecisionPolicy.validate(d.getBreakdownPolicy());
     }
 
     private static void validateEvent(WeatherScenarioDTO.EventParameters p,boolean breakdown) {
@@ -153,6 +155,7 @@ public class WeatherEnvironmentService {
         apply(events.getCongestion(),d.getCongestion());apply(events.getBreakdown(),d.getBreakdown());
     }
     public String runId(){return currentRun==null?null:currentRun.getId();}
+    public WeatherScenarioDTO.BreakdownPolicy breakdownPolicy(){return currentScenario==null?null:currentScenario.getBreakdownPolicy();}
     public WeatherCurrentDTO current(){return at(clock.getCurrentSimTime());}
     public synchronized WeatherCurrentDTO at(LocalDateTime time) {
         WeatherRun run=currentRun;WeatherScenarioDTO d=currentScenario;
