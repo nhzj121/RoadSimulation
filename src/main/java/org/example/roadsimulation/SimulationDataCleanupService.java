@@ -5,6 +5,8 @@ import org.example.roadsimulation.repository.*;
 import jakarta.persistence.EntityManager;
 import org.example.roadsimulation.service.TransportLifecycleService;
 import org.example.roadsimulation.evaluation.NodeServiceLedgerHealth;
+import org.example.roadsimulation.evaluation.WaitFactLedgerHealth;
+import org.example.roadsimulation.evaluation.DeliverySlaLedgerHealth;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -53,6 +55,28 @@ public class SimulationDataCleanupService {
     @Autowired
     private NodeServiceLedgerHealth nodeServiceLedgerHealth;
 
+    // Phase 9A-1：三类等待账本均属于单次运行评价事实，完整 reset 必须一并删除。
+    @Autowired
+    private VehicleWaitEpisodeRepository vehicleWaitEpisodeRepository;
+
+    @Autowired
+    private CargoWaitEpisodeRepository cargoWaitEpisodeRepository;
+
+    @Autowired
+    private TaskWaitEpisodeRepository taskWaitEpisodeRepository;
+
+    // Phase 9A-1：只在完整数据清理成功后恢复等待事实健康状态。
+    @Autowired
+    private WaitFactLedgerHealth waitFactLedgerHealth;
+
+    // Phase 9B-2：截止基线和交付完成时间均按 simulationRunId 隔离，完整 reset 必须删除。
+    @Autowired
+    private DeliverySlaFactRepository deliverySlaFactRepository;
+
+    // Phase 9B-2：仅在账本与业务数据全部清理完成后恢复交付事实健康状态。
+    @Autowired
+    private DeliverySlaLedgerHealth deliverySlaLedgerHealth;
+
     @Autowired
     private VehicleRepository vehicleRepository;
 
@@ -79,6 +103,32 @@ public class SimulationDataCleanupService {
 
         try {
             // 删除顺序按实际外键依赖从叶子节点向业务主数据回退：
+            // Phase 9B-2：交付账本只存标量但依赖货物语义，先于其它评价及业务数据删除。
+            long deliverySlaFactCount = deliverySlaFactRepository.count();
+            deliverySlaFactRepository.deleteAllInBatch();
+            deliverySlaFactRepository.flush();
+            System.out.println("Deleted " + deliverySlaFactCount + " delivery_sla_fact records");
+            clearPersistenceContext();
+
+            // Phase 9A-1：等待事实虽不设业务外键，仍在业务数据前删除，避免跨 run 继承样本。
+            long vehicleWaitCount = vehicleWaitEpisodeRepository.count();
+            vehicleWaitEpisodeRepository.deleteAllInBatch();
+            vehicleWaitEpisodeRepository.flush();
+            System.out.println("Deleted " + vehicleWaitCount + " vehicle_wait_episode records");
+            clearPersistenceContext();
+
+            long cargoWaitCount = cargoWaitEpisodeRepository.count();
+            cargoWaitEpisodeRepository.deleteAllInBatch();
+            cargoWaitEpisodeRepository.flush();
+            System.out.println("Deleted " + cargoWaitCount + " cargo_wait_episode records");
+            clearPersistenceContext();
+
+            long taskWaitCount = taskWaitEpisodeRepository.count();
+            taskWaitEpisodeRepository.deleteAllInBatch();
+            taskWaitEpisodeRepository.flush();
+            System.out.println("Deleted " + taskWaitCount + " task_wait_episode records");
+            clearPersistenceContext();
+
             // Phase 7B：node_service_episode 使用标量标识但仍先清理，避免新运行继承上一轮评价样本。
             long nodeServiceEpisodeCount = nodeServiceEpisodeRepository.count();
             nodeServiceEpisodeRepository.deleteAllInBatch();
@@ -127,6 +177,10 @@ public class SimulationDataCleanupService {
 
             // Phase 7B：只有全部运行数据清理成功后才允许新运行重新发布节点指标。
             nodeServiceLedgerHealth.reset();
+            // Phase 9A-1：账本删除和业务清理均成功后，下一运行才可重新建立可信等待样本。
+            waitFactLedgerHealth.reset();
+            // Phase 9B-2：清理完整成功后，下一运行才可重新冻结可信截止时间和交付时间。
+            deliverySlaLedgerHealth.reset();
 
             long endTime = System.currentTimeMillis();
             System.out.println("模拟数据清理完成，耗时 " + (endTime - startTime) + "ms");

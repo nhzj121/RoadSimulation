@@ -49,6 +49,8 @@
             <span>低载阈值 {{ formatRatio(snapshot.thresholds.lowLoadRatioThreshold) }}</span>
             <span>满载阈值 {{ formatRatio(snapshot.thresholds.fullLoadRatioThreshold) }}</span>
             <span>最大服务等待 {{ formatPlainNumber(snapshot.thresholds.maxServiceWaitSeconds, 0) }} s</span>
+            <!-- Phase 8：只展示后端冻结的模型版本，不在前端复制或解释排放系数。 -->
+            <span>排放模型 {{ snapshot.energyEmissionModel.modelId }}</span>
             <span>契约 v{{ snapshot.contractVersion }}</span>
           </div>
           <div
@@ -96,6 +98,7 @@
               v-for="metricId in globalMetricIds"
               :key="metricId"
               class="evaluation-objective-card"
+              :class="{ 'evaluation-objective-card--violated': isViolatedServiceConstraint(metricId) }"
             >
               <span>{{ metricById(metricId)?.displayName || metricId }}</span>
               <strong>{{ formatMetric(metricById(metricId)) }}</strong>
@@ -158,8 +161,8 @@
         <section class="evaluation-section evaluation-deferred-section">
           <div class="evaluation-section-heading">
             <div>
-              <h3>待接入事实维度</h3>
-              <p>本阶段只诚实展示契约状态，不用前端估算替代后续模型。</p>
+              <h3>完整契约覆盖概览</h3>
+              <p>汇总全部 70 项后端指标状态；缺失和不支持项不会被前端补成 0。</p>
             </div>
           </div>
           <div class="evaluation-deferred-grid">
@@ -167,8 +170,9 @@
               <span>{{ summary.title }}</span>
               <strong>{{ summary.available }}/{{ summary.total }} 项可用</strong>
               <div class="evaluation-deferred-counts">
-                <span v-if="summary.pending">{{ summary.pending }} 项待接入</span>
+                <span v-if="summary.pending">{{ summary.pending }} 项暂不可用</span>
                 <span v-if="summary.unsupported">{{ summary.unsupported }} 项不支持</span>
+                <span v-if="summary.notApplicable">{{ summary.notApplicable }} 项不适用</span>
                 <span v-if="summary.invalid">{{ summary.invalid }} 项无效</span>
               </div>
               <small :title="summary.reason">{{ summary.reason }}</small>
@@ -181,6 +185,129 @@
           <span>最近成功读取：{{ lastSuccessfulReadText }}</span>
         </footer>
       </template>
+
+      <!-- Phase 9C：历史区不依赖当前 latest；reset 后仍能读取此前持久化运行。 -->
+      <section class="evaluation-section evaluation-history-section">
+        <div class="evaluation-section-heading">
+          <div>
+            <h3>历史、趋势与运行对比</h3>
+            <p>历史跨 reset 保留；趋势按原始 loop 展示，对比使用各运行最终快照。</p>
+          </div>
+          <ElButton :loading="historyLoading" @click="refreshHistory">刷新历史</ElButton>
+        </div>
+
+        <div v-if="historyError" class="evaluation-alert evaluation-alert--error">
+          {{ historyError }}
+        </div>
+        <div v-if="!historyLoading && !runSummaries.length" class="evaluation-history-empty">
+          尚无持久化评价历史；完成一个业务循环后即可查询。
+        </div>
+
+        <template v-if="runSummaries.length">
+          <div class="evaluation-history-controls">
+            <label>
+              <span>历史运行</span>
+              <select v-model="selectedHistoryRunId" @change="loadSelectedHistory">
+                <option v-for="run in runSummaries" :key="run.simulationRunId" :value="run.simulationRunId">
+                  {{ runLabel(run) }}
+                </option>
+              </select>
+            </label>
+            <label>
+              <span>趋势指标</span>
+              <select v-model="selectedTrendMetricId" @change="loadSelectedTrend">
+                <option v-for="metric in historyMetricOptions" :key="metric.metricId" :value="metric.metricId">
+                  {{ metric.displayName }}（{{ metric.metricId }}）
+                </option>
+              </select>
+            </label>
+            <div class="evaluation-history-actions">
+              <ElButton :disabled="!selectedHistoryRunId" :loading="exporting" @click="exportHistory('csv')">
+                下载 CSV
+              </ElButton>
+              <ElButton :disabled="!selectedHistoryRunId" :loading="exporting" @click="exportHistory('json')">
+                下载 JSON
+              </ElButton>
+            </div>
+          </div>
+
+          <div v-if="selectedHistorySummary" class="evaluation-history-summary">
+            <span>契约 v{{ selectedHistorySummary.contractVersion }}</span>
+            <span>{{ selectedHistorySummary.snapshotCount }} 个快照</span>
+            <span>loop {{ selectedHistorySummary.firstLoopIndex }}～{{ selectedHistorySummary.lastLoopIndex }}</span>
+            <span>末轮状态 {{ snapshotStatusLabel(selectedHistorySummary.latestStatus) }}</span>
+          </div>
+
+          <div class="evaluation-history-grid">
+            <div>
+              <h4>快照历史</h4>
+              <div class="evaluation-compact-table">
+                <div class="evaluation-compact-row evaluation-compact-row--head">
+                  <span>Loop</span><span>Revision</span><span>仿真时间</span><span>状态</span>
+                </div>
+                <div v-for="item in displayedHistorySnapshots" :key="item.snapshotRevision" class="evaluation-compact-row">
+                  <span>{{ item.loopIndex }}</span>
+                  <span>{{ item.snapshotRevision }}</span>
+                  <span>{{ formatSimTime(item.simTime) }}</span>
+                  <span>{{ snapshotStatusLabel(item.snapshotStatus) }}</span>
+                </div>
+              </div>
+            </div>
+            <div>
+              <h4>指标趋势</h4>
+              <div class="evaluation-compact-table">
+                <div class="evaluation-compact-row evaluation-compact-row--head">
+                  <span>Loop</span><span>Revision</span><span>仿真时间</span><span>指标值</span>
+                </div>
+                <div v-for="point in displayedTrendPoints" :key="point.snapshotRevision" class="evaluation-compact-row">
+                  <span>{{ point.loopIndex }}</span>
+                  <span>{{ point.snapshotRevision }}</span>
+                  <span>{{ formatSimTime(point.simTime) }}</span>
+                  <span>{{ formatMetric(point.metrics[selectedTrendMetricId] || null) }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="evaluation-comparison-controls">
+            <label>
+              <span>左侧基线</span>
+              <select v-model="leftRunId">
+                <option v-for="run in runSummaries" :key="`left-${run.simulationRunId}`" :value="run.simulationRunId">
+                  {{ runLabel(run) }}
+                </option>
+              </select>
+            </label>
+            <label>
+              <span>右侧对比</span>
+              <select v-model="rightRunId">
+                <option v-for="run in runSummaries" :key="`right-${run.simulationRunId}`" :value="run.simulationRunId">
+                  {{ runLabel(run) }}
+                </option>
+              </select>
+            </label>
+            <ElButton
+              type="primary"
+              plain
+              :disabled="!leftRunId || !rightRunId || leftRunId === rightRunId"
+              :loading="comparisonLoading"
+              @click="loadComparison"
+            >比较最终快照</ElButton>
+          </div>
+
+          <div v-if="comparison" class="evaluation-comparison-table">
+            <div class="evaluation-comparison-row evaluation-comparison-row--head">
+              <span>指标</span><span>左侧最终值</span><span>右侧最终值</span><span>差值（右−左）</span>
+            </div>
+            <div v-for="metric in displayedComparisonMetrics" :key="metric.metricId" class="evaluation-comparison-row">
+              <span>{{ metric.displayName }}</span>
+              <span>{{ formatComparisonMetric(metric.leftValue, metric.leftStatus, metric.unit) }}</span>
+              <span>{{ formatComparisonMetric(metric.rightValue, metric.rightStatus, metric.unit) }}</span>
+              <span>{{ formatComparisonDelta(metric.rightMinusLeft, metric.unit) }}</span>
+            </div>
+          </div>
+        </template>
+      </section>
     </div>
   </section>
 </template>
@@ -189,14 +316,22 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { ElButton } from 'element-plus';
 import {
+  downloadEvaluationHistory,
+  fetchEvaluationHistory,
   fetchLatestEvaluationSnapshot,
+  fetchEvaluationRunComparison,
+  fetchEvaluationRuns,
+  fetchEvaluationTrend,
   isEvaluationRequestCanceled
 } from '../api/evaluationApi';
 import { shouldAcceptEvaluationSnapshot } from '../utils/evaluationSnapshotPolicy';
 import type {
   EvaluationMetricValue,
   EvaluationMetricValueStatus,
-  EvaluationSnapshot
+  EvaluationRunComparison,
+  EvaluationRunSummary,
+  EvaluationSnapshot,
+  EvaluationTrend
 } from '../types/evaluation';
 
 type EvaluationWarningLevel = 'error' | 'warning';
@@ -222,7 +357,27 @@ const lastSuccessfulReadAt = ref<Date | null>(null);
 let pollingTimer: number | null = null;
 let activeRequest: AbortController | null = null;
 
-/** Phase 6C：本阶段仅展示计划确认的核心项，完整 69 项表留到 Phase 9。 */
+// Phase 9C：历史状态与实时轮询解耦，历史请求失败不能清空当前 latest 快照。
+const runSummaries = ref<EvaluationRunSummary[]>([]);
+const historySnapshots = ref<EvaluationSnapshot[]>([]);
+const trend = ref<EvaluationTrend | null>(null);
+const comparison = ref<EvaluationRunComparison | null>(null);
+const selectedHistoryRunId = ref('');
+const selectedTrendMetricId = ref('emptyMileageRatio');
+const leftRunId = ref('');
+const rightRunId = ref('');
+const historyLoading = ref(false);
+const comparisonLoading = ref(false);
+const exporting = ref(false);
+const historyError = ref('');
+
+/**
+ * 前端展示排除项：只隐藏当前领域模型明确不适用的“未分配任务数”。
+ * 后端契约、快照历史和导出数据继续保留该指标，避免破坏接口兼容性。
+ */
+const FRONTEND_HIDDEN_METRIC_IDS = new Set(['taskUnassignedCount']);
+
+/** Phase 9C：按后端契约顺序展示指标；明确排除的指标不进入可视化区域。 */
 const globalMetricIds = Object.freeze([
   'emptyMileageRatio',
   'capacityWasteRatio',
@@ -240,9 +395,24 @@ const coreMetricGroups = Object.freeze([
       'vehicleTotalCount',
       'vehicleAvailableCount',
       'vehicleInTransportCount',
+      'vehicleEmptyDrivingCount',
+      'vehicleLoadedDrivingCount',
       'vehicleTotalExecutedDistanceKm',
       'vehicleEmptyExecutedDistanceKm',
-      'vehicleDistanceWeightedLoadRatio'
+      'vehicleEmptyMileageRatio',
+      'vehicleCurrentLoadTonnes',
+      'vehicleRatedCapacityTonnes',
+      'vehicleDistanceWeightedLoadRatio',
+      'vehicleRemainingCapacityTonnes',
+      'vehicleLowLoadRatio',
+      'vehicleFullLoadRatio',
+      // Phase 9A-3：车辆可用空闲等待只作利用率解释，不参与全局服务约束。
+      'vehicleCumulativeWaitSeconds',
+      'vehicleP95WaitSeconds',
+      // Phase 8：车辆能耗与排放直接展示后端累计事实，前端不再估算。
+      'vehicleTotalEnergy',
+      'vehicleTotalEmissionKg',
+      'vehicleEmissionIntensity'
     ]
   },
   {
@@ -252,9 +422,17 @@ const coreMetricGroups = Object.freeze([
     metricIds: [
       'cargoRequiredTonnes',
       'cargoUnassignedTonnes',
+      'cargoAssignedNotLoadedTonnes',
       'cargoInTransitTonnes',
       'cargoDeliveredTonnes',
       'cargoDeliveryAchievementRatio',
+      'cargoUnmetTonnes',
+      // Phase 9A-3：货物等待三项直接展示后端账本结果，前端不计算 P95。
+      'cargoOverdueUntransportedTonnes',
+      'cargoAverageWaitSeconds',
+      'cargoP95WaitSeconds',
+      'cargoHighPriorityCompletionRatio',
+      'cargoPriorityWeightedCompletionRatio',
       'cargoExecutedTonneKm'
     ]
   },
@@ -268,9 +446,23 @@ const coreMetricGroups = Object.freeze([
       'taskInProgressCount',
       'taskCompletedCount',
       'taskCompletionRatio',
+      // Phase 9A-3：响应、启动和整体 P95 分开显示，避免把不同等待阶段混成一个平均值。
+      'taskAverageResponseSeconds',
+      'taskAverageStartWaitSeconds',
+      'taskP95ServiceWaitSeconds',
+      // Phase 9C：Phase 9B-3 已就绪的交付指标必须进入主任务表直接展示。
+      'taskOverdueCount',
+      'taskOnTimeCompletionRatio',
       'taskAverageLoadRatio',
+      'taskLowLoadCount',
       'taskEmptyPickupDistanceKm',
-      'taskTonneKm'
+      'taskAverageEmptyPickupDistanceKm',
+      'taskRouteEfficiencyRatio',
+      'taskTonneKm',
+      // Phase 8：任务层展示全部任务路段的累计排放与单位吨公里排放。
+      'taskEmissionKg',
+      'taskEmissionIntensity',
+      'taskReassignmentCount'
     ]
   },
   {
@@ -322,6 +514,11 @@ const evaluationWarnings = computed<EvaluationWarning[]>(() => {
       title: '评价事实采集失败',
       message: '评价层未能取得一致的本轮事实，当前快照不应作为运行结果依据。'
     },
+    EVALUATION_HISTORY_PERSIST_FAILED: {
+      level: 'warning',
+      title: '评价历史保存失败',
+      message: '本轮实时快照仍可查看，但该轮未进入历史、趋势和导出数据。'
+    },
     TRANSPORT_PROGRESS_ASSIGNMENT_FAILED: {
       level: 'warning',
       title: '部分运输任务推进失败',
@@ -358,8 +555,165 @@ const evaluationWarnings = computed<EvaluationWarning[]>(() => {
         `${metric.displayName}：${metric.reason || '评价事实无效'}`)
     });
   }
+
+  const serviceConstraint = current.metrics?.waitingServiceCompliant;
+  if (serviceConstraint?.status === 'AVAILABLE'
+      && serviceConstraint.value !== null
+      && serviceConstraint.value < 0.5) {
+    // Phase 9A-3：约束违反是业务告警，不伪装成评价系统错误，也不新增后端机器错误码。
+    const cargoP95 = current.metrics?.cargoP95WaitSeconds;
+    const taskP95 = current.metrics?.taskP95ServiceWaitSeconds;
+    warnings.push({
+      key: 'WAITING_SERVICE_CONSTRAINT_VIOLATED',
+      code: null,
+      level: 'warning',
+      title: 'P95 服务等待超过阈值',
+      message: `货物或任务的 P95 等待已超过 ${formatPlainNumber(current.thresholds.maxServiceWaitSeconds, 0)} s。`,
+      details: [
+        `货物 P95：${formatMetric(cargoP95 || null)}`,
+        `任务 P95：${formatMetric(taskP95 || null)}`
+      ]
+    });
+  }
   return warnings;
 });
+
+/** Phase 9C：所选运行摘要来自持久化历史列表，不从当前 latest 推断。 */
+const selectedHistorySummary = computed(() =>
+  runSummaries.value.find(run => run.simulationRunId === selectedHistoryRunId.value) || null
+);
+
+/** Phase 9C：指标选择项取所选历史的最终快照，保留当时后端契约顺序。 */
+const historyMetricOptions = computed(() => {
+  const finalSnapshot = historySnapshots.value[historySnapshots.value.length - 1];
+  return Object.values(finalSnapshot?.metrics || snapshot.value?.metrics || {})
+    .filter(metric => !FRONTEND_HIDDEN_METRIC_IDS.has(metric.metricId));
+});
+
+/** 历史运行对比同样应用前端排除项，避免已隐藏指标通过对比表再次出现。 */
+const displayedComparisonMetrics = computed(() =>
+  (comparison.value?.metrics || [])
+    .filter(metric => !FRONTEND_HIDDEN_METRIC_IDS.has(metric.metricId))
+);
+
+/** Phase 9C：页面限制展示最近 50 行，下载仍包含全部历史。 */
+const displayedHistorySnapshots = computed(() =>
+  historySnapshots.value.slice(-50).reverse()
+);
+
+const displayedTrendPoints = computed(() =>
+  (trend.value?.points || []).slice(-50).reverse()
+);
+
+async function refreshHistory(): Promise<void> {
+  historyLoading.value = true;
+  historyError.value = '';
+  try {
+    const runs = await fetchEvaluationRuns();
+    runSummaries.value = runs;
+    const availableIds = new Set(runs.map(run => run.simulationRunId));
+    if (!availableIds.has(selectedHistoryRunId.value)) {
+      selectedHistoryRunId.value = runs[0]?.simulationRunId || '';
+    }
+    if (!availableIds.has(leftRunId.value)) {
+      leftRunId.value = runs[0]?.simulationRunId || '';
+    }
+    if (!availableIds.has(rightRunId.value) || rightRunId.value === leftRunId.value) {
+      rightRunId.value = runs[1]?.simulationRunId || '';
+    }
+    if (selectedHistoryRunId.value) {
+      await loadSelectedHistoryContent();
+    } else {
+      historySnapshots.value = [];
+      trend.value = null;
+      comparison.value = null;
+    }
+  } catch (error: unknown) {
+    historyError.value = readErrorMessage(error);
+  } finally {
+    historyLoading.value = false;
+  }
+}
+
+async function loadSelectedHistory(): Promise<void> {
+  historyLoading.value = true;
+  historyError.value = '';
+  try {
+    await loadSelectedHistoryContent();
+  } catch (error: unknown) {
+    historyError.value = readErrorMessage(error);
+  } finally {
+    historyLoading.value = false;
+  }
+}
+
+async function loadSelectedHistoryContent(): Promise<void> {
+  if (!selectedHistoryRunId.value) return;
+  historySnapshots.value = await fetchEvaluationHistory(selectedHistoryRunId.value);
+  const metricIds = new Set(historyMetricOptions.value.map(metric => metric.metricId));
+  if (!metricIds.has(selectedTrendMetricId.value)) {
+    selectedTrendMetricId.value = historyMetricOptions.value[0]?.metricId || '';
+  }
+  await loadSelectedTrendContent();
+}
+
+async function loadSelectedTrend(): Promise<void> {
+  historyLoading.value = true;
+  historyError.value = '';
+  try {
+    await loadSelectedTrendContent();
+  } catch (error: unknown) {
+    historyError.value = readErrorMessage(error);
+  } finally {
+    historyLoading.value = false;
+  }
+}
+
+async function loadSelectedTrendContent(): Promise<void> {
+  if (!selectedHistoryRunId.value || !selectedTrendMetricId.value) {
+    trend.value = null;
+    return;
+  }
+  trend.value = await fetchEvaluationTrend(
+    selectedHistoryRunId.value,
+    [selectedTrendMetricId.value]
+  );
+}
+
+async function loadComparison(): Promise<void> {
+  if (!leftRunId.value || !rightRunId.value || leftRunId.value === rightRunId.value) return;
+  comparisonLoading.value = true;
+  historyError.value = '';
+  try {
+    comparison.value = await fetchEvaluationRunComparison(leftRunId.value, rightRunId.value);
+  } catch (error: unknown) {
+    comparison.value = null;
+    historyError.value = readErrorMessage(error);
+  } finally {
+    comparisonLoading.value = false;
+  }
+}
+
+async function exportHistory(format: 'csv' | 'json'): Promise<void> {
+  if (!selectedHistoryRunId.value) return;
+  exporting.value = true;
+  historyError.value = '';
+  try {
+    const blob = await downloadEvaluationHistory(selectedHistoryRunId.value, format);
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `evaluation-${safeDownloadName(selectedHistoryRunId.value)}.${format}`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  } catch (error: unknown) {
+    historyError.value = readErrorMessage(error);
+  } finally {
+    exporting.value = false;
+  }
+}
 
 /** Phase 6C：单请求互斥，慢请求期间不叠加第二次读取。 */
 async function pollLatestEvaluationSnapshot(): Promise<void> {
@@ -395,6 +749,8 @@ async function pollLatestEvaluationSnapshot(): Promise<void> {
 /** Phase 6C：组件挂载即读取，卸载即停止，避免后台隐藏轮询。 */
 onMounted(() => {
   void pollLatestEvaluationSnapshot();
+  // Phase 9C：历史只在进入页面时和用户主动刷新时查询，不跟随 1 秒 latest 轮询压数据库。
+  void refreshHistory();
   pollingTimer = window.setInterval(() => void pollLatestEvaluationSnapshot(), POLL_INTERVAL_MS);
 });
 
@@ -408,6 +764,15 @@ onUnmounted(() => {
 
 function metricById(metricId: string): EvaluationMetricValue | null {
   return snapshot.value?.metrics?.[metricId] || null;
+}
+
+/** Phase 9A-3：只对明确可用且不满足的服务约束着色；N/A/INVALID 继续使用状态样式。 */
+function isViolatedServiceConstraint(metricId: string): boolean {
+  const metric = metricById(metricId);
+  return metricId === 'waitingServiceCompliant'
+    && metric?.status === 'AVAILABLE'
+    && metric.value !== null
+    && metric.value < 0.5;
 }
 
 function formatMetric(metric: EvaluationMetricValue | null): string {
@@ -435,16 +800,56 @@ function formatPlainNumber(value: number, maximumFractionDigits: number): string
   }).format(value);
 }
 
-function metricStatusText(metric: EvaluationMetricValue | null): string {
-  if (!metric) return '字段缺失';
-  const labels: Record<EvaluationMetricValueStatus, string> = {
+/** Phase 9C：历史和对比沿用实时指标格式，但必须尊重各自持久化状态。 */
+function formatComparisonMetric(
+  value: number | null,
+  status: EvaluationMetricValueStatus,
+  unit: string
+): string {
+  if (status !== 'AVAILABLE' || value === null) return metricStatusLabel(status);
+  if (unit === 'ratio') return formatRatio(value);
+  if (unit === 'boolean') return value >= 0.5 ? '满足' : '不满足';
+  const digits = ['vehicle', 'task', 'road', 'event', 'count'].includes(unit) ? 0 : 2;
+  return `${formatPlainNumber(value, digits)} ${unit}`;
+}
+
+function formatComparisonDelta(delta: number | null, unit: string): string {
+  if (delta === null) return '--';
+  const prefix = delta > 0 ? '+' : '';
+  if (unit === 'ratio') return `${prefix}${formatPlainNumber(delta * 100, 2)} 个百分点`;
+  return `${prefix}${formatPlainNumber(delta, 2)} ${unit}`;
+}
+
+function metricStatusLabel(status: EvaluationMetricValueStatus): string {
+  return ({
     AVAILABLE: '可用',
     NOT_AVAILABLE: '暂不可用',
     NOT_SUPPORTED: '不支持',
     NOT_APPLICABLE: '不适用',
     INVALID: '无效'
-  };
-  return labels[metric.status];
+  })[status];
+}
+
+function snapshotStatusLabel(status: EvaluationSnapshot['snapshotStatus']): string {
+  return ({ COMPLETE: '完整', PARTIAL: '部分完成', FAILED: '失败' })[status];
+}
+
+function formatSimTime(value: string): string {
+  return value ? value.replace('T', ' ') : '--';
+}
+
+function runLabel(run: EvaluationRunSummary): string {
+  const kind = run.runKind === 'DISPATCH_COMPARISON' ? '对比实验' : '普通仿真';
+  return `${kind}｜${run.simulationRunId}｜loop ${run.lastLoopIndex}`;
+}
+
+function safeDownloadName(runId: string): string {
+  return runId.replace(/[^a-zA-Z0-9._-]/g, '_') || 'unknown';
+}
+
+function metricStatusText(metric: EvaluationMetricValue | null): string {
+  if (!metric) return '字段缺失';
+  return metricStatusLabel(metric.status);
 }
 
 function metricRowClass(metric: EvaluationMetricValue | null): string {
@@ -498,21 +903,15 @@ const lastSuccessfulReadText = computed(() =>
   lastSuccessfulReadAt.value?.toLocaleTimeString('zh-CN', { hour12: false }) || '--'
 );
 
-/** Phase 6C：聚合展示后续阶段依赖，不展开完整契约表。 */
+/** Phase 9C：完整汇总四类对象指标；全局目标与服务约束已在顶部单独展示。 */
 const deferredSummaries = computed(() => {
-  const allMetrics = Object.values(snapshot.value?.metrics || {});
+  const allMetrics = Object.values(snapshot.value?.metrics || {})
+    .filter(metric => !FRONTEND_HIDDEN_METRIC_IDS.has(metric.metricId));
   return [
-    summarizeDeferred('environment', '外部环境', allMetrics.filter(metric => metric.category === 'ENVIRONMENT')),
-    summarizeDeferred(
-      'energy',
-      '能耗与碳排',
-      allMetrics.filter(metric => metric.metricId === 'carbonIntensity'
-        || metric.metricId === 'vehicleTotalEnergy'
-        || metric.metricId === 'vehicleTotalEmissionKg'
-        || metric.metricId === 'vehicleEmissionIntensity'
-        || metric.metricId === 'taskEmissionKg'
-        || metric.metricId === 'taskEmissionIntensity')
-    )
+    summarizeDeferred('vehicle', '车辆评价', allMetrics.filter(metric => metric.category === 'VEHICLE')),
+    summarizeDeferred('cargo', '货物评价', allMetrics.filter(metric => metric.category === 'CARGO')),
+    summarizeDeferred('task', '任务评价', allMetrics.filter(metric => metric.category === 'TASK')),
+    summarizeDeferred('environment', '外部环境', allMetrics.filter(metric => metric.category === 'ENVIRONMENT'))
   ];
 });
 
@@ -520,13 +919,14 @@ function summarizeDeferred(key: string, title: string, metrics: EvaluationMetric
   const available = metrics.filter(metric => metric.status === 'AVAILABLE').length;
   const pending = metrics.filter(metric => metric.status === 'NOT_AVAILABLE').length;
   const unsupported = metrics.filter(metric => metric.status === 'NOT_SUPPORTED').length;
+  const notApplicable = metrics.filter(metric => metric.status === 'NOT_APPLICABLE').length;
   const invalid = metrics.filter(metric => metric.status === 'INVALID').length;
   // Phase 7E-R：详情优先暴露真实异常，其次是待接入事实；明确不支持不再伪装成开发缺口。
   const reason = metrics.find(metric => metric.status === 'INVALID')?.reason
     || metrics.find(metric => metric.status === 'NOT_AVAILABLE')?.reason
     || metrics.find(metric => metric.status === 'NOT_SUPPORTED')?.reason
     || (metrics.length ? '本轮事实已可用' : '快照中没有对应字段');
-  return { key, title, available, pending, unsupported, invalid, total: metrics.length, reason };
+  return { key, title, available, pending, unsupported, notApplicable, invalid, total: metrics.length, reason };
 }
 
 function readErrorMessage(error: unknown): string {
@@ -778,6 +1178,15 @@ function readErrorMessage(error: unknown): string {
   background: #fbfcfe;
 }
 
+/* Phase 9A-3：业务约束不满足使用警示色，与 INVALID 的评价事实错误保持视觉区分。 */
+.evaluation-objective-card--violated {
+  border-color: #edc679;
+  background: #fff9ec;
+  box-shadow: inset 0 3px 0 #d9a441;
+}
+
+.evaluation-objective-card--violated strong { color: #a26709; }
+
 .evaluation-objective-card strong,
 .evaluation-deferred-card strong {
   display: block;
@@ -884,7 +1293,7 @@ function readErrorMessage(error: unknown): string {
   color: #64748b;
 }
 
-.evaluation-deferred-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.evaluation-deferred-grid { grid-template-columns: minmax(0, 1fr); }
 .evaluation-deferred-card strong { font-size: 19px; }
 .evaluation-deferred-counts { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 8px; }
 .evaluation-deferred-counts span {
@@ -894,6 +1303,106 @@ function readErrorMessage(error: unknown): string {
   color: #66778a;
   font-size: 11px;
 }
+
+/* Phase 9C：历史、趋势和对比样式全部限定在评价面板，不复用地图或车辆动画类。 */
+.evaluation-history-controls,
+.evaluation-comparison-controls {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) minmax(240px, 1fr) auto;
+  align-items: end;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.evaluation-history-controls label,
+.evaluation-comparison-controls label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.evaluation-history-controls select,
+.evaluation-comparison-controls select {
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 9px;
+  border: 1px solid #d9e2ec;
+  border-radius: 7px;
+  background: #fff;
+  color: #334155;
+}
+
+.evaluation-history-actions,
+.evaluation-history-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.evaluation-history-summary {
+  margin-top: 12px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.evaluation-history-summary span {
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: #f1f5f9;
+}
+
+.evaluation-history-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.evaluation-history-grid h4 {
+  margin: 0 0 8px;
+  color: #34465a;
+}
+
+.evaluation-compact-table,
+.evaluation-comparison-table {
+  max-height: 420px;
+  overflow: auto;
+  border: 1px solid #e6ecf3;
+  border-radius: 9px;
+}
+
+.evaluation-compact-row,
+.evaluation-comparison-row {
+  display: grid;
+  grid-template-columns: 70px 80px minmax(150px, 1fr) minmax(110px, 0.8fr);
+  gap: 10px;
+  padding: 8px 10px;
+  border-top: 1px solid #edf1f5;
+  font-size: 12px;
+}
+
+.evaluation-comparison-row {
+  grid-template-columns: minmax(180px, 1.3fr) repeat(3, minmax(130px, 1fr));
+}
+
+.evaluation-compact-row:first-child,
+.evaluation-comparison-row:first-child { border-top: 0; }
+.evaluation-compact-row--head,
+.evaluation-comparison-row--head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #edf3f8;
+  color: #64748b;
+  font-weight: 600;
+}
+
+.evaluation-comparison-controls { margin-top: 22px; }
+.evaluation-comparison-table { margin-top: 12px; }
+.evaluation-history-empty { margin-top: 16px; color: #8793a3; font-size: 13px; }
 
 .evaluation-empty-state {
   padding: 70px 20px;
@@ -906,6 +1415,7 @@ function readErrorMessage(error: unknown): string {
 @media (max-width: 1100px) {
   .evaluation-meta-grid { grid-template-columns: repeat(3, minmax(110px, 1fr)); }
   .evaluation-objective-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .evaluation-history-grid { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 720px) {
@@ -916,6 +1426,8 @@ function readErrorMessage(error: unknown): string {
   .evaluation-meta-grid,
   .evaluation-objective-grid,
   .evaluation-deferred-grid { grid-template-columns: 1fr; }
+  .evaluation-history-controls,
+  .evaluation-comparison-controls { grid-template-columns: 1fr; }
   .evaluation-metric-row { grid-template-columns: 1fr; gap: 7px; padding: 12px; }
   .evaluation-metric-row--head { display: none; }
   .evaluation-metric-value { font-size: 16px; }

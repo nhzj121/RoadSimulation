@@ -25,7 +25,10 @@ public final class EvaluationMetricCatalog {
 
     /** Phase 6A：快照和前端用于识别指标语义版本的稳定编号。 */
     // Phase 7E-R：1.4 明确区分“事实待接入”与“当前版本不支持”。
-    public static final String CONTRACT_VERSION = "1.4";
+    // Phase 9A-2：1.7 将已冻结的九项等待指标接入运行隔离的事实账本。
+    // Phase 9B-1：1.8 冻结确定性交付 SLA、交付逾期和任务准时聚合口径；事实仍待后续接入。
+    // Phase 9B-3：交付逾期数与准时完成率正式接入当前运行事实账本。
+    public static final String CONTRACT_VERSION = "1.9";
 
     private static final String EVERY_TICK = "每个 simulation tick 的业务推进完成后更新";
     private static final String ZERO_DENOMINATOR = "分母大于 0；否则返回 NOT_AVAILABLE";
@@ -112,12 +115,13 @@ public final class EvaluationMetricCatalog {
                         "Σ currentLoadTonnes × executedDistanceKm", ZERO_DENOMINATOR,
                         "AssignmentLeg.currentLoadTonnes", "AssignmentLeg.executedDistanceMeters",
                         "Phase 8 emission fact"),
-                fact(GLOBAL_WAITING_SERVICE_COMPLIANT, "P95 等待时间服务约束", "boolean",
-                        CURRENT_RUN_COMPLETED_EPISODES,
-                        "max(vehicleP95, cargoP95, taskP95) <= maxServiceWaitSeconds",
-                        "车辆、货物和任务等待事件的 P95", "simulation.evaluation.max-service-wait-seconds",
-                        "三类等待样本均可用；任一类不可用时返回 NOT_AVAILABLE",
-                        "仿真等待事件账本", "EvaluationMetricPolicy.maxServiceWaitSeconds")
+                readyWait(GLOBAL_WAITING_SERVICE_COMPLIANT, "P95 等待时间服务约束", "boolean",
+                        TICK_END_INSTANT,
+                        "max(cargoObservedP95, taskServiceObservedP95) <= maxServiceWaitSeconds",
+                        "货物首次运输等待与任务整体启动等待的当前观察 P95",
+                        "simulation.evaluation.max-service-wait-seconds",
+                        "货物和任务两类当前观察样本均存在；车辆空闲等待不参与服务约束",
+                        "Phase 9A wait episode ledger", "EvaluationMetricPolicy.maxServiceWaitSeconds")
         );
     }
 
@@ -173,24 +177,26 @@ public final class EvaluationMetricCatalog {
                         "达到配置阈值的当前有载车辆数", "当前载重>0 且额定载重>0 的车辆数",
                         ZERO_DENOMINATOR, "Vehicle.currentLoadTonnes", "Vehicle.maxLoadCapacity",
                         "EvaluationMetricPolicy.fullLoadRatioThreshold"),
-                fact(VEHICLE_CUMULATIVE_WAIT_SECONDS, "车辆累计等待时间", "s", CURRENT_RUN_CUMULATIVE,
-                        "Σ closed vehicle waiting episode seconds", "全部已闭合车辆等待事件时长", "不适用",
-                        "存在只使用仿真时间记录的车辆等待事件",
-                        "待新增 VehicleWaitEpisode.startedSimTime/completedSimTime/type"),
-                fact(VEHICLE_P95_WAIT_SECONDS, "车辆 P95 等待时间", "s", CURRENT_RUN_COMPLETED_EPISODES,
-                        "P95(vehicle waiting episode seconds)", "车辆等待时长样本第 95 分位", "不适用",
-                        "至少存在一个已闭合等待事件",
-                        "待新增 VehicleWaitEpisode.startedSimTime/completedSimTime/type"),
-                energy(VEHICLE_TOTAL_ENERGY, "车辆总能耗", "model-specific", CURRENT_RUN_CUMULATIVE,
-                        "Σ vehicle energy consumption", "车辆能耗总和", "不适用", DIRECT_VALUE,
-                        "Phase 8 vehicle energy fact"),
+                readyWait(VEHICLE_CUMULATIVE_WAIT_SECONDS, "车辆累计等待时间", "s", CURRENT_RUN_CUMULATIVE,
+                        "Σ observed available-idle wait seconds through tickEnd",
+                        "已闭合等待时长与当前未闭合等待的已观察时长", "不适用",
+                        "至少存在一辆当前运行内可用且无活动任务的车辆等待事实；只使用仿真时间",
+                        "Phase 9A VEHICLE_AVAILABLE_IDLE episode", "SimulationTick.tickEnd"),
+                readyWait(VEHICLE_P95_WAIT_SECONDS, "车辆 P95 等待时间", "s", TICK_END_INSTANT,
+                        "nearest-rank P95(observed available-idle wait seconds through tickEnd)",
+                        "车辆空闲等待当前观察时长样本", "不适用",
+                        "至少存在一个已闭合或当前未闭合的车辆空闲等待样本；不参与服务约束",
+                        "Phase 9A VEHICLE_AVAILABLE_IDLE episode", "SimulationTick.tickEnd"),
+                energy(VEHICLE_TOTAL_ENERGY, "车辆总能耗", "L(diesel-eq)", CURRENT_RUN_CUMULATIVE,
+                        "Σ AssignmentLeg.executedEnergyLiters", "车辆路段柴油当量能耗总和", "不适用",
+                        DIRECT_VALUE, "AssignmentLeg.executedEnergyLiters", "Phase 8 emission model"),
                 energy(VEHICLE_TOTAL_EMISSION_KG, "车辆总碳排放", "kgCO2e", CURRENT_RUN_CUMULATIVE,
-                        "Σ vehicle emissionKg", "车辆碳排总和", "不适用", DIRECT_VALUE,
-                        "Phase 8 vehicle emission fact"),
+                        "Σ AssignmentLeg.executedEmissionKg", "车辆路段碳排总和", "不适用", DIRECT_VALUE,
+                        "AssignmentLeg.executedEmissionKg", "Phase 8 emission model"),
                 energy(VEHICLE_EMISSION_INTENSITY, "车辆单位吨公里排放", "kgCO2e/(t·km)",
                         CURRENT_RUN_CUMULATIVE, "totalEmissionKg / executedTonneKm", "车辆总碳排",
                         "实际有效吨公里", ZERO_DENOMINATOR,
-                        "Phase 8 vehicle emission fact", "AssignmentLeg.currentLoadTonnes",
+                        "AssignmentLeg.executedEmissionKg", "AssignmentLeg.currentLoadTonnes",
                         "AssignmentLeg.executedDistanceMeters")
         );
     }
@@ -220,19 +226,21 @@ public final class EvaluationMetricCatalog {
                 ready(CARGO_UNMET_TONNES, "未达成吨位", "t", CURRENT_RUN_CUMULATIVE,
                         "max(requiredTonnes-deliveredTonnes, 0)", "需求吨位减已交付吨位", "不适用",
                         DIRECT_VALUE, "ShipmentItem.weightTonnes", "ShipmentItem.status"),
-                fact(CARGO_OVERDUE_UNTRANSPORTED_TONNES, "超时未运输吨位", "t", TICK_END_INSTANT,
-                        "Σ undelivered weightTonnes where waitSeconds>maxServiceWaitSeconds",
-                        "超过服务阈值且未交付的货物吨位", "不适用",
-                        "每件货物具有可信创建和首次运输仿真时间",
-                        "待新增 ShipmentItem.firstTransportStartedSimTime"),
-                fact(CARGO_AVERAGE_WAIT_SECONDS, "平均货物等待时间", "s", CURRENT_RUN_COMPLETED_EPISODES,
-                        "average(firstTransportStartedSimTime-createdSimTime)", "货物等待时长总和",
-                        "已开始运输的货物数", "至少存在一个完整等待样本",
-                        "待新增 ShipmentItem.createdSimTime/firstTransportStartedSimTime"),
-                fact(CARGO_P95_WAIT_SECONDS, "P95 货物等待时间", "s", CURRENT_RUN_COMPLETED_EPISODES,
-                        "P95(firstTransportStartedSimTime-createdSimTime)", "货物等待时长样本第 95 分位",
-                        "不适用", "至少存在一个完整等待样本",
-                        "待新增 ShipmentItem.createdSimTime/firstTransportStartedSimTime"),
+                readyWait(CARGO_OVERDUE_UNTRANSPORTED_TONNES, "超时未运输吨位", "t", TICK_END_INSTANT,
+                        "Σ weightTonnes where first loaded transport has not started and observedWait>Wmax",
+                        "尚未首次有载运输且已超过服务阈值的货物吨位", "不适用",
+                        "每件货物具有可信需求创建时间和当前观察截止时间",
+                        "Phase 9A CARGO_FIRST_TRANSPORT episode", "ShipmentItem.weightTonnes"),
+                readyWait(CARGO_AVERAGE_WAIT_SECONDS, "平均货物等待时间", "s", CURRENT_RUN_COMPLETED_EPISODES,
+                        "average(firstLoadedTransportStartedSimTime-demandCreatedSimTime) for successful starts",
+                        "成功开始首次有载运输的完整货物等待时长总和",
+                        "成功开始首次有载运输的货物数", "至少存在一个成功闭合等待样本",
+                        "Phase 9A CARGO_FIRST_TRANSPORT episode"),
+                readyWait(CARGO_P95_WAIT_SECONDS, "P95 货物等待时间", "s", TICK_END_INSTANT,
+                        "nearest-rank P95(observed first-transport wait seconds through tickEnd)",
+                        "成功闭合、当前未闭合及取消/失败终止的货物等待观察时长", "不适用",
+                        "至少存在一个货物等待观察样本",
+                        "Phase 9A CARGO_FIRST_TRANSPORT episode", "SimulationTick.tickEnd"),
                 fact(CARGO_HIGH_PRIORITY_COMPLETION_RATIO, "高优先级货物完成率", "ratio",
                         CURRENT_RUN_CUMULATIVE,
                         "delivered high-priority tonnes / required high-priority tonnes",
@@ -275,24 +283,37 @@ public final class EvaluationMetricCatalog {
                         "completed Assignment count / all current-run Assignment count", "已完成任务数",
                         "当前运行创建的全部任务数（包含 FAILED/CANCELLED）", ZERO_DENOMINATOR,
                         "Assignment.status", "Assignment.createdTime"),
-                fact(TASK_AVERAGE_RESPONSE_SECONDS, "平均任务响应时间", "s",
+                readyWait(TASK_AVERAGE_RESPONSE_SECONDS, "平均任务响应时间", "s",
                         CURRENT_RUN_COMPLETED_EPISODES,
-                        "average(assignmentConfirmedSimTime-taskCreatedSimTime)", "任务响应时长总和",
-                        "具有完整时间事实的任务数", "存在可信的任务创建和确认仿真时间",
-                        "待新增 taskCreatedSimTime/assignmentConfirmedSimTime"),
-                fact(TASK_AVERAGE_START_WAIT_SECONDS, "平均启动等待时间", "s",
+                        "average(assignmentConfirmedSimTime-earliestBoundDemandCreatedSimTime)",
+                        "任务最早关联需求至分配确认的响应时长总和",
+                        "具有完整响应时间事实的任务数", "至少存在一个完整任务响应样本",
+                        "Phase 9A TASK_RESPONSE episode"),
+                readyWait(TASK_AVERAGE_START_WAIT_SECONDS, "平均启动等待时间", "s",
                         CURRENT_RUN_COMPLETED_EPISODES,
                         "average(firstExecutionSimTime-assignmentConfirmedSimTime)", "任务启动等待时长总和",
-                        "具有完整时间事实的任务数", "存在可信的确认和首次执行仿真时间",
-                        "待新增 assignmentConfirmedSimTime/firstExecutionSimTime"),
-                fact(TASK_OVERDUE_COUNT, "超时任务数", "task", TICK_END_INSTANT,
-                        "count(task past wait or completion deadline)", "超过服务或交付时限的任务数", "不适用",
-                        "任务具有可信时限、创建、确认、首次执行和完成仿真时间",
-                        "待新增任务观测时间；现有 appointment 字段不是所有任务必填"),
-                fact(TASK_ON_TIME_COMPLETION_RATIO, "准时完成率", "ratio", CURRENT_RUN_CUMULATIVE,
-                        "on-time completed task count / completed task count", "按时完成任务数", "已完成任务数",
-                        "已完成任务具有可信完成仿真时间和交付时限",
-                        "待统一 deliveryDeadlineSimTime/completedSimTime"),
+                        "具有完整启动时间事实的任务数", "至少存在一个完整任务启动等待样本",
+                        "Phase 9A TASK_START episode"),
+                readyWait(TASK_P95_SERVICE_WAIT_SECONDS, "任务 P95 服务等待时间", "s", TICK_END_INSTANT,
+                        "nearest-rank P95(firstExecutionOrTickEnd-earliestBoundDemandCreatedSimTime)",
+                        "任务从最早关联需求到首次实际路段推进的当前观察时长", "不适用",
+                        "至少存在一个已确认任务的整体等待观察样本",
+                        "Phase 9A TASK_SERVICE episode", "SimulationTick.tickEnd"),
+                // Phase 9B-3：交付逾期不再混入 Phase 9A 已独立表达的等待服务超时。
+                readyDelivery(TASK_OVERDUE_COUNT, "超时任务数", "task", TICK_END_INSTANT,
+                        "count(active Assignment where any non-cancelled item is undelivered and tickEnd>deliveryDeadlineSimTime)",
+                        "当前仍有未交付货物且已越过对应交付截止时刻的活动任务数", "不适用",
+                        "所有在途非取消货物具有当前运行内冻结的交付截止时刻；缺失预期事实时返回 INVALID",
+                        // Phase 9B-3：截止与状态均由当前运行交付账本提供。
+                        "DeliverySlaFact.deliveryDeadlineSimTime", "DeliverySlaFact.status", "SimulationTick.tickEnd"),
+                readyDelivery(TASK_ON_TIME_COMPLETION_RATIO, "准时完成率", "ratio", CURRENT_RUN_CUMULATIVE,
+                        "completed tasks where every non-cancelled item deliveredSimTime<=deliveryDeadlineSimTime / completed tasks with complete delivery facts",
+                        "全部非取消货物均不晚于各自截止时刻完成卸货的任务数",
+                        "当前运行内具有完整截止时间和卸货完成事实的已完成任务数",
+                        "至少存在一个事实完整的已完成任务；预期事实缺失时返回 INVALID，零样本返回 NOT_AVAILABLE",
+                        // Phase 9B-3：交付时间只读取 Phase 9B-2 复制的后端 UNLOAD 完成记录，不使用 Assignment.endTime。
+                        "DeliverySlaFact.deliveryDeadlineSimTime", "DeliverySlaFact.deliveredSimTime",
+                        "DeliverySlaFact.deliveryAssignmentId"),
                 ready(TASK_AVERAGE_LOAD_RATIO, "任务平均载重率", "ratio", CURRENT_RUN_CUMULATIVE,
                         "average(per-task loaded-distance-weighted load ratio)", "各任务有效载重率总和",
                         "具有正有载实际里程和正额定载重的任务数", ZERO_DENOMINATOR,
@@ -325,11 +346,11 @@ public final class EvaluationMetricCatalog {
                         "AssignmentLeg.executedDistanceMeters"),
                 energy(TASK_EMISSION_KG, "任务碳排放", "kgCO2e", CURRENT_RUN_CUMULATIVE,
                         "Σ emission allocated to Assignment legs", "任务路段碳排总和", "不适用", DIRECT_VALUE,
-                        "Phase 8 assignment-leg emission fact"),
+                        "AssignmentLeg.executedEmissionKg"),
                 energy(TASK_EMISSION_INTENSITY, "任务单位吨公里排放", "kgCO2e/(t·km)",
                         CURRENT_RUN_CUMULATIVE,
                         "taskEmissionKg / taskTonneKm", "任务碳排放", "任务实际吨公里",
-                        ZERO_DENOMINATOR, "Phase 8 assignment-leg emission fact",
+                        ZERO_DENOMINATOR, "AssignmentLeg.executedEmissionKg",
                         "AssignmentLeg.currentLoadTonnes", "AssignmentLeg.executedDistanceMeters"),
                 fact(TASK_REASSIGNMENT_COUNT, "重分配次数", "count", CURRENT_RUN_CUMULATIVE,
                         "Σ Assignment.reassignmentCount", "任务重新匹配车辆事件数", "不适用",
@@ -371,9 +392,10 @@ public final class EvaluationMetricCatalog {
                         "无环境扰动时理论最短距离",
                         "当前版本不支持动态绕行；禁止改写同步路线规划、路线几何和前端路线展示",
                         "动态执行路径", "冻结最短距离基线"),
-                environment(ENV_ENERGY_FACTOR, "环境能耗修正系数", "ratio",
-                        "current energy per km / normal energy per km", "环境下单位里程能耗",
-                        "正常单位里程能耗", "Phase 7 environment factor and Phase 8 energy baseline"),
+                readyEnergyEnvironment(ENV_ENERGY_FACTOR, "环境能耗修正系数", "ratio",
+                        "1 + environmentFactorGamma * (travelTimeFactor - 1)", "环境下单位里程能耗",
+                        "正常单位里程能耗", "EnvironmentScenarioSnapshot.travelTimeFactor",
+                        "VehicleEnergyEmissionPolicy.environmentFactorGamma"),
                 // Phase 7E-R：节点排队被明确排除；平均服务时间和吞吐量仍由现有服务账本支持。
                 unsupported(ENV_NODE_QUEUE_LENGTH, "节点装卸排队长度", "vehicle", TICK_END_INSTANT,
                         "count(node service episodes with status=QUEUED)", "全系统当前排队车辆数", "不适用",
@@ -437,10 +459,64 @@ public final class EvaluationMetricCatalog {
             String availability,
             String... sources
     ) {
+        // Phase 8：版本化代理模型与路段累计事实已经接入，六项能耗/排放指标正式进入 READY。
         return definition(id, name, unit, scope, formula, numerator, denominator, availability,
-                EvaluationMetricReadiness.REQUIRES_ENERGY_MODEL, EvaluationMetricValueStatus.NOT_AVAILABLE,
+                EvaluationMetricReadiness.READY, EvaluationMetricValueStatus.NOT_AVAILABLE,
                 Set.of(EvaluationMetricDependency.ENERGY_AND_CARBON_MODEL),
-                "等待 Phase 8 的能耗和碳排事实模型", sources);
+                "Phase 8 已接入逐轮实际距离能耗与直接运行碳排事实", sources);
+    }
+
+    private EvaluationMetricDefinition readyWait(
+            EvaluationMetricId id,
+            String name,
+            String unit,
+            EvaluationMetricTimeScope scope,
+            String formula,
+            String numerator,
+            String denominator,
+            String availability,
+            String... sources
+    ) {
+        // Phase 9A-2：等待账本已接入；无样本是合法 N/A，投影或结构异常才令快照 PARTIAL。
+        return definition(id, name, unit, scope, formula, numerator, denominator, availability,
+                EvaluationMetricReadiness.READY, EvaluationMetricValueStatus.NOT_AVAILABLE,
+                Set.of(EvaluationMetricDependency.FACT_CAPTURE),
+                "Phase 9A 已接入按运行隔离的等待事实账本", sources);
+    }
+
+    private EvaluationMetricDefinition readyDelivery(
+            EvaluationMetricId id,
+            String name,
+            String unit,
+            EvaluationMetricTimeScope scope,
+            String formula,
+            String numerator,
+            String denominator,
+            String availability,
+            String... sources
+    ) {
+        // Phase 9B-3：逐货物截止与卸货完成事实已接入；零已完成样本仍是合法 N/A。
+        return definition(id, name, unit, scope, formula, numerator, denominator, availability,
+                EvaluationMetricReadiness.READY, EvaluationMetricValueStatus.NOT_AVAILABLE,
+                Set.of(EvaluationMetricDependency.FACT_CAPTURE),
+                "Phase 9B 已接入按运行隔离的确定性交付 SLA 事实账本", sources);
+    }
+
+    private EvaluationMetricDefinition readyEnergyEnvironment(
+            EvaluationMetricId id,
+            String name,
+            String unit,
+            String formula,
+            String numerator,
+            String denominator,
+            String... sources
+    ) {
+        // Phase 8：该值同时依赖 Phase 7 的逐 tick 场景和 Phase 8 的独立能耗换算模型。
+        return definition(id, name, unit, TICK_END_INSTANT, formula, numerator, denominator,
+                DIRECT_VALUE, EvaluationMetricReadiness.READY, EvaluationMetricValueStatus.NOT_AVAILABLE,
+                Set.of(EvaluationMetricDependency.ENVIRONMENT_SCENARIO,
+                        EvaluationMetricDependency.ENERGY_AND_CARBON_MODEL),
+                "Phase 8 已由旅行时间事实转换为独立环境能耗修正系数", sources);
     }
 
     private EvaluationMetricDefinition environment(

@@ -6,6 +6,7 @@ import org.example.roadsimulation.entity.AssignmentLeg;
 import org.example.roadsimulation.entity.Vehicle;
 import org.example.roadsimulation.evaluation.EnvironmentScenarioSnapshot;
 import org.example.roadsimulation.evaluation.ReproducibleEnvironmentScenarioService;
+import org.example.roadsimulation.evaluation.VehicleEnergyEmissionModel;
 import org.example.roadsimulation.repository.AssignmentLegRepository;
 import org.example.roadsimulation.repository.AssignmentRepository;
 import org.slf4j.Logger;
@@ -27,7 +28,7 @@ import java.util.Optional;
 /**
  * Phase 7D：支持可复现环境影响的后端权威运输路段进度服务。
  *
- * <p>本服务仍只计算“走到哪里”，但在路段新完成时会把唯一事件交给
+ * <p>本服务计算“走到哪里”并在同一事务累计 Phase 8 能耗事实；路段新完成时把唯一事件交给
  * {@link TransportLifecycleService}。货物、任务和车辆动作仍由生命周期服务执行，
  * 避免进度服务演变为新的巨型业务类。</p>
  */
@@ -47,6 +48,8 @@ public class TransportProgressService {
     private final TransactionTemplate assignmentProgressTransaction;
     // Phase 7D：生产推进必须读取与评价侧同源的确定性环境快照，不读取前端或路线动画状态。
     private final ReproducibleEnvironmentScenarioService environmentScenarioService;
+    // Phase 8：只消费本服务已经确定的距离增量，不参与路线、状态机或任务分配决策。
+    private final VehicleEnergyEmissionModel energyEmissionModel;
 
     public TransportProgressService(
             AssignmentRepository assignmentRepository,
@@ -60,11 +63,11 @@ public class TransportProgressService {
                 assignmentLegRepository,
                 transportLifecycleService,
                 transactionManager,
-                null
+                null,
+                VehicleEnergyEmissionModel.defaultModel()
         );
     }
 
-    @Autowired
     public TransportProgressService(
             AssignmentRepository assignmentRepository,
             AssignmentLegRepository assignmentLegRepository,
@@ -84,6 +87,35 @@ public class TransportProgressService {
         );
         this.assignmentProgressTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         this.environmentScenarioService = environmentScenarioService;
+        // Phase 8：五参数构造器保留旧测试兼容，并使用与生产默认配置一致的代理模型。
+        this.energyEmissionModel = VehicleEnergyEmissionModel.defaultModel();
+    }
+
+    @Autowired
+    public TransportProgressService(
+            AssignmentRepository assignmentRepository,
+            AssignmentLegRepository assignmentLegRepository,
+            TransportLifecycleService transportLifecycleService,
+            PlatformTransactionManager transactionManager,
+            ReproducibleEnvironmentScenarioService environmentScenarioService,
+            VehicleEnergyEmissionModel energyEmissionModel
+    ) {
+        this.assignmentRepository = assignmentRepository;
+        this.assignmentLegRepository = assignmentLegRepository;
+        this.transportLifecycleService = Objects.requireNonNull(
+                transportLifecycleService,
+                "transportLifecycleService must not be null"
+        );
+        // Phase 8：继续沿用每任务独立事务，距离、能耗、排放和路段完成事件原子提交。
+        this.assignmentProgressTransaction = new TransactionTemplate(
+                Objects.requireNonNull(transactionManager, "transactionManager must not be null")
+        );
+        this.assignmentProgressTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        this.environmentScenarioService = environmentScenarioService;
+        this.energyEmissionModel = Objects.requireNonNull(
+                energyEmissionModel,
+                "energyEmissionModel must not be null"
+        );
     }
 
     /**
@@ -346,6 +378,8 @@ public class TransportProgressService {
         }
         leg.setExecutedDrivingSeconds(newExecutedSeconds);
         leg.setExecutedDistanceMeters(newExecutedDistance);
+        // Phase 8：必须使用本轮新增距离；累计距离若直接送入模型会在每轮重复计算历史排放。
+        updateEnergyEmissionFacts(leg, executedDistance, newExecutedDistance, travelTimeFactor);
         leg.setLastProcessedLoopIndex(tick.loopIndex());
 
         if (completed) {
@@ -420,6 +454,61 @@ public class TransportProgressService {
             newExecutedDistance = Math.min(plannedDistance, executedDistance + distanceIncrement);
         }
         return new ProgressSlice(consumedSeconds, newExecutedDistance, completed);
+    }
+
+    /**
+     * Phase 8：能耗事实失败与运输推进隔离。非法容量、旧运行缺口或跨模型混用只将路段标为
+     * INVALID，距离和生命周期仍按既有逻辑提交，评价层随后拒绝使用不完整的排放累计值。
+     */
+    private void updateEnergyEmissionFacts(
+            AssignmentLeg leg,
+            double previousExecutedDistanceMeters,
+            double newExecutedDistanceMeters,
+            double travelTimeFactor
+    ) {
+        double distanceDeltaMeters = newExecutedDistanceMeters - previousExecutedDistanceMeters;
+        if (distanceDeltaMeters <= 0.0 || leg.getEnergyFactStatus() == AssignmentLeg.EnergyFactStatus.INVALID) {
+            return;
+        }
+        // Phase 8：升级前已有实际距离无法还原每轮历史环境因子，禁止用当前因子回填旧里程。
+        if (previousExecutedDistanceMeters > 0.0
+                && leg.getEnergyFactStatus() == AssignmentLeg.EnergyFactStatus.PENDING) {
+            leg.setEnergyFactStatus(AssignmentLeg.EnergyFactStatus.INVALID);
+            log.warn("[Phase8 Energy] existing executed distance has no historical energy fact. legId={}", leg.getId());
+            return;
+        }
+
+        try {
+            Vehicle vehicle = leg.getVehicle();
+            Double capacity = vehicle == null ? null : vehicle.getMaxLoadCapacityTonnes();
+            if (capacity == null) {
+                throw new IllegalArgumentException("vehicle capacity is missing");
+            }
+            VehicleEnergyEmissionModel.EnergyEmissionDelta delta = energyEmissionModel.calculateDelta(
+                    distanceDeltaMeters,
+                    capacity,
+                    leg.getCurrentLoadTonnes(),
+                    travelTimeFactor
+            );
+            if (leg.getEnergyFactStatus() == AssignmentLeg.EnergyFactStatus.VALID
+                    && (!Objects.equals(leg.getEmissionModelId(), delta.modelId())
+                    || !Objects.equals(leg.getVehicleEmissionClassCode(), delta.vehicleClassCode()))) {
+                // Phase 8：模型或档位发生变化时不能把不同口径继续累加到同一个路段。
+                leg.setEnergyFactStatus(AssignmentLeg.EnergyFactStatus.INVALID);
+                log.warn("[Phase8 Energy] model or vehicle class changed during one leg. legId={}", leg.getId());
+                return;
+            }
+            leg.setEmissionModelId(delta.modelId());
+            leg.setVehicleEmissionClassCode(delta.vehicleClassCode());
+            leg.setExecutedEnergyLiters(leg.getExecutedEnergyLiters() + delta.energyLiters());
+            leg.setExecutedEmissionKg(leg.getExecutedEmissionKg() + delta.emissionKg());
+            leg.setEnergyFactStatus(AssignmentLeg.EnergyFactStatus.VALID);
+        } catch (RuntimeException ex) {
+            // Phase 8：评价事实异常不得反向导致车辆停止、路段回退或任务失败。
+            leg.setEnergyFactStatus(AssignmentLeg.EnergyFactStatus.INVALID);
+            log.warn("[Phase8 Energy] energy fact rejected without blocking transport. legId={}, reason={}",
+                    leg.getId(), ex.getMessage());
+        }
     }
 
     private ProgressSlice advanceZeroDistanceCompatibilityLeg(

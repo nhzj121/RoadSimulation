@@ -15,6 +15,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -53,8 +54,14 @@ public class EvaluationSnapshotCalculator {
     private final NodeServiceLedgerHealth nodeServiceLedgerHealth;
     // Phase 7C：环境场景提供器是无状态只读依赖，不接触运输推进和路线规划。
     private final ReproducibleEnvironmentScenarioService environmentScenarioService;
+    // Phase 8：评价读取已持久化累计事实，并用同一模型校验排放换算与环境能耗因子。
+    private final VehicleEnergyEmissionModel energyEmissionModel;
+    // Phase 9A-2：等待指标只读取评价账本，不从当前业务状态反推历史等待。
+    private final WaitMetricFactReader waitMetricFactReader;
+    // Phase 9B-3：交付指标只读取按 runId 隔离的截止与后端卸货完成事实。
+    private final DeliverySlaMetricFactReader deliverySlaMetricFactReader;
 
-    /** Phase 6B/7B/7C：保留旧构造器供既有测试逐步迁移；生产 Spring 使用九参数构造器。 */
+    /** Phase 6B/7B/7C/8/9A/9B：保留旧构造器供既有测试逐步迁移；生产 Spring 使用完整依赖构造器。 */
     public EvaluationSnapshotCalculator(
             EvaluationMetricCatalog catalog,
             EvaluationMetricPolicy policy,
@@ -121,7 +128,6 @@ public class EvaluationSnapshotCalculator {
         );
     }
 
-    @Autowired
     public EvaluationSnapshotCalculator(
             EvaluationMetricCatalog catalog,
             EvaluationMetricPolicy policy,
@@ -133,6 +139,77 @@ public class EvaluationSnapshotCalculator {
             NodeServiceLedgerHealth nodeServiceLedgerHealth,
             ReproducibleEnvironmentScenarioService environmentScenarioService
     ) {
+        this(
+                catalog,
+                policy,
+                vehicleRepository,
+                assignmentRepository,
+                assignmentLegRepository,
+                shipmentItemRepository,
+                nodeServiceEpisodeRepository,
+                nodeServiceLedgerHealth,
+                environmentScenarioService,
+                VehicleEnergyEmissionModel.defaultModel(),
+                null
+        );
+    }
+
+    public EvaluationSnapshotCalculator(
+            EvaluationMetricCatalog catalog,
+            EvaluationMetricPolicy policy,
+            VehicleRepository vehicleRepository,
+            AssignmentRepository assignmentRepository,
+            AssignmentLegRepository assignmentLegRepository,
+            ShipmentItemRepository shipmentItemRepository,
+            NodeServiceEpisodeRepository nodeServiceEpisodeRepository,
+            NodeServiceLedgerHealth nodeServiceLedgerHealth,
+            ReproducibleEnvironmentScenarioService environmentScenarioService,
+            VehicleEnergyEmissionModel energyEmissionModel
+    ) {
+        this(
+                catalog, policy, vehicleRepository, assignmentRepository,
+                assignmentLegRepository, shipmentItemRepository,
+                nodeServiceEpisodeRepository, nodeServiceLedgerHealth,
+                environmentScenarioService, energyEmissionModel, null, null
+        );
+    }
+
+    public EvaluationSnapshotCalculator(
+            EvaluationMetricCatalog catalog,
+            EvaluationMetricPolicy policy,
+            VehicleRepository vehicleRepository,
+            AssignmentRepository assignmentRepository,
+            AssignmentLegRepository assignmentLegRepository,
+            ShipmentItemRepository shipmentItemRepository,
+            NodeServiceEpisodeRepository nodeServiceEpisodeRepository,
+            NodeServiceLedgerHealth nodeServiceLedgerHealth,
+            ReproducibleEnvironmentScenarioService environmentScenarioService,
+            VehicleEnergyEmissionModel energyEmissionModel,
+            WaitMetricFactReader waitMetricFactReader
+    ) {
+        this(
+                catalog, policy, vehicleRepository, assignmentRepository,
+                assignmentLegRepository, shipmentItemRepository,
+                nodeServiceEpisodeRepository, nodeServiceLedgerHealth,
+                environmentScenarioService, energyEmissionModel, waitMetricFactReader, null
+        );
+    }
+
+    @Autowired
+    public EvaluationSnapshotCalculator(
+            EvaluationMetricCatalog catalog,
+            EvaluationMetricPolicy policy,
+            VehicleRepository vehicleRepository,
+            AssignmentRepository assignmentRepository,
+            AssignmentLegRepository assignmentLegRepository,
+            ShipmentItemRepository shipmentItemRepository,
+            NodeServiceEpisodeRepository nodeServiceEpisodeRepository,
+            NodeServiceLedgerHealth nodeServiceLedgerHealth,
+            ReproducibleEnvironmentScenarioService environmentScenarioService,
+            VehicleEnergyEmissionModel energyEmissionModel,
+            WaitMetricFactReader waitMetricFactReader,
+            DeliverySlaMetricFactReader deliverySlaMetricFactReader
+    ) {
         // Phase 7C：生产构造器显式包含场景提供器，旧构造器仅供旧测试兼容。
         this.catalog = catalog;
         this.policy = policy;
@@ -143,21 +220,31 @@ public class EvaluationSnapshotCalculator {
         this.nodeServiceEpisodeRepository = nodeServiceEpisodeRepository;
         this.nodeServiceLedgerHealth = nodeServiceLedgerHealth;
         this.environmentScenarioService = environmentScenarioService;
+        // Phase 8：生产构造器强制注入已校验模型；旧构造器使用同参数默认模型。
+        this.energyEmissionModel = energyEmissionModel;
+        this.waitMetricFactReader = waitMetricFactReader;
+        this.deliverySlaMetricFactReader = deliverySlaMetricFactReader;
     }
 
     /** Phase 6B 兼容入口：缺少明确 tick 时节点本轮吞吐量会保持不可用。 */
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public Calculation calculate() {
-        return calculateInternal(null);
+        return calculateInternal(null, null);
     }
 
     /** Phase 7B：每次调用只执行一次五类根事实扫描，并按传入 tick 计算本轮节点吞吐量。 */
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public Calculation calculate(SimulationTick tick) {
-        return calculateInternal(tick);
+        return calculateInternal(tick, null);
     }
 
-    private Calculation calculateInternal(SimulationTick tick) {
+    /** Phase 9A-2：生产快照必须携带 runId，确保等待事实不会跨运行混算。 */
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
+    public Calculation calculate(SimulationTick tick, String simulationRunId) {
+        return calculateInternal(tick, simulationRunId);
+    }
+
+    private Calculation calculateInternal(SimulationTick tick, String simulationRunId) {
         MetricAccumulator metrics = new MetricAccumulator(catalog);
 
         // Phase 7B：五组 findAll 均位于同一事务；HTTP 接口不会再次执行这些查询。
@@ -177,6 +264,10 @@ public class EvaluationSnapshotCalculator {
         // Phase 7C：场景只在评价侧读取；这里不向任何运输实体或路径服务回写结果。
         calculateEnvironmentFacts(metrics, tick);
         calculateNodeServiceFacts(metrics, nodeServiceEpisodes, tick);
+        // Phase 9A-2：等待事实已在本轮采集前投影完成，使用同一 tickEnd 统计开放样本。
+        calculateWaitingFacts(metrics, tick, simulationRunId);
+        // Phase 9B-3：交付事实同样在本轮计算前投影完成；该计算不反向修改 Assignment。
+        calculateDeliverySlaFacts(metrics, tick, simulationRunId, assignments, shipmentItems);
 
         // Phase 6B：车辆里程类值来自同一份路段事实；这里在路段校验后统一覆盖占位结果。
         if (legFacts.distanceFactsValid()) {
@@ -190,12 +281,401 @@ public class EvaluationSnapshotCalculator {
                     legFacts.executedTonneKm(), legFacts.capacityTonneKm(),
                     "不存在正载重且正额定载重的已执行有载里程");
         }
+        // Phase 8：能耗、排放与强度统一从同一份路段累计事实计算，避免车辆/任务口径分叉。
+        calculateEnergyEmissionFacts(metrics, legFacts);
 
         // Phase 6B：显式引用结果，保留车辆事实计算与路段事实计算的独立校验边界。
         if (!vehicleFacts.statusFactsValid()) {
             metrics.error(INVALID_FACT_ERROR);
         }
         return metrics.finish();
+    }
+
+    /** Phase 9A-2：统一计算九项等待指标及货物/任务 P95 服务约束。 */
+    private void calculateWaitingFacts(
+            MetricAccumulator metrics,
+            SimulationTick tick,
+            String simulationRunId
+    ) {
+        List<EvaluationMetricId> dependent = List.of(
+                GLOBAL_WAITING_SERVICE_COMPLIANT,
+                VEHICLE_CUMULATIVE_WAIT_SECONDS,
+                VEHICLE_P95_WAIT_SECONDS,
+                CARGO_OVERDUE_UNTRANSPORTED_TONNES,
+                CARGO_AVERAGE_WAIT_SECONDS,
+                CARGO_P95_WAIT_SECONDS,
+                TASK_AVERAGE_RESPONSE_SECONDS,
+                TASK_AVERAGE_START_WAIT_SECONDS,
+                TASK_P95_SERVICE_WAIT_SECONDS
+        );
+        if (tick == null || simulationRunId == null || simulationRunId.isBlank()
+                || waitMetricFactReader == null) {
+            // Phase 9A-2：旧测试兼容入口没有 runId；明确 N/A，但不把其它既有指标降级。
+            dependent.forEach(id -> metrics.zeroDenominator(
+                    id, "缺少评价运行标识或等待账本读取器，兼容入口不计算等待指标"));
+            return;
+        }
+
+        final WaitMetricFactReader.WaitFacts facts;
+        try {
+            facts = waitMetricFactReader.read(simulationRunId);
+        } catch (RuntimeException ex) {
+            // Phase 9A-2：局部读取或结构异常只污染等待指标，不能修改业务或伪造零值。
+            dependent.forEach(id -> metrics.invalid(id, "等待事实账本读取失败"));
+            return;
+        }
+        if (facts.projectionFailed()) {
+            String reason = "当前运行存在等待事实投影失败；" + facts.failureReason();
+            dependent.forEach(id -> metrics.invalid(id, reason));
+            return;
+        }
+
+        try {
+            WaitingMetricResult result = aggregateWaitingFacts(facts, tick.tickEnd());
+            publishVehicleWaiting(metrics, result);
+            publishCargoWaiting(metrics, result);
+            publishTaskWaiting(metrics, result);
+            if (result.cargoP95Seconds() == null || result.taskP95Seconds() == null) {
+                metrics.zeroDenominator(GLOBAL_WAITING_SERVICE_COMPLIANT,
+                        "货物和任务两类等待观察样本尚未同时形成");
+            } else {
+                boolean compliant = Math.max(result.cargoP95Seconds(), result.taskP95Seconds())
+                        <= policy.getMaxServiceWaitSeconds();
+                // Phase 9A-2：boolean 指标沿用数值契约，1 表示满足，0 表示违反。
+                metrics.available(GLOBAL_WAITING_SERVICE_COMPLIANT, compliant ? 1.0 : 0.0);
+            }
+        } catch (RuntimeException ex) {
+            dependent.forEach(id -> metrics.invalid(id, "等待事实时间、重量或状态不一致"));
+        }
+    }
+
+    /** Phase 9B-3：从当前运行交付账本计算任务逾期数和准时完成率。 */
+    private void calculateDeliverySlaFacts(
+            MetricAccumulator metrics,
+            SimulationTick tick,
+            String simulationRunId,
+            List<Assignment> assignments,
+            List<ShipmentItem> shipmentItems
+    ) {
+        List<EvaluationMetricId> dependent = List.of(
+                TASK_OVERDUE_COUNT,
+                TASK_ON_TIME_COMPLETION_RATIO
+        );
+        if (tick == null || simulationRunId == null || simulationRunId.isBlank()
+                || deliverySlaMetricFactReader == null) {
+            // Phase 9B-3：旧测试兼容入口缺少运行边界时明确 N/A，不用墙钟或跨运行事实补算。
+            dependent.forEach(id -> metrics.zeroDenominator(
+                    id, "缺少评价运行标识、仿真 tick 或交付 SLA 账本读取器"));
+            return;
+        }
+
+        final DeliverySlaMetricFactReader.DeliveryFacts facts;
+        try {
+            facts = deliverySlaMetricFactReader.read(simulationRunId);
+        } catch (RuntimeException ex) {
+            dependent.forEach(id -> metrics.invalid(id, "交付 SLA 事实账本读取或模型校验失败"));
+            return;
+        }
+        if (facts.projectionFailed()) {
+            String reason = "当前运行存在交付 SLA 事实投影失败；" + facts.failureReason();
+            dependent.forEach(id -> metrics.invalid(id, reason));
+            return;
+        }
+
+        try {
+            DeliveryMetricResult result = aggregateDeliveryFacts(
+                    facts.facts(), assignments, shipmentItems, tick.tickEnd());
+            metrics.available(TASK_OVERDUE_COUNT, result.overdueTaskCount());
+            if (result.completedTaskCount() == 0L) {
+                // Phase 9B-3：零已完成样本不是 0% 准时，也不是 100% 准时。
+                metrics.zeroDenominator(TASK_ON_TIME_COMPLETION_RATIO, "当前运行尚无已完成任务样本");
+            } else {
+                metrics.ratio(
+                        TASK_ON_TIME_COMPLETION_RATIO,
+                        result.onTimeCompletedTaskCount(),
+                        result.completedTaskCount(),
+                        "当前运行尚无已完成任务样本");
+            }
+        } catch (RuntimeException ex) {
+            dependent.forEach(id -> metrics.invalid(id, "交付截止、卸货完成时间或任务关联事实不一致"));
+        }
+    }
+
+    private DeliveryMetricResult aggregateDeliveryFacts(
+            List<DeliverySlaFact> facts,
+            List<Assignment> assignments,
+            List<ShipmentItem> shipmentItems,
+            LocalDateTime tickEnd
+    ) {
+        Map<Long, ShipmentItem> itemsById = new HashMap<>();
+        Map<Long, List<ShipmentItem>> itemsByAssignment = new HashMap<>();
+        for (ShipmentItem item : shipmentItems) {
+            requireRunFact(item != null && item.getId() != null && item.getId() > 0L
+                    && item.getStatus() != null, "shipment item delivery state");
+            if (itemsById.put(item.getId(), item) != null) {
+                throw new IllegalStateException("duplicate shipment item id");
+            }
+            if (item.getAssignment() != null && item.getAssignment().getId() != null) {
+                itemsByAssignment.computeIfAbsent(item.getAssignment().getId(), ignored -> new ArrayList<>())
+                        .add(item);
+            }
+        }
+
+        Map<Long, DeliverySlaFact> factsByItem = new HashMap<>();
+        for (DeliverySlaFact fact : facts) {
+            requireRunFact(fact != null && fact.getShipmentItemId() != null
+                    && fact.getShipmentItemId() > 0L, "delivery SLA fact identity");
+            if (factsByItem.put(fact.getShipmentItemId(), fact) != null) {
+                throw new IllegalStateException("duplicate delivery SLA fact for shipment item");
+            }
+        }
+        // Phase 9B-3：当前运行业务项与账本必须一一对应；多记和少记均禁止静默排除。
+        requireRunFact(itemsById.keySet().equals(factsByItem.keySet()), "delivery SLA fact coverage");
+
+        for (Map.Entry<Long, ShipmentItem> entry : itemsById.entrySet()) {
+            ShipmentItem item = entry.getValue();
+            DeliverySlaFact fact = factsByItem.get(entry.getKey());
+            validateDeliveryState(item, fact, tickEnd);
+        }
+
+        Map<Long, Assignment> assignmentsById = new HashMap<>();
+        for (Assignment assignment : assignments) {
+            requireRunFact(assignment != null && assignment.getId() != null && assignment.getId() > 0L
+                    && assignment.getStatus() != null, "assignment delivery state");
+            if (assignmentsById.put(assignment.getId(), assignment) != null) {
+                throw new IllegalStateException("duplicate assignment id");
+            }
+        }
+
+        long overdueTaskCount = 0L;
+        long completedTaskCount = 0L;
+        long onTimeCompletedTaskCount = 0L;
+        for (Assignment assignment : assignmentsById.values()) {
+            List<ShipmentItem> effectiveItems = itemsByAssignment
+                    .getOrDefault(assignment.getId(), List.of())
+                    .stream()
+                    .filter(item -> item.getStatus() != ShipmentItem.ShipmentItemStatus.CANCELLED)
+                    .toList();
+
+            if (isDeliveryActive(assignment.getStatus())) {
+                requireRunFact(!effectiveItems.isEmpty(), "active assignment shipment items");
+                boolean overdue = effectiveItems.stream()
+                        .map(item -> factsByItem.get(item.getId()))
+                        .anyMatch(fact -> fact.getStatus() == DeliverySlaFact.Status.OPEN
+                                && tickEnd.isAfter(fact.getDeliveryDeadlineSimTime()));
+                if (overdue) overdueTaskCount++;
+            } else if (assignment.getStatus() == Assignment.AssignmentStatus.COMPLETED) {
+                requireRunFact(!effectiveItems.isEmpty(), "completed assignment shipment items");
+                boolean allDelivered = effectiveItems.stream()
+                        .map(item -> factsByItem.get(item.getId()))
+                        .allMatch(fact -> fact.getStatus() == DeliverySlaFact.Status.DELIVERED);
+                requireRunFact(allDelivered, "completed assignment delivery facts");
+                completedTaskCount++;
+                boolean allOnTime = effectiveItems.stream()
+                        .map(item -> factsByItem.get(item.getId()))
+                        .allMatch(fact -> !fact.getDeliveredSimTime()
+                                .isAfter(fact.getDeliveryDeadlineSimTime()));
+                if (allOnTime) onTimeCompletedTaskCount++;
+            }
+            // Phase 9B-3：FAILED/CANCELLED 不进入分母，且不伪装成当前活动逾期任务。
+        }
+        return new DeliveryMetricResult(
+                overdueTaskCount, completedTaskCount, onTimeCompletedTaskCount);
+    }
+
+    private void validateDeliveryState(
+            ShipmentItem item,
+            DeliverySlaFact fact,
+            LocalDateTime tickEnd
+    ) {
+        requireRunFact(fact.getDemandCreatedSimTime() != null
+                && fact.getDeliveryDeadlineSimTime() != null
+                && fact.getDeliveryDeadlineSimTime().isAfter(fact.getDemandCreatedSimTime()),
+                "delivery SLA time boundary");
+        if (item.getStatus() == ShipmentItem.ShipmentItemStatus.CANCELLED) {
+            requireRunFact(fact.getStatus() == DeliverySlaFact.Status.CANCELLED
+                    && fact.getDeliveredSimTime() == null
+                    && fact.getDeliveryAssignmentId() == null, "cancelled delivery fact");
+            return;
+        }
+        if (item.getStatus() == ShipmentItem.ShipmentItemStatus.DELIVERED) {
+            requireRunFact(fact.getStatus() == DeliverySlaFact.Status.DELIVERED
+                    && fact.getDeliveredSimTime() != null
+                    && !fact.getDeliveredSimTime().isBefore(fact.getDemandCreatedSimTime())
+                    && !fact.getDeliveredSimTime().isAfter(tickEnd)
+                    && fact.getDeliveryAssignmentId() != null
+                    && fact.getDeliveryAssignmentId() > 0L,
+                    "completed delivery fact");
+            Long currentAssignmentId = item.getAssignment() == null ? null : item.getAssignment().getId();
+            requireRunFact(fact.getDeliveryAssignmentId().equals(currentAssignmentId),
+                    "delivery assignment identity");
+            return;
+        }
+        requireRunFact(fact.getStatus() == DeliverySlaFact.Status.OPEN
+                && fact.getDeliveredSimTime() == null
+                && fact.getDeliveryAssignmentId() == null, "open delivery fact");
+    }
+
+    private boolean isDeliveryActive(Assignment.AssignmentStatus status) {
+        return status == Assignment.AssignmentStatus.WAITING
+                || status == Assignment.AssignmentStatus.ASSIGNED
+                || status == Assignment.AssignmentStatus.IN_PROGRESS
+                || status == Assignment.AssignmentStatus.DELAYED;
+    }
+
+    /** Phase 9B-3：任务级交付汇总只包含指标所需的三个计数。 */
+    private record DeliveryMetricResult(
+            long overdueTaskCount,
+            long completedTaskCount,
+            long onTimeCompletedTaskCount
+    ) { }
+
+    /** Phase 9A-2：开放、成功和终止样本采用冻结契约中不同的统计集合。 */
+    private WaitingMetricResult aggregateWaitingFacts(
+            WaitMetricFactReader.WaitFacts facts,
+            java.time.LocalDateTime tickEnd
+    ) {
+        List<Long> vehicleObserved = new ArrayList<>();
+        double vehicleCumulative = 0.0;
+        for (VehicleWaitEpisode episode : facts.vehicleEpisodes()) {
+            requireRunFact(episode != null && episode.getStatus() != null, "vehicle wait fact");
+            long seconds = episode.observedSeconds(tickEnd);
+            requireNonNegative(seconds, "vehicle wait seconds");
+            vehicleObserved.add(seconds);
+            vehicleCumulative += seconds;
+        }
+
+        List<Long> cargoObserved = new ArrayList<>();
+        double cargoCompletedSum = 0.0;
+        long cargoCompletedCount = 0L;
+        double overdueTonnes = 0.0;
+        for (CargoWaitEpisode episode : facts.cargoEpisodes()) {
+            requireRunFact(episode != null && episode.getOutcome() != null, "cargo wait fact");
+            long seconds = episode.observedSeconds(tickEnd);
+            requireNonNegative(seconds, "cargo wait seconds");
+            Double tonnes = episode.getWeightTonnes();
+            requireRunFact(tonnes != null && Double.isFinite(tonnes) && tonnes >= 0.0,
+                    "cargo wait tonnes");
+            cargoObserved.add(seconds);
+            if (episode.getOutcome() == CargoWaitEpisode.Outcome.TRANSPORT_STARTED) {
+                cargoCompletedSum += seconds;
+                cargoCompletedCount++;
+            } else if (seconds > policy.getMaxServiceWaitSeconds()) {
+                // Phase 9A-2：只有尚未首次有载运输的开放/取消样本计入超时吨位。
+                overdueTonnes += tonnes;
+            }
+        }
+
+        List<Long> taskObserved = new ArrayList<>();
+        double responseSum = 0.0;
+        long responseCount = 0L;
+        double startWaitSum = 0.0;
+        long startWaitCount = 0L;
+        for (TaskWaitEpisode episode : facts.taskEpisodes()) {
+            requireRunFact(episode != null && episode.getOutcome() != null, "task wait fact");
+            long response = episode.responseSeconds();
+            long service = episode.observedServiceWaitSeconds(tickEnd);
+            requireNonNegative(response, "task response seconds");
+            requireNonNegative(service, "task service wait seconds");
+            responseSum += response;
+            responseCount++;
+            taskObserved.add(service);
+            if (episode.getOutcome() == TaskWaitEpisode.Outcome.STARTED) {
+                long startWait = episode.startWaitSeconds();
+                requireNonNegative(startWait, "task start wait seconds");
+                startWaitSum += startWait;
+                startWaitCount++;
+            }
+        }
+
+        return new WaitingMetricResult(
+                vehicleCumulative,
+                nearestRankP95(vehicleObserved),
+                overdueTonnes,
+                cargoCompletedCount == 0L ? null : cargoCompletedSum / cargoCompletedCount,
+                nearestRankP95(cargoObserved),
+                responseCount == 0L ? null : responseSum / responseCount,
+                startWaitCount == 0L ? null : startWaitSum / startWaitCount,
+                nearestRankP95(taskObserved)
+        );
+    }
+
+    private void publishVehicleWaiting(MetricAccumulator metrics, WaitingMetricResult result) {
+        if (result.vehicleP95Seconds() == null) {
+            metrics.zeroDenominator(VEHICLE_CUMULATIVE_WAIT_SECONDS, "当前运行尚无车辆可用空闲等待样本");
+            metrics.zeroDenominator(VEHICLE_P95_WAIT_SECONDS, "当前运行尚无车辆可用空闲等待样本");
+        } else {
+            metrics.available(VEHICLE_CUMULATIVE_WAIT_SECONDS, result.vehicleCumulativeSeconds());
+            metrics.available(VEHICLE_P95_WAIT_SECONDS, result.vehicleP95Seconds());
+        }
+    }
+
+    private void publishCargoWaiting(MetricAccumulator metrics, WaitingMetricResult result) {
+        metrics.available(CARGO_OVERDUE_UNTRANSPORTED_TONNES, result.overdueCargoTonnes());
+        if (result.cargoAverageSeconds() == null) {
+            metrics.zeroDenominator(CARGO_AVERAGE_WAIT_SECONDS, "当前运行尚无成功开始有载运输的货物样本");
+        } else {
+            metrics.available(CARGO_AVERAGE_WAIT_SECONDS, result.cargoAverageSeconds());
+        }
+        if (result.cargoP95Seconds() == null) {
+            metrics.zeroDenominator(CARGO_P95_WAIT_SECONDS, "当前运行尚无货物等待观察样本");
+        } else {
+            metrics.available(CARGO_P95_WAIT_SECONDS, result.cargoP95Seconds());
+        }
+    }
+
+    private void publishTaskWaiting(MetricAccumulator metrics, WaitingMetricResult result) {
+        if (result.taskAverageResponseSeconds() == null) {
+            metrics.zeroDenominator(TASK_AVERAGE_RESPONSE_SECONDS, "当前运行尚无已确认任务等待样本");
+        } else {
+            metrics.available(TASK_AVERAGE_RESPONSE_SECONDS, result.taskAverageResponseSeconds());
+        }
+        if (result.taskAverageStartSeconds() == null) {
+            metrics.zeroDenominator(TASK_AVERAGE_START_WAIT_SECONDS, "当前运行尚无首次实际执行的任务样本");
+        } else {
+            metrics.available(TASK_AVERAGE_START_WAIT_SECONDS, result.taskAverageStartSeconds());
+        }
+        if (result.taskP95Seconds() == null) {
+            metrics.zeroDenominator(TASK_P95_SERVICE_WAIT_SECONDS, "当前运行尚无任务整体等待观察样本");
+        } else {
+            metrics.available(TASK_P95_SERVICE_WAIT_SECONDS, result.taskP95Seconds());
+        }
+    }
+
+    /** Phase 9A-2：nearest-rank 的索引为 ceil(0.95*n)-1，不做线性插值。 */
+    private Double nearestRankP95(List<Long> samples) {
+        if (samples.isEmpty()) {
+            return null;
+        }
+        List<Long> ordered = new ArrayList<>(samples);
+        ordered.sort(Long::compareTo);
+        int index = (int) Math.ceil(0.95 * ordered.size()) - 1;
+        return ordered.get(index).doubleValue();
+    }
+
+    private void requireRunFact(boolean condition, String field) {
+        if (!condition) {
+            throw new IllegalStateException(field + " is invalid");
+        }
+    }
+
+    private void requireNonNegative(long value, String field) {
+        if (value < 0L) {
+            throw new IllegalStateException(field + " must be non-negative");
+        }
+    }
+
+    /** Phase 9A-2：内部汇总结果只包含统计标量，不暴露账本实体。 */
+    private record WaitingMetricResult(
+            double vehicleCumulativeSeconds,
+            Double vehicleP95Seconds,
+            double overdueCargoTonnes,
+            Double cargoAverageSeconds,
+            Double cargoP95Seconds,
+            Double taskAverageResponseSeconds,
+            Double taskAverageStartSeconds,
+            Double taskP95Seconds
+    ) {
     }
 
     private void calculateEnvironmentFacts(MetricAccumulator metrics, SimulationTick tick) {
@@ -206,7 +686,8 @@ public class EvaluationSnapshotCalculator {
                 ENV_CLOSED_ROAD_COUNT,
                 ENV_ABNORMAL_EVENT_COUNT,
                 ENV_WEATHER_RISK_LEVEL,
-                ENV_TRAVEL_TIME_FACTOR
+                ENV_TRAVEL_TIME_FACTOR,
+                ENV_ENERGY_FACTOR
         );
         if (tick == null) {
             // Phase 7C：环境是逐 tick 事实，兼容 calculate() 入口不能用 revision 或墙上时间补造。
@@ -241,6 +722,46 @@ public class EvaluationSnapshotCalculator {
         metrics.available(ENV_ABNORMAL_EVENT_COUNT, snapshot.abnormalEventCount());
         metrics.available(ENV_WEATHER_RISK_LEVEL, snapshot.weatherRiskLevel());
         metrics.available(ENV_TRAVEL_TIME_FACTOR, snapshot.travelTimeFactor());
+        try {
+            // Phase 8：环境能耗因子由独立能耗模型转换，不把旅行时间放大系数直接冒充为能耗值。
+            metrics.available(ENV_ENERGY_FACTOR,
+                    energyEmissionModel.environmentEnergyFactor(snapshot.travelTimeFactor()));
+        } catch (RuntimeException ex) {
+            metrics.invalid(ENV_ENERGY_FACTOR, "环境能耗修正系数计算失败");
+        }
+    }
+
+    /** Phase 8：将可信路段累计事实映射为车辆、任务和全局碳排核心指标。 */
+    private void calculateEnergyEmissionFacts(MetricAccumulator metrics, LegFacts legFacts) {
+        List<EvaluationMetricId> dependent = List.of(
+                VEHICLE_TOTAL_ENERGY,
+                VEHICLE_TOTAL_EMISSION_KG,
+                VEHICLE_EMISSION_INTENSITY,
+                TASK_EMISSION_KG,
+                TASK_EMISSION_INTENSITY,
+                GLOBAL_CARBON_INTENSITY
+        );
+        if (!legFacts.energyFactsValid()) {
+            dependent.forEach(id -> metrics.invalid(id,
+                    "路段能耗事实缺失、跨模型混用或与累计距离不一致"));
+            return;
+        }
+
+        metrics.available(VEHICLE_TOTAL_ENERGY, legFacts.totalEnergyLiters());
+        metrics.available(VEHICLE_TOTAL_EMISSION_KG, legFacts.totalEmissionKg());
+        metrics.available(TASK_EMISSION_KG, legFacts.totalEmissionKg());
+        if (legFacts.loadFactsValid()) {
+            metrics.ratio(VEHICLE_EMISSION_INTENSITY,
+                    legFacts.totalEmissionKg(), legFacts.executedTonneKm(), "实际有效吨公里为 0");
+            metrics.ratio(TASK_EMISSION_INTENSITY,
+                    legFacts.totalEmissionKg(), legFacts.executedTonneKm(), "任务实际吨公里为 0");
+            metrics.ratio(GLOBAL_CARBON_INTENSITY,
+                    legFacts.totalEmissionKg(), legFacts.executedTonneKm(), "实际有效吨公里为 0");
+        } else {
+            metrics.invalid(VEHICLE_EMISSION_INTENSITY, "有载路段吨公里事实无效");
+            metrics.invalid(TASK_EMISSION_INTENSITY, "有载路段吨公里事实无效");
+            metrics.invalid(GLOBAL_CARBON_INTENSITY, "有载路段吨公里事实无效");
+        }
     }
 
     private void calculateNodeServiceFacts(
@@ -322,7 +843,7 @@ public class EvaluationSnapshotCalculator {
         }
     }
 
-    /** Phase 6B：采集整体失败时仍返回完整 69 项结构，而不是生成字段不齐的半对象。 */
+    /** Phase 9A-0：采集整体失败时仍返回完整 70 项结构，而不是生成字段不齐的半对象。 */
     public Map<String, EvaluationMetricValue> failedMetricValues(String reason) {
         MetricAccumulator metrics = new MetricAccumulator(catalog);
         for (EvaluationMetricDefinition definition : catalog.all()) {
@@ -527,15 +1048,22 @@ public class EvaluationSnapshotCalculator {
         double emptyDistanceKm = 0.0;
         double executedTonneKm = 0.0;
         double capacityTonneKm = 0.0;
+        // Phase 8：能耗与排放都是当前运行的路段累计事实，不从计划路线或旧 Vehicle 汇总字段读取。
+        double totalEnergyLiters = 0.0;
+        double totalEmissionKg = 0.0;
         boolean distanceFactsValid = true;
         boolean loadFactsValid = true;
         boolean capacityFactsValid = true;
+        boolean energyFactsValid = true;
+        // Phase 8：一次扫描只冻结一次模型元数据，避免循环内反复构造快照或读出不同口径。
+        EnergyEmissionModelSnapshot emissionModelSnapshot = energyEmissionModel.snapshot();
 
         for (AssignmentLeg leg : legs) {
             if (leg == null || leg.getLoadState() == null) {
                 distanceFactsValid = false;
                 loadFactsValid = false;
                 capacityFactsValid = false;
+                energyFactsValid = false;
                 continue;
             }
             double distanceMeters = leg.getExecutedDistanceMeters();
@@ -543,10 +1071,48 @@ public class EvaluationSnapshotCalculator {
                 distanceFactsValid = false;
                 loadFactsValid = false;
                 capacityFactsValid = false;
+                energyFactsValid = false;
                 continue;
             }
             double distanceKm = distanceMeters / 1000.0;
             totalDistanceKm += distanceKm;
+
+            // Phase 8：升级前已有执行距离但没有能耗账本时必须显式 INVALID，不能用当前环境补算历史。
+            double energyLiters = leg.getExecutedEnergyLiters();
+            double emissionKg = leg.getExecutedEmissionKg();
+            AssignmentLeg.EnergyFactStatus energyStatus = leg.getEnergyFactStatus();
+            if (!isNonNegativeFinite(energyLiters) || !isNonNegativeFinite(emissionKg)
+                    || energyStatus == AssignmentLeg.EnergyFactStatus.INVALID) {
+                energyFactsValid = false;
+            } else if (energyStatus == AssignmentLeg.EnergyFactStatus.PENDING) {
+                if (distanceMeters > 0.0 || energyLiters > 0.0 || emissionKg > 0.0) {
+                    energyFactsValid = false;
+                }
+            } else {
+                boolean metadataValid = leg.getEmissionModelId() != null
+                        && leg.getEmissionModelId().equals(emissionModelSnapshot.modelId())
+                        && leg.getVehicleEmissionClassCode() != null;
+                try {
+                    Vehicle vehicle = leg.getVehicle();
+                    Double capacity = vehicle == null ? null : vehicle.getMaxLoadCapacityTonnes();
+                    metadataValid = metadataValid
+                            && capacity != null
+                            && leg.getVehicleEmissionClassCode().equals(
+                                    energyEmissionModel.resolveVehicleClass(capacity).code()
+                            );
+                } catch (RuntimeException ex) {
+                    metadataValid = false;
+                }
+                if (!metadataValid
+                        || (distanceMeters > 0.0 && energyLiters <= 0.0)
+                        || !approximatelyEqual(emissionKg,
+                        energyLiters * emissionModelSnapshot.directEmissionKgPerLiter())) {
+                    energyFactsValid = false;
+                }
+            }
+            totalEnergyLiters += energyLiters;
+            totalEmissionKg += emissionKg;
+
             if (leg.getLoadState() == AssignmentLeg.LoadState.EMPTY) {
                 emptyDistanceKm += distanceKm;
                 continue;
@@ -580,7 +1146,8 @@ public class EvaluationSnapshotCalculator {
             metrics.invalid(VEHICLE_DISTANCE_WEIGHTED_LOAD_RATIO, "有载路段载重或车辆额定载重无效");
         }
         return new LegFacts(totalDistanceKm, emptyDistanceKm, executedTonneKm,
-                capacityTonneKm, distanceFactsValid, loadFactsValid, capacityFactsValid);
+                capacityTonneKm, totalEnergyLiters, totalEmissionKg,
+                distanceFactsValid, loadFactsValid, capacityFactsValid, energyFactsValid);
     }
 
     private void calculateCargoFacts(
@@ -830,6 +1397,12 @@ public class EvaluationSnapshotCalculator {
         return Double.isFinite(value) && value >= 0.0;
     }
 
+    /** Phase 8：允许连续浮点累计产生的极小舍入差，但拒绝不同排放因子形成的实质偏差。 */
+    private boolean approximatelyEqual(double left, double right) {
+        double scale = Math.max(1.0, Math.max(Math.abs(left), Math.abs(right)));
+        return Math.abs(left - right) <= 1.0e-9 * scale;
+    }
+
     /** Phase 6B：纯计算结果包含是否降级及机器可读错误码，供快照层决定整体状态。 */
     public record Calculation(
             Map<String, EvaluationMetricValue> metrics,
@@ -851,13 +1424,16 @@ public class EvaluationSnapshotCalculator {
             double emptyDistanceKm,
             double executedTonneKm,
             double capacityTonneKm,
+            double totalEnergyLiters,
+            double totalEmissionKg,
             boolean distanceFactsValid,
             boolean loadFactsValid,
-            boolean capacityFactsValid
+            boolean capacityFactsValid,
+            boolean energyFactsValid
     ) {
     }
 
-    /** Phase 6B：集中执行状态和值约束，避免 69 个指标各自形成不同缺失策略。 */
+    /** Phase 9A-0：集中执行状态和值约束，避免 70 个指标各自形成不同缺失策略。 */
     private static final class MetricAccumulator {
         private final EvaluationMetricCatalog catalog;
         private final Map<EvaluationMetricId, EvaluationMetricValue> values = new EnumMap<>(EvaluationMetricId.class);
