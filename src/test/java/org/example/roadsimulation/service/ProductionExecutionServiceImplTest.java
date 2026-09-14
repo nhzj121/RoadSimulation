@@ -1,21 +1,27 @@
 package org.example.roadsimulation.service;
 
+import org.example.roadsimulation.entity.POI;
+import org.example.roadsimulation.entity.ProcessingExecutionFlow;
 import org.example.roadsimulation.entity.ProcessingStage;
 import org.example.roadsimulation.entity.ProcessingStageExecution;
 import org.example.roadsimulation.entity.ProductionBatch;
+import org.example.roadsimulation.entity.ProductionPlanFlow;
 import org.example.roadsimulation.entity.ProductionPlanNode;
+import org.example.roadsimulation.entity.Shipment;
+import org.example.roadsimulation.event.ShipmentDeliveredEvent;
+import org.example.roadsimulation.repository.ProcessingExecutionFlowRepository;
 import org.example.roadsimulation.repository.ProcessingStageExecutionRepository;
 import org.example.roadsimulation.repository.ProductionBatchRepository;
 import org.example.roadsimulation.service.impl.ProductionExecutionServiceImpl;
 import org.junit.jupiter.api.Test;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -27,10 +33,13 @@ class ProductionExecutionServiceImplTest {
     void updateProgressCompletesStageAndCreatesOutboundTransportDemand() {
         ProcessingStageExecutionRepository executionRepository =
                 mock(ProcessingStageExecutionRepository.class);
+        ProcessingExecutionFlowRepository executionFlowRepository =
+                mock(ProcessingExecutionFlowRepository.class);
         ProductionBatchRepository batchRepository = mock(ProductionBatchRepository.class);
         TransportDemandService transportDemandService = mock(TransportDemandService.class);
         ProductionExecutionServiceImpl service = new ProductionExecutionServiceImpl(
                 executionRepository,
+                executionFlowRepository,
                 batchRepository,
                 transportDemandService
         );
@@ -85,21 +94,129 @@ class ProductionExecutionServiceImplTest {
         next.setStageOrder(2);
         next.setStatus(ProcessingStageExecution.ExecutionStatus.WAITING_INPUT);
 
+        ProductionPlanFlow planFlow = new ProductionPlanFlow();
+        planFlow.setId(40L);
+        ProcessingExecutionFlow flow = new ProcessingExecutionFlow();
+        flow.setId(41L);
+        flow.setBatch(batch);
+        flow.setPlanFlow(planFlow);
+        flow.setFromExecution(current);
+        flow.setToExecution(next);
+        flow.setInputKey("input");
+        flow.setSku("SEMI");
+        flow.setPlannedWeight(80.0);
+        flow.setActualWeight(80.0);
+        flow.setStatus(ProcessingExecutionFlow.FlowStatus.PLANNED);
+
         when(executionRepository.findByStatus(ProcessingStageExecution.ExecutionStatus.PROCESSING))
                 .thenReturn(List.of(current));
-        when(executionRepository.findByBatchIdAndStageOrder(1L, 2))
-                .thenReturn(Optional.of(next));
+        when(executionFlowRepository.findByFromExecutionId(30L)).thenReturn(List.of(flow));
 
         service.updateProgress(LocalDateTime.of(2026, 1, 1, 9, 0), 30);
 
         assertThat(current.getStatus()).isEqualTo(ProcessingStageExecution.ExecutionStatus.COMPLETED);
         assertThat(current.getActualOutputWeight()).isEqualTo(80.0);
         assertThat(current.getProgressPercent()).isEqualTo(100);
-        verify(transportDemandService).createOutboundTransport(
-                current,
-                next,
-                "production-system"
-        );
+        verify(transportDemandService).createTransport(flow, null, "production-system");
         verify(batchRepository, never()).save(any(ProductionBatch.class));
+    }
+
+    @Test
+    void mergeExecutionStartsOnlyAfterAllInputsAreDelivered() {
+        ProcessingStageExecutionRepository executionRepository =
+                mock(ProcessingStageExecutionRepository.class);
+        ProcessingExecutionFlowRepository executionFlowRepository =
+                mock(ProcessingExecutionFlowRepository.class);
+        ProductionBatchRepository batchRepository = mock(ProductionBatchRepository.class);
+        TransportDemandService transportDemandService = mock(TransportDemandService.class);
+        ProductionExecutionServiceImpl service = new ProductionExecutionServiceImpl(
+                executionRepository,
+                executionFlowRepository,
+                batchRepository,
+                transportDemandService
+        );
+
+        ProductionBatch batch = new ProductionBatch();
+        batch.setId(1L);
+        batch.setStatus(ProductionBatch.BatchStatus.INTER_STAGE_TRANSPORT);
+        ProcessingStageExecution merge = execution(30L, batch, 3);
+        ProcessingExecutionFlow steel = inboundFlow(
+                40L, batch, merge, "steel", 80.0, 90L
+        );
+        ProcessingExecutionFlow wood = inboundFlow(
+                41L, batch, merge, "wood", 20.0, 91L
+        );
+
+        when(executionFlowRepository.findByShipmentId(90L)).thenReturn(Optional.of(steel));
+        when(executionFlowRepository.findByShipmentId(91L)).thenReturn(Optional.of(wood));
+        when(executionFlowRepository.findByToExecutionId(30L)).thenReturn(List.of(steel, wood));
+        when(executionRepository.findById(30L)).thenReturn(Optional.of(merge));
+
+        service.onShipmentDelivered(new ShipmentDeliveredEvent(
+                List.of(90L),
+                LocalDateTime.of(2026, 1, 1, 8, 0)
+        ));
+        assertThat(merge.getStatus()).isEqualTo(ProcessingStageExecution.ExecutionStatus.WAITING_INPUT);
+
+        service.onShipmentDelivered(new ShipmentDeliveredEvent(
+                List.of(91L),
+                LocalDateTime.of(2026, 1, 1, 9, 0)
+        ));
+        assertThat(merge.getStatus()).isEqualTo(ProcessingStageExecution.ExecutionStatus.PROCESSING);
+        assertThat(merge.getActualInputWeight()).isEqualTo(100.0);
+    }
+
+    private ProcessingStageExecution execution(Long id, ProductionBatch batch, int order) {
+        ProcessingStage stage = new ProcessingStage();
+        stage.setId(10L);
+        stage.setStageOrder(order);
+        stage.setStageName("Merge");
+        stage.setProcessingTimeMinutes(60);
+        stage.setOutputWeightRatio(1.0);
+        stage.setProcessingPOI(new POI("Factory", BigDecimal.ZERO, BigDecimal.ZERO, POI.POIType.WAREHOUSE));
+
+        ProductionPlanNode node = new ProductionPlanNode();
+        node.setId(20L);
+        node.setStage(stage);
+        node.setStageOrder(order);
+        node.setPlannedInputWeight(100.0);
+        node.setPlannedOutputWeight(100.0);
+
+        ProcessingStageExecution execution = new ProcessingStageExecution();
+        execution.setId(id);
+        execution.setBatch(batch);
+        execution.setPlanNode(node);
+        execution.setStage(stage);
+        execution.setStageOrder(order);
+        execution.setProcessingPOI(stage.getProcessingPOI());
+        execution.setStatus(ProcessingStageExecution.ExecutionStatus.WAITING_INPUT);
+        return execution;
+    }
+
+    private ProcessingExecutionFlow inboundFlow(
+            Long id,
+            ProductionBatch batch,
+            ProcessingStageExecution target,
+            String inputKey,
+            Double weight,
+            Long shipmentId
+    ) {
+        Shipment shipment = new Shipment();
+        shipment.setId(shipmentId);
+        shipment.setTotalWeight(weight);
+
+        ProductionPlanFlow planFlow = new ProductionPlanFlow();
+        planFlow.setId(100L + id);
+        ProcessingExecutionFlow flow = new ProcessingExecutionFlow();
+        flow.setId(id);
+        flow.setBatch(batch);
+        flow.setPlanFlow(planFlow);
+        flow.setToExecution(target);
+        flow.setInputKey(inputKey);
+        flow.setSku(inputKey.toUpperCase());
+        flow.setPlannedWeight(weight);
+        flow.setShipment(shipment);
+        flow.setStatus(ProcessingExecutionFlow.FlowStatus.WAITING_TRANSPORT);
+        return flow;
     }
 }

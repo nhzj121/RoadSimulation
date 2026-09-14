@@ -11,5 +11,6 @@ import java.util.Optional;
 public interface ProductionBatchRepository extends JpaRepository<ProductionBatch, Long> {
     Optional<ProductionBatch> findByBatchNo(String batchNo);
     boolean existsByBatchNo(String batchNo);
+    boolean existsByPlanId(Long planId);
     List<ProductionBatch> findByPlanId(Long planId);
 }

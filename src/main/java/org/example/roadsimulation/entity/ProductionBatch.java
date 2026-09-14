@@ -65,6 +65,10 @@ public class ProductionBatch {
     @OrderBy("stageOrder ASC")
     private List<ProcessingStageExecution> executions = new ArrayList<>();
 
+    @OneToMany(mappedBy = "batch", cascade = CascadeType.ALL, orphanRemoval = true)
+    @OrderBy("id ASC")
+    private List<ProcessingExecutionFlow> flows = new ArrayList<>();
+
     public ProductionBatch() {}
 
     public Long getId() { return id; }
@@ -91,6 +95,8 @@ public class ProductionBatch {
     public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
     public List<ProcessingStageExecution> getExecutions() { return executions; }
     public void setExecutions(List<ProcessingStageExecution> executions) { this.executions = executions; }
+    public List<ProcessingExecutionFlow> getFlows() { return flows; }
+    public void setFlows(List<ProcessingExecutionFlow> flows) { this.flows = flows; }
 
     @PreUpdate
     public void touchUpdate() {

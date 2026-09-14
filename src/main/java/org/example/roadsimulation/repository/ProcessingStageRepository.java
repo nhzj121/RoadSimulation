@@ -10,6 +10,7 @@ import java.util.List;
 public interface ProcessingStageRepository extends JpaRepository<ProcessingStage, Long> {
     
     List<ProcessingStage> findByProcessingChainIdOrderByStageOrderAsc(Long chainId);
+    boolean existsByProcessingChainIdAndStageKey(Long chainId, String stageKey);
     
     List<ProcessingStage> findByProcessingPOI_Id(Long poiId);
     

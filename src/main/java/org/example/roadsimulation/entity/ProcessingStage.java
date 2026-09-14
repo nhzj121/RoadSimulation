@@ -7,13 +7,21 @@ import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Static definition of one operation in a processing chain.
  * Actual execution is represented by ProcessingStageExecution.
  */
 @Entity
-@Table(name = "processing_stage")
+@Table(
+        name = "processing_stage",
+        uniqueConstraints = @UniqueConstraint(
+                name = "uk_processing_stage_key",
+                columnNames = {"chain_id", "stage_key"}
+        )
+)
 public class ProcessingStage {
 
     @Id
@@ -33,6 +41,10 @@ public class ProcessingStage {
     @Size(max = 100)
     @Column(name = "stage_name", length = 100, nullable = false)
     private String stageName;
+
+    @Size(max = 50)
+    @Column(name = "stage_key", length = 50)
+    private String stageKey;
 
     @Size(max = 500)
     @Column(name = "description", length = 500)
@@ -96,6 +108,8 @@ public class ProcessingStage {
 
     public String getStageName() { return stageName; }
     public void setStageName(String stageName) { this.stageName = stageName; }
+    public String getStageKey() { return stageKey; }
+    public void setStageKey(String stageKey) { this.stageKey = stageKey; }
 
     public String getDescription() { return description; }
     public void setDescription(String description) { this.description = description; }
@@ -135,6 +149,13 @@ public class ProcessingStage {
 
     public LocalDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
+
+    @OneToMany(mappedBy = "stage", cascade = CascadeType.ALL, orphanRemoval = true)
+    @OrderBy("inputKey ASC")
+    private List<ProcessingStageInput> inputs = new ArrayList<>();
+
+    public List<ProcessingStageInput> getInputs() { return inputs; }
+    public void setInputs(List<ProcessingStageInput> inputs) { this.inputs = inputs; }
 
     @PreUpdate
     public void touchUpdateTime() {

@@ -7,11 +7,14 @@ import org.example.roadsimulation.entity.POI;
 import org.example.roadsimulation.entity.ProcessingChain;
 import org.example.roadsimulation.entity.ProcessingStage;
 import org.example.roadsimulation.entity.ProductionPlan;
+import org.example.roadsimulation.entity.ProductionPlanFlow;
 import org.example.roadsimulation.repository.EnrollmentRepository;
 import org.example.roadsimulation.repository.POIRepository;
 import org.example.roadsimulation.repository.ProcessingChainRepository;
+import org.example.roadsimulation.repository.ProcessingExecutionFlowRepository;
 import org.example.roadsimulation.repository.ProcessingStageExecutionRepository;
 import org.example.roadsimulation.repository.ProductionBatchRepository;
+import org.example.roadsimulation.repository.ProductionPlanFlowRepository;
 import org.example.roadsimulation.repository.ProductionPlanNodeRepository;
 import org.example.roadsimulation.repository.ProductionPlanRepository;
 import org.example.roadsimulation.service.impl.ProductionPlanningServiceImpl;
@@ -19,6 +22,7 @@ import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -33,9 +37,12 @@ class ProductionPlanningServiceImplTest {
         ProcessingChainRepository chainRepository = mock(ProcessingChainRepository.class);
         ProductionPlanRepository planRepository = mock(ProductionPlanRepository.class);
         ProductionPlanNodeRepository nodeRepository = mock(ProductionPlanNodeRepository.class);
+        ProductionPlanFlowRepository planFlowRepository = mock(ProductionPlanFlowRepository.class);
         ProductionBatchRepository batchRepository = mock(ProductionBatchRepository.class);
         ProcessingStageExecutionRepository executionRepository =
                 mock(ProcessingStageExecutionRepository.class);
+        ProcessingExecutionFlowRepository executionFlowRepository =
+                mock(ProcessingExecutionFlowRepository.class);
         POIRepository poiRepository = mock(POIRepository.class);
         EnrollmentRepository enrollmentRepository = mock(EnrollmentRepository.class);
         TransportDemandService transportDemandService = mock(TransportDemandService.class);
@@ -44,8 +51,10 @@ class ProductionPlanningServiceImplTest {
                 chainRepository,
                 planRepository,
                 nodeRepository,
+                planFlowRepository,
                 batchRepository,
                 executionRepository,
+                executionFlowRepository,
                 poiRepository,
                 enrollmentRepository,
                 transportDemandService
@@ -84,6 +93,13 @@ class ProductionPlanningServiceImplTest {
             }
             return nodes;
         });
+        when(planFlowRepository.saveAll(any())).thenAnswer(invocation -> {
+            List<ProductionPlanFlow> flows = invocation.getArgument(0);
+            for (int i = 0; i < flows.size(); i++) {
+                flows.get(i).setId(300L + i);
+            }
+            return flows;
+        });
 
         ProductionPlanResponse response = service.createRandomPlan(new CreateProductionPlanRequest(
                 10L,
@@ -92,7 +108,8 @@ class ProductionPlanningServiceImplTest {
                 null,
                 123L,
                 1L,
-                "test"
+                "test",
+                Map.of()
         ));
 
         assertThat(response.finalDemandWeight()).isEqualTo(63.0);
@@ -103,6 +120,7 @@ class ProductionPlanningServiceImplTest {
         assertThat(response.nodes().get(1).plannedOutputWeight()).isEqualTo(70.0);
         assertThat(response.nodes().get(2).plannedInputWeight()).isEqualTo(70.0);
         assertThat(response.nodes().get(2).plannedOutputWeight()).isEqualTo(63.0);
+        assertThat(response.flows()).hasSize(3);
     }
 
     private POI poi(Long id, String name) {

@@ -191,14 +191,6 @@ const mapContainer = ref<HTMLElement>()
 const map = ref<any>(null)
 const AMap = ref<any>(null)
 
-// 全局变量的接口定义设置
-declare global {
-  interface Window {
-    _AMapSecurityConfig: {
-      securityJsCode: string;
-    };
-  }
-}
 
 // POI数据接口定义
 interface POI {
@@ -476,7 +468,7 @@ const reverseTypeMapping = {
 // 地图初始化
 const initMap = async () => {
   try {
-    window._AMapSecurityConfig = {
+    (window as any)._AMapSecurityConfig = {
       securityJsCode: "9df38c185c95fa1dbf78a1082b64f668",
     };
 

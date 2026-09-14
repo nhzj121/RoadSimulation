@@ -2,6 +2,8 @@ package org.example.roadsimulation.controller;
 
 import lombok.RequiredArgsConstructor;
 import org.example.roadsimulation.dto.ApiResponse;
+import org.example.roadsimulation.dto.ProcessingChainGraphRequest;
+import org.example.roadsimulation.dto.ProcessingChainGraphResponse;
 import org.example.roadsimulation.entity.ProcessingChain;
 import org.example.roadsimulation.entity.ProcessingStage;
 import org.example.roadsimulation.service.ProcessingChainDefinitionService;
@@ -10,10 +12,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
-/**
- * CRUD API for static processing-chain definitions.
- * Processing execution is exposed through the production-plan API.
- */
+/** CRUD API for static processing-chain definitions. */
 @RestController
 @RequestMapping("/api/v1/processing-chains")
 @RequiredArgsConstructor
@@ -24,6 +23,18 @@ public class ProcessingChainDefinitionController {
     @PostMapping
     public ResponseEntity<ProcessingChain> createChain(@RequestBody ProcessingChain chain) {
         return ResponseEntity.ok(processingChainDefinitionService.createChain(chain));
+    }
+
+    @PostMapping("/graph")
+    public ResponseEntity<ProcessingChainGraphResponse> createGraph(
+            @RequestBody ProcessingChainGraphRequest request
+    ) {
+        return ResponseEntity.ok(processingChainDefinitionService.createGraph(request));
+    }
+
+    @GetMapping("/{id}/graph")
+    public ResponseEntity<ProcessingChainGraphResponse> getGraph(@PathVariable Long id) {
+        return ResponseEntity.ok(processingChainDefinitionService.getGraph(id));
     }
 
     @GetMapping

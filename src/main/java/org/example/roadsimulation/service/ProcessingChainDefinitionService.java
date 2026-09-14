@@ -1,18 +1,21 @@
 package org.example.roadsimulation.service;
 
+import org.example.roadsimulation.dto.ProcessingChainGraphRequest;
+import org.example.roadsimulation.dto.ProcessingChainGraphResponse;
 import org.example.roadsimulation.entity.ProcessingChain;
 import org.example.roadsimulation.entity.ProcessingStage;
 
 import java.util.List;
 import java.util.Optional;
 
-/**
- * Manages static processing-chain definitions only.
- * Demand calculation and runtime execution belong to the production domain.
- */
+/** Manages static processing-chain definitions only. */
 public interface ProcessingChainDefinitionService {
 
     ProcessingChain createChain(ProcessingChain chain);
+
+    ProcessingChainGraphResponse createGraph(ProcessingChainGraphRequest request);
+
+    ProcessingChainGraphResponse getGraph(Long chainId);
 
     Optional<ProcessingChain> getChainById(Long id);
 

@@ -65,6 +65,10 @@ public class ProductionPlan {
     @OrderBy("stageOrder ASC")
     private List<ProductionPlanNode> nodes = new ArrayList<>();
 
+    @OneToMany(mappedBy = "plan", cascade = CascadeType.ALL, orphanRemoval = true)
+    @OrderBy("id ASC")
+    private List<ProductionPlanFlow> flows = new ArrayList<>();
+
     public ProductionPlan() {}
 
     public Long getId() { return id; }
@@ -89,6 +93,8 @@ public class ProductionPlan {
     public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
     public List<ProductionPlanNode> getNodes() { return nodes; }
     public void setNodes(List<ProductionPlanNode> nodes) { this.nodes = nodes; }
+    public List<ProductionPlanFlow> getFlows() { return flows; }
+    public void setFlows(List<ProductionPlanFlow> flows) { this.flows = flows; }
 
     @PreUpdate
     public void touchUpdate() {

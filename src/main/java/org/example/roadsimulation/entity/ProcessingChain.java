@@ -48,6 +48,10 @@ public class ProcessingChain {
     @OrderBy("stageOrder ASC")
     private List<ProcessingStage> stages = new ArrayList<>();
 
+    @OneToMany(mappedBy = "chain", cascade = CascadeType.ALL, orphanRemoval = true)
+    @OrderBy("id ASC")
+    private List<ProcessingStageEdge> edges = new ArrayList<>();
+
     public ProcessingChain() {}
 
     public enum ChainStatus {
@@ -79,6 +83,8 @@ public class ProcessingChain {
 
     public List<ProcessingStage> getStages() { return stages; }
     public void setStages(List<ProcessingStage> stages) { this.stages = stages; }
+    public List<ProcessingStageEdge> getEdges() { return edges; }
+    public void setEdges(List<ProcessingStageEdge> edges) { this.edges = edges; }
 
     @PreUpdate
     public void touchUpdateTime() {

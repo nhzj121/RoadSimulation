@@ -15,7 +15,8 @@ public record ProductionBatchResponse(
         Double actualFinalOutputWeight,
         LocalDateTime startedAt,
         LocalDateTime completedAt,
-        List<ExecutionResponse> executions
+        List<ExecutionResponse> executions,
+        List<FlowResponse> flows
 ) {
     public record ExecutionResponse(
             Long id,
@@ -33,5 +34,18 @@ public record ProductionBatchResponse(
             LocalDateTime completedAt,
             Long inboundShipmentId,
             Long outboundShipmentId
+    ) {}
+
+    public record FlowResponse(
+            Long id,
+            Long planFlowId,
+            Long fromExecutionId,
+            Long toExecutionId,
+            String inputKey,
+            String sku,
+            Double plannedWeight,
+            Double actualWeight,
+            Long shipmentId,
+            String status
     ) {}
 }

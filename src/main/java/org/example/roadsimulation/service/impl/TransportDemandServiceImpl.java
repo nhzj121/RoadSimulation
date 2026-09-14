@@ -2,13 +2,14 @@ package org.example.roadsimulation.service.impl;
 
 import org.example.roadsimulation.entity.Goods;
 import org.example.roadsimulation.entity.POI;
+import org.example.roadsimulation.entity.ProcessingExecutionFlow;
 import org.example.roadsimulation.entity.ProcessingStageExecution;
 import org.example.roadsimulation.entity.ProductionBatch;
 import org.example.roadsimulation.entity.ProductionPlanNode;
 import org.example.roadsimulation.entity.Shipment;
 import org.example.roadsimulation.entity.ShipmentItem;
 import org.example.roadsimulation.repository.GoodsRepository;
-import org.example.roadsimulation.repository.ProcessingStageExecutionRepository;
+import org.example.roadsimulation.repository.ProcessingExecutionFlowRepository;
 import org.example.roadsimulation.repository.ShipmentItemRepository;
 import org.example.roadsimulation.repository.ShipmentRepository;
 import org.example.roadsimulation.service.TransportDemandService;
@@ -19,10 +20,8 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Creates transport demands for the production domain.
- *
- * <p>This service deliberately creates only Shipment and ShipmentItem. Vehicle
- * assignment remains the responsibility of the existing dispatch system.</p>
+ * Creates one transport demand for one production material flow.
+ * Vehicle assignment remains the responsibility of the existing dispatch system.
  */
 @Service
 @Transactional
@@ -31,81 +30,54 @@ public class TransportDemandServiceImpl implements TransportDemandService {
     private final ShipmentRepository shipmentRepository;
     private final ShipmentItemRepository shipmentItemRepository;
     private final GoodsRepository goodsRepository;
-    private final ProcessingStageExecutionRepository executionRepository;
+    private final ProcessingExecutionFlowRepository executionFlowRepository;
 
     public TransportDemandServiceImpl(
             ShipmentRepository shipmentRepository,
             ShipmentItemRepository shipmentItemRepository,
             GoodsRepository goodsRepository,
-            ProcessingStageExecutionRepository executionRepository
+            ProcessingExecutionFlowRepository executionFlowRepository
     ) {
         this.shipmentRepository = shipmentRepository;
         this.shipmentItemRepository = shipmentItemRepository;
         this.goodsRepository = goodsRepository;
-        this.executionRepository = executionRepository;
+        this.executionFlowRepository = executionFlowRepository;
     }
 
     @Override
-    public Shipment createInboundTransport(
-            ProcessingStageExecution execution,
+    public Shipment createTransport(
+            ProcessingExecutionFlow flow,
             POI sourcePOI,
             String actor
     ) {
-        validateExecution(execution);
-        if (sourcePOI == null || sourcePOI.getId() == null) {
-            throw new IllegalArgumentException("生产计划缺少原材料来源 POI");
-        }
+        validateFlow(flow);
+        POI origin = sourcePOI != null
+                ? sourcePOI
+                : flow.getFromExecution().getProcessingPOI();
+        ProcessingStageExecution target = flow.getToExecution();
+        double weight = flow.getActualWeight() == null
+                ? flow.getPlannedWeight()
+                : flow.getActualWeight();
 
-        ProductionPlanNode node = execution.getPlanNode();
         Shipment shipment = createTransport(
-                sourcePOI,
-                execution.getProcessingPOI(),
-                node.getInputSku(),
-                node.getPlannedInputWeight(),
-                execution,
-                actor
-        );
-        execution.setInboundShipment(shipment);
-        execution.setStatus(ProcessingStageExecution.ExecutionStatus.WAITING_INPUT);
-        node.setStatus(ProductionPlanNode.NodeStatus.WAITING_TRANSPORT);
-        execution.getBatch().setStatus(ProductionBatch.BatchStatus.INBOUND_TRANSPORT);
-        executionRepository.save(execution);
-        return shipment;
-    }
-
-    @Override
-    public Shipment createOutboundTransport(
-            ProcessingStageExecution currentExecution,
-            ProcessingStageExecution nextExecution,
-            String actor
-    ) {
-        validateExecution(currentExecution);
-        validateExecution(nextExecution);
-        if (currentExecution.getActualOutputWeight() == null
-                || currentExecution.getActualOutputWeight() <= 0) {
-            throw new IllegalStateException("当前工序没有有效产出，无法创建运输需求");
-        }
-
-        ProductionPlanNode currentNode = currentExecution.getPlanNode();
-        Shipment shipment = createTransport(
-                currentExecution.getProcessingPOI(),
-                nextExecution.getProcessingPOI(),
-                currentNode.getOutputSku(),
-                currentExecution.getActualOutputWeight(),
-                nextExecution,
+                origin,
+                target.getProcessingPOI(),
+                flow.getSku(),
+                weight,
+                flow,
                 actor
         );
 
-        currentExecution.setOutboundShipment(shipment);
-        nextExecution.setInboundShipment(shipment);
-        nextExecution.setStatus(ProcessingStageExecution.ExecutionStatus.WAITING_INPUT);
-        currentNode.setStatus(ProductionPlanNode.NodeStatus.COMPLETED);
-        nextExecution.getPlanNode().setStatus(ProductionPlanNode.NodeStatus.WAITING_TRANSPORT);
-        currentExecution.getBatch().setStatus(ProductionBatch.BatchStatus.INTER_STAGE_TRANSPORT);
+        flow.setShipment(shipment);
+        flow.setStatus(ProcessingExecutionFlow.FlowStatus.WAITING_TRANSPORT);
+        target.setStatus(ProcessingStageExecution.ExecutionStatus.WAITING_INPUT);
+        target.getPlanNode().setStatus(ProductionPlanNode.NodeStatus.WAITING_TRANSPORT);
 
-        executionRepository.save(currentExecution);
-        executionRepository.save(nextExecution);
-        return shipment;
+        ProductionBatch batch = flow.getBatch();
+        batch.setStatus(flow.getFromExecution() == null
+                ? ProductionBatch.BatchStatus.INBOUND_TRANSPORT
+                : ProductionBatch.BatchStatus.INTER_STAGE_TRANSPORT);
+        return executionFlowRepository.save(flow).getShipment();
     }
 
     private Shipment createTransport(
@@ -113,11 +85,11 @@ public class TransportDemandServiceImpl implements TransportDemandService {
             POI destination,
             String sku,
             Double weight,
-            ProcessingStageExecution execution,
+            ProcessingExecutionFlow flow,
             String actor
     ) {
-        if (origin == null || destination == null) {
-            throw new IllegalArgumentException("运输需求必须包含起点和终点 POI");
+        if (origin == null || destination == null || origin.getId() == null || destination.getId() == null) {
+            throw new IllegalArgumentException("运输需求必须包含有效起点和终点 POI");
         }
         if (sku == null || sku.isBlank()) {
             throw new IllegalArgumentException("运输需求必须包含货物 SKU");
@@ -126,8 +98,9 @@ public class TransportDemandServiceImpl implements TransportDemandService {
             throw new IllegalArgumentException("运输重量必须大于 0");
         }
 
-        String refNo = "PROD-" + execution.getBatch().getId()
-                + "-" + execution.getStageOrder()
+        String refNo = "PROD-" + flow.getBatch().getId()
+                + "-" + flow.getToExecution().getStageOrder()
+                + "-" + flow.getInputKey()
                 + "-" + UUID.randomUUID().toString().substring(0, 8);
         String safeActor = actor == null || actor.isBlank() ? "production-system" : actor;
 
@@ -140,7 +113,7 @@ public class TransportDemandServiceImpl implements TransportDemandService {
         Optional<Goods> goods = goodsRepository.findBySku(sku);
         ShipmentItem item = new ShipmentItem(
                 savedShipment,
-                execution.getStage().getStageName() + "运输",
+                flow.getToExecution().getStage().getStageName() + "-" + flow.getInputKey() + "运输",
                 1,
                 sku,
                 weight,
@@ -150,16 +123,22 @@ public class TransportDemandServiceImpl implements TransportDemandService {
         item.setStatus(ShipmentItem.ShipmentItemStatus.NOT_ASSIGNED);
         item.setUpdatedBy(safeActor);
         shipmentItemRepository.save(item);
-
         return savedShipment;
     }
 
-    private void validateExecution(ProcessingStageExecution execution) {
-        if (execution == null || execution.getId() == null) {
-            throw new IllegalArgumentException("工序执行记录不存在");
+    private void validateFlow(ProcessingExecutionFlow flow) {
+        if (flow == null || flow.getId() == null) {
+            throw new IllegalArgumentException("生产物料流不存在");
         }
-        if (execution.getBatch() == null || execution.getPlanNode() == null || execution.getStage() == null) {
-            throw new IllegalArgumentException("工序执行记录缺少生产计划关联");
+        if (flow.getBatch() == null || flow.getPlanFlow() == null || flow.getToExecution() == null) {
+            throw new IllegalArgumentException("生产物料流缺少执行关联");
+        }
+        if (flow.getFromExecution() == null && (flow.getPlanFlow().getSourcePOI() == null
+                || flow.getPlanFlow().getSourcePOI().getId() == null)) {
+            throw new IllegalArgumentException("外部原材料流缺少来源 POI");
+        }
+        if (flow.getSku() == null || flow.getSku().isBlank()) {
+            throw new IllegalArgumentException("生产物料流缺少 SKU");
         }
     }
 }

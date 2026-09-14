@@ -16,7 +16,8 @@ public record ProductionPlanResponse(
         String status,
         Long randomSeed,
         LocalDateTime createdAt,
-        List<NodeResponse> nodes
+        List<NodeResponse> nodes,
+        List<FlowResponse> flows
 ) {
     public record NodeResponse(
             Long id,
@@ -28,5 +29,16 @@ public record ProductionPlanResponse(
             Double plannedInputWeight,
             Double plannedOutputWeight,
             String status
+    ) {}
+
+    public record FlowResponse(
+            Long id,
+            Long fromNodeId,
+            Long toNodeId,
+            String inputKey,
+            String sku,
+            Double plannedWeight,
+            Long sourcePoiId,
+            String sourcePoiName
     ) {}
 }

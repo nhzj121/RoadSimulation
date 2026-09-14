@@ -1,19 +1,32 @@
 package org.example.roadsimulation.service.impl;
 
+import org.example.roadsimulation.dto.ProcessingChainGraphRequest;
+import org.example.roadsimulation.dto.ProcessingChainGraphResponse;
+import org.example.roadsimulation.entity.Goods;
+import org.example.roadsimulation.entity.POI;
 import org.example.roadsimulation.entity.ProcessingChain;
 import org.example.roadsimulation.entity.ProcessingStage;
+import org.example.roadsimulation.entity.ProcessingStageEdge;
+import org.example.roadsimulation.entity.ProcessingStageInput;
+import org.example.roadsimulation.repository.GoodsRepository;
+import org.example.roadsimulation.repository.POIRepository;
 import org.example.roadsimulation.repository.ProcessingChainRepository;
+import org.example.roadsimulation.repository.ProcessingStageEdgeRepository;
 import org.example.roadsimulation.repository.ProcessingStageExecutionRepository;
+import org.example.roadsimulation.repository.ProcessingStageInputRepository;
 import org.example.roadsimulation.repository.ProcessingStageRepository;
 import org.example.roadsimulation.repository.ProductionPlanNodeRepository;
 import org.example.roadsimulation.repository.ProductionPlanRepository;
 import org.example.roadsimulation.service.ProcessingChainDefinitionService;
+import org.example.roadsimulation.service.ProcessingChainGraphValidator;
 import org.example.roadsimulation.service.ProcessingChainSkuValidator;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -23,22 +36,34 @@ public class ProcessingChainDefinitionServiceImpl implements ProcessingChainDefi
 
     private final ProcessingChainRepository processingChainRepository;
     private final ProcessingStageRepository processingStageRepository;
+    private final ProcessingStageInputRepository stageInputRepository;
+    private final ProcessingStageEdgeRepository stageEdgeRepository;
     private final ProductionPlanRepository productionPlanRepository;
     private final ProductionPlanNodeRepository productionPlanNodeRepository;
     private final ProcessingStageExecutionRepository processingStageExecutionRepository;
+    private final POIRepository poiRepository;
+    private final GoodsRepository goodsRepository;
 
     public ProcessingChainDefinitionServiceImpl(
             ProcessingChainRepository processingChainRepository,
             ProcessingStageRepository processingStageRepository,
+            ProcessingStageInputRepository stageInputRepository,
+            ProcessingStageEdgeRepository stageEdgeRepository,
             ProductionPlanRepository productionPlanRepository,
             ProductionPlanNodeRepository productionPlanNodeRepository,
-            ProcessingStageExecutionRepository processingStageExecutionRepository
+            ProcessingStageExecutionRepository processingStageExecutionRepository,
+            POIRepository poiRepository,
+            GoodsRepository goodsRepository
     ) {
         this.processingChainRepository = processingChainRepository;
         this.processingStageRepository = processingStageRepository;
+        this.stageInputRepository = stageInputRepository;
+        this.stageEdgeRepository = stageEdgeRepository;
         this.productionPlanRepository = productionPlanRepository;
         this.productionPlanNodeRepository = productionPlanNodeRepository;
         this.processingStageExecutionRepository = processingStageExecutionRepository;
+        this.poiRepository = poiRepository;
+        this.goodsRepository = goodsRepository;
     }
 
     @Override
@@ -52,10 +77,64 @@ public class ProcessingChainDefinitionServiceImpl implements ProcessingChainDefi
             chain.getStages().forEach(stage -> {
                 validateStage(stage, null);
                 stage.setProcessingChain(chain);
+                if (stage.getInputs() != null) {
+                    stage.getInputs().forEach(input -> input.setStage(stage));
+                }
             });
-            ProcessingChainSkuValidator.validateStages(chain.getStages());
+            ProcessingChainGraphValidator.validate(chain.getStages(), chain.getEdges());
         }
         return processingChainRepository.save(chain);
+    }
+
+    @Override
+    public ProcessingChainGraphResponse createGraph(ProcessingChainGraphRequest request) {
+        requireGraphRequest(request);
+        if (processingChainRepository.existsByChainCode(request.chainCode())) {
+            throw new IllegalArgumentException("加工链编码已存在：" + request.chainCode());
+        }
+
+        ProcessingChain chain = new ProcessingChain();
+        chain.setChainCode(request.chainCode());
+        chain.setChainName(request.chainName());
+        chain.setDescription(request.description());
+
+        Map<String, ProcessingStage> stagesByKey = new HashMap<>();
+        Map<String, Map<String, ProcessingStageInput>> inputsByStageAndKey = new HashMap<>();
+        for (ProcessingChainGraphRequest.StageRequest stageRequest : request.stages()) {
+            ProcessingStage stage = createStageEntity(chain, stageRequest);
+            chain.getStages().add(stage);
+            stagesByKey.put(stageRequest.stageKey(), stage);
+
+            Map<String, ProcessingStageInput> inputsByKey = new HashMap<>();
+            for (ProcessingStageInput input : stage.getInputs()) {
+                inputsByKey.put(input.getInputKey(), input);
+            }
+            inputsByStageAndKey.put(stageRequest.stageKey(), inputsByKey);
+        }
+
+        for (ProcessingChainGraphRequest.EdgeRequest edgeRequest : request.edges()) {
+            ProcessingStage fromStage = stagesByKey.get(edgeRequest.fromStageKey());
+            ProcessingStage toStage = stagesByKey.get(edgeRequest.toStageKey());
+            Map<String, ProcessingStageInput> inputs = inputsByStageAndKey.get(edgeRequest.toStageKey());
+            if (fromStage == null || toStage == null || inputs == null) {
+                throw new IllegalArgumentException("加工链边引用了不存在的工序或输入");
+            }
+            ProcessingStageInput targetInput = inputs.get(edgeRequest.toInputKey());
+            if (targetInput == null) {
+                throw new IllegalArgumentException("工序输入不存在: " + edgeRequest.toInputKey());
+            }
+            chain.getEdges().add(new ProcessingStageEdge(chain, fromStage, toStage, targetInput));
+        }
+
+        ProcessingChainGraphValidator.validate(chain.getStages(), chain.getEdges());
+        ProcessingChain saved = processingChainRepository.save(chain);
+        return mapGraph(saved);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public ProcessingChainGraphResponse getGraph(Long chainId) {
+        return mapGraph(requireExistingChain(chainId));
     }
 
     @Override
@@ -105,9 +184,12 @@ public class ProcessingChainDefinitionServiceImpl implements ProcessingChainDefi
         }
 
         stage.setProcessingChain(chain);
-        ProcessingChainSkuValidator.validateStages(
-                chain.getStages() == null ? List.of(stage) : concatStages(chain.getStages(), stage)
-        );
+        if (stage.getInputs() != null) {
+            stage.getInputs().forEach(input -> input.setStage(stage));
+        }
+        List<ProcessingStage> candidateStages = new ArrayList<>(chain.getStages());
+        candidateStages.add(stage);
+        ProcessingChainGraphValidator.validate(candidateStages, chain.getEdges());
         return processingStageRepository.save(stage);
     }
 
@@ -128,6 +210,7 @@ public class ProcessingChainDefinitionServiceImpl implements ProcessingChainDefi
             }
             stage.setStageOrder(details.getStageOrder());
         }
+        if (details.getStageKey() != null) stage.setStageKey(details.getStageKey());
         if (details.getStageName() != null) stage.setStageName(details.getStageName());
         if (details.getDescription() != null) stage.setDescription(details.getDescription());
         if (details.getProcessingPOI() != null) stage.setProcessingPOI(details.getProcessingPOI());
@@ -151,13 +234,16 @@ public class ProcessingChainDefinitionServiceImpl implements ProcessingChainDefi
         }
         if (details.getMaxCapacityPerCycle() != null) stage.setMaxCapacityPerCycle(details.getMaxCapacityPerCycle());
         if (details.getMinBatchSize() != null) stage.setMinBatchSize(details.getMinBatchSize());
+        if (details.getInputs() != null) {
+            stage.getInputs().clear();
+            details.getInputs().forEach(input -> {
+                input.setStage(stage);
+                stage.getInputs().add(input);
+            });
+        }
 
         ProcessingChain chain = stage.getProcessingChain();
-        ProcessingChainSkuValidator.validateStages(
-                chain == null || chain.getStages() == null
-                        ? List.of(stage)
-                        : replaceStage(chain.getStages(), stage)
-        );
+        ProcessingChainGraphValidator.validate(chain.getStages(), chain.getEdges());
         return processingStageRepository.save(stage);
     }
 
@@ -172,7 +258,65 @@ public class ProcessingChainDefinitionServiceImpl implements ProcessingChainDefi
         if (processingStageExecutionRepository.existsByStageId(stageId)) {
             throw new IllegalStateException("工序已有执行记录，不能删除");
         }
+        if (stageEdgeRepository.existsByFromStageId(stageId)
+                || stageEdgeRepository.existsByToStageId(stageId)) {
+            throw new IllegalStateException("工序已被加工链边引用，不能删除");
+        }
         processingStageRepository.deleteById(stageId);
+    }
+
+    private ProcessingStage createStageEntity(
+            ProcessingChain chain,
+            ProcessingChainGraphRequest.StageRequest request
+    ) {
+        POI poi = poiRepository.findById(request.processingPoiId())
+                .orElseThrow(() -> new IllegalArgumentException("加工 POI 不存在: " + request.processingPoiId()));
+        ProcessingStage stage = new ProcessingStage();
+        stage.setProcessingChain(chain);
+        stage.setStageOrder(request.stageOrder());
+        stage.setStageKey(request.stageKey());
+        stage.setStageName(request.stageName());
+        stage.setDescription(request.description());
+        stage.setProcessingPOI(poi);
+        stage.setOutputGoodsSku(request.outputGoodsSku());
+        stage.setOutputWeightRatio(request.outputWeightRatio() == null ? 1.0 : request.outputWeightRatio());
+        stage.setProcessingTimeMinutes(request.processingTimeMinutes());
+        stage.setMinBatchSize(request.minBatchSize());
+        stage.setMaxCapacityPerCycle(request.maxCapacityPerCycle());
+
+        if (request.inputs() == null || request.inputs().isEmpty()) {
+            throw new IllegalArgumentException("图加工链工序必须显式定义输入: " + request.stageName());
+        }
+        for (ProcessingChainGraphRequest.InputRequest inputRequest : request.inputs()) {
+            ProcessingStageInput input = new ProcessingStageInput(
+                    stage,
+                    inputRequest.inputKey(),
+                    inputRequest.sku(),
+                    inputRequest.inputShare()
+            );
+            goodsRepository.findBySku(inputRequest.sku()).ifPresent(input::setGoods);
+            stage.getInputs().add(input);
+        }
+        return stage;
+    }
+
+    private void requireGraphRequest(ProcessingChainGraphRequest request) {
+        if (request == null
+                || request.chainCode() == null || request.chainCode().isBlank()
+                || request.chainName() == null || request.chainName().isBlank()) {
+            throw new IllegalArgumentException("加工链编码和名称不能为空");
+        }
+        if (request.stages() == null || request.stages().isEmpty()) {
+            throw new IllegalArgumentException("加工链至少需要一道工序");
+        }
+        for (ProcessingChainGraphRequest.StageRequest stage : request.stages()) {
+            if (stage == null || stage.stageKey() == null || stage.stageKey().isBlank()) {
+                throw new IllegalArgumentException("图加工链工序标识不能为空");
+            }
+        }
+        if (request.edges() == null || request.edges().isEmpty()) {
+            throw new IllegalArgumentException("图加工链至少需要一条边");
+        }
     }
 
     private ProcessingChain requireExistingChain(Long chainId) {
@@ -213,7 +357,9 @@ public class ProcessingChainDefinitionServiceImpl implements ProcessingChainDefi
         if (stage.getInputWeightRatio() != null) {
             requirePositiveRatio(stage.getInputWeightRatio(), "输入产出系数");
         }
-        ProcessingChainSkuValidator.validateStage(stage);
+        if (stage.getInputs() == null || stage.getInputs().isEmpty()) {
+            ProcessingChainSkuValidator.validateStage(stage);
+        }
     }
 
     private boolean hasStageOrderConflict(ProcessingChain chain, Integer stageOrder, Long excludedStageId) {
@@ -224,26 +370,57 @@ public class ProcessingChainDefinitionServiceImpl implements ProcessingChainDefi
     }
 
     private void requirePositiveRatio(Double value, String name) {
-        if (value == null || value <= 0) {
+        if (value == null || value <= 0 || !Double.isFinite(value)) {
             throw new IllegalArgumentException(name + "必须大于 0");
         }
     }
 
-    private List<ProcessingStage> concatStages(List<ProcessingStage> stages, ProcessingStage stage) {
-        List<ProcessingStage> result = new ArrayList<>(stages);
-        result.add(stage);
-        return result;
-    }
+    private ProcessingChainGraphResponse mapGraph(ProcessingChain chain) {
+        List<ProcessingChainGraphResponse.StageResponse> stages = chain.getStages().stream()
+                .map(stage -> new ProcessingChainGraphResponse.StageResponse(
+                        stage.getId(),
+                        stage.getStageOrder(),
+                        stage.getStageKey(),
+                        stage.getStageName(),
+                        stage.getDescription(),
+                        stage.getProcessingPOI().getId(),
+                        stage.getProcessingPOI().getName(),
+                        ProcessingChainSkuValidator.resolveOutputSku(stage),
+                        stage.getOutputWeightRatio(),
+                        stage.getProcessingTimeMinutes(),
+                        stage.getMinBatchSize(),
+                        stage.getMaxCapacityPerCycle(),
+                        stage.getInputs().stream()
+                                .map(input -> new ProcessingChainGraphResponse.InputResponse(
+                                        input.getId(),
+                                        input.getInputKey(),
+                                        input.getSku(),
+                                        input.getInputShare()
+                                ))
+                                .toList()
+                ))
+                .toList();
 
-    private List<ProcessingStage> replaceStage(List<ProcessingStage> stages, ProcessingStage stage) {
-        List<ProcessingStage> result = new ArrayList<>();
-        for (ProcessingStage item : stages) {
-            if (Objects.equals(item.getId(), stage.getId())) {
-                result.add(stage);
-            } else {
-                result.add(item);
-            }
-        }
-        return result;
+        List<ProcessingChainGraphResponse.EdgeResponse> edges = chain.getEdges().stream()
+                .map(edge -> new ProcessingChainGraphResponse.EdgeResponse(
+                        edge.getId(),
+                        edge.getFromStage().getId(),
+                        edge.getToStage().getId(),
+                        edge.getToStageInput().getId(),
+                        edge.getFromStage().getStageKey(),
+                        edge.getToStage().getStageKey(),
+                        edge.getToStageInput().getInputKey()
+                ))
+                .toList();
+
+        return new ProcessingChainGraphResponse(
+                chain.getId(),
+                chain.getChainCode(),
+                chain.getChainName(),
+                chain.getStatus().name(),
+                chain.getDescription(),
+                stages,
+                edges
+        );
     }
 }
