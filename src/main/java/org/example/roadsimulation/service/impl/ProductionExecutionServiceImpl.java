@@ -13,113 +13,69 @@ import org.example.roadsimulation.repository.ProcessingStageExecutionRepository;
 import org.example.roadsimulation.repository.ProductionBatchRepository;
 import org.example.roadsimulation.service.ProductionExecutionService;
 import org.example.roadsimulation.service.TransportDemandService;
-import org.springframework.context.event.EventListener;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.event.TransactionPhase;
+import org.springframework.transaction.event.TransactionalEventListener;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Optional;
-import java.util.Set;
 
 /** Runtime orchestration for demand-driven production batches. */
 @Service
 @Transactional
 public class ProductionExecutionServiceImpl implements ProductionExecutionService {
 
+    private static final Logger log = LoggerFactory.getLogger(ProductionExecutionServiceImpl.class);
+
     private final ProcessingStageExecutionRepository executionRepository;
     private final ProcessingExecutionFlowRepository executionFlowRepository;
     private final ProductionBatchRepository batchRepository;
     private final TransportDemandService transportDemandService;
+    private final ProductionDeliveryProcessor deliveryProcessor;
 
     public ProductionExecutionServiceImpl(
             ProcessingStageExecutionRepository executionRepository,
             ProcessingExecutionFlowRepository executionFlowRepository,
             ProductionBatchRepository batchRepository,
-            TransportDemandService transportDemandService
+            TransportDemandService transportDemandService,
+            ProductionDeliveryProcessor deliveryProcessor
     ) {
         this.executionRepository = executionRepository;
         this.executionFlowRepository = executionFlowRepository;
         this.batchRepository = batchRepository;
         this.transportDemandService = transportDemandService;
+        this.deliveryProcessor = deliveryProcessor;
     }
 
     @Override
-    @EventListener
+    @TransactionalEventListener(
+            phase = TransactionPhase.AFTER_COMMIT,
+            fallbackExecution = true
+    )
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void onShipmentDelivered(ShipmentDeliveredEvent event) {
         if (event == null || event.shipmentIds().isEmpty()) {
             return;
         }
 
-        Set<Long> affectedExecutions = new HashSet<>();
         for (Long shipmentId : event.shipmentIds()) {
-            Optional<ProcessingExecutionFlow> optional =
-                    executionFlowRepository.findByShipmentId(shipmentId);
-            if (optional.isEmpty()) {
-                continue;
+            try {
+                // 合并修复：实际生产投影在 ProductionDeliveryProcessor 的 REQUIRES_NEW 事务中完成。
+                deliveryProcessor.processShipment(shipmentId, event.deliveredAt());
+            } catch (RuntimeException productionFailure) {
+                // 临时异常保留 WAITING_TRANSPORT，下一轮恢复扫描会重试；不得传播到运输主链。
+                log.error(
+                        "Production delivery projection failed and will be retried: shipmentId={}",
+                        shipmentId,
+                        productionFailure
+                );
             }
-
-            ProcessingExecutionFlow flow = optional.get();
-            if (flow.getStatus() == ProcessingExecutionFlow.FlowStatus.DELIVERED) {
-                affectedExecutions.add(flow.getToExecution().getId());
-                continue;
-            }
-
-            Shipment shipment = flow.getShipment();
-            if (shipment == null || shipment.getTotalWeight() == null
-                    || shipment.getTotalWeight() <= 0 || !Double.isFinite(shipment.getTotalWeight())) {
-                flow.setStatus(ProcessingExecutionFlow.FlowStatus.FAILED);
-                executionFlowRepository.save(flow);
-                throw new IllegalStateException("生产物料流交付重量无效: " + shipmentId);
-            }
-
-            flow.setActualWeight(shipment.getTotalWeight());
-            flow.setStatus(ProcessingExecutionFlow.FlowStatus.DELIVERED);
-            executionFlowRepository.save(flow);
-            affectedExecutions.add(flow.getToExecution().getId());
         }
-
-        for (Long executionId : affectedExecutions) {
-            startExecutionIfInputsReady(executionId, event.deliveredAt());
-        }
-    }
-
-    private void startExecutionIfInputsReady(Long executionId, LocalDateTime deliveredAt) {
-        executionRepository.findById(executionId).ifPresent(execution -> {
-            if (execution.getStatus() != ProcessingStageExecution.ExecutionStatus.WAITING_INPUT
-                    && execution.getStatus() != ProcessingStageExecution.ExecutionStatus.READY_TO_PROCESS) {
-                return;
-            }
-            List<ProcessingExecutionFlow> inboundFlows =
-                    executionFlowRepository.findByToExecutionId(executionId);
-            if (inboundFlows.isEmpty()
-                    || inboundFlows.stream().anyMatch(flow ->
-                    flow.getStatus() != ProcessingExecutionFlow.FlowStatus.DELIVERED)) {
-                return;
-            }
-
-            double actualInput = inboundFlows.stream()
-                    .mapToDouble(ProcessingExecutionFlow::getActualWeight)
-                    .sum();
-            if (actualInput <= 0 || !Double.isFinite(actualInput)) {
-                throw new IllegalStateException("工序实际输入重量无效: " + execution.getStage().getStageName());
-            }
-
-            execution.setActualInputWeight(round(actualInput));
-            execution.setStatus(ProcessingStageExecution.ExecutionStatus.PROCESSING);
-            execution.setProgressPercent(0);
-            execution.setStartedAt(deliveredAt);
-            execution.getPlanNode().setStatus(ProductionPlanNode.NodeStatus.PROCESSING);
-
-            ProductionBatch batch = execution.getBatch();
-            batch.setStatus(ProductionBatch.BatchStatus.PROCESSING);
-            if (batch.getStartedAt() == null) {
-                batch.setStartedAt(deliveredAt);
-            }
-            executionRepository.save(execution);
-        });
     }
 
     @Override
@@ -127,6 +83,8 @@ public class ProductionExecutionServiceImpl implements ProductionExecutionServic
         if (simNow == null) {
             return;
         }
+        reconcileDeliveredTransportFlows(simNow);
+
         List<ProcessingStageExecution> executions = executionRepository.findByStatus(
                 ProcessingStageExecution.ExecutionStatus.PROCESSING
         );
@@ -149,6 +107,30 @@ public class ProductionExecutionServiceImpl implements ProductionExecutionServic
                 completeExecution(execution, simNow);
             } else {
                 executionRepository.save(execution);
+            }
+        }
+    }
+
+    private void reconcileDeliveredTransportFlows(LocalDateTime simNow) {
+        List<ProcessingExecutionFlow> waitingFlows = executionFlowRepository.findByStatus(
+                ProcessingExecutionFlow.FlowStatus.WAITING_TRANSPORT
+        );
+        for (ProcessingExecutionFlow flow : waitingFlows) {
+            Shipment shipment = flow.getShipment();
+            if (shipment == null || shipment.getStatus() != Shipment.ShipmentStatus.DELIVERED) {
+                continue;
+            }
+            try {
+                // 恢复路径使用当前权威仿真时间启动下游工序，不使用系统墙钟时间。
+                deliveryProcessor.processFlow(flow.getId(), simNow);
+            } catch (RuntimeException productionFailure) {
+                // 普通临时错误保持 WAITING_TRANSPORT，避免阻塞同一轮其它生产流与运输主循环。
+                log.error(
+                        "Production delivery recovery failed and will be retried: flowId={}, shipmentId={}",
+                        flow.getId(),
+                        shipment.getId(),
+                        productionFailure
+                );
             }
         }
     }

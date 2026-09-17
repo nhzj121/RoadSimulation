@@ -13,6 +13,7 @@ import org.example.roadsimulation.repository.ProcessingExecutionFlowRepository;
 import org.example.roadsimulation.repository.ProcessingStageExecutionRepository;
 import org.example.roadsimulation.repository.ProductionBatchRepository;
 import org.example.roadsimulation.service.impl.ProductionExecutionServiceImpl;
+import org.example.roadsimulation.service.impl.ProductionDeliveryProcessor;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
@@ -21,13 +22,105 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class ProductionExecutionServiceImplTest {
+
+    @Test
+    void listenerFailureDoesNotEscapeIntoTransportCompletion() {
+        ProcessingStageExecutionRepository executionRepository =
+                mock(ProcessingStageExecutionRepository.class);
+        ProcessingExecutionFlowRepository executionFlowRepository =
+                mock(ProcessingExecutionFlowRepository.class);
+        ProductionBatchRepository batchRepository = mock(ProductionBatchRepository.class);
+        TransportDemandService transportDemandService = mock(TransportDemandService.class);
+        ProductionDeliveryProcessor deliveryProcessor = mock(ProductionDeliveryProcessor.class);
+        ProductionExecutionServiceImpl service = new ProductionExecutionServiceImpl(
+                executionRepository,
+                executionFlowRepository,
+                batchRepository,
+                transportDemandService,
+                deliveryProcessor
+        );
+        LocalDateTime deliveredAt = LocalDateTime.of(2026, 1, 1, 8, 0);
+        doThrow(new IllegalStateException("temporary production failure"))
+                .when(deliveryProcessor).processShipment(90L, deliveredAt);
+
+        assertThatCode(() -> service.onShipmentDelivered(
+                new ShipmentDeliveredEvent(List.of(90L), deliveredAt)
+        )).doesNotThrowAnyException();
+    }
+
+    @Test
+    void nextTickRecoversDeliveredShipmentStillWaitingForProduction() {
+        ProcessingStageExecutionRepository executionRepository =
+                mock(ProcessingStageExecutionRepository.class);
+        ProcessingExecutionFlowRepository executionFlowRepository =
+                mock(ProcessingExecutionFlowRepository.class);
+        ProductionBatchRepository batchRepository = mock(ProductionBatchRepository.class);
+        TransportDemandService transportDemandService = mock(TransportDemandService.class);
+        ProductionDeliveryProcessor deliveryProcessor = mock(ProductionDeliveryProcessor.class);
+        ProductionExecutionServiceImpl service = new ProductionExecutionServiceImpl(
+                executionRepository,
+                executionFlowRepository,
+                batchRepository,
+                transportDemandService,
+                deliveryProcessor
+        );
+        ProcessingExecutionFlow flow = new ProcessingExecutionFlow();
+        flow.setId(41L);
+        flow.setStatus(ProcessingExecutionFlow.FlowStatus.WAITING_TRANSPORT);
+        Shipment shipment = new Shipment();
+        shipment.setId(90L);
+        shipment.setStatus(Shipment.ShipmentStatus.DELIVERED);
+        flow.setShipment(shipment);
+        when(executionFlowRepository.findByStatus(ProcessingExecutionFlow.FlowStatus.WAITING_TRANSPORT))
+                .thenReturn(List.of(flow));
+        when(executionRepository.findByStatus(ProcessingStageExecution.ExecutionStatus.PROCESSING))
+                .thenReturn(List.of());
+        LocalDateTime simNow = LocalDateTime.of(2026, 1, 1, 9, 0);
+
+        service.updateProgress(simNow, 30);
+
+        verify(deliveryProcessor).processFlow(41L, simNow);
+    }
+
+    @Test
+    void invalidDeliveredWeightMarksFlowFailedWithoutThrowing() {
+        ProcessingStageExecutionRepository executionRepository =
+                mock(ProcessingStageExecutionRepository.class);
+        ProcessingExecutionFlowRepository executionFlowRepository =
+                mock(ProcessingExecutionFlowRepository.class);
+        ProductionBatchRepository batchRepository = mock(ProductionBatchRepository.class);
+        ProductionDeliveryProcessor deliveryProcessor = new ProductionDeliveryProcessor(
+                executionRepository,
+                executionFlowRepository,
+                batchRepository
+        );
+        ProcessingExecutionFlow flow = new ProcessingExecutionFlow();
+        flow.setId(41L);
+        flow.setStatus(ProcessingExecutionFlow.FlowStatus.WAITING_TRANSPORT);
+        Shipment shipment = new Shipment();
+        shipment.setId(90L);
+        shipment.setStatus(Shipment.ShipmentStatus.DELIVERED);
+        shipment.setTotalWeight(0.0);
+        flow.setShipment(shipment);
+        when(executionFlowRepository.findById(41L)).thenReturn(Optional.of(flow));
+
+        assertThatCode(() -> deliveryProcessor.processFlow(
+                41L,
+                LocalDateTime.of(2026, 1, 1, 9, 0)
+        )).doesNotThrowAnyException();
+
+        assertThat(flow.getStatus()).isEqualTo(ProcessingExecutionFlow.FlowStatus.FAILED);
+        verify(executionFlowRepository).save(flow);
+    }
 
     @Test
     void updateProgressCompletesStageAndCreatesOutboundTransportDemand() {
@@ -37,11 +130,17 @@ class ProductionExecutionServiceImplTest {
                 mock(ProcessingExecutionFlowRepository.class);
         ProductionBatchRepository batchRepository = mock(ProductionBatchRepository.class);
         TransportDemandService transportDemandService = mock(TransportDemandService.class);
+        ProductionDeliveryProcessor deliveryProcessor = new ProductionDeliveryProcessor(
+                executionRepository,
+                executionFlowRepository,
+                batchRepository
+        );
         ProductionExecutionServiceImpl service = new ProductionExecutionServiceImpl(
                 executionRepository,
                 executionFlowRepository,
                 batchRepository,
-                transportDemandService
+                transportDemandService,
+                deliveryProcessor
         );
 
         ProductionBatch batch = new ProductionBatch();
@@ -129,11 +228,17 @@ class ProductionExecutionServiceImplTest {
                 mock(ProcessingExecutionFlowRepository.class);
         ProductionBatchRepository batchRepository = mock(ProductionBatchRepository.class);
         TransportDemandService transportDemandService = mock(TransportDemandService.class);
+        ProductionDeliveryProcessor deliveryProcessor = new ProductionDeliveryProcessor(
+                executionRepository,
+                executionFlowRepository,
+                batchRepository
+        );
         ProductionExecutionServiceImpl service = new ProductionExecutionServiceImpl(
                 executionRepository,
                 executionFlowRepository,
                 batchRepository,
-                transportDemandService
+                transportDemandService,
+                deliveryProcessor
         );
 
         ProductionBatch batch = new ProductionBatch();
@@ -204,6 +309,7 @@ class ProductionExecutionServiceImplTest {
         Shipment shipment = new Shipment();
         shipment.setId(shipmentId);
         shipment.setTotalWeight(weight);
+        shipment.setStatus(Shipment.ShipmentStatus.DELIVERED);
 
         ProductionPlanFlow planFlow = new ProductionPlanFlow();
         planFlow.setId(100L + id);

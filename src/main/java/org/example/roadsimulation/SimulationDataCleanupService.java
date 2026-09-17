@@ -77,6 +77,16 @@ public class SimulationDataCleanupService {
     @Autowired
     private DeliverySlaLedgerHealth deliverySlaLedgerHealth;
 
+    // 合并修复：生产执行层属于单次运行数据，必须先于其关联 shipment 删除。
+    @Autowired
+    private ProcessingExecutionFlowRepository processingExecutionFlowRepository;
+
+    @Autowired
+    private ProcessingStageExecutionRepository processingStageExecutionRepository;
+
+    @Autowired
+    private ProductionBatchRepository productionBatchRepository;
+
     @Autowired
     private VehicleRepository vehicleRepository;
 
@@ -134,6 +144,25 @@ public class SimulationDataCleanupService {
             nodeServiceEpisodeRepository.deleteAllInBatch();
             nodeServiceEpisodeRepository.flush();
             System.out.println("Deleted " + nodeServiceEpisodeCount + " node_service_episode records");
+            clearPersistenceContext();
+
+            // 生产运行数据按外键叶子到父级清理；加工链定义和生产计划不在 reset 范围内。
+            long executionFlowCount = processingExecutionFlowRepository.count();
+            processingExecutionFlowRepository.deleteAllInBatch();
+            processingExecutionFlowRepository.flush();
+            System.out.println("Deleted " + executionFlowCount + " processing_execution_flow records");
+            clearPersistenceContext();
+
+            long stageExecutionCount = processingStageExecutionRepository.count();
+            processingStageExecutionRepository.deleteAllInBatch();
+            processingStageExecutionRepository.flush();
+            System.out.println("Deleted " + stageExecutionCount + " processing_stage_execution records");
+            clearPersistenceContext();
+
+            long productionBatchCount = productionBatchRepository.count();
+            productionBatchRepository.deleteAllInBatch();
+            productionBatchRepository.flush();
+            System.out.println("Deleted " + productionBatchCount + " production_batch records");
             clearPersistenceContext();
 
             // assignment_leg -> assignment_nodes -> shipment_item -> assignment -> shipment -> enrollment

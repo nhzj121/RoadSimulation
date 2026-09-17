@@ -15,9 +15,11 @@ import org.example.roadsimulation.repository.AssignmentRepository;
 import org.example.roadsimulation.repository.ShipmentItemRepository;
 import org.example.roadsimulation.repository.ShipmentRepository;
 import org.example.roadsimulation.repository.VehicleRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
@@ -32,6 +34,8 @@ import java.util.Set;
 
 @Service
 public class TransportLifecycleService {
+
+    private static final Logger log = LoggerFactory.getLogger(TransportLifecycleService.class);
 
     // Phase 1：兼容前端的状态窗口也引用唯一后端 tick；它仍不改变当前前端完成权，留待 Phase 4。
     private static final Duration FRONTEND_ORDER_DRIVING_WINDOW = SimulationContext.TICK_DURATION;
@@ -63,20 +67,20 @@ public class TransportLifecycleService {
                 assignmentRepository,
                 vehicleRepository,
                 null,
+                null,
                 null
         );
     }
 
     /**
-     * Phase 1/7B：保留五参数构造器供既有纯单元测试使用；测试未显式注入观察器时不发布事件。
+     * Phase 1：保留五参数构造器供既有纯单元测试使用；测试未显式注入观察器时不发布事件。
      */
     public TransportLifecycleService(
             ShipmentRepository shipmentRepository,
             ShipmentItemRepository shipmentItemRepository,
             AssignmentRepository assignmentRepository,
             VehicleRepository vehicleRepository,
-            SimulationContext simulationContext,
-            ApplicationEventPublisher eventPublisher
+            SimulationContext simulationContext
     ) {
         this(
                 shipmentRepository,
@@ -84,12 +88,35 @@ public class TransportLifecycleService {
                 assignmentRepository,
                 vehicleRepository,
                 simulationContext,
+                null,
                 null
         );
     }
 
     /**
-     * Phase 7B：Spring 生产构造器同时注入唯一仿真时钟和提交后节点服务观察器。
+     * Phase 7B：保留节点观察器测试构造器；生产事件发布器在纯单元测试中保持为空。
+     */
+    public TransportLifecycleService(
+            ShipmentRepository shipmentRepository,
+            ShipmentItemRepository shipmentItemRepository,
+            AssignmentRepository assignmentRepository,
+            VehicleRepository vehicleRepository,
+            SimulationContext simulationContext,
+            NodeServiceObservationPublisher nodeServiceObservationPublisher
+    ) {
+        this(
+                shipmentRepository,
+                shipmentItemRepository,
+                assignmentRepository,
+                vehicleRepository,
+                simulationContext,
+                null,
+                nodeServiceObservationPublisher
+        );
+    }
+
+    /**
+     * 合并修复：Spring 生产环境只使用这一条无歧义构造路径，同时注入生产事件与评价观察器。
      */
     @Autowired
     public TransportLifecycleService(
@@ -98,6 +125,7 @@ public class TransportLifecycleService {
             AssignmentRepository assignmentRepository,
             VehicleRepository vehicleRepository,
             SimulationContext simulationContext,
+            ApplicationEventPublisher eventPublisher,
             NodeServiceObservationPublisher nodeServiceObservationPublisher
     ) {
         this.shipmentRepository = shipmentRepository;
@@ -525,13 +553,23 @@ public class TransportLifecycleService {
         refreshShipments(touchedShipments);
 
         if (eventPublisher != null && !touchedShipments.isEmpty()) {
-            eventPublisher.publishEvent(new ShipmentDeliveredEvent(
-                    touchedShipments.stream()
-                            .map(Shipment::getId)
-                            .filter(Objects::nonNull)
-                            .toList(),
-                    now
-            ));
+            try {
+                eventPublisher.publishEvent(new ShipmentDeliveredEvent(
+                        touchedShipments.stream()
+                                .map(Shipment::getId)
+                                .filter(Objects::nonNull)
+                                .toList(),
+                        now
+                ));
+            } catch (RuntimeException eventFailure) {
+                // 合并修复：生产域是运输完成事实的下游观察者，不能反向撤销已落库的运输终态。
+                log.error(
+                        "Failed to publish production delivery event after assignment completion: assignmentId={}",
+                        assignment.getId(),
+                        eventFailure
+                );
+            }
+        }
         if (!hasNodes(assignment) && nodeServiceObservationPublisher != null) {
             // Phase 7B：普通任务卸货没有节点对象，由唯一交付完成边界闭合 UNLOAD 服务事件。
             nodeServiceObservationPublisher.serviceCompleted(
