@@ -10,7 +10,8 @@
     </template>
 
     <div class="event-form">
-      <ElSelect v-model="vehicleId" placeholder="选择运输车辆" size="small" :disabled="disabled">
+      <label for="random-event-vehicle">运输车辆</label>
+      <ElSelect id="random-event-vehicle" v-model="vehicleId" placeholder="选择运输车辆" size="small" :disabled="disabled" aria-label="运输车辆">
         <ElOption
             v-for="vehicle in vehicles"
             :key="vehicle.vehicleId"
@@ -18,8 +19,8 @@
             :value="vehicle.vehicleId"
         />
       </ElSelect>
-      <ElInputNumber
-          v-model="durationMinutes"
+      <label for="congestion-duration">拥堵持续时长（分钟）</label>
+      <ElInputNumber id="congestion-duration" v-model="durationMinutes" aria-label="拥堵持续时长（分钟）"
           :min="30"
           :max="240"
           :step="30"
@@ -27,6 +28,18 @@
           controls-position="right"
           :disabled="disabled"
       />
+      <label for="breakdown-level">故障等级</label>
+      <ElSelect id="breakdown-level" v-model="breakdownLevel" size="small" :disabled="disabled" aria-label="故障等级">
+        <ElOption label="轻微故障（无需救援）" value="MINOR" />
+        <ElOption label="需救援故障" value="ASSISTANCE_REQUIRED" />
+      </ElSelect>
+      <template v-if="breakdownLevel === 'ASSISTANCE_REQUIRED'">
+        <label for="rescue-wait">救援等待时长（分钟）</label>
+        <ElInputNumber id="rescue-wait" v-model="rescueWaitMinutes" aria-label="救援等待时长（分钟）" :min="30" :max="180" :step="30" size="small" controls-position="right" :disabled="disabled" />
+      </template>
+      <label for="repair-duration">维修时长（分钟）</label>
+      <ElInputNumber id="repair-duration" v-model="repairMinutes" aria-label="维修时长（分钟）" :min="30" :max="180" :step="30" size="small" controls-position="right" :disabled="disabled" />
+      <small class="duration-help">各阶段须为 30–180 分钟且按 30 分钟递增；总时长不超过 240 分钟。</small>
       <div class="event-actions">
         <ElButton size="small" type="warning" :loading="submitting" :disabled="!vehicleId || disabled" @click="trigger('TRAFFIC_CONGESTION')">
           触发拥堵
@@ -41,6 +54,7 @@
       <div v-for="event in activeEvents" :key="event.eventId" class="active-event-item">
         <strong>{{ event.eventTypeText }}</strong>
         <span>{{ event.licensePlate }}</span>
+        <small v-if="event.eventType === 'VEHICLE_BREAKDOWN'">{{ describeBreakdown(event) }}</small>
         <small>已持续 {{ formatDelay(event.delaySeconds) }} · 结束 {{ formatTime(event.plannedEndTime) }}</small>
       </div>
     </div>
@@ -52,6 +66,7 @@
 import { ref, watch } from 'vue'
 import { ElButton, ElCard, ElInputNumber, ElMessage, ElOption, ElSelect, ElTag } from 'element-plus'
 import { randomEventApi } from '../api/randomEventApi'
+import { describeBreakdown, validateRandomEventInput } from '../utils/breakdownPresentation'
 
 const props = defineProps({
   vehicles: { type: Array, default: () => [] },
@@ -62,7 +77,15 @@ const emit = defineEmits(['triggered'])
 
 const vehicleId = ref(null)
 const durationMinutes = ref(60)
+const breakdownLevel = ref('MINOR')
+const rescueWaitMinutes = ref(30)
+const repairMinutes = ref(60)
 const submitting = ref(false)
+
+watch(breakdownLevel, level => {
+  rescueWaitMinutes.value = level === 'MINOR' ? 0 : 30
+  repairMinutes.value = level === 'MINOR' ? 60 : 90
+})
 
 watch(() => props.vehicles, (vehicles) => {
   if (vehicleId.value && !vehicles.some(vehicle => vehicle.vehicleId === vehicleId.value)) {
@@ -72,9 +95,17 @@ watch(() => props.vehicles, (vehicles) => {
 
 const trigger = async (eventType) => {
   if (!vehicleId.value || submitting.value) return
+  const options = eventType === 'VEHICLE_BREAKDOWN'
+      ? { breakdownLevel: breakdownLevel.value, rescueWaitMinutes: breakdownLevel.value === 'MINOR' ? 0 : rescueWaitMinutes.value, repairMinutes: repairMinutes.value }
+      : { durationMinutes: durationMinutes.value }
+  const validationError = validateRandomEventInput(eventType, options)
+  if (validationError) {
+    ElMessage.error(validationError)
+    return
+  }
   submitting.value = true
   try {
-    await randomEventApi.trigger(eventType, vehicleId.value, durationMinutes.value)
+    await randomEventApi.trigger(eventType, vehicleId.value, options)
     ElMessage.success(eventType === 'TRAFFIC_CONGESTION' ? '交通拥堵已触发' : '车辆故障已触发')
     emit('triggered')
   } catch (error) {
@@ -143,4 +174,5 @@ const formatDelay = (seconds) => {
   font-size: 12px;
   text-align: center;
 }
+.duration-help { color: #606266; line-height: 1.5; }
 </style>

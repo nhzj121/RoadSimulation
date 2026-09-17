@@ -122,6 +122,9 @@
 
       <ElMain>
         <div id="container"></div>
+        <div v-if="missingRouteAssignmentIds.size" class="route-recovery-notice" role="status">
+          {{ missingRouteAssignmentIds.size }} 个任务等待路线恢复；继续仿真后将自动重试。
+        </div>
         <div
             v-if="floatingVehicleInfo.visible"
             ref="vehicleFloatingInfoWindowRef"
@@ -151,8 +154,8 @@
           <div class="vehicle-floating-info-body">
             <VehicleImpactDetails :vehicle="floatingVehicleMonitor" :weather="monitorWeather" />
             <div class="vehicle-floating-status-row">
-              <span class="vehicle-floating-status-dot" :style="{ backgroundColor: floatingVehicleInfo.statusColor }"></span>
-              <span>{{ floatingVehicleInfo.statusText || floatingVehicleInfo.currentStatus || '-' }}</span>
+              <span class="vehicle-floating-status-dot" :style="{ backgroundColor: floatingVehicleLiveStatus.color }"></span>
+              <span>{{ floatingVehicleLiveStatus.text }}</span>
               <span v-if="floatingVehicleInfo.loading" class="vehicle-floating-loading">Loading...</span>
             </div>
 
@@ -977,6 +980,8 @@ import maintenanceIcon from '../../public/icons/maintenance-center.png';
 import restAreaIcon from '../../public/icons/rest-area.png';
 import transportIcon from '../../public/icons/distribution-center.png';
 import testIcon from '../../public/icons/test.png';
+import { mergeLiveVehicleDisplay } from '../utils/liveVehicleDisplay';
+import { createWeatherRouteCache } from '../utils/weatherRouteCache';
 import timberYardIcon from '../../public/icons/timber-yard.png';
 import sawmillIcon from '../../public/icons/sawmill.png';
 import boardFactoryIcon from '../../public/icons/board-factory.png';
@@ -3121,6 +3126,17 @@ const activeRoutes = ref(new Map()); // 当前活动的路线映射，key为assi
 
 // 路线规划缓存
 const routePlanningCache = new Map();
+const weatherRouteCache = createWeatherRouteCache(typeof sessionStorage === 'undefined' ? null : sessionStorage);
+const missingRouteAssignmentIds = reactive(new Set());
+let weatherRouteCacheRunId = null;
+
+const syncWeatherRouteCacheRun = (runId) => {
+  const next = runId == null ? null : String(runId);
+  if (weatherRouteCacheRunId && next && weatherRouteCacheRunId !== next) {
+    weatherRouteCache.clearRun(weatherRouteCacheRunId);
+  }
+  weatherRouteCacheRunId = next;
+};
 
 const abortRoutePlanningRequests = () => {
   if (routePlanningAbortController) {
@@ -3519,7 +3535,7 @@ class VehicleStatusManager {
     };
 
     // 创建新图标
-    const newIcon = createVehicleIcon(32, status, color, iconMeta);
+    const newIcon = createVehicleIcon(32, status, color, { ...iconMeta, vehicleId });
 
     // 更新标记
     marker.setContent(newIcon);
@@ -4750,9 +4766,10 @@ const startSimulation = async () => {
       // 启动动画管理器
       animationManager.startAll();
 
-      // 初始加载当前活跃的Assignment
-      scheduleAssignmentDrawing(fetchCurrentAssignments, runGeneration, 'initial assignments');
     }
+
+    // Explicit resume also retries active assignments whose route was unavailable during paused refresh.
+    scheduleAssignmentDrawing(fetchCurrentAssignments, runGeneration, 'resume active assignments');
 
     // 启动定时更新
     startSimulationTimer();
@@ -4847,6 +4864,9 @@ const resetSimulation = async () => {
 
       // 清除缓存
       routePlanningCache.clear();
+      weatherRouteCache.clearRun(weatherRouteCacheRunId);
+      weatherRouteCacheRunId = null;
+      missingRouteAssignmentIds.clear();
       assignmentStates.clear();
 
       // 清理所有绘制的路线
@@ -5187,9 +5207,22 @@ const handleRandomEventTriggered = async () => {
   await updateVehicleInfo();
 };
 
-const floatingVehicleDisplayAssignment = computed(() => floatingVehicleInfo.assignment || {});
-const floatingVehicleDisplayInfo = computed(() => floatingVehicleInfo.vehicleInfo || {});
 const floatingVehicleMonitor = computed(() => monitorVehicles.find(vehicle => String(vehicle.vehicleId) === String(floatingVehicleInfo.vehicleId)) || null);
+const floatingVehicleLiveDisplay = computed(() => {
+  const cachedAssignment = floatingVehicleInfo.assignment || {};
+  const cachedInfo = floatingVehicleInfo.vehicleInfo || {};
+  if (!monitorWeather.value?.runId) return { assignment: cachedAssignment, vehicleInfo: cachedInfo, currentStatus: floatingVehicleInfo.currentStatus };
+  const liveVehicle = floatingVehicleMonitor.value;
+  const assignmentId = liveVehicle?.assignmentId ?? cachedAssignment.assignmentId;
+  const liveAssignment = monitorAssignments.find(item => String(item.assignmentId) === String(assignmentId) && String(item.vehicleId) === String(floatingVehicleInfo.vehicleId));
+  return mergeLiveVehicleDisplay({ ...cachedAssignment, ...cachedInfo }, liveVehicle, liveAssignment);
+});
+const floatingVehicleDisplayAssignment = computed(() => floatingVehicleLiveDisplay.value.assignment || {});
+const floatingVehicleDisplayInfo = computed(() => floatingVehicleLiveDisplay.value.vehicleInfo || {});
+const floatingVehicleLiveStatus = computed(() => {
+  const status = floatingVehicleLiveDisplay.value.currentStatus || '-';
+  return { text: statusMap[status]?.text || status, color: statusMap[status]?.color || '#ccc' };
+});
 const floatingVehicleTitle = computed(() =>
     floatingVehicleDisplayInfo.value.licensePlate ||
     floatingVehicleDisplayAssignment.value.licensePlate ||
@@ -5253,6 +5286,7 @@ const firstDefined = (...values) => values.find(value => value !== undefined && 
 
 const syncTransportMonitorData = (monitorData = {}) => {
   monitorWeather.value = monitorData.weather || null;
+  syncWeatherRouteCacheRun(monitorData.weather?.runId);
   monitorShipments.splice(0, monitorShipments.length, ...(monitorData.shipments || []));
   monitorAssignments.splice(0, monitorAssignments.length, ...(monitorData.assignments || []));
   monitorVehicles.splice(0, monitorVehicles.length, ...(monitorData.vehicles || []));
@@ -5565,6 +5599,7 @@ const clearFrontendSimulationVisuals = () => {
 // Create vehicle icons with status-aware styling.
 const createVehicleIcon = (size = 32, status = 'IDLE', color = null, meta = {}) => {
   const el = document.createElement('div');
+  if (meta.vehicleId !== undefined && meta.vehicleId !== null) el.dataset.vehicleId = String(meta.vehicleId);
   el.style.width = `${size}px`;
   el.style.height = `${size}px`;
   el.style.borderRadius = '50%';
@@ -5743,6 +5778,9 @@ const fetchCurrentAssignments = async (runGeneration = simulationGeneration.valu
             if (!isActiveTransportGeneration(runGeneration)) return;
             if (routeData) {
               drawnAssignmentIds.value.add(assignment.assignmentId);
+              missingRouteAssignmentIds.delete(assignment.assignmentId);
+            } else if (monitorWeather.value?.runId) {
+              missingRouteAssignmentIds.add(assignment.assignmentId);
             }
           }
         }
@@ -5786,9 +5824,11 @@ const fetchAndDrawNewAssignments = async (runGeneration = simulationGeneration.v
 
           if (!isActiveTransportGeneration(runGeneration)) return;
           if (!routeData) {
+            if (monitorWeather.value?.runId) missingRouteAssignmentIds.add(assignment.assignmentId);
             continue;
           }
           drawnAssignmentIds.value.add(assignment.assignmentId);
+          missingRouteAssignmentIds.delete(assignment.assignmentId);
 
           try {
             await request.post(`/api/assignments/mark-drawn/${assignment.assignmentId}`);
@@ -5979,7 +6019,7 @@ const drawTwoStageRouteForAssignment = async (assignment, runGeneration = simula
     });
 
     // 创建车辆移动标记
-    const movingEl = createVehicleIcon(32, 'ORDER_DRIVING', '#ff7f50');
+    const movingEl = createVehicleIcon(32, 'ORDER_DRIVING', '#ff7f50', { vehicleId: assignment.vehicleId });
     const movingMarker = new AMapLib.Marker({
       position: stage1Route.path[0],
       content: movingEl,
@@ -6190,7 +6230,7 @@ const drawMultiStageRouteForVrpAssignment = async (assignment, runGeneration = s
     }
 
     // 2. 车辆移动标记
-    const movingEl = createVehicleIcon(32, 'ORDER_DRIVING', '#9b59b6');
+    const movingEl = createVehicleIcon(32, 'ORDER_DRIVING', '#9b59b6', { vehicleId: assignment.vehicleId });
     const movingMarker = new AMapLib.Marker({
       position: stages[0].path[0],
       content: movingEl,
@@ -6248,10 +6288,17 @@ const isValidCoordinate = (lng, lat) => {
 // 带缓存的路线规划
 const computeSingleRouteWithCache = async (start, end, cacheKey, runGeneration = simulationGeneration.value) => {
   if (!isActiveTransportGeneration(runGeneration)) return null;
+  const weatherRunId = monitorWeather.value?.runId;
+  syncWeatherRouteCacheRun(weatherRunId);
   // 检查缓存
   if (routePlanningCache.has(cacheKey)) {
     console.log(`使用缓存的路线: ${cacheKey}`);
     return routePlanningCache.get(cacheKey);
+  }
+  const restoredRoute = weatherRunId ? weatherRouteCache.read(weatherRunId, cacheKey, start, end) : null;
+  if (restoredRoute) {
+    routePlanningCache.set(cacheKey, restoredRoute);
+    return restoredRoute;
   }
 
   // 规划新路线
@@ -6260,6 +6307,7 @@ const computeSingleRouteWithCache = async (start, end, cacheKey, runGeneration =
   if (route && !isLifecycleCancelledRoute(route) && isActiveTransportGeneration(runGeneration)) {
     // 缓存结果
     routePlanningCache.set(cacheKey, route);
+    if (weatherRunId) weatherRouteCache.write(weatherRunId, cacheKey, start, end, route);
   }
 
   return route;
@@ -7363,6 +7411,7 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.route-recovery-notice { position: absolute; z-index: 600; top: 12px; left: 50%; transform: translateX(-50%); padding: 8px 12px; border-radius: 6px; background: #fff7e6; color: #8a5a00; box-shadow: 0 2px 10px rgba(0,0,0,.15); font-size: 12px; }
 .page-container {
   height: 100vh;
   width: 100vw;

@@ -38,6 +38,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { ElButton, ElCard, ElInputNumber, ElMessage, ElOption, ElSelect, ElTag } from 'element-plus'
 import { weatherApi } from '../api/weatherApi'
+import { describeBreakdownPolicy } from '../utils/breakdownPresentation'
 
 const props = defineProps({ weather: { type: Object, default: null }, disabled: Boolean })
 const selected = ref('DEMO')
@@ -60,8 +61,12 @@ const eventDescription = computed(() => {
   const scene = selectedScene.value
   const congestion = scene?.congestion || { hourlyProbability: .08, minDurationMinutes: 30, maxDurationMinutes: 90 }
   const breakdown = scene?.breakdown || { hourlyProbability: .02, minDurationMinutes: 60, maxDurationMinutes: 120 }
+  const breakdownPolicy = scene ? scene.breakdownPolicy : {
+    version: 'breakdown-v2', minorProbability: .7, minorRepairMin: 30, minorRepairMax: 60,
+    rescueWaitMin: 30, rescueWaitMax: 60, assistanceRepairMin: 60, assistanceRepairMax: 120
+  }
   const auto = scene ? scene.autoEvents : selected.value === 'AUTO'
-  return `自动事件${auto ? '开启' : '关闭'}；拥堵 ${Math.round(congestion.hourlyProbability * 100)}%/小时、${congestion.minDurationMinutes}–${congestion.maxDurationMinutes} 分钟；故障 ${Math.round(breakdown.hourlyProbability * 100)}%/小时、${breakdown.minDurationMinutes}–${breakdown.maxDurationMinutes} 分钟。`
+  return `自动事件${auto ? '开启' : '关闭'}；拥堵 ${Math.round(congestion.hourlyProbability * 100)}%/小时、${congestion.minDurationMinutes}–${congestion.maxDurationMinutes} 分钟；故障 ${Math.round(breakdown.hourlyProbability * 100)}%/小时，${describeBreakdownPolicy(breakdownPolicy, breakdown)}。`
 })
 const formatTime = value => value ? String(value).replace('T', ' ').slice(0, 19) : '无（之后晴天）'
 watch(() => props.weather, value => {
