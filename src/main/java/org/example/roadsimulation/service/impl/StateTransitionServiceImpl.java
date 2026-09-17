@@ -1,6 +1,5 @@
 package org.example.roadsimulation.service.impl;
 
-import jakarta.annotation.PostConstruct;
 import jakarta.transaction.Transactional;
 import org.example.roadsimulation.entity.Assignment;
 import org.example.roadsimulation.entity.Assignment.AssignmentStatus;
@@ -33,8 +32,6 @@ import java.util.*;
 public class StateTransitionServiceImpl implements StateTransitionService {
 
     private static final Logger logger = LoggerFactory.getLogger(StateTransitionServiceImpl.class);
-    private final Random random = new Random();
-
     @Autowired
     private VehicleRepository vehicleRepository;
     @Autowired
@@ -47,31 +44,6 @@ public class StateTransitionServiceImpl implements StateTransitionService {
     // Phase 4：普通/VRP 卸货统一收口，本状态机不再直接散写库存和终态。
     @Autowired
     private TransportDeliverySettlementService transportDeliverySettlementService;
-
-    // 状态顺序（必须与矩阵行/列严格对应）
-    private static final List<VehicleStatus> STATES = List.of(
-            VehicleStatus.IDLE,
-            VehicleStatus.ORDER_DRIVING,
-            VehicleStatus.LOADING,
-            VehicleStatus.TRANSPORT_DRIVING,
-            VehicleStatus.UNLOADING,
-            VehicleStatus.WAITING,
-            VehicleStatus.BREAKDOWN
-    );
-
-    private double[][] transitionMatrix;
-
-    @PostConstruct
-    public void initTransitionMatrix() {
-        transitionMatrix = new double[7][7];
-        transitionMatrix[0] = new double[]{0.13, 0.55, 0.0,  0.0,   0.0,   0.255, 0.065};
-        transitionMatrix[1] = new double[]{0.0,  0.065,0.775, 0.0,   0.0,   0.112, 0.048};
-        transitionMatrix[2] = new double[]{0.0,  0.0,  0.08, 0.78,  0.055, 0.043, 0.042};
-        transitionMatrix[3] = new double[]{0.0,  0.0,  0.0,  0.09,  0.778, 0.07,  0.062};
-        transitionMatrix[4] = new double[]{0.637,0.125,0.0,  0.0,   0.093, 0.083, 0.062};
-        transitionMatrix[5] = new double[]{0.0,  0.30, 0.225,0.138, 0.10,  0.195, 0.042};
-        transitionMatrix[6] = new double[]{0.212,0.0,  0.0,  0.0,   0.0,   0.0,   0.788};
-    }
 
     /**
      * 核心方法：结合任务上下文选择下一状态
@@ -235,47 +207,6 @@ public class StateTransitionServiceImpl implements StateTransitionService {
             }
         }
         return assignment.getNextPendingNode();
-    }
-
-    /**
-     * 纯马尔科夫链转移（无任务时使用）
-     */
-    private VehicleStatus selectNextStateWithMarkovOnly(VehicleStatus currentStatus) {
-        int idx = STATES.indexOf(currentStatus);
-        if (idx == -1) return VehicleStatus.IDLE;
-
-        double[] probs = transitionMatrix[idx];
-        double rand = random.nextDouble();
-        double sum = 0.0;
-        for (int i = 0; i < probs.length; i++) {
-            sum += probs[i];
-            if (rand < sum) {
-                return STATES.get(i);
-            }
-        }
-        return STATES.get(probs.length - 1);
-    }
-
-    @Override
-    public VehicleStatus selectNextState(VehicleStatus currentStatus) {
-        return selectNextStateWithMarkovOnly(currentStatus);
-    }
-
-    @Override
-    public Map<Long, VehicleStatus> batchSelectNextState(Map<Long, VehicleStatus> currentStates) {
-        Map<Long, VehicleStatus> result = new HashMap<>();
-        for (Map.Entry<Long, VehicleStatus> entry : currentStates.entrySet()) {
-            result.put(entry.getKey(), selectNextState(entry.getValue()));
-        }
-        return result;
-    }
-
-    @Override
-    public VehicleStatus selectNextStateWithMarkov(
-            VehicleStatus currentStatus,
-            Map<VehicleStatus, Map<VehicleStatus, Double>> markovMatrix) {
-        // 你现在用的是 transitionMatrix，因此忽略参数 markovMatrix
-        return selectNextStateWithMarkovOnly(currentStatus);
     }
 
     /**
