@@ -74,7 +74,7 @@ public class AssignmentLeg {
     @Column(name = "executed_distance_meters", nullable = false, columnDefinition = "double default 0")
     private Double executedDistanceMeters = 0.0;
 
-    // Phase 2：实际累计有效行驶秒数单独持久化，不能与计划 drivingSeconds 混用。
+    // Phase 7D：实际累计仿真行驶秒数单独持久化；受环境影响后可高于或低于基准计划秒数。
     @Column(name = "executed_driving_seconds", nullable = false, columnDefinition = "bigint default 0")
     private Long executedDrivingSeconds = 0L;
 
@@ -94,6 +94,28 @@ public class AssignmentLeg {
     // Phase 2：冻结该路段开始时的吨制载重快照，车辆后续变化不会改写历史路段语义。
     @Column(name = "current_load_tonnes", nullable = false, columnDefinition = "double default 0")
     private Double currentLoadTonnes = 0.0;
+
+    // Phase 8：柴油当量能耗按每轮实际新增距离累计，单位 L；不使用计划距离预估值。
+    @Column(name = "executed_energy_liters", nullable = false, columnDefinition = "double default 0")
+    private Double executedEnergyLiters = 0.0;
+
+    // Phase 8：直接运行碳排按每轮能耗增量累计，单位 kgCO2e；不包含生命周期排放。
+    @Column(name = "executed_emission_kg", nullable = false, columnDefinition = "double default 0")
+    private Double executedEmissionKg = 0.0;
+
+    // Phase 8：记录首次产生能耗事实时采用的模型版本，防止应用重启后跨模型继续累计。
+    @Column(name = "emission_model_id", length = 80)
+    private String emissionModelId;
+
+    // Phase 8：保存由额定载重解析得到的代理档位代码，而不是把修正系数写入 Vehicle 主数据。
+    @Column(name = "vehicle_emission_class_code", length = 20)
+    private String vehicleEmissionClassCode;
+
+    // Phase 8：事实状态显式区分尚未行驶、可信累计与不可恢复的历史缺口。
+    @Enumerated(EnumType.STRING)
+    @Column(name = "energy_fact_status", nullable = false, length = 20,
+            columnDefinition = "varchar(20) default 'PENDING'")
+    private EnergyFactStatus energyFactStatus = EnergyFactStatus.PENDING;
 
     // Phase 2：主循环与 HTTP 路径以后可能同时更新同一路段，使用乐观锁拒绝静默覆盖。
     // Phase 2 修复：新建实体保持 null，首次持久化时由 JPA/Hibernate 分配初始版本，业务代码不预置版本号。
@@ -125,6 +147,13 @@ public class AssignmentLeg {
         PENDING,
         RUNNING,
         COMPLETED
+    }
+
+    /** Phase 8：INVALID 只禁止评价使用，不改变或回滚车辆运输生命周期。 */
+    public enum EnergyFactStatus {
+        PENDING,
+        VALID,
+        INVALID
     }
 
     public Long getId() { return id; }
@@ -190,13 +219,10 @@ public class AssignmentLeg {
         this.executedDistanceMeters = value;
     }
 
-    // Phase 2：实际有效行驶秒数只允许非负值，且不能超过已知计划秒数。
+    // Phase 7D：实际行驶秒数只要求非负；plannedDrivingSeconds 是正常环境基准，不再是上限。
     public Long getExecutedDrivingSeconds() { return executedDrivingSeconds == null ? 0L : executedDrivingSeconds; }
     public void setExecutedDrivingSeconds(Long executedDrivingSeconds) {
         long value = requireNonNegative(executedDrivingSeconds, "executedDrivingSeconds");
-        if (drivingSeconds != null && value > drivingSeconds) {
-            throw new IllegalArgumentException("executedDrivingSeconds cannot exceed plannedDrivingSeconds");
-        }
         this.executedDrivingSeconds = value;
     }
 
@@ -218,6 +244,30 @@ public class AssignmentLeg {
     public Double getCurrentLoadTonnes() { return currentLoadTonnes == null ? 0.0 : currentLoadTonnes; }
     public void setCurrentLoadTonnes(Double currentLoadTonnes) {
         this.currentLoadTonnes = requireNonNegativeFinite(currentLoadTonnes, "currentLoadTonnes");
+    }
+
+    // Phase 8：能耗和排放累计值执行与实际距离一致的非负有限值约束。
+    public Double getExecutedEnergyLiters() { return executedEnergyLiters == null ? 0.0 : executedEnergyLiters; }
+    public void setExecutedEnergyLiters(Double executedEnergyLiters) {
+        this.executedEnergyLiters = requireNonNegativeFinite(executedEnergyLiters, "executedEnergyLiters");
+    }
+    public Double getExecutedEmissionKg() { return executedEmissionKg == null ? 0.0 : executedEmissionKg; }
+    public void setExecutedEmissionKg(Double executedEmissionKg) {
+        this.executedEmissionKg = requireNonNegativeFinite(executedEmissionKg, "executedEmissionKg");
+    }
+    public String getEmissionModelId() { return emissionModelId; }
+    public void setEmissionModelId(String emissionModelId) {
+        this.emissionModelId = normalizeOptionalCode(emissionModelId);
+    }
+    public String getVehicleEmissionClassCode() { return vehicleEmissionClassCode; }
+    public void setVehicleEmissionClassCode(String vehicleEmissionClassCode) {
+        this.vehicleEmissionClassCode = normalizeOptionalCode(vehicleEmissionClassCode);
+    }
+    public EnergyFactStatus getEnergyFactStatus() {
+        return energyFactStatus == null ? EnergyFactStatus.PENDING : energyFactStatus;
+    }
+    public void setEnergyFactStatus(EnergyFactStatus energyFactStatus) {
+        this.energyFactStatus = energyFactStatus == null ? EnergyFactStatus.PENDING : energyFactStatus;
     }
 
     // Phase 2 修复：version 只由 JPA 乐观锁维护；只读暴露真实值，新建未持久化实体返回 null。
@@ -298,6 +348,13 @@ public class AssignmentLeg {
         double executedMeters = requireNonNegativeFinite(getExecutedDistanceMeters(), "executedDistanceMeters");
         long executedSeconds = requireNonNegative(getExecutedDrivingSeconds(), "executedDrivingSeconds");
         requireNonNegativeFinite(getCurrentLoadTonnes(), "currentLoadTonnes");
+        // Phase 8：持久化层只保证数值形态；历史完整性由 energyFactStatus 和评价计算器判定。
+        requireNonNegativeFinite(getExecutedEnergyLiters(), "executedEnergyLiters");
+        requireNonNegativeFinite(getExecutedEmissionKg(), "executedEmissionKg");
+        if (getEnergyFactStatus() == EnergyFactStatus.VALID
+                && (emissionModelId == null || vehicleEmissionClassCode == null)) {
+            throw new IllegalStateException("VALID energy fact requires model id and vehicle class code");
+        }
         // Phase 3：重复 tick 去重标记不能使用负循环序号。
         if (lastProcessedLoopIndex != null && lastProcessedLoopIndex < 0) {
             throw new IllegalStateException("lastProcessedLoopIndex must be non-negative");
@@ -306,9 +363,7 @@ public class AssignmentLeg {
         if (distanceMeters != null && executedMeters > distanceMeters + 1.0e-6) {
             throw new IllegalStateException("executedDistanceMeters cannot exceed plannedDistanceMeters");
         }
-        if (drivingSeconds != null && executedSeconds > drivingSeconds) {
-            throw new IllegalStateException("executedDrivingSeconds cannot exceed plannedDrivingSeconds");
-        }
+        // Phase 7D：不再比较实际秒数与基准计划秒数；拥堵或天气可使实际累计时间合法超出计划。
         if (startedSimTime != null && completedSimTime != null && completedSimTime.isBefore(startedSimTime)) {
             throw new IllegalStateException("completedSimTime cannot be before startedSimTime");
         }
@@ -325,8 +380,9 @@ public class AssignmentLeg {
             if (distanceMeters != null && Math.abs(executedMeters - distanceMeters) > 1.0e-6) {
                 throw new IllegalStateException("COMPLETED leg must end at plannedDistanceMeters");
             }
-            if (drivingSeconds != null && executedSeconds != drivingSeconds) {
-                throw new IllegalStateException("COMPLETED leg must end at plannedDrivingSeconds");
+            if (distanceMeters != null && distanceMeters > 0.0 && executedSeconds == 0L) {
+                // Phase 7D：正距离完成路段至少要消费一个完整仿真秒，继续拒绝零耗时瞬移。
+                throw new IllegalStateException("COMPLETED positive-distance leg requires executed driving time");
             }
         }
     }
@@ -339,6 +395,10 @@ public class AssignmentLeg {
         if (executedDrivingSeconds == null) executedDrivingSeconds = 0L;
         if (progressStatus == null) progressStatus = ProgressStatus.PENDING;
         if (currentLoadTonnes == null) currentLoadTonnes = 0.0;
+        // Phase 8：旧表新增列统一补零，但旧运行若已有距离仍会在评价侧识别为历史事实缺口。
+        if (executedEnergyLiters == null) executedEnergyLiters = 0.0;
+        if (executedEmissionKg == null) executedEmissionKg = 0.0;
+        if (energyFactStatus == null) energyFactStatus = EnergyFactStatus.PENDING;
         // Phase 2 修复：不在回调中修改 @Version，否则会破坏 JPA 对新建/已持久化实体的版本判定。
         validateExecutionState();
     }
@@ -359,6 +419,11 @@ public class AssignmentLeg {
             throw new IllegalArgumentException(fieldName + " must be a non-negative finite value: " + value);
         }
         return value;
+    }
+
+    // Phase 8：空白模型/档位标识统一归一为 null，防止空字符串伪装成可追溯版本。
+    private String normalizeOptionalCode(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
     }
 
     // Phase 2：执行秒数字段统一执行非负校验。

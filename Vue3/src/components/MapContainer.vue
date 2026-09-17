@@ -14,6 +14,10 @@
           <ElButton type="primary" text @click="openRuntimeDashboard">
             成本监控
           </ElButton>
+          <!-- Phase 6C：评价快照使用独立主视图，不复用或改写旧成本监控。 -->
+          <ElButton type="primary" text @click="openEvaluationDashboard">
+            实时评价
+          </ElButton>
         </div>
       </div>
     </ElHeader>
@@ -336,6 +340,12 @@
       </transition>
 
     </ElContainer>
+
+    <!-- Phase 6C：组件仅在评价视图中挂载，离开页面即停止其独立轮询。 -->
+    <EvaluationDashboard
+      v-if="activeMainView === 'evaluationDashboard'"
+      @back="returnToMapView"
+    />
 
     <!-- 成本趋势图对话框 -->
     <ElDialog
@@ -954,6 +964,8 @@ import { useVehicleArrivalMonitor } from '@/composables/useVehicleArrivalMonitor
 import { poiManagerApi } from "../api/poiManagerApi";
 import { simulationController} from "@/api/simulationController";
 import request from "../utils/request";
+// Phase 6C：新增独立评价视图，不向地图动画管理器注入任何评价状态。
+import EvaluationDashboard from './EvaluationDashboard.vue';
 import AMapLoader from "@amap/amap-jsapi-loader";
 import factoryIcon from '../../public/icons/factory.png';
 import warehouseIcon from '../../public/icons/warehouse.png';
@@ -2971,6 +2983,13 @@ const openRuntimeDashboard = async () => {
   } else {
     updateRuntimeDashboardCharts();
   }
+};
+
+// Phase 6C：只切换展示容器；仿真循环、前端倍速和车辆连续动画保持原逻辑运行。
+const openEvaluationDashboard = () => {
+  activeMainView.value = 'evaluationDashboard';
+  isMonitorPanelVisible.value = false;
+  disposeRuntimeDashboardCharts();
 };
 
 const returnToMapView = async () => {

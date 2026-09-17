@@ -32,6 +32,8 @@ import org.example.roadsimulation.entity.Route;
 import org.example.roadsimulation.entity.Shipment;
 import org.example.roadsimulation.entity.ShipmentItem;
 import org.example.roadsimulation.entity.Vehicle;
+import org.example.roadsimulation.evaluation.EvaluationLoopExecutionReport;
+import org.example.roadsimulation.evaluation.EvaluationSnapshotService;
 import org.example.roadsimulation.repository.AssignmentLegRepository;
 import org.example.roadsimulation.repository.AssignmentNodeRepository;
 import org.example.roadsimulation.repository.AssignmentRepository;
@@ -111,6 +113,8 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
     private final StateUpdateService stateUpdateService;
     // Phase 4：实验循环与普通循环共用后端权威进度及生命周期规则，保证策略评价口径一致。
     private final TransportProgressService transportProgressService;
+    // Phase 6B：ORIGINAL 与 HEURISTIC 各自拥有独立评价运行及 latest 快照。
+    private final EvaluationSnapshotService evaluationSnapshotService;
     private final GetCostService getCostService;
     private final CostBaselineNormalizationService costBaselineNormalizationService;
     private final GaodeRoutePlanningQueueService routePlanningQueueService;
@@ -146,6 +150,7 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
             SimulationDispatchRouter simulationDispatchRouter,
             StateUpdateService stateUpdateService,
             TransportProgressService transportProgressService,
+            EvaluationSnapshotService evaluationSnapshotService,
             GetCostService getCostService,
             CostBaselineNormalizationService costBaselineNormalizationService,
             GaodeRoutePlanningQueueService routePlanningQueueService,
@@ -174,6 +179,8 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
         this.stateUpdateService = stateUpdateService;
         // Phase 3：构造器强制注入，避免实验运行缺失路段执行数据却仍生成成本快照。
         this.transportProgressService = transportProgressService;
+        // Phase 6B：实验循环必须与普通循环使用同一个快照服务和指标口径。
+        this.evaluationSnapshotService = evaluationSnapshotService;
         this.getCostService = getCostService;
         this.costBaselineNormalizationService = costBaselineNormalizationService;
         this.routePlanningQueueService = routePlanningQueueService;
@@ -531,7 +538,7 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
         stateUpdateService.tick(simulationTick);
 
         // Phase 4：实验循环与普通主循环共用同一后端权威路段/生命周期。
-        advanceTransportProgressSafely(simulationTick);
+        EvaluationLoopExecutionReport executionReport = advanceTransportProgressSafely(simulationTick);
 
         int completed = countCompletedActiveItems();
         int total = activeStrategyShipmentItemIds.size();
@@ -550,6 +557,9 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
             experimentRunRepository.save(run);
             strategyRunRepository.save(strategyRun);
         });
+
+        // Phase 6B：实验本轮业务与运行元数据落定后、策略切换/清理和 loop++ 之前只生成一个快照。
+        evaluationSnapshotService.captureCompletedTick(simulationTick, executionReport);
 
         if (isCurrentStrategyComplete(completed, total)) {
             finalizeStrategy(strategyRun, StrategyRunStatus.COMPLETED);
@@ -597,6 +607,9 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
         activeStrategyShipmentItemIds = List.copyOf(itemIds);
         visualArrivedAssignmentIds.clear();
 
+        // Phase 6B：每个策略运行独立计量；切换策略时 revision 从 1 重新开始且 latest 清空。
+        evaluationSnapshotService.beginComparisonRun(run.getId(), strategyRun.getId());
+
         run.setCurrentStrategy(strategy.name());
         run.setCurrentLoop(0);
         run.setCompletedItems(0);
@@ -632,6 +645,8 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
         activeStrategyRunId = null;
         activeStrategyShipmentItemIds = List.of();
         visualArrivedAssignmentIds.clear();
+        // Phase 6B：实验结束后关闭活动 run，但保留最后快照；下一次新运行会主动清除陈旧 latest。
+        evaluationSnapshotService.endCurrentRunPreservingLatest();
         simulationModeGuard.clearDispatchComparisonExperimentActive();
     }
 
@@ -673,7 +688,7 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
     /**
      * Phase 4：实验中的后端进度按任务隔离失败，已完成的其他路段仍然保留。
      */
-    private void advanceTransportProgressSafely(SimulationTick tick) {
+    private EvaluationLoopExecutionReport advanceTransportProgressSafely(SimulationTick tick) {
         try {
             List<TransportProgressResult> results = transportProgressService.advanceAllActiveAssignments(tick);
             long completedLegs = results.stream().filter(TransportProgressResult::legCompleted).count();
@@ -685,6 +700,8 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
                         completedLegs
                 );
             }
+            // Phase 6B：实验与普通循环使用相同任务处理计数和 PARTIAL 判定。
+            return EvaluationLoopExecutionReport.fromResults(results);
         } catch (Exception ex) {
             log.error(
                     "[Phase4 Progress Experiment] candidate query failed for this loop. loop={}, reason={}",
@@ -692,6 +709,8 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
                     ex.getMessage(),
                     ex
             );
+            // Phase 6B：候选查询级故障必须进入本策略本轮 FAILED 快照。
+            return EvaluationLoopExecutionReport.candidateQueryFailure();
         }
     }
 

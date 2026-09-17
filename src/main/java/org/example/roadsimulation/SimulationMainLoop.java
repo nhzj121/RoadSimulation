@@ -7,6 +7,8 @@ import org.example.roadsimulation.core.TransportUnits;
 import org.example.roadsimulation.dto.RuntimeCostDTO;
 import org.example.roadsimulation.entity.CostEntity;
 import org.example.roadsimulation.entity.ShipmentItem;
+import org.example.roadsimulation.evaluation.EvaluationLoopExecutionReport;
+import org.example.roadsimulation.evaluation.EvaluationSnapshotService;
 import org.example.roadsimulation.repository.AssignmentRepository;
 import org.example.roadsimulation.repository.ShipmentItemRepository;
 import org.example.roadsimulation.repository.VehicleRepository;
@@ -38,6 +40,8 @@ public class SimulationMainLoop {
     private final StateUpdateService stateUpdateService;
     // Phase 4：路段进度已从 Shadow 切换为后端行驶完成权威。
     private final TransportProgressService transportProgressService;
+    // Phase 6B：主循环在业务推进结束后通过该服务原子发布唯一评价快照。
+    private final EvaluationSnapshotService evaluationSnapshotService;
 
     @Autowired
     private VehicleInitializationService vehicleInitializationService;
@@ -76,12 +80,15 @@ public class SimulationMainLoop {
     SimulationMainLoop(DataInitializer dataInitializer,
                        StateUpdateService stateUpdateService,
                        SimulationContext simulationContext,
-                       TransportProgressService transportProgressService) {
+                       TransportProgressService transportProgressService,
+                       EvaluationSnapshotService evaluationSnapshotService) {
         this.dataInitializer = dataInitializer;
         this.stateUpdateService = stateUpdateService;
         this.simulationContext = simulationContext;
         // Phase 4：构造器强制注入，避免生产运行时静默漏掉权威进度。
         this.transportProgressService = transportProgressService;
+        // Phase 6B：构造器强制注入，避免运行时漏采某个已完成 tick。
+        this.evaluationSnapshotService = evaluationSnapshotService;
     }
 
     /**
@@ -179,11 +186,13 @@ public class SimulationMainLoop {
             }
 
             // Phase 4：先结算到期的装卸动作，再让新激活的行驶路段消费本轮秒预算。
-            advanceTransportProgressSafely(currentTick);
+            EvaluationLoopExecutionReport executionReport = advanceTransportProgressSafely(currentTick);
             if (shouldAbortLoop()) {
                 return;
             }
 
+            // Phase 6B：严格位于状态/路段/生命周期推进之后、loopCount++ 之前；每轮只调用一次。
+            evaluationSnapshotService.captureCompletedTick(currentTick, executionReport);
             simulationContext.incrementLoop();
         } finally {
             lifecycleLock.unlock();
@@ -221,6 +230,8 @@ public class SimulationMainLoop {
     }
 
     public void start() {
+        // Phase 6B：stop/start 是暂停恢复；仅首次启动创建 UUID，不清除已有 revision。
+        evaluationSnapshotService.beginRegularRunIfAbsent();
         simulationContext.finishReset();
         simulationContext.setRunning(true);
         System.out.println("仿真主循环已启动");
@@ -245,6 +256,8 @@ public class SimulationMainLoop {
             System.out.println("请先停止仿真再进行单步执行");
             return;
         }
+        // Phase 6B：未调用 start 的单步执行也必须建立普通评价运行。
+        evaluationSnapshotService.beginRegularRunIfAbsent();
         simulationContext.setRunning(true);
         executeMainLoop();
         simulationContext.setRunning(false);
@@ -259,6 +272,8 @@ public class SimulationMainLoop {
         lifecycleLock.lock();
         try {
             simulationContext.reset();
+            // Phase 6B：显式 reset 清空最新快照和运行上下文；下一次启动从 revision=1 开始。
+            evaluationSnapshotService.reset();
             CostEntity.reset();
             costBaselineNormalizationService.reset();
             System.out.println("仿真已重置");
@@ -285,7 +300,7 @@ public class SimulationMainLoop {
     /**
      * Phase 4：按任务隔离权威进度故障；一辆车的脏数据不能阻塞其他任务和全局 loop。
      */
-    private void advanceTransportProgressSafely(SimulationTick tick) {
+    private EvaluationLoopExecutionReport advanceTransportProgressSafely(SimulationTick tick) {
         try {
             java.util.List<TransportProgressResult> results =
                     transportProgressService.advanceAllActiveAssignments(tick);
@@ -302,11 +317,15 @@ public class SimulationMainLoop {
                         failures
                 );
             }
+            // Phase 6B：把任务级失败数传入同轮快照，正常暂停和幂等结果仍计为已处理。
+            return EvaluationLoopExecutionReport.fromResults(results);
         } catch (Exception ex) {
             System.err.println(
                     "[Phase4 Progress] 候选查询级故障，本轮不推进任何路段: loop="
                             + tick.loopIndex() + ", reason=" + ex.getMessage()
             );
+            // Phase 6B：候选查询失败意味着本轮推进覆盖范围未知，快照整体状态必须为 FAILED。
+            return EvaluationLoopExecutionReport.candidateQueryFailure();
         }
     }
 
