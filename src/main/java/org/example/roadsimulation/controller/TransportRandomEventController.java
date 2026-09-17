@@ -53,6 +53,12 @@ public class TransportRandomEventController {
         return ApiResponse.success(eventService.getActiveEvents().stream().map(RandomEventDTO::from).toList());
     }
 
+    // Body binding happens before trigger(), so its try/catch cannot handle invalid JSON.
+    @ExceptionHandler(org.springframework.http.converter.HttpMessageNotReadableException.class)
+    public ResponseEntity<ApiResponse<Void>> invalidJson() {
+        return ResponseEntity.badRequest().body(ApiResponse.error("请求 JSON 格式或字段类型不正确；分钟数必须为整数"));
+    }
+
     @GetMapping("/history")
     public ApiResponse<List<RandomEventDTO>> history(@RequestParam(defaultValue = "50") int limit) {
         return ApiResponse.success(eventService.getHistory(limit).stream().map(RandomEventDTO::from).toList());

@@ -17,4 +17,8 @@ public class WeatherController {
     @GetMapping("/current") public WeatherCurrentDTO current(){return weather.current();}
     @GetMapping("/runs/{id}") public Map<String,Object> run(@PathVariable String id){return weather.exportRun(id);}
     @ExceptionHandler(IllegalArgumentException.class) public ResponseEntity<Map<String,String>> invalid(IllegalArgumentException e){return ResponseEntity.badRequest().body(Map.of("message",e.getMessage()));}
+    @ExceptionHandler(org.springframework.http.converter.HttpMessageNotReadableException.class)
+    public ResponseEntity<Map<String,String>> invalidJson() {
+        return ResponseEntity.badRequest().body(Map.of("message", "场景 JSON 格式或字段类型不正确；分钟数必须为整数"));
+    }
 }

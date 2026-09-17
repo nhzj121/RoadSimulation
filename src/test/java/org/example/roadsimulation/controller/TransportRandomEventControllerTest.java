@@ -104,7 +104,8 @@ class TransportRandomEventControllerTest {
     }
 
     @Test void realJsonRequestRejectsFractionalAndStringMinuteTokens() throws Exception {
-        var mvc = org.springframework.test.web.servlet.setup.MockMvcBuilders.standaloneSetup(controller).build();
+        var mvc = org.springframework.test.web.servlet.setup.MockMvcBuilders.standaloneSetup(controller)
+                .setControllerAdvice(new org.example.roadsimulation.exception.GlobalExceptionHandler()).build();
         for (String invalidValue : List.of("30.5", "30.0", "\"30\"")) {
             mvc.perform(post("/api/simulation/random-events/trigger")
                             .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
@@ -114,6 +115,17 @@ class TransportRandomEventControllerTest {
                     .andExpect(status().isBadRequest());
         }
         verifyNoInteractions(eventService);
+    }
+
+    @Test void weatherPolicyJsonErrorIs400WithApplicationAdvice() throws Exception {
+        var weather = mock(org.example.roadsimulation.service.WeatherEnvironmentService.class);
+        var mvc = org.springframework.test.web.servlet.setup.MockMvcBuilders.standaloneSetup(new WeatherController(weather))
+                .setControllerAdvice(new org.example.roadsimulation.exception.GlobalExceptionHandler()).build();
+        mvc.perform(post("/api/simulation/weather/scenarios/import")
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"breakdownPolicy\":{\"minorRepairMin\":30.5}}"))
+                .andExpect(status().isBadRequest());
+        verifyNoInteractions(weather);
     }
 
     private TransportRandomEvent activeEvent(Long vehicleId) {

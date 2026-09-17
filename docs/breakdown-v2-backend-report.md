@@ -1,5 +1,15 @@
 # Breakdown v2 backend report
 
+## Live API follow-up (2026-09-17)
+
+Live QA found a gap in the standalone MockMvc setup: malformed minute JSON was rejected
+by the deserializer but the application's generic GlobalExceptionHandler turned the response
+into HTTP 500. Added the actual advice to the request-binding tests; RED reproduced two
+400-versus-500 failures for event triggering and weather policy import. Controller-local
+HttpMessageNotReadableException handlers now return 400 without changing unrelated controllers.
+GREEN: `./mvnw.cmd -Dtest=TransportRandomEventControllerTest,WeatherEnvironmentServiceTest,TransportRandomEventServiceTest,BreakdownDecisionPolicyTest test`
+completed with 31 tests, zero failures/errors/skips on 2026-09-17 11:47. Runtime recheck follows restart.
+
 ## Delivered contract
 
 `POST /api/simulation/random-events/trigger` retains `eventType`, `vehicleId`, and legacy
