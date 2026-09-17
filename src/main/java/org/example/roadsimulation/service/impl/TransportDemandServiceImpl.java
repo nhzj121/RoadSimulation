@@ -1,5 +1,6 @@
 package org.example.roadsimulation.service.impl;
 
+import org.example.roadsimulation.core.SimulationContext;
 import org.example.roadsimulation.entity.Goods;
 import org.example.roadsimulation.entity.POI;
 import org.example.roadsimulation.entity.ProcessingExecutionFlow;
@@ -16,6 +17,7 @@ import org.example.roadsimulation.service.TransportDemandService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -31,17 +33,20 @@ public class TransportDemandServiceImpl implements TransportDemandService {
     private final ShipmentItemRepository shipmentItemRepository;
     private final GoodsRepository goodsRepository;
     private final ProcessingExecutionFlowRepository executionFlowRepository;
+    private final SimulationContext simulationContext;
 
     public TransportDemandServiceImpl(
             ShipmentRepository shipmentRepository,
             ShipmentItemRepository shipmentItemRepository,
             GoodsRepository goodsRepository,
-            ProcessingExecutionFlowRepository executionFlowRepository
+            ProcessingExecutionFlowRepository executionFlowRepository,
+            SimulationContext simulationContext
     ) {
         this.shipmentRepository = shipmentRepository;
         this.shipmentItemRepository = shipmentItemRepository;
         this.goodsRepository = goodsRepository;
         this.executionFlowRepository = executionFlowRepository;
+        this.simulationContext = simulationContext;
     }
 
     @Override
@@ -103,10 +108,13 @@ public class TransportDemandServiceImpl implements TransportDemandService {
                 + "-" + flow.getInputKey()
                 + "-" + UUID.randomUUID().toString().substring(0, 8);
         String safeActor = actor == null || actor.isBlank() ? "production-system" : actor;
+        LocalDateTime createdSimTime = simulationContext.getCurrentSimTime();
 
         Shipment shipment = new Shipment(refNo, origin, destination, weight, 0.0);
         shipment.setCargoType(sku);
         shipment.setStatus(Shipment.ShipmentStatus.CREATED);
+        // 合并修复：生产运输需求与普通需求共享评价口径，创建时间必须来自权威仿真时钟。
+        shipment.setCreatedAt(createdSimTime);
         shipment.setUpdatedBy(safeActor);
         Shipment savedShipment = shipmentRepository.save(shipment);
 
@@ -121,6 +129,7 @@ public class TransportDemandServiceImpl implements TransportDemandService {
         );
         goods.ifPresent(item::setGoods);
         item.setStatus(ShipmentItem.ShipmentItemStatus.NOT_ASSIGNED);
+        item.setCreatedTime(createdSimTime);
         item.setUpdatedBy(safeActor);
         shipmentItemRepository.save(item);
         return savedShipment;
