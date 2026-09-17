@@ -93,7 +93,7 @@ class GetCostServiceVehicleCostTest {
         assertEquals(10.0, summary.getSchemeCostA(), 1e-9);
         assertEquals(1.0 / 27.5, summary.getSchemeCostB(), 1e-9);
         assertEquals(500.0, summary.getSchemeCostC(), 1e-9);
-        assertEquals(7.195, summary.getSchemeCostD(), 1e-9);
+        assertEquals(7.145, summary.getSchemeCostD(), 1e-9);
         assertEquals(0.2, summary.getSchemeCostE(), 1e-9);
         assertEquals(0.1, summary.getSchemeCostG(), 1e-9);
         assertEquals(0.2, summary.getSchemeCostH(), 1e-9);

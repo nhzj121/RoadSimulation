@@ -11,8 +11,7 @@ import java.util.HashSet;
 import java.util.Set;
 
 /**
- * 运单（业务主单）- 方案 A：直接添加加工字段
- * 支持 Y 形加工链（多链合并）
+ * 运单（业务主单）：只表示一次运输需求。
  */
 @Entity
 @Table(
@@ -22,8 +21,6 @@ import java.util.Set;
                 @Index(name = "idx_shipment_origin_poi", columnList = "origin_poi_id"),
                 @Index(name = "idx_shipment_dest_poi", columnList = "dest_poi_id"),
                 @Index(name = "idx_shipment_customer", columnList = "customer_id"),
-                @Index(name = "idx_processing_status", columnList = "processing_status"),
-                @Index(name = "idx_processing_chain", columnList = "processing_chain_id")
         },
         uniqueConstraints = {
                 @UniqueConstraint(name = "uk_shipment_ref_no", columnNames = "ref_no")
@@ -68,16 +65,6 @@ public class Shipment {
         CREATED, PLANNED, PICKED_UP, IN_TRANSIT, DELIVERED, CANCELLED
     }
 
-    /**
-     * 加工状态枚举（加工运单特有）
-     */
-    public enum ProcessingStatus {
-        PENDING,      // 待处理
-        IN_PROCESS,   // 加工中
-        COMPLETED,    // 已完成
-        CANCELLED     // 已取消
-    }
-
     @Enumerated(EnumType.STRING)
     @Column(name = "status", length = 20, nullable = false)
     private ShipmentStatus status = ShipmentStatus.CREATED;
@@ -109,53 +96,6 @@ public class Shipment {
 
     @Column(name = "updated_at")
     private LocalDateTime updatedAt = LocalDateTime.now();
-
-    // ==================== 加工链特有字段（方案 A）====================
-
-    @Column(name = "is_processing_shipment")
-    private Boolean processingShipment = false;
-
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "processing_chain_id")
-    private ProcessingChain processingChain;
-
-    @Column(name = "chain_code", length = 50)
-    private String chainCode;
-
-    @Column(name = "chain_name", length = 100)
-    private String chainName;
-
-    @Column(name = "expected_yield_rate")
-    private Double expectedYieldRate;
-
-    @Column(name = "expected_output_weight")
-    private Double expectedOutputWeight;
-
-    @Column(name = "actual_output_weight")
-    private Double actualOutputWeight;
-
-    @Enumerated(EnumType.STRING)
-    @Column(name = "processing_status", length = 20)
-    private ProcessingStatus processingStatus = ProcessingStatus.PENDING;
-
-    @Column(name = "processing_start_time")
-    private LocalDateTime processingStartTime;
-
-    @Column(name = "processing_expected_finish_time")
-    private LocalDateTime processingExpectedFinishTime;
-
-    @Column(name = "processing_actual_finish_time")
-    private LocalDateTime processingActualFinishTime;
-
-    /**
-     * 上游运单 IDs（用于 Y 形加工链合并）
-     * 例如：运单 C 的 upstreamShipmentIds = [A.id, B.id]
-     */
-    @ElementCollection
-    @CollectionTable(name = "shipment_upstream_relations",
-                     joinColumns = @JoinColumn(name = "shipment_id"))
-    @Column(name = "upstream_shipment_id")
-    private Set<Long> upstreamShipmentIds = new HashSet<>();
 
     // ==================== 与明细的一对多 ====================
 
@@ -353,43 +293,6 @@ public class Shipment {
     public String getUpdatedBy() { return updatedBy; }
     public void setUpdatedBy(String updatedBy) { this.updatedBy = updatedBy; }
 
-    // 加工链特有字段 Getter & Setter
-    public Boolean getProcessingShipment() { return processingShipment; }
-    public void setProcessingShipment(Boolean processingShipment) { this.processingShipment = processingShipment; }
-
-    public ProcessingChain getProcessingChain() { return processingChain; }
-    public void setProcessingChain(ProcessingChain processingChain) { this.processingChain = processingChain; }
-
-    public String getChainCode() { return chainCode; }
-    public void setChainCode(String chainCode) { this.chainCode = chainCode; }
-
-    public String getChainName() { return chainName; }
-    public void setChainName(String chainName) { this.chainName = chainName; }
-
-    public Double getExpectedYieldRate() { return expectedYieldRate; }
-    public void setExpectedYieldRate(Double expectedYieldRate) { this.expectedYieldRate = expectedYieldRate; }
-
-    public Double getExpectedOutputWeight() { return expectedOutputWeight; }
-    public void setExpectedOutputWeight(Double expectedOutputWeight) { this.expectedOutputWeight = expectedOutputWeight; }
-
-    public Double getActualOutputWeight() { return actualOutputWeight; }
-    public void setActualOutputWeight(Double actualOutputWeight) { this.actualOutputWeight = actualOutputWeight; }
-
-    public ProcessingStatus getProcessingStatus() { return processingStatus; }
-    public void setProcessingStatus(ProcessingStatus processingStatus) { this.processingStatus = processingStatus; }
-
-    public LocalDateTime getProcessingStartTime() { return processingStartTime; }
-    public void setProcessingStartTime(LocalDateTime processingStartTime) { this.processingStartTime = processingStartTime; }
-
-    public LocalDateTime getProcessingExpectedFinishTime() { return processingExpectedFinishTime; }
-    public void setProcessingExpectedFinishTime(LocalDateTime processingExpectedFinishTime) { this.processingExpectedFinishTime = processingExpectedFinishTime; }
-
-    public LocalDateTime getProcessingActualFinishTime() { return processingActualFinishTime; }
-    public void setProcessingActualFinishTime(LocalDateTime processingActualFinishTime) { this.processingActualFinishTime = processingActualFinishTime; }
-
-    public Set<Long> getUpstreamShipmentIds() { return upstreamShipmentIds; }
-    public void setUpstreamShipmentIds(Set<Long> upstreamShipmentIds) { this.upstreamShipmentIds = upstreamShipmentIds; }
-
     public Long getLoadingWaitTime() { return loadingWaitTime; }
     public void setLoadingWaitTime(Long loadingWaitTime) { this.loadingWaitTime = loadingWaitTime; }
 
@@ -420,21 +323,6 @@ public class Shipment {
     public Long getWaitingAssignmentSeconds() { return waitingAssignmentSeconds; }
     public void setWaitingAssignmentSeconds(Long waitingAssignmentSeconds) { this.waitingAssignmentSeconds = waitingAssignmentSeconds; }
 
-    /**
-     * 添加上游运单 ID
-     */
-    public void addUpstreamShipmentId(Long shipmentId) {
-        if (shipmentId != null) {
-            upstreamShipmentIds.add(shipmentId);
-        }
-    }
-
-    /**
-     * 判断是否是合并运单（Y 形的下游运单）
-     */
-    public boolean isMergeShipment() {
-        return upstreamShipmentIds != null && !upstreamShipmentIds.isEmpty();
-    }
     @PreUpdate
     public void touchUpdateTime() {
         this.updatedAt = LocalDateTime.now();
@@ -446,8 +334,6 @@ public class Shipment {
                 "id=" + id +
                 ", refNo='" + refNo + '\'' +
                 ", status=" + status +
-                ", processingShipment=" + processingShipment +
-                ", processingStatus=" + processingStatus +
                 ", customer=" + (customer != null ? customer.getId() : "null") +
                 ", originPOI=" + (originPOI != null ? originPOI.getId() : "null") +
                 ", destPOI=" + (destPOI != null ? destPOI.getId() : "null") +

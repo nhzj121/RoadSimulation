@@ -46,7 +46,7 @@ export function useVehicleArrivalMonitor(config: MonitoringConfig = {}) {
 
     // 状态
     const isMonitoring = ref(false);
-    const monitoringTimer = ref<NodeJS.Timeout | null>(null);
+    const monitoringTimer = ref<number | null>(null);
     const arrivalRecords = ref<ArrivalRecord[]>([]);
 
     // 清理过期记录
@@ -63,7 +63,7 @@ export function useVehicleArrivalMonitor(config: MonitoringConfig = {}) {
 
         cleanupExpiredRecords();
         return arrivalRecords.value.some(
-            record => record.vehicleId === vehicleId && record.oiId === poiId
+            record => record.vehicleId === vehicleId && record.poiId === poiId
         );
     };
 

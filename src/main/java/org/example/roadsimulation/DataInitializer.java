@@ -1245,9 +1245,7 @@ public class DataInitializer implements CommandLineRunner {
         List<ShipmentItem> items = createStartupShipmentItems(
                 shipment,
                 plan.goods,
-                quantity,
-                plan.toStage,
-                managedEndPOI
+                quantity
         );
         if (items.isEmpty()) {
             throw new RuntimeException("No startup shipment items were created");
@@ -1272,9 +1270,7 @@ public class DataInitializer implements CommandLineRunner {
     private List<ShipmentItem> createStartupShipmentItems(
             Shipment shipment,
             Goods goods,
-            int quantity,
-            ProcessingStage targetStage,
-            POI processingPOI
+            int quantity
     ) {
         List<CargoChunk> chunks = createStartupCargoChunks(goods, quantity);
         List<ShipmentItem> items = new ArrayList<>();
@@ -1291,14 +1287,14 @@ public class DataInitializer implements CommandLineRunner {
                         chunk.getQuantity()
                 );
                 for (ShipmentItem fragment : fragments) {
-                    applyStartupProcessingFields(fragment, targetStage, processingPOI);
+                    applyStartupTransportFields(fragment);
                     items.add(fragment);
                 }
                 continue;
             }
 
             ShipmentItem item = shipmentItemService.initalizeShipmentItem(shipment, goods, chunk.getQuantity());
-            applyStartupProcessingFields(item, targetStage, processingPOI);
+            applyStartupTransportFields(item);
             items.add(item);
         }
 
@@ -1321,20 +1317,10 @@ public class DataInitializer implements CommandLineRunner {
         return Collections.singletonList(new CargoChunk(quantity, null, null, null, 0.0, true));
     }
 
-    private void applyStartupProcessingFields(
-            ShipmentItem item,
-            ProcessingStage targetStage,
-            POI processingPOI
-    ) {
+    private void applyStartupTransportFields(ShipmentItem item) {
         markShipmentItemCreatedAtSimTime(item);
         item.setStatus(ShipmentItem.ShipmentItemStatus.NOT_ASSIGNED);
         item.setAssignment(null);
-        item.setStage(targetStage);
-        item.setStageOrder(targetStage != null ? targetStage.getStageOrder() : null);
-        item.setStageName(targetStage != null ? targetStage.getStageName() : null);
-        item.setProcessingPOI(processingPOI);
-        item.setProcessingStatus(ShipmentItem.ProcessingItemStatus.WAITING);
-        item.setProgressPercent(0);
         shipmentItemRepository.save(item);
     }
 

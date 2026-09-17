@@ -9,7 +9,7 @@ import org.example.roadsimulation.core.TransportUnits;
 import java.time.LocalDateTime;
 
 /**
- * 运单明细 - 方案 A：直接添加加工字段
+ * 运单明细：只表示运输需求中的货物项。
  */
 @Entity
 @Table(
@@ -17,8 +17,6 @@ import java.time.LocalDateTime;
         indexes = {
                 @Index(name = "idx_item_shipment", columnList = "shipment_id"),
                 @Index(name = "idx_item_goods", columnList = "goods_id"),
-                @Index(name = "idx_item_stage", columnList = "stage_id"),
-                @Index(name = "idx_item_processing_status", columnList = "processing_status")
         }
 )
 public class ShipmentItem {
@@ -40,46 +38,6 @@ public class ShipmentItem {
     @JoinColumn(name = "assignment_id")
     private Assignment assignment;
 
-    // ==================== 加工特有字段（方案 A）====================
-    
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "stage_id")
-    private ProcessingStage stage;  // 关联的工序
-    
-    @Column(name = "stage_order")
-    private Integer stageOrder;  // 工序顺序
-    
-    @Column(name = "stage_name", length = 100)
-    private String stageName;  // 工序名称
-    
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "processing_poi_id")
-    private POI processingPOI;  // 加工点 POI
-    
-    @Enumerated(EnumType.STRING)
-    @Column(name = "processing_status", length = 20)
-    private ProcessingItemStatus processingStatus = ProcessingItemStatus.WAITING;  // 加工状态
-    
-    @Column(name = "processed_weight")
-    private Double processedWeight;  // 已加工重量
-    
-    @Column(name = "progress_percent")
-    private Integer progressPercent = 0;  // 加工进度 0-100
-    
-    @Column(name = "processing_start_time")
-    private LocalDateTime processingStartTime;  // 开始加工时间
-    
-    @Column(name = "processing_end_time")
-    private LocalDateTime processingEndTime;  // 完成加工时间
-    
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "inbound_assignment_id")
-    private Assignment inboundAssignment;  // 原料运入任务
-    
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "outbound_assignment_id")
-    private Assignment outboundAssignment;  // 成品运出任务
-
     // ==================== 原有字段 ====================
 
     @NotNull
@@ -92,19 +50,6 @@ public class ShipmentItem {
 
     public enum ShipmentItemStatus {
         NOT_ASSIGNED, ASSIGNED, LOADED, IN_TRANSIT, DELIVERED, CANCELLED
-    }
-
-    /**
-     * 加工物料项状态
-     */
-    public enum ProcessingItemStatus {
-        WAITING,      // 等待加工
-        READY,        // 已就绪
-        PROCESSING,   // 加工中
-        COMPLETED,    // 已完成
-        BLOCKED,      // 阻塞
-        FAILED,       // 失败
-        CANCELLED     // 已取消
     }
 
     @Enumerated(EnumType.STRING)
@@ -195,40 +140,6 @@ public class ShipmentItem {
         }
     }
 
-    // 加工特有字段 Getter & Setter
-    public ProcessingStage getStage() { return stage; }
-    public void setStage(ProcessingStage stage) { this.stage = stage; }
-
-    public Integer getStageOrder() { return stageOrder; }
-    public void setStageOrder(Integer stageOrder) { this.stageOrder = stageOrder; }
-
-    public String getStageName() { return stageName; }
-    public void setStageName(String stageName) { this.stageName = stageName; }
-
-    public POI getProcessingPOI() { return processingPOI; }
-    public void setProcessingPOI(POI processingPOI) { this.processingPOI = processingPOI; }
-
-    public ProcessingItemStatus getProcessingStatus() { return processingStatus; }
-    public void setProcessingStatus(ProcessingItemStatus processingStatus) { this.processingStatus = processingStatus; }
-
-    public Double getProcessedWeight() { return processedWeight; }
-    public void setProcessedWeight(Double processedWeight) { this.processedWeight = processedWeight; }
-
-    public Integer getProgressPercent() { return progressPercent; }
-    public void setProgressPercent(Integer progressPercent) { this.progressPercent = progressPercent; }
-
-    public LocalDateTime getProcessingStartTime() { return processingStartTime; }
-    public void setProcessingStartTime(LocalDateTime processingStartTime) { this.processingStartTime = processingStartTime; }
-
-    public LocalDateTime getProcessingEndTime() { return processingEndTime; }
-    public void setProcessingEndTime(LocalDateTime processingEndTime) { this.processingEndTime = processingEndTime; }
-
-    public Assignment getInboundAssignment() { return inboundAssignment; }
-    public void setInboundAssignment(Assignment inboundAssignment) { this.inboundAssignment = inboundAssignment; }
-
-    public Assignment getOutboundAssignment() { return outboundAssignment; }
-    public void setOutboundAssignment(Assignment outboundAssignment) { this.outboundAssignment = outboundAssignment; }
-
     // 原有字段 Getter & Setter
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
@@ -288,10 +199,8 @@ public class ShipmentItem {
         return "ShipmentItem{" +
                 "id=" + id +
                 ", name='" + name + '\'' +
-                ", stageName='" + stageName + '\'' +
-                ", processingStatus=" + processingStatus +
-                ", progress=" + progressPercent +
-                '%'+
+                ", sku='" + sku + '\'' +
+                ", status=" + status +
                 '}';
     }
 }

@@ -10,10 +10,12 @@ import org.example.roadsimulation.entity.POI;
 import org.example.roadsimulation.entity.Shipment;
 import org.example.roadsimulation.entity.ShipmentItem;
 import org.example.roadsimulation.entity.Vehicle;
+import org.example.roadsimulation.event.ShipmentDeliveredEvent;
 import org.example.roadsimulation.repository.AssignmentRepository;
 import org.example.roadsimulation.repository.ShipmentItemRepository;
 import org.example.roadsimulation.repository.ShipmentRepository;
 import org.example.roadsimulation.repository.VehicleRepository;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
@@ -42,6 +44,7 @@ public class TransportLifecycleService {
     private final VehicleRepository vehicleRepository;
     // Phase 1：生产环境中缺省业务时间必须回到唯一的 SimulationContext，而不是系统墙上时间。
     private final SimulationContext simulationContext;
+    private final ApplicationEventPublisher eventPublisher;
     // Phase 7B：观察器只复制已完成的生命周期事实，绝不参与状态选择或路段推进。
     private final NodeServiceObservationPublisher nodeServiceObservationPublisher;
 
@@ -72,7 +75,8 @@ public class TransportLifecycleService {
             ShipmentItemRepository shipmentItemRepository,
             AssignmentRepository assignmentRepository,
             VehicleRepository vehicleRepository,
-            SimulationContext simulationContext
+            SimulationContext simulationContext,
+            ApplicationEventPublisher eventPublisher
     ) {
         this(
                 shipmentRepository,
@@ -101,6 +105,7 @@ public class TransportLifecycleService {
         this.assignmentRepository = assignmentRepository;
         this.vehicleRepository = vehicleRepository;
         this.simulationContext = simulationContext;
+        this.eventPublisher = eventPublisher;
         this.nodeServiceObservationPublisher = nodeServiceObservationPublisher;
     }
 
@@ -518,6 +523,15 @@ public class TransportLifecycleService {
         }
 
         refreshShipments(touchedShipments);
+
+        if (eventPublisher != null && !touchedShipments.isEmpty()) {
+            eventPublisher.publishEvent(new ShipmentDeliveredEvent(
+                    touchedShipments.stream()
+                            .map(Shipment::getId)
+                            .filter(Objects::nonNull)
+                            .toList(),
+                    now
+            ));
         if (!hasNodes(assignment) && nodeServiceObservationPublisher != null) {
             // Phase 7B：普通任务卸货没有节点对象，由唯一交付完成边界闭合 UNLOAD 服务事件。
             nodeServiceObservationPublisher.serviceCompleted(

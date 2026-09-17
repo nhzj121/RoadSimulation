@@ -15,7 +15,7 @@ import org.example.roadsimulation.repository.VehicleRepository;
 import org.example.roadsimulation.service.CostBaselineNormalizationService;
 import org.example.roadsimulation.service.GetCostService;
 import org.example.roadsimulation.service.POIShipmentManager;
-import org.example.roadsimulation.service.ProcessingChainServiceV2;
+import org.example.roadsimulation.service.ProductionExecutionService;
 import org.example.roadsimulation.service.TransportProgressResult;
 import org.example.roadsimulation.service.TransportProgressService;
 import org.example.roadsimulation.service.VehicleInitializationService;
@@ -46,8 +46,8 @@ public class SimulationMainLoop {
     @Autowired
     private VehicleInitializationService vehicleInitializationService;
 
-    @Autowired(required = false)
-    private ProcessingChainServiceV2 processingChainServiceV2;
+    @Autowired
+    private ProductionExecutionService productionExecutionService;
 
     @Autowired
     private SimulationContext simulationContext;
@@ -167,16 +167,16 @@ public class SimulationMainLoop {
                 }
             }
 
-            // 加工链进度更新
-            if (processingChainServiceV2 != null) {
-                if (shouldAbortLoop()) {
-                    return;
-                }
-                // Phase 1：加工链与运输链使用同一个后端仿真 tick，不再各自硬编码 30。
-                processingChainServiceV2.updateProcessingProgress(simNow, simulationContext.getMinutesPerLoop());
-                if (shouldAbortLoop()) {
-                    return;
-                }
+            // 需求驱动生产域：ProductionBatch 中的工序执行与运输链使用同一个仿真 tick。
+            if (shouldAbortLoop()) {
+                return;
+            }
+            productionExecutionService.updateProgress(
+                    simNow,
+                    simulationContext.getMinutesPerLoop()
+            );
+            if (shouldAbortLoop()) {
+                return;
             }
 
             // Phase 1：状态更新接收本轮唯一 SimulationTick；秒预算将在后续进度阶段真正消费。

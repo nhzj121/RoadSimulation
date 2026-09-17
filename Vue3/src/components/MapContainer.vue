@@ -7,6 +7,7 @@
         </div>
         <div class="navbar-menu">
           <ElButton text @click="goToPOIManager">POI点管理</ElButton>
+          <ElButton text @click="goToProcessingChainManager">加工链管理</ElButton>
           <ElButton text @click="openMonitorPanel('vehicles')">车辆监控</ElButton>
           <ElButton text @click="openMonitorPanel('shipments')">运单监控</ElButton>
           <ElButton text @click="openMonitorPanel('assignments')">任务监控</ElButton>
@@ -959,6 +960,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted, markRaw , nextTick} from "vue";
 import { useRouter } from 'vue-router';
+import { useVehicleArrivalMonitor } from '@/composables/useVehicleArrivalMonitor';
 import { poiManagerApi } from "../api/poiManagerApi";
 import { simulationController} from "@/api/simulationController";
 import request from "../utils/request";
@@ -1008,6 +1010,9 @@ const router = useRouter()
 const goToPOIManager = () => {
   router.push('/poi-manager')
 }
+const goToProcessingChainManager = () => {
+  router.push('/processing-chains')
+}
 const gotoMain = () => {
   router.push('./')
 }
@@ -1039,7 +1044,6 @@ const handleVehicleClick = (vehicle) => {
   openVehicleFloatingInfo(vehicle, { source: 'panel' });
 };
 
-import { useVehicleArrivalMonitor } from '@/composables/useVehicleArrivalMonitor';
 
 // 在您的组件逻辑中添加以下内容
 // 假设您已经有以下响应式数据
