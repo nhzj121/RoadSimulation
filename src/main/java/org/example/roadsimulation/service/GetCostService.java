@@ -855,6 +855,7 @@ public class GetCostService {
             case ORDER_DRIVING, TRANSPORT_DRIVING -> 1.0;
             case LOADING, UNLOADING, WAITING, BREAKDOWN -> 0.5;
             case IDLE -> 0.0;
+            default -> 0.0;
         };
     }
 

@@ -38,7 +38,7 @@ class WeatherEnvironmentServiceTest {
         var exported = service.load(scene.getId());
         assertEquals(scene.getTimeSlices(), exported.getTimeSlices());
         service.start(1L, "experiment-A");
-        assertEquals("breakdown-v2", service.breakdownPolicy().version());
+        assertEquals("breakdown-v3", service.breakdownPolicy().version());
         String firstRun = service.runId();
         assertTrue(service.current().locked()); assertTrue(config.isAutoEnabled()); assertEquals(314159, config.getSeed());
         service.start(1L, "experiment-A"); assertEquals(firstRun, service.runId());
@@ -72,9 +72,9 @@ class WeatherEnvironmentServiceTest {
         assertEquals(x.getTimeSlices(),WeatherEnvironmentService.preset(b).getTimeSlices());
         assertEquals(12,x.getTimeSlices().size());assertTrue(x.isAutoEvents());
         WeatherEnvironmentService.validate(x);
-        assertEquals("breakdown-v2", x.getBreakdownPolicy().version());
+        assertEquals("breakdown-v3", x.getBreakdownPolicy().version());
     }
-    @Test void importedLegacySceneStaysLegacyWhilePresetGetsV2Policy() {
+    @Test void importedLegacySceneStaysLegacyWhilePresetGetsV3Policy() {
         var legacy = new WeatherScenarioDTO();
         legacy.setName("legacy");
         legacy.setBreakdownPolicy(null);
@@ -83,8 +83,32 @@ class WeatherEnvironmentServiceTest {
         assertNull(legacy.getBreakdownPolicy());
 
         var fresh = WeatherEnvironmentService.preset(new WeatherScenarioDTO());
-        assertEquals(new WeatherScenarioDTO.BreakdownPolicy("breakdown-v2", .7, 30, 60, 30, 60, 60, 120),
+        assertEquals(new WeatherScenarioDTO.BreakdownPolicy("breakdown-v3", .6, 30, 60, 30, 60, 60, 120,.1,60,90),
                 fresh.getBreakdownPolicy());
+    }
+
+    @Test void replacementAttemptsExportLiveAndRemainInArchivedRun() throws Exception {
+        var scenes=org.mockito.Mockito.mock(org.example.roadsimulation.repository.WeatherScenarioRepository.class);
+        var runs=org.mockito.Mockito.mock(org.example.roadsimulation.repository.WeatherRunRepository.class);
+        var events=org.mockito.Mockito.mock(org.example.roadsimulation.repository.TransportRandomEventRepository.class);
+        var progress=org.mockito.Mockito.mock(org.example.roadsimulation.repository.DrivingProgressRepository.class);
+        var attempts=org.mockito.Mockito.mock(org.example.roadsimulation.repository.VehicleReplacementAttemptRepository.class);
+        var savedRuns=new java.util.HashMap<String,org.example.roadsimulation.entity.WeatherRun>();
+        var scenario=new org.example.roadsimulation.entity.WeatherScenario();scenario.setId(1L);
+        var dto=WeatherEnvironmentService.preset(new WeatherScenarioDTO());dto.setId(1L);
+        scenario.setDefinitionJson(new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules().writeValueAsString(dto));
+        org.mockito.Mockito.when(scenes.findById(1L)).thenReturn(java.util.Optional.of(scenario));
+        org.mockito.Mockito.when(runs.save(org.mockito.ArgumentMatchers.any())).thenAnswer(i->{var x=(org.example.roadsimulation.entity.WeatherRun)i.getArgument(0);savedRuns.put(x.getId(),x);return x;});
+        org.mockito.Mockito.when(runs.findById(org.mockito.ArgumentMatchers.anyString())).thenAnswer(i->java.util.Optional.ofNullable(savedRuns.get(i.getArgument(0))));
+        var attempt=new org.example.roadsimulation.entity.VehicleReplacementAttempt();attempt.setId(9L);
+        org.mockito.Mockito.when(attempts.findByRunId(org.mockito.ArgumentMatchers.anyString())).thenReturn(List.of(attempt));
+        var service=new WeatherEnvironmentService(scenes,runs,new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules(),
+                new org.example.roadsimulation.core.SimulationContext(),new org.example.roadsimulation.config.RandomEventProperties(),events,progress);
+        org.springframework.test.util.ReflectionTestUtils.setField(service,"replacementAttempts",attempts);
+        service.start(1L,null);String run=service.runId();
+        assertEquals(List.of(attempt),service.exportRun(run).get("replacementAttempts"));
+        service.archiveAndReset(java.time.LocalDateTime.of(2026,1,1,0,0));
+        assertTrue(service.exportRun(run).get("replacementAttempts").toString().contains("9"));
     }
     @Test void scenarioJsonRejectsNonIntegerPolicyMinuteTokens() {
         var mapper = new com.fasterxml.jackson.databind.ObjectMapper();

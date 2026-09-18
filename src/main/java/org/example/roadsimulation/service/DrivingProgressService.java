@@ -60,15 +60,15 @@ public class DrivingProgressService {
             LocalDateTime from=p.getLastSettledTime();
             List<TransportRandomEvent> impacts=events.findByVehicleId(vehicle.getId()).stream()
                 .filter(e->Objects.equals(e.getRunId(), weather.runId()) && Objects.equals(e.getAssignmentId(), a.getId()))
-                .filter(e->e.getStartTime().isBefore(now)&&e.getPlannedEndTime().isAfter(from)).toList();
+                .filter(e->e.getStartTime().isBefore(now)&&(e.getPlannedEndTime()==null||e.getPlannedEndTime().isAfter(from))).toList();
             TreeSet<LocalDateTime> points=new TreeSet<>();points.add(from);points.add(now);points.addAll(weather.boundaries(from,now));
             for(var e:impacts){if(e.getStartTime().isAfter(from)&&e.getStartTime().isBefore(now))points.add(e.getStartTime());
-                if(e.getPlannedEndTime().isAfter(from)&&e.getPlannedEndTime().isBefore(now))points.add(e.getPlannedEndTime());}
+                if(e.getPlannedEndTime()!=null&&e.getPlannedEndTime().isAfter(from)&&e.getPlannedEndTime().isBefore(now))points.add(e.getPlannedEndTime());}
             List<LocalDateTime> ordered=new ArrayList<>(points);
             for(int i=0;i<ordered.size()-1 && p.getRemainingWorkSeconds()>0;i++) {
                 LocalDateTime begin=ordered.get(i),end=ordered.get(i+1);
                 double factor=weather.at(begin).speedFactor();
-                for(var e:impacts)if(!begin.isBefore(e.getStartTime()) && begin.isBefore(e.getPlannedEndTime()))factor*=e.getSpeedFactor();
+                for(var e:impacts)if(!begin.isBefore(e.getStartTime()) && (e.getPlannedEndTime()==null||begin.isBefore(e.getPlannedEndTime())))factor*=e.getSpeedFactor();
                 integrate(p,begin,end,factor);
             }
         }
@@ -94,9 +94,23 @@ public class DrivingProgressService {
         return v.getCurrentStatus()!=Vehicle.VehicleStatus.BREAKDOWN && (p==null || p.getRemainingWorkSeconds()<=1e-7);
     }
     @Transactional(readOnly=true) public DrivingProgress latest(Long vehicleId){return repository.findFirstByVehicleIdOrderByPhaseStartDesc(vehicleId).orElse(null);}
+    @Transactional public DrivingProgress transferAndSettle(Long originalVehicleId,Vehicle replacement,Assignment assignment,
+            LocalDateTime readyTime,LocalDateTime simNow){
+        DrivingProgress source=latest(originalVehicleId);
+        if(source==null||replacement==null||assignment==null)return settle(replacement,simNow);
+        String key=weather.runId()+":"+assignment.getId()+":"+replacement.getCurrentStatus()+":"+legIndex(assignment)+":"+readyTime;
+        DrivingProgress copy=new DrivingProgress();copy.setPhaseKey(key);copy.setRunId(source.getRunId());copy.setAssignmentId(source.getAssignmentId());
+        copy.setVehicleId(replacement.getId());copy.setLegIndex(source.getLegIndex());copy.setDrivingStatus(source.getDrivingStatus());
+        copy.setPhaseStart(source.getPhaseStart());copy.setLastSettledTime(readyTime);copy.setInitialWorkSeconds(source.getInitialWorkSeconds());
+        copy.setRemainingWorkSeconds(source.getRemainingWorkSeconds());copy.setAffectedSeconds(source.getAffectedSeconds());
+        copy.setLostWorkSeconds(source.getLostWorkSeconds());copy.setModelCompletedTime(source.getModelCompletedTime());
+        copy.setObservedCompletedTime(source.getObservedCompletedTime());repository.save(copy);
+        return settle(replacement,simNow);
+    }
     public double effectiveFactor(Long vehicleId,LocalDateTime now) {
         double factor=weather.at(now).speedFactor();
-        for(var e:events.findByVehicleId(vehicleId))if(Objects.equals(e.getRunId(), weather.runId()) && !now.isBefore(e.getStartTime())&&now.isBefore(e.getPlannedEndTime()))factor*=e.getSpeedFactor();
+        for(var e:events.findByVehicleId(vehicleId))if(Objects.equals(e.getRunId(), weather.runId()) && !now.isBefore(e.getStartTime())
+                &&(e.getPlannedEndTime()==null||now.isBefore(e.getPlannedEndTime())))factor*=e.getSpeedFactor();
         return factor;
     }
     public LocalDateTime now(){return clock.getCurrentSimTime();}

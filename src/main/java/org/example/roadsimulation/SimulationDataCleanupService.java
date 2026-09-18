@@ -46,6 +46,8 @@ public class SimulationDataCleanupService {
 
     @Autowired
     private TransportRandomEventRepository transportRandomEventRepository;
+    @Autowired
+    private VehicleReplacementAttemptRepository vehicleReplacementAttemptRepository;
 
     @Autowired
     private VehicleRepository vehicleRepository;
@@ -74,6 +76,10 @@ public class SimulationDataCleanupService {
         try {
             // 删除顺序按实际外键依赖从叶子节点向业务主数据回退：
             // transport_random_event -> assignment_leg -> assignment_nodes -> shipment_item -> assignment -> shipment -> enrollment
+            long replacementAttemptCount=vehicleReplacementAttemptRepository.count();
+            vehicleReplacementAttemptRepository.deleteAllInBatch();vehicleReplacementAttemptRepository.flush();
+            System.out.println("Deleted " + replacementAttemptCount + " vehicle_replacement_attempt records");
+            clearPersistenceContext();
             long randomEventCount = transportRandomEventRepository.count();
             transportRandomEventRepository.deleteAllInBatch();
             transportRandomEventRepository.flush();
@@ -287,7 +293,7 @@ public class SimulationDataCleanupService {
             );
         }
 
-        vehicle.transitionToStatus(Vehicle.VehicleStatus.IDLE, LocalDateTime.now(), Duration.ZERO);
+        vehicle.resetToIdle(LocalDateTime.now());
         vehicle.setPreviousStatus(null);
         vehicle.setLoopCount(0);
 

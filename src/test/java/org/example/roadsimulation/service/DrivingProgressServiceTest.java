@@ -67,4 +67,15 @@ class DrivingProgressServiceTest {
         assertEquals(4320,p.getRemainingWorkSeconds(),1e-7);
         assertEquals(6120,p.getLostWorkSeconds(),1e-7);
     }
+    @Test void openEndedReplacementEventIsNullSafeAndFreezesScrappedVehicle() {
+        var repo=mock(DrivingProgressRepository.class);var vehicles=mock(VehicleRepository.class);
+        var events=mock(TransportRandomEventRepository.class);var weather=mock(WeatherEnvironmentService.class);
+        when(weather.runId()).thenReturn("run1");
+        when(weather.at(any())).thenAnswer(i->new WeatherCurrentDTO(null,null,"SUNNY",1,null,false,false,false,i.getArgument(0)));
+        var event=new TransportRandomEvent();event.setRunId("run1");event.setAssignmentId(88L);event.setStartTime(start);
+        event.setPlannedEndTime(null);event.setSpeedFactor(0.0);event.setBreakdownLevel(TransportRandomEvent.BreakdownLevel.REPLACEMENT_REQUIRED);
+        when(events.findByVehicleId(12L)).thenReturn(List.of(event));
+        var service=new DrivingProgressService(repo,vehicles,events,weather,new SimulationContext(),mock(SimulationModeGuard.class));
+        assertEquals(0.0,service.effectiveFactor(12L,start.plusDays(2)));
+    }
 }

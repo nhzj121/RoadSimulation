@@ -21,6 +21,8 @@ public class WeatherEnvironmentService {
     private final RandomEventProperties events;
     private final TransportRandomEventRepository eventRecords;
     private final DrivingProgressRepository progress;
+    @org.springframework.beans.factory.annotation.Autowired(required=false)
+    private VehicleReplacementAttemptRepository replacementAttempts;
     private volatile WeatherRun currentRun;
     private volatile WeatherScenarioDTO currentScenario;
     private Boolean originalAuto;
@@ -44,7 +46,7 @@ public class WeatherEnvironmentService {
         d.setGeneratorVersion("weather-v1");
         d.setAfterTimeline("SUNNY");
         d.setAutoEvents("AUTO".equals(preset));
-        d.setBreakdownPolicy(new WeatherScenarioDTO.BreakdownPolicy("breakdown-v2",.7,30,60,30,60,60,120));
+        d.setBreakdownPolicy(new WeatherScenarioDTO.BreakdownPolicy("breakdown-v3",.6,30,60,30,60,60,120,.1,60,90));
         if (d.getName()==null || d.getName().isBlank()) d.setName(preset);
         switch (preset) {
             case "BASELINE" -> d.getTimeSlices().add(new WeatherScenarioDTO.TimeSlice(0,1440,SUNNY,1));
@@ -177,7 +179,9 @@ public class WeatherEnvironmentService {
     @Transactional public synchronized void archiveAndReset(LocalDateTime now) {
         if(currentRun!=null){
             currentRun.setEndedAt(now);currentRun.setEventHistoryJson(encode(eventRecords.findByRunId(currentRun.getId())));
-            currentRun.setDrivingHistoryJson(encode(progress.findByRunId(currentRun.getId())));runs.save(currentRun);
+            currentRun.setDrivingHistoryJson(encode(progress.findByRunId(currentRun.getId())));
+            if(replacementAttempts!=null)currentRun.setReplacementAttemptHistoryJson(encode(replacementAttempts.findByRunId(currentRun.getId())));
+            runs.save(currentRun);
         }
         currentRun=null;currentScenario=null;
         if(originalAuto!=null){events.setAutoEnabled(originalAuto);originalAuto=null;}
@@ -190,7 +194,10 @@ public class WeatherEnvironmentService {
         WeatherRun run=runs.findById(id).orElseThrow(()->new IllegalArgumentException("Unknown run"));
         Map<String,Object> result=new LinkedHashMap<>();result.put("run",run);result.put("scenario",load(run.getScenarioId()));
         result.put("drivingHistory",run.getEndedAt()==null?progress.findByRunId(id):parse(run.getDrivingHistoryJson()));
-        result.put("events",run.getEndedAt()==null?eventRecords.findByRunId(id):parse(run.getEventHistoryJson()));return result;
+        result.put("events",run.getEndedAt()==null?eventRecords.findByRunId(id):parse(run.getEventHistoryJson()));
+        result.put("replacementAttempts",run.getEndedAt()==null
+                ?(replacementAttempts==null?List.of():replacementAttempts.findByRunId(id))
+                :parse(run.getReplacementAttemptHistoryJson()));return result;
     }
     private Object parse(String s){try{return s==null?List.of():json.readTree(s);}catch(Exception e){throw new IllegalStateException(e);}}
 }

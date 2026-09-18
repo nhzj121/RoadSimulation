@@ -50,7 +50,7 @@ public class TransportRandomEvent {
     @Column(name = "start_time", nullable = false)
     private LocalDateTime startTime;
 
-    @Column(name = "planned_end_time", nullable = false)
+    @Column(name = "planned_end_time")
     private LocalDateTime plannedEndTime;
 
     @Column(name = "resolved_time")
@@ -90,8 +90,18 @@ public class TransportRandomEvent {
     @Column(name="original_leg_index") private Integer originalLegIndex;
     @Column(name="original_driving_phase_key", length=240) private String originalDrivingPhaseKey;
 
-    public enum BreakdownLevel { MINOR, ASSISTANCE_REQUIRED }
-    public enum BreakdownPhase { WAITING_RESCUE, REPAIRING, RECOVERED }
+    @Column(name="replacement_wait_minutes") private Integer replacementWaitMinutes;
+    @Column(name="replacement_vehicle_id") private Long replacementVehicleId;
+    @Column(name="replacement_license_plate",length=50) private String replacementLicensePlate;
+    @Column(name="replacement_selected_time") private LocalDateTime replacementSelectedTime;
+    @Column(name="replacement_ready_time") private LocalDateTime replacementReadyTime;
+    @Column(name="replacement_processed_time") private LocalDateTime replacementProcessedTime;
+    @Column(name="replacement_outcome",length=80) private String replacementOutcome;
+    @Column(name="required_load") private Double requiredLoad;
+    @Column(name="required_volume") private Double requiredVolume;
+
+    public enum BreakdownLevel { MINOR, ASSISTANCE_REQUIRED, REPLACEMENT_REQUIRED }
+    public enum BreakdownPhase { WAITING_RESCUE, REPAIRING, RECOVERED, WAITING_REPLACEMENT, REPLACEMENT_PREPARING, REPLACED }
 
     public enum EventType {
         TRAFFIC_CONGESTION,

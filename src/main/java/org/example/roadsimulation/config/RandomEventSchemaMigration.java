@@ -43,5 +43,14 @@ public class RandomEventSchemaMigration {
             jdbcTemplate.execute("ALTER TABLE transport_random_event DROP FOREIGN KEY `" + constraintName + "`");
             logger.info("Removed legacy random-event foreign key: {}", constraintName);
         }
+        String nullable=jdbcTemplate.queryForObject("""
+                SELECT IS_NULLABLE FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'transport_random_event'
+                  AND COLUMN_NAME = 'planned_end_time'
+                """,String.class);
+        if("NO".equalsIgnoreCase(nullable)){
+            jdbcTemplate.execute("ALTER TABLE transport_random_event MODIFY planned_end_time DATETIME NULL");
+            logger.info("Made transport_random_event.planned_end_time nullable");
+        }
     }
 }

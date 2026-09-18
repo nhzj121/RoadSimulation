@@ -127,6 +127,17 @@ class TransportRandomEventControllerTest {
                 .andExpect(status().isBadRequest());
         verifyNoInteractions(weather);
     }
+    @Test void replacementJsonBindsStrictIntegerWait() throws Exception {
+        when(eventService.triggerManually(TransportRandomEvent.EventType.VEHICLE_BREAKDOWN,12L,null,
+                TransportRandomEvent.BreakdownLevel.REPLACEMENT_REQUIRED,null,null,60,simNow)).thenReturn(activeEvent(12L));
+        var mvc=org.springframework.test.web.servlet.setup.MockMvcBuilders.standaloneSetup(controller).build();
+        mvc.perform(post("/api/simulation/random-events/trigger").contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"eventType\":\"VEHICLE_BREAKDOWN\",\"vehicleId\":12,\"breakdownLevel\":\"REPLACEMENT_REQUIRED\",\"replacementWaitMinutes\":60}"))
+                .andExpect(status().isOk());
+        mvc.perform(post("/api/simulation/random-events/trigger").contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"eventType\":\"VEHICLE_BREAKDOWN\",\"vehicleId\":12,\"breakdownLevel\":\"REPLACEMENT_REQUIRED\",\"replacementWaitMinutes\":60.0}"))
+                .andExpect(status().isBadRequest());
+    }
 
     private TransportRandomEvent activeEvent(Long vehicleId) {
         TransportRandomEvent event = new TransportRandomEvent();

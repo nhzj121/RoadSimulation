@@ -8,7 +8,11 @@ import java.util.SplittableRandom;
 @Component
 public class BreakdownDecisionPolicy {
     public static final String VERSION="breakdown-v2";
-    public record Decision(TransportRandomEvent.BreakdownLevel level, int rescueWaitMinutes, int repairMinutes) {}
+    public static final String VERSION_V3="breakdown-v3";
+    public record Decision(TransportRandomEvent.BreakdownLevel level, int rescueWaitMinutes, int repairMinutes,
+            int replacementWaitMinutes) {
+        public Decision(TransportRandomEvent.BreakdownLevel level,int rescueWaitMinutes,int repairMinutes){this(level,rescueWaitMinutes,repairMinutes,0);}
+    }
     public Decision decide(long seed, int loop, long vehicleId, WeatherScenarioDTO.BreakdownPolicy policy) {
         if (policy == null) {
             throw new IllegalArgumentException("breakdownPolicy is required");
@@ -18,6 +22,16 @@ public class BreakdownDecisionPolicy {
                 ^ vehicleId * 0x94D049BB133111EBL
                 ^ (long) loop * 0xD6E8FEB86659FD93L;
         SplittableRandom random = new SplittableRandom(mixedSeed);
+        if(VERSION_V3.equals(policy.version())){
+            double draw=random.nextDouble();
+            if(draw<policy.minorProbability())return new Decision(TransportRandomEvent.BreakdownLevel.MINOR,0,
+                    between(random,policy.minorRepairMin(),policy.minorRepairMax()));
+            if(draw<1-policy.replacementProbability())return new Decision(TransportRandomEvent.BreakdownLevel.ASSISTANCE_REQUIRED,
+                    between(random,policy.rescueWaitMin(),policy.rescueWaitMax()),
+                    between(random,policy.assistanceRepairMin(),policy.assistanceRepairMax()));
+            return new Decision(TransportRandomEvent.BreakdownLevel.REPLACEMENT_REQUIRED,0,0,
+                    between(random,policy.replacementWaitMin(),policy.replacementWaitMax()));
+        }
         if (random.nextDouble() < policy.minorProbability()) {
             return new Decision(TransportRandomEvent.BreakdownLevel.MINOR, 0,
                     between(random, policy.minorRepairMin(), policy.minorRepairMax()));
@@ -36,7 +50,11 @@ public class BreakdownDecisionPolicy {
         boolean invalidRange = bad(policy.minorRepairMin(), policy.minorRepairMax())
                 || bad(policy.rescueWaitMin(), policy.rescueWaitMax())
                 || bad(policy.assistanceRepairMin(), policy.assistanceRepairMax());
-        if (!VERSION.equals(policy.version()) || invalidProbability || invalidRange
+        boolean v2=VERSION.equals(policy.version());
+        boolean v3=VERSION_V3.equals(policy.version())&&Math.abs(policy.minorProbability()-.6)<1e-12
+                &&Math.abs(policy.replacementProbability()-.1)<1e-12
+                &&!bad(policy.replacementWaitMin(),policy.replacementWaitMax());
+        if ((!v2&&!v3) || invalidProbability || invalidRange
                 || policy.rescueWaitMax() + policy.assistanceRepairMax() > 240) {
             throw new IllegalArgumentException("Invalid breakdownPolicy");
         }

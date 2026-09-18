@@ -33,11 +33,16 @@ public class TransportRandomEventController {
                 throw new IllegalArgumentException("request body is required");
             }
             boolean v2 = request.getBreakdownLevel() != null || request.getRescueWaitMinutes() != null
-                    || request.getRepairMinutes() != null;
+                    || request.getRepairMinutes() != null || request.getReplacementWaitMinutes()!=null;
+            boolean replacement=request.getBreakdownLevel()==TransportRandomEvent.BreakdownLevel.REPLACEMENT_REQUIRED
+                    ||request.getReplacementWaitMinutes()!=null;
             TransportRandomEvent event = v2
-                    ? eventService.triggerManually(request.getEventType(), request.getVehicleId(), request.getDurationMinutes(),
-                            request.getBreakdownLevel(), request.getRescueWaitMinutes(), request.getRepairMinutes(),
+                    ? (replacement?eventService.triggerManually(request.getEventType(), request.getVehicleId(), request.getDurationMinutes(),
+                            request.getBreakdownLevel(), request.getRescueWaitMinutes(), request.getRepairMinutes(),request.getReplacementWaitMinutes(),
                             simulationContext.getCurrentSimTime())
+                    : eventService.triggerManually(request.getEventType(), request.getVehicleId(), request.getDurationMinutes(),
+                            request.getBreakdownLevel(), request.getRescueWaitMinutes(), request.getRepairMinutes(),
+                            simulationContext.getCurrentSimTime()))
                     : eventService.triggerManually(request.getEventType(), request.getVehicleId(),
                             request.getDurationMinutes(), simulationContext.getCurrentSimTime());
             return ResponseEntity.ok(ApiResponse.success("random event triggered", RandomEventDTO.from(event)));

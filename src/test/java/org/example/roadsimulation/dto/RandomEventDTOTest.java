@@ -36,6 +36,8 @@ class RandomEventDTOTest {
         event.setRescueWaitMinutes(30);
         event.setRepairMinutes(90);
         event.setBreakdownRuleVersion("breakdown-v2");
+        event.setReplacementWaitMinutes(60);event.setReplacementVehicleId(21L);event.setReplacementLicensePlate("T");
+        event.setRequiredLoad(9.0);event.setRequiredVolume(8.0);
 
         RandomEventDTO dto = RandomEventDTO.from(event);
 
@@ -50,5 +52,7 @@ class RandomEventDTOTest {
         assertEquals(30, dto.getRescueWaitMinutes());
         assertEquals(90, dto.getRepairMinutes());
         assertEquals("breakdown-v2", dto.getBreakdownRuleVersion());
+        assertEquals(60,dto.getReplacementWaitMinutes());assertEquals(21L,dto.getReplacementVehicleId());
+        assertEquals("T",dto.getReplacementLicensePlate());assertEquals(9.0,dto.getRequiredLoad());assertEquals(8.0,dto.getRequiredVolume());
     }
 }

@@ -4,10 +4,12 @@ import org.example.roadsimulation.config.RandomEventProperties;
 import org.example.roadsimulation.entity.Assignment;
 import org.example.roadsimulation.entity.TransportRandomEvent;
 import org.example.roadsimulation.entity.Vehicle;
+import org.example.roadsimulation.entity.VehicleReplacementAttempt;
 import org.example.roadsimulation.dto.WeatherScenarioDTO;
 import org.example.roadsimulation.repository.AssignmentRepository;
 import org.example.roadsimulation.repository.TransportRandomEventRepository;
 import org.example.roadsimulation.repository.VehicleRepository;
+import org.example.roadsimulation.repository.VehicleReplacementAttemptRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -32,6 +34,8 @@ class TransportRandomEventServiceTest {
     private VehicleRepository vehicleRepository;
     @Mock
     private AssignmentRepository assignmentRepository;
+    @Mock
+    private VehicleReplacementAttemptRepository replacementAttemptRepository;
 
     private TransportRandomEventService service;
     private RandomEventProperties properties;
@@ -65,6 +69,9 @@ class TransportRandomEventServiceTest {
         lenient().when(eventRepository.findFirstByVehicleIdAndStatus(12L, TransportRandomEvent.EventStatus.ACTIVE))
                 .thenReturn(Optional.empty());
         lenient().when(eventRepository.save(any(TransportRandomEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        lenient().when(replacementAttemptRepository.save(any(VehicleReplacementAttempt.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "replacementAttemptRepository", replacementAttemptRepository);
     }
 
     @Test
@@ -262,4 +269,148 @@ class TransportRandomEventServiceTest {
         service.tick(simNow.plusMinutes(60), 60, 1);
         assertEquals("ASSIGNMENT_STATUS_CHANGED", event.getRecoveryOutcome());
     }
+    @Test void replacementProjectsPeakCapacityAcrossIncompleteNodes() {
+        vehicle.setCurrentLoad(4.0); vehicle.setCurrentVolumn(3.0);
+        var unload = new org.example.roadsimulation.entity.AssignmentNode();
+        unload.setSequenceIndex(1); unload.setWeightDelta(-2.0); unload.setVolumeDelta(-1.0);
+        var load = new org.example.roadsimulation.entity.AssignmentNode();
+        load.setSequenceIndex(2); load.setWeightDelta(7.0); load.setVolumeDelta(6.0);
+        assignment.setNodes(new java.util.ArrayList<>(List.of(unload, load)));
+        var required = TransportRandomEventService.requiredCapacity(vehicle, assignment);
+        assertEquals(9.0, required.load(), 1e-9); assertEquals(8.0, required.volume(), 1e-9);
+    }
+
+    @Test void replacementWaitsWithoutCandidateThenReservesBestSlackCandidateOnRetry() {
+        when(eventRepository.save(any(TransportRandomEvent.class))).thenAnswer(i -> {TransportRandomEvent e=i.getArgument(0);if(e.getId()==null)e.setId(101L);return e;});
+        when(vehicleRepository.findByCurrentStatus(Vehicle.VehicleStatus.IDLE)).thenReturn(List.of());
+        TransportRandomEvent event = service.triggerManually(TransportRandomEvent.EventType.VEHICLE_BREAKDOWN,
+                12L, null, TransportRandomEvent.BreakdownLevel.REPLACEMENT_REQUIRED, null, null, 60, simNow);
+        assertEquals(Vehicle.VehicleStatus.SCRAPPED, vehicle.getCurrentStatus());
+        assertEquals(TransportRandomEvent.BreakdownPhase.WAITING_REPLACEMENT, event.getBreakdownPhase());
+        assertNull(event.getPlannedEndTime());
+        Vehicle roomy = candidate(20L, "R", 15, 12); Vehicle tight = candidate(21L, "T", 10, 10);
+        when(vehicleRepository.findByCurrentStatus(Vehicle.VehicleStatus.IDLE)).thenReturn(List.of(roomy, tight));
+        when(vehicleRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(tight));
+        when(assignmentRepository.findActiveAssignmentByVehicle(20L)).thenReturn(Optional.empty());
+        when(assignmentRepository.findActiveAssignmentByVehicle(21L)).thenReturn(Optional.empty());
+        when(eventRepository.findFirstByVehicleIdAndStatus(20L, TransportRandomEvent.EventStatus.ACTIVE)).thenReturn(Optional.empty());
+        when(eventRepository.findFirstByVehicleIdAndStatus(21L, TransportRandomEvent.EventStatus.ACTIVE)).thenReturn(Optional.empty());
+        when(eventRepository.findByStatus(TransportRandomEvent.EventStatus.ACTIVE)).thenReturn(List.of(event));
+        service.tick(simNow.plusMinutes(30), 30, 1);
+        assertEquals(21L, event.getReplacementVehicleId());
+        assertEquals(Vehicle.VehicleStatus.RESERVED_REPLACEMENT, tight.getCurrentStatus());
+        assertEquals(simNow.plusMinutes(90), event.getReplacementReadyTime());
+        assertTrue(service.isTransitionBlocked(21L,simNow.plusMinutes(31)));
+    }
+
+    @Test void replacementHandoffTransfersOwnershipStateAndSettlesLargeTickAfterReady() {
+        vehicle.setCurrentLoad(4.0); vehicle.setCurrentVolumn(3.0);
+        vehicle.setCurrentLongitude(java.math.BigDecimal.ONE); vehicle.setCurrentLatitude(java.math.BigDecimal.TEN);
+        vehicle.addAssignment(assignment);
+        Vehicle replacement=candidate(21L,"T",10,10);
+        when(vehicleRepository.findByCurrentStatus(Vehicle.VehicleStatus.IDLE)).thenReturn(List.of(replacement));
+        when(vehicleRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(replacement));
+        when(assignmentRepository.findActiveAssignmentByVehicle(21L)).thenReturn(Optional.empty());
+        when(eventRepository.findFirstByVehicleIdAndStatus(21L, TransportRandomEvent.EventStatus.ACTIVE)).thenReturn(Optional.empty());
+        when(eventRepository.save(any(TransportRandomEvent.class))).thenAnswer(i->{TransportRandomEvent e=i.getArgument(0);e.setId(101L);return e;});
+        DrivingProgressService progress=mock(DrivingProgressService.class); when(progress.enabled()).thenReturn(true);
+        org.springframework.test.util.ReflectionTestUtils.setField(service,"drivingProgressService",progress);
+        TransportRandomEvent event=service.triggerManually(TransportRandomEvent.EventType.VEHICLE_BREAKDOWN,
+                12L,null,TransportRandomEvent.BreakdownLevel.REPLACEMENT_REQUIRED,null,null,60,simNow);
+        when(eventRepository.findByStatus(TransportRandomEvent.EventStatus.ACTIVE)).thenReturn(List.of(event));
+        LocalDateTime observed=simNow.plusMinutes(90); service.tick(observed,90,1);
+        assertSame(replacement,assignment.getAssignedVehicle()); assertSame(assignment,replacement.getCurrentAssignment());
+        assertNull(vehicle.getCurrentAssignment()); assertEquals(4.0,replacement.getCurrentLoad()); assertEquals(0.0,vehicle.getCurrentLoad());
+        assertEquals(java.math.BigDecimal.ONE,replacement.getCurrentLongitude());
+        assertEquals(Vehicle.VehicleStatus.TRANSPORT_DRIVING,replacement.getCurrentStatus());
+        assertEquals(TransportRandomEvent.EventStatus.RESOLVED,event.getStatus()); assertEquals("REPLACED",event.getReplacementOutcome());
+        verify(progress).transferAndSettle(vehicle.getId(), replacement, assignment,event.getReplacementReadyTime(), observed);
+        service.tick(observed.plusMinutes(30),30,2);
+        verify(progress,times(1)).transferAndSettle(anyLong(),same(replacement),same(assignment),any(),any());
+    }
+
+    @Test void invalidatedCandidateIsCancelledWithoutOverwritingChangedStateAndRetriesLater() {
+        Vehicle replacement=candidate(21L,"T",10,10);
+        when(vehicleRepository.findByCurrentStatus(Vehicle.VehicleStatus.IDLE)).thenReturn(List.of(replacement),List.of());
+        when(vehicleRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(replacement));
+        when(assignmentRepository.findActiveAssignmentByVehicle(21L)).thenReturn(Optional.empty());
+        when(eventRepository.findFirstByVehicleIdAndStatus(21L,TransportRandomEvent.EventStatus.ACTIVE)).thenReturn(Optional.empty());
+        when(eventRepository.save(any(TransportRandomEvent.class))).thenAnswer(i->{TransportRandomEvent e=i.getArgument(0);e.setId(101L);return e;});
+        var attempt=new VehicleReplacementAttempt();attempt.setStatus(VehicleReplacementAttempt.AttemptStatus.RESERVED);
+        when(replacementAttemptRepository.findFirstByEventIdAndStatusOrderByIdDesc(101L,VehicleReplacementAttempt.AttemptStatus.RESERVED))
+                .thenReturn(Optional.of(attempt));
+        TransportRandomEvent event=service.triggerManually(TransportRandomEvent.EventType.VEHICLE_BREAKDOWN,12L,null,
+                TransportRandomEvent.BreakdownLevel.REPLACEMENT_REQUIRED,null,null,60,simNow);
+        replacement.releaseReplacementReservation(simNow.plusMinutes(10));
+        when(eventRepository.findByStatus(TransportRandomEvent.EventStatus.ACTIVE)).thenReturn(List.of(event));
+        service.tick(simNow.plusMinutes(10),10,1);
+        assertEquals(Vehicle.VehicleStatus.IDLE,replacement.getCurrentStatus());
+        assertEquals(VehicleReplacementAttempt.AttemptStatus.CANCELLED,attempt.getStatus());
+        assertNull(event.getReplacementVehicleId());assertNull(event.getPlannedEndTime());
+        assertEquals(TransportRandomEvent.BreakdownPhase.WAITING_REPLACEMENT,event.getBreakdownPhase());
+    }
+
+    @Test void guardFailureReleasesReservedCandidateAndResolvesWithSpecificOutcome() {
+        Vehicle replacement=candidate(21L,"T",10,10);
+        when(vehicleRepository.findByCurrentStatus(Vehicle.VehicleStatus.IDLE)).thenReturn(List.of(replacement));
+        when(vehicleRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(replacement));
+        when(assignmentRepository.findActiveAssignmentByVehicle(21L)).thenReturn(Optional.empty());
+        when(eventRepository.findFirstByVehicleIdAndStatus(21L,TransportRandomEvent.EventStatus.ACTIVE)).thenReturn(Optional.empty());
+        when(eventRepository.save(any(TransportRandomEvent.class))).thenAnswer(i->{TransportRandomEvent e=i.getArgument(0);e.setId(101L);return e;});
+        TransportRandomEvent event=service.triggerManually(TransportRandomEvent.EventType.VEHICLE_BREAKDOWN,12L,null,
+                TransportRandomEvent.BreakdownLevel.REPLACEMENT_REQUIRED,null,null,60,simNow);
+        assignment.setStatus(Assignment.AssignmentStatus.COMPLETED);
+        when(eventRepository.findByStatus(TransportRandomEvent.EventStatus.ACTIVE)).thenReturn(List.of(event));
+        service.tick(simNow.plusMinutes(60),60,1);
+        assertEquals("ASSIGNMENT_STATUS_CHANGED",event.getReplacementOutcome());
+        assertEquals(TransportRandomEvent.EventStatus.RESOLVED,event.getStatus());
+        assertEquals(Vehicle.VehicleStatus.IDLE,replacement.getCurrentStatus());
+    }
+
+    @Test void twoReplacementEventsCannotReserveTheSameVehicle() {
+        Vehicle replacement=candidate(21L,"T",10,10);
+        Vehicle secondOriginal=candidate(13L,"O2",10,10);
+        secondOriginal.transitionToStatus(Vehicle.VehicleStatus.TRANSPORT_DRIVING,simNow.minusMinutes(5),Duration.ofHours(1));
+        Assignment secondAssignment=new Assignment();secondAssignment.setId(89L);secondAssignment.setStatus(Assignment.AssignmentStatus.IN_PROGRESS);
+        secondAssignment.setAssignedVehicle(secondOriginal);
+        when(vehicleRepository.findByCurrentStatus(Vehicle.VehicleStatus.IDLE)).thenReturn(List.of(replacement));
+        when(vehicleRepository.findByIdForUpdate(13L)).thenReturn(Optional.of(secondOriginal));
+        when(vehicleRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(replacement));
+        when(assignmentRepository.findActiveAssignmentByVehicle(13L)).thenReturn(Optional.of(secondAssignment));
+        when(assignmentRepository.findActiveAssignmentByVehicle(21L)).thenReturn(Optional.empty());
+        when(eventRepository.findFirstByVehicleIdAndStatus(13L,TransportRandomEvent.EventStatus.ACTIVE)).thenReturn(Optional.empty());
+        when(eventRepository.findFirstByVehicleIdAndStatus(21L,TransportRandomEvent.EventStatus.ACTIVE)).thenReturn(Optional.empty());
+        java.util.concurrent.atomic.AtomicLong ids=new java.util.concurrent.atomic.AtomicLong(100);
+        when(eventRepository.save(any(TransportRandomEvent.class))).thenAnswer(i->{TransportRandomEvent e=i.getArgument(0);if(e.getId()==null)e.setId(ids.incrementAndGet());return e;});
+        TransportRandomEvent first=service.triggerManually(TransportRandomEvent.EventType.VEHICLE_BREAKDOWN,12L,null,
+                TransportRandomEvent.BreakdownLevel.REPLACEMENT_REQUIRED,null,null,60,simNow);
+        TransportRandomEvent second=service.triggerManually(TransportRandomEvent.EventType.VEHICLE_BREAKDOWN,13L,null,
+                TransportRandomEvent.BreakdownLevel.REPLACEMENT_REQUIRED,null,null,60,simNow);
+        assertEquals(21L,first.getReplacementVehicleId());assertNull(second.getReplacementVehicleId());
+        assertEquals(TransportRandomEvent.BreakdownPhase.WAITING_REPLACEMENT,second.getBreakdownPhase());
+    }
+
+    @Test void replacementFieldsAreValidatedBeforeVehicleLookup() {
+        assertThrows(IllegalArgumentException.class, () -> service.triggerManually(TransportRandomEvent.EventType.VEHICLE_BREAKDOWN,12L,60,TransportRandomEvent.BreakdownLevel.REPLACEMENT_REQUIRED,null,null,60,simNow));
+        assertThrows(IllegalArgumentException.class, () -> service.triggerManually(TransportRandomEvent.EventType.VEHICLE_BREAKDOWN,12L,null,TransportRandomEvent.BreakdownLevel.MINOR,0,60,60,simNow));
+        assertThrows(IllegalArgumentException.class, () -> service.triggerManually(TransportRandomEvent.EventType.VEHICLE_BREAKDOWN,12L,null,TransportRandomEvent.BreakdownLevel.REPLACEMENT_REQUIRED,null,null,29,simNow));
+        verify(vehicleRepository,never()).findByIdForUpdate(anyLong());
+    }
+
+    @Test void replacementRequiresAnActiveAssignedOrInProgressAssignment() {
+        assignment.setStatus(Assignment.AssignmentStatus.WAITING);
+        assertThrows(IllegalStateException.class,()->service.triggerManually(TransportRandomEvent.EventType.VEHICLE_BREAKDOWN,
+                12L,null,TransportRandomEvent.BreakdownLevel.REPLACEMENT_REQUIRED,null,null,60,simNow));
+    }
+
+    @Test void protectedReplacementStatusesIgnoreOrdinaryTransitionsButResetToIdle() {
+        vehicle.markScrapped(simNow);vehicle.transitionToStatus(Vehicle.VehicleStatus.IDLE,simNow.plusMinutes(1),Duration.ZERO);
+        assertEquals(Vehicle.VehicleStatus.SCRAPPED,vehicle.getCurrentStatus());vehicle.resetToIdle(simNow.plusMinutes(2));
+        assertEquals(Vehicle.VehicleStatus.IDLE,vehicle.getCurrentStatus());vehicle.reserveAsReplacement(simNow.plusMinutes(3));
+        vehicle.transitionToStatus(Vehicle.VehicleStatus.TRANSPORT_DRIVING,simNow.plusMinutes(4),Duration.ZERO);
+        assertEquals(Vehicle.VehicleStatus.RESERVED_REPLACEMENT,vehicle.getCurrentStatus());vehicle.resetToIdle(simNow.plusMinutes(5));
+        assertEquals(Vehicle.VehicleStatus.IDLE,vehicle.getCurrentStatus());
+    }
+
+    private Vehicle candidate(long id,String plate,double load,double volume){Vehicle v=new Vehicle();v.setId(id);v.setLicensePlate(plate);v.setMaxLoadCapacity(load);v.setCargoVolume(volume);v.transitionToStatus(Vehicle.VehicleStatus.IDLE,simNow,Duration.ZERO);return v;}
 }

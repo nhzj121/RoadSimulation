@@ -29,6 +29,15 @@ public class RandomEventDTO {
     private LocalDateTime recoveryProcessedTime;
     private String recoveryOutcome;
     private String breakdownRuleVersion;
+    private Integer replacementWaitMinutes;
+    private Long replacementVehicleId;
+    private String replacementLicensePlate;
+    private LocalDateTime replacementSelectedTime;
+    private LocalDateTime replacementReadyTime;
+    private LocalDateTime replacementProcessedTime;
+    private String replacementOutcome;
+    private Double requiredLoad;
+    private Double requiredVolume;
 
     public static RandomEventDTO from(TransportRandomEvent event) {
         RandomEventDTO dto = new RandomEventDTO();
@@ -54,6 +63,15 @@ public class RandomEventDTO {
         dto.setRecoveryProcessedTime(event.getRecoveryProcessedTime());
         dto.setRecoveryOutcome(event.getRecoveryOutcome());
         dto.setBreakdownRuleVersion(event.getBreakdownRuleVersion());
+        dto.setReplacementWaitMinutes(event.getReplacementWaitMinutes());
+        dto.setReplacementVehicleId(event.getReplacementVehicleId());
+        dto.setReplacementLicensePlate(event.getReplacementLicensePlate());
+        dto.setReplacementSelectedTime(event.getReplacementSelectedTime());
+        dto.setReplacementReadyTime(event.getReplacementReadyTime());
+        dto.setReplacementProcessedTime(event.getReplacementProcessedTime());
+        dto.setReplacementOutcome(event.getReplacementOutcome());
+        dto.setRequiredLoad(event.getRequiredLoad());
+        dto.setRequiredVolume(event.getRequiredVolume());
         return dto;
     }
 

@@ -31,6 +31,15 @@ public class WeatherScenarioDTO {
             @JsonDeserialize(using = StrictIntegerDeserializer.class) int rescueWaitMin,
             @JsonDeserialize(using = StrictIntegerDeserializer.class) int rescueWaitMax,
             @JsonDeserialize(using = StrictIntegerDeserializer.class) int assistanceRepairMin,
-            @JsonDeserialize(using = StrictIntegerDeserializer.class) int assistanceRepairMax
-    ) {}
+            @JsonDeserialize(using = StrictIntegerDeserializer.class) int assistanceRepairMax,
+            double replacementProbability,
+            @JsonDeserialize(using = StrictIntegerDeserializer.class) int replacementWaitMin,
+            @JsonDeserialize(using = StrictIntegerDeserializer.class) int replacementWaitMax
+    ) {
+        public BreakdownPolicy(String version,double minorProbability,int minorRepairMin,int minorRepairMax,
+                int rescueWaitMin,int rescueWaitMax,int assistanceRepairMin,int assistanceRepairMax){
+            this(version,minorProbability,minorRepairMin,minorRepairMax,rescueWaitMin,rescueWaitMax,
+                    assistanceRepairMin,assistanceRepairMax,0,0,0);
+        }
+    }
 }

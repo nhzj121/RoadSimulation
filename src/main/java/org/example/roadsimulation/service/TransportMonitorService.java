@@ -60,6 +60,8 @@ public class TransportMonitorService {
         Map<Long, RandomEventDTO> eventByVehicleId = activeEvents.stream()
                 .filter(event -> event.getVehicleId() != null)
                 .collect(Collectors.toMap(RandomEventDTO::getVehicleId, event -> event, (left, right) -> left));
+        activeEvents.stream().filter(e->e.getReplacementVehicleId()!=null)
+                .forEach(e->eventByVehicleId.putIfAbsent(e.getReplacementVehicleId(),e));
 
         List<Shipment> activeShipments = shipmentRepository.findByStatusIn(ACTIVE_SHIPMENT_STATUSES);
         activeShipments.sort((left, right) -> {

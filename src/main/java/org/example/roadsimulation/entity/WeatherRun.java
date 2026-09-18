@@ -15,4 +15,5 @@ public class WeatherRun {
     private boolean manuallyIntervened;
     @Lob @Column(columnDefinition = "LONGTEXT") private String eventHistoryJson;
     @Lob @Column(columnDefinition = "LONGTEXT") private String drivingHistoryJson;
+    @Lob @Column(columnDefinition = "LONGTEXT") private String replacementAttemptHistoryJson;
 }

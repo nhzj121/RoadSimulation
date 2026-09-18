@@ -480,7 +480,7 @@ public class VehicleInitializationServiceImpl implements VehicleInitializationSe
         logger.debug("初始化车辆 {} (车牌: {})", vehicle.getId(), vehicle.getLicensePlate());
 
         // 1. 设置车辆状态为空闲
-        vehicle.transitionToStatus(Vehicle.VehicleStatus.IDLE, LocalDateTime.now(), Duration.ZERO);
+        vehicle.resetToIdle(LocalDateTime.now());
 
         // 2. 设置车辆位置到目标POI
         vehicle.setCurrentPOI(targetPOI);

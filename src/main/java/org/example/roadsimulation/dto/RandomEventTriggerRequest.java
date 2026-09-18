@@ -15,4 +15,6 @@ public class RandomEventTriggerRequest {
     private Integer rescueWaitMinutes;
     @JsonDeserialize(using = StrictIntegerDeserializer.class)
     private Integer repairMinutes;
+    @JsonDeserialize(using = StrictIntegerDeserializer.class)
+    private Integer replacementWaitMinutes;
 }
