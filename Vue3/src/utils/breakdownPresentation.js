@@ -9,7 +9,7 @@ export function validateRandomEventInput(eventType, values) {
   if (eventType === 'VEHICLE_BREAKDOWN' && values.breakdownLevel === 'MINOR' && Number(values.rescueWaitMinutes) !== 0) return '轻微故障无需等待救援'
   for (const [label, value] of fields) {
     const number = Number(value)
-    if (!Number.isInteger(number) || number % 30 !== 0) return `${label}必须为 30 分钟整数倍`
+    if (!Number.isInteger(number)) return `${label}必须为整数分钟`
     if (number < STAGE_MIN || number > (eventType === 'TRAFFIC_CONGESTION' ? TOTAL_MAX : STAGE_MAX)) return `${label}必须在 ${STAGE_MIN}–${eventType === 'TRAFFIC_CONGESTION' ? TOTAL_MAX : STAGE_MAX} 分钟内`
   }
   if (eventType === 'VEHICLE_BREAKDOWN' && Number(values.rescueWaitMinutes || 0) + Number(values.repairMinutes) > TOTAL_MAX) return `救援等待与维修总时长不能超过 ${TOTAL_MAX} 分钟`
@@ -48,3 +48,16 @@ export function describeBreakdownPolicy(policy, legacy = {}) {
 }
 
 export const formatTime = value => value ? String(value).replace('T', ' ').slice(0, 19) : '等待更新'
+
+export const recentBreakdownRows = history => (history || [])
+  .filter(event => event.eventType === 'VEHICLE_BREAKDOWN' && event.status === 'RESOLVED')
+  .map(event => ({ ...event, description: describeBreakdown(event) }))
+
+export const activeEventSignature = events => (events || [])
+  .map(event => String(event.eventId))
+  .sort()
+  .join(',')
+
+export const createEventHistoryTransitionHandler = refresh => async (current, previous) => {
+  if (previous !== undefined && current !== previous) await refresh()
+}

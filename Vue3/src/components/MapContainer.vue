@@ -981,7 +981,7 @@ import restAreaIcon from '../../public/icons/rest-area.png';
 import transportIcon from '../../public/icons/distribution-center.png';
 import testIcon from '../../public/icons/test.png';
 import { mergeLiveVehicleDisplay } from '../utils/liveVehicleDisplay';
-import { createWeatherRouteCache } from '../utils/weatherRouteCache';
+import { assignmentPollingMode, createWeatherRouteCache } from '../utils/weatherRouteCache';
 import timberYardIcon from '../../public/icons/timber-yard.png';
 import sawmillIcon from '../../public/icons/sawmill.png';
 import boardFactoryIcon from '../../public/icons/board-factory.png';
@@ -4933,9 +4933,15 @@ const startSimulationTimer = () => {
         await syncExperimentRunAfterStatusRefresh();
       }
 
-      // Draw new assignments asynchronously so route planning does not block monitor data.
+      // Weather refresh recovery polls all active assignments; the drawer skips routes already animated.
+      // Other modes retain the lower-cost new-assignment endpoint.
       if (isActiveTransportGeneration(runGeneration)) {
-        scheduleAssignmentDrawing(fetchAndDrawNewAssignments, runGeneration, 'new assignments');
+        const weatherRecovery = assignmentPollingMode(monitorWeather.value) === 'active';
+        scheduleAssignmentDrawing(
+            weatherRecovery ? fetchCurrentAssignments : fetchAndDrawNewAssignments,
+            runGeneration,
+            weatherRecovery ? 'weather active assignment recovery' : 'new assignments'
+        );
       }
 
     }

@@ -7,6 +7,8 @@ const equalCoord = (a, b) => coord(a) && coord(b) && Number(a[0]) === Number(b[0
 const validRoute = route => route && Array.isArray(route.path) && route.path.length >= 2 && route.path.length <= MAX_POINTS && route.path.every(coord) && (route.distance == null || Number.isFinite(Number(route.distance)))
 const key = (runId, routeKey) => `${PREFIX}${encodeURIComponent(String(runId))}:${encodeURIComponent(String(routeKey))}`
 
+export const assignmentPollingMode = weather => weather?.runId ? 'active' : 'new'
+
 export function createWeatherRouteCache(storage) {
   return {
     read(runId, routeKey, start, end) {

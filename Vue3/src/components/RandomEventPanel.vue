@@ -39,7 +39,7 @@
       </template>
       <label for="repair-duration">维修时长（分钟）</label>
       <ElInputNumber id="repair-duration" v-model="repairMinutes" aria-label="维修时长（分钟）" :min="30" :max="180" :step="30" size="small" controls-position="right" :disabled="disabled" />
-      <small class="duration-help">各阶段须为 30–180 分钟且按 30 分钟递增；总时长不超过 240 分钟。</small>
+      <small class="duration-help">各阶段须为整数分钟且在 30–180 分钟内；总时长不超过 240 分钟。</small>
       <div class="event-actions">
         <ElButton size="small" type="warning" :loading="submitting" :disabled="!vehicleId || disabled" @click="trigger('TRAFFIC_CONGESTION')">
           触发拥堵
@@ -59,14 +59,22 @@
       </div>
     </div>
     <div v-else class="event-empty">当前无活跃事件</div>
+    <div v-if="recentEvents.length" class="recent-event-list" aria-label="最近故障结果">
+      <strong>最近故障结果</strong>
+      <div v-for="event in recentEvents" :key="event.eventId" class="recent-event-item">
+        <span>{{ event.licensePlate || `车辆${event.vehicleId}` }}</span>
+        <small>{{ event.description }}</small>
+        <small>{{ formatTime(event.resolvedTime || event.plannedEndTime) }}</small>
+      </div>
+    </div>
   </ElCard>
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { ElButton, ElCard, ElInputNumber, ElMessage, ElOption, ElSelect, ElTag } from 'element-plus'
 import { randomEventApi } from '../api/randomEventApi'
-import { describeBreakdown, validateRandomEventInput } from '../utils/breakdownPresentation'
+import { activeEventSignature, createEventHistoryTransitionHandler, describeBreakdown, recentBreakdownRows, validateRandomEventInput } from '../utils/breakdownPresentation'
 
 const props = defineProps({
   vehicles: { type: Array, default: () => [] },
@@ -81,6 +89,14 @@ const breakdownLevel = ref('MINOR')
 const rescueWaitMinutes = ref(30)
 const repairMinutes = ref(60)
 const submitting = ref(false)
+const recentEvents = ref([])
+
+const refreshHistory = async () => {
+  recentEvents.value = recentBreakdownRows(await randomEventApi.getHistory(20)).slice(0, 5)
+}
+onMounted(() => refreshHistory().catch(() => {}))
+const handleActiveEventTransition = createEventHistoryTransitionHandler(() => refreshHistory().catch(() => {}))
+watch(() => activeEventSignature(props.activeEvents), handleActiveEventTransition)
 
 watch(breakdownLevel, level => {
   rescueWaitMinutes.value = level === 'MINOR' ? 0 : 30
@@ -108,6 +124,7 @@ const trigger = async (eventType) => {
     await randomEventApi.trigger(eventType, vehicleId.value, options)
     ElMessage.success(eventType === 'TRAFFIC_CONGESTION' ? '交通拥堵已触发' : '车辆故障已触发')
     emit('triggered')
+    await refreshHistory().catch(() => {})
   } catch (error) {
     ElMessage.error(error?.response?.data?.message || error?.message || '随机事件触发失败')
   } finally {
@@ -155,6 +172,9 @@ const formatDelay = (seconds) => {
   display: grid;
   gap: 8px;
 }
+.recent-event-list { margin-top: 12px; display: grid; gap: 6px; padding-top: 10px; border-top: 1px solid #ebeef5; font-size: 12px; }
+.recent-event-item { display: grid; gap: 2px; padding: 7px; border-radius: 6px; background: #f5f7fa; }
+.recent-event-item small { color: #606266; }
 
 .active-event-item {
   padding: 8px;

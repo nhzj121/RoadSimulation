@@ -9,5 +9,9 @@ export const createRandomEventApi = http => ({
   async getActive() {
     const response = await http.get('/api/simulation/random-events/active')
     return response.data?.data || []
+  },
+  async getHistory(limit = 20) {
+    const response = await http.get('/api/simulation/random-events/history', { params: { limit } })
+    return response.data?.data || []
   }
 })

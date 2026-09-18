@@ -26,12 +26,48 @@ test('production random-event API posts the constructed body at the HTTP boundar
   assert.deepEqual(calls[0], { url: '/api/simulation/random-events/trigger', body: { eventType: 'VEHICLE_BREAKDOWN', vehicleId: 5, breakdownLevel: 'MINOR', rescueWaitMinutes: 0, repairMinutes: 60 } })
 })
 
+test('history API and recent rows expose restored and guarded recovery outcomes', async () => {
+  const { createRandomEventApi } = await import(pathToFileURL(path.join(__dirname, '../src/api/randomEventApiFactory.js')).href)
+  const { recentBreakdownRows } = await load('breakdownPresentation')
+  const calls = []
+  const history = [
+    { eventId: 2, eventType: 'VEHICLE_BREAKDOWN', status: 'RESOLVED', breakdownPhase: 'RECOVERED', recoveryOutcome: 'ASSIGNMENT_CHANGED', licensePlate: 'B' },
+    { eventId: 1, eventType: 'VEHICLE_BREAKDOWN', status: 'RESOLVED', breakdownPhase: 'RECOVERED', recoveryOutcome: 'RESTORED', licensePlate: 'A' }
+  ]
+  const api = createRandomEventApi({ async get(url, config) { calls.push({url, config}); return { data: { data: history } } } })
+  assert.deepEqual(await api.getHistory(5), history)
+  assert.deepEqual(calls, [{ url: '/api/simulation/random-events/history', config: { params: { limit: 5 } } }])
+  const rows = recentBreakdownRows(history)
+  assert.match(rows[0].description, /任务已变化，未自动恢复/)
+  assert.match(rows[1].description, /原运输任务已恢复/)
+  assert.doesNotMatch(rows[0].description, /原运输任务已恢复/)
+})
+
+test('active to empty transition refreshes history and exposes the resolved result', async () => {
+  const { activeEventSignature, createEventHistoryTransitionHandler, recentBreakdownRows } = await load('breakdownPresentation')
+  let rows = []
+  let calls = 0
+  const onTransition = createEventHistoryTransitionHandler(async () => {
+    calls += 1
+    rows = recentBreakdownRows([{ eventId: 4, eventType: 'VEHICLE_BREAKDOWN', status: 'RESOLVED', breakdownPhase: 'RECOVERED', recoveryOutcome: 'RESTORED' }])
+  })
+  const active = activeEventSignature([{ eventId: 4, status: 'ACTIVE' }])
+  const empty = activeEventSignature([])
+  await onTransition(empty, active)
+  assert.equal(calls, 1)
+  assert.match(rows[0].description, /原运输任务已恢复/)
+  await onTransition(empty, empty)
+  assert.equal(calls, 1)
+})
+
 test('validates integer stage bounds, minor wait and total staged duration', async () => {
   const { validateRandomEventInput } = await load('breakdownPresentation')
   assert.equal(validateRandomEventInput('VEHICLE_BREAKDOWN', { breakdownLevel: 'MINOR', rescueWaitMinutes: 30, repairMinutes: 60 }), '轻微故障无需等待救援')
   assert.match(validateRandomEventInput('VEHICLE_BREAKDOWN', { breakdownLevel: 'ASSISTANCE_REQUIRED', rescueWaitMinutes: 180, repairMinutes: 90 }), /240/)
-  assert.match(validateRandomEventInput('VEHICLE_BREAKDOWN', { breakdownLevel: 'MINOR', rescueWaitMinutes: 0, repairMinutes: 31.5 }), /30 分钟整数倍/)
+  assert.match(validateRandomEventInput('VEHICLE_BREAKDOWN', { breakdownLevel: 'MINOR', rescueWaitMinutes: 0, repairMinutes: 31.5 }), /整数分钟/)
   assert.equal(validateRandomEventInput('VEHICLE_BREAKDOWN', { breakdownLevel: 'MINOR', rescueWaitMinutes: 0, repairMinutes: 60 }), null)
+  assert.equal(validateRandomEventInput('VEHICLE_BREAKDOWN', { breakdownLevel: 'MINOR', rescueWaitMinutes: 0, repairMinutes: 45 }), null)
+  assert.equal(validateRandomEventInput('TRAFFIC_CONGESTION', { durationMinutes: 45 }), null)
 })
 
 test('presents staged phases, legacy repairs and recovery outcomes distinctly', async () => {
@@ -46,6 +82,12 @@ test('weather breakdown text uses v2 policy while old saved scenes remain legacy
   const { describeBreakdownPolicy } = await load('breakdownPresentation')
   assert.match(describeBreakdownPolicy({ version: 'breakdown-v2', minorProbability: .7, minorRepairMin: 30, minorRepairMax: 60, rescueWaitMin: 30, rescueWaitMax: 60, assistanceRepairMin: 60, assistanceRepairMax: 120 }), /轻微 70%.*30–60.*救援等待 30–60.*维修 60–120/)
   assert.equal(describeBreakdownPolicy(null, { minDurationMinutes: 60, maxDurationMinutes: 120 }), '原版故障维修 60–120 分钟')
+})
+
+test('weather polling selects active recovery while non-weather keeps new-only behavior', async () => {
+  const { assignmentPollingMode } = await load('weatherRouteCache')
+  assert.equal(assignmentPollingMode({ runId: 'weather-run' }), 'active')
+  assert.equal(assignmentPollingMode(null), 'new')
 })
 
 test('weather live monitor owns zeros/status/load and rejects another assignment', async () => {
