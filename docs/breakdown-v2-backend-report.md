@@ -8,7 +8,18 @@ into HTTP 500. Added the actual advice to the request-binding tests; RED reprodu
 400-versus-500 failures for event triggering and weather policy import. Controller-local
 HttpMessageNotReadableException handlers now return 400 without changing unrelated controllers.
 GREEN: `./mvnw.cmd -Dtest=TransportRandomEventControllerTest,WeatherEnvironmentServiceTest,TransportRandomEventServiceTest,BreakdownDecisionPolicyTest test`
-completed with 31 tests, zero failures/errors/skips on 2026-09-17 11:47. Runtime recheck follows restart.
+completed with 31 tests, zero failures/errors/skips on 2026-09-17 11:47.
+
+Runtime recheck passed after restart on 2026-09-17 against the isolated QA database.
+Run `ef176fd9-f402-4e19-a02c-4d3c01e11975`, vehicle 57, assignment 10:
+fractional/string minutes returned 400; mixed legacy/v2 fields returned 400 even during
+an active fault; a valid duplicate returned 409. Both MINOR and ASSISTANCE_REQUIRED
+completed with RECOVERED / RESTORED, with waiting and repair phases observed.
+The two-item, four-stop assignment reached COMPLETED; both items were DELIVERED,
+all four actions completed, and inventory changed from 10 to 8. This is API/database
+evidence, not a substitute for the pending map refresh/movement acceptance.
+Evidence: `breakdown-v2-api-evidence.json` in the local visualization output folder.
+The QA run was then reset for a separate browser case; its archived run remains saved.
 
 ## Delivered contract
 
