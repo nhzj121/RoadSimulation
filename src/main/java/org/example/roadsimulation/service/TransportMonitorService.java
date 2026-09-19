@@ -11,6 +11,7 @@ import org.example.roadsimulation.entity.Vehicle;
 import org.example.roadsimulation.repository.AssignmentRepository;
 import org.example.roadsimulation.repository.ShipmentItemRepository;
 import org.example.roadsimulation.repository.ShipmentRepository;
+import org.example.roadsimulation.repository.VehicleRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -43,6 +44,9 @@ public class TransportMonitorService {
 
     @Autowired
     private AssignmentRepository assignmentRepository;
+
+    @Autowired
+    private VehicleRepository vehicleRepository;
 
     @Autowired
     private TransportRandomEventService transportRandomEventService;
@@ -145,6 +149,17 @@ public class TransportMonitorService {
             }
         }
 
+        Set<Long> replacementVehicleIds=activeEvents.stream()
+                .map(RandomEventDTO::getReplacementVehicleId)
+                .filter(java.util.Objects::nonNull)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        if(!replacementVehicleIds.isEmpty()){
+            for(Vehicle replacement:vehicleRepository.findAllById(replacementVehicleIds)){
+                if(replacement!=null&&replacement.getId()!=null)
+                    vehicleMap.putIfAbsent(replacement.getId(),buildVehicleDTO(replacement));
+            }
+        }
+
         dto.setShipments(new ArrayList<>(shipmentMap.values()));
         dto.setAssignments(new ArrayList<>(assignmentMap.values()));
         dto.setVehicles(new ArrayList<>(vehicleMap.values()));
@@ -158,7 +173,7 @@ public class TransportMonitorService {
             vehicle.setAssignmentId(vehicle.getAssignmentIds().isEmpty() ? null : vehicle.getAssignmentIds().get(0));
             // A repair may reach its planned end before the next state-machine tick observes it.
             // Until BREAKDOWN is actually cleared, the displayed vehicle must remain stopped.
-            vehicle.setEffectiveSpeedFactor("BREAKDOWN".equals(vehicle.getStatus()) ? 0.0
+            vehicle.setEffectiveSpeedFactor(Set.of("BREAKDOWN","SCRAPPED","RESERVED_REPLACEMENT").contains(vehicle.getStatus()) ? 0.0
                     : drivingProgressService.effectiveFactor(vehicle.getVehicleId(), drivingProgressService.now()));
             if (p != null && java.util.Objects.equals(p.getAssignmentId(), vehicle.getAssignmentId())) {
                 vehicle.setDrivingPhaseKey(p.getPhaseKey()); vehicle.setDrivingStatus(p.getDrivingStatus().name());
@@ -354,6 +369,8 @@ public class TransportMonitorService {
             case TRANSPORT_DRIVING: return "\u8fd0\u8f93\u4e2d";
             case UNLOADING: return "\u5378\u8d27\u4e2d";
             case WAITING: return "\u7b49\u5f85\u4e2d";
+            case SCRAPPED: return "\u5df2\u62a5\u5e9f";
+            case RESERVED_REPLACEMENT: return "\u66ff\u6362\u8f66\u8f86\u51c6\u5907\u4e2d";
             case BREAKDOWN:
             default: return "\u6545\u969c";
         }

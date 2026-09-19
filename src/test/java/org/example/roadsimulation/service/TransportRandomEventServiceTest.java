@@ -10,11 +10,14 @@ import org.example.roadsimulation.repository.AssignmentRepository;
 import org.example.roadsimulation.repository.TransportRandomEventRepository;
 import org.example.roadsimulation.repository.VehicleRepository;
 import org.example.roadsimulation.repository.VehicleReplacementAttemptRepository;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.LockModeType;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.jpa.repository.Modifying;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -38,6 +41,8 @@ class TransportRandomEventServiceTest {
     private AssignmentRepository assignmentRepository;
     @Mock
     private VehicleReplacementAttemptRepository replacementAttemptRepository;
+    @Mock
+    private EntityManager entityManager;
 
     private TransportRandomEventService service;
     private RandomEventProperties properties;
@@ -85,6 +90,64 @@ class TransportRandomEventServiceTest {
             candidate.releaseReplacementReservation(i.getArgument(2,LocalDateTime.class));return 1;
         });
         org.springframework.test.util.ReflectionTestUtils.setField(service, "replacementAttemptRepository", replacementAttemptRepository);
+        org.springframework.test.util.ReflectionTestUtils.setField(service,"entityManager",entityManager);
+    }
+
+    @Test void reservationCasDoesNotClearTheTickPersistenceContext() throws Exception {
+        Modifying reserve=VehicleRepository.class.getMethod("reserveReplacementIfIdle",Long.class,Long.class,LocalDateTime.class)
+                .getAnnotation(Modifying.class);
+        Modifying release=VehicleRepository.class.getMethod("releaseReplacementIfOwned",Long.class,Long.class,LocalDateTime.class)
+                .getAnnotation(Modifying.class);
+        assertFalse(reserve.clearAutomatically());
+        assertFalse(release.clearAutomatically());
+    }
+
+    @Test void successfulReservationRefreshesAStaleManagedCandidateBeforeEligibilityCheck() {
+        Vehicle stale=candidate(21L,"T",10,10);
+        when(vehicleRepository.findByCurrentStatus(Vehicle.VehicleStatus.IDLE)).thenReturn(List.of(stale));
+        when(vehicleRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(stale));
+        doReturn(1).when(vehicleRepository).reserveReplacementIfIdle(eq(21L),anyLong(),any());
+        when(assignmentRepository.findActiveAssignmentByVehicle(21L)).thenReturn(Optional.empty());
+        when(eventRepository.findFirstByVehicleIdAndStatus(21L,TransportRandomEvent.EventStatus.ACTIVE)).thenReturn(Optional.empty());
+        when(eventRepository.save(any(TransportRandomEvent.class))).thenAnswer(i->{TransportRandomEvent e=i.getArgument(0);if(e.getId()==null)e.setId(101L);return e;});
+        doAnswer(i->{stale.reserveAsReplacement(101L,simNow);return null;}).when(entityManager).refresh(stale,LockModeType.PESSIMISTIC_WRITE);
+
+        TransportRandomEvent event=service.triggerManually(TransportRandomEvent.EventType.VEHICLE_BREAKDOWN,12L,null,
+                TransportRandomEvent.BreakdownLevel.REPLACEMENT_REQUIRED,null,null,60,simNow);
+
+        assertEquals(21L,event.getReplacementVehicleId());
+        assertEquals(101L,stale.getReplacementReservationEventId());
+    }
+
+    @Test void oneAutomaticTickCanReserveSeparateCandidatesForTwoBufferedAssignments() {
+        properties.setAutoEnabled(true);properties.getBreakdown().setHourlyProbability(1);properties.getCongestion().setHourlyProbability(0);
+        Vehicle original2=candidate(13L,"O2",10,10);original2.transitionToStatus(Vehicle.VehicleStatus.TRANSPORT_DRIVING,simNow,Duration.ofHours(1));
+        Assignment assignment2=new Assignment();assignment2.setId(89L);assignment2.setStatus(Assignment.AssignmentStatus.IN_PROGRESS);assignment2.setAssignedVehicle(original2);
+        assignment.setNodes(new java.util.ArrayList<>());assignment2.setNodes(new java.util.ArrayList<>());
+        Vehicle candidate1=candidate(21L,"T1",10,10),candidate2=candidate(22L,"T2",10,10);
+        when(assignmentRepository.findActiveAssignments()).thenReturn(List.of(assignment,assignment2));
+        when(vehicleRepository.findByIdForUpdate(13L)).thenReturn(Optional.of(original2));
+        when(vehicleRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(candidate1));
+        when(vehicleRepository.findByIdForUpdate(22L)).thenReturn(Optional.of(candidate2));
+        when(vehicleRepository.findByCurrentStatus(Vehicle.VehicleStatus.IDLE)).thenReturn(List.of(candidate1,candidate2));
+        when(assignmentRepository.findActiveAssignmentByVehicle(anyLong())).thenReturn(Optional.empty());
+        when(eventRepository.findFirstByVehicleIdAndStatus(anyLong(),eq(TransportRandomEvent.EventStatus.ACTIVE))).thenReturn(Optional.empty());
+        when(eventRepository.findByStatus(TransportRandomEvent.EventStatus.ACTIVE)).thenReturn(List.of());
+        AtomicLong ids=new AtomicLong(100);List<TransportRandomEvent> saved=new CopyOnWriteArrayList<>();
+        when(eventRepository.save(any())).thenAnswer(i->{TransportRandomEvent e=i.getArgument(0);if(e.getId()==null)e.setId(ids.incrementAndGet());saved.add(e);return e;});
+        WeatherEnvironmentService weather=mock(WeatherEnvironmentService.class);
+        when(weather.breakdownPolicy()).thenReturn(new WeatherScenarioDTO.BreakdownPolicy("breakdown-v3",.6,30,60,30,60,60,120,.1,60,90));
+        BreakdownDecisionPolicy breakdown=mock(BreakdownDecisionPolicy.class);
+        when(breakdown.decide(anyLong(),anyInt(),anyLong(),any())).thenReturn(new BreakdownDecisionPolicy.Decision(
+                TransportRandomEvent.BreakdownLevel.REPLACEMENT_REQUIRED,0,0,60));
+        org.springframework.test.util.ReflectionTestUtils.setField(service,"weatherEnvironmentService",weather);
+        org.springframework.test.util.ReflectionTestUtils.setField(service,"breakdownDecisionPolicy",breakdown);
+
+        service.tick(simNow,60,4);
+
+        List<TransportRandomEvent> reserved=saved.stream().filter(e->e.getReplacementVehicleId()!=null).distinct().toList();
+        assertEquals(2,reserved.size());
+        assertEquals(java.util.Set.of(21L,22L),reserved.stream().map(TransportRandomEvent::getReplacementVehicleId).collect(java.util.stream.Collectors.toSet()));
     }
 
     @Test

@@ -124,3 +124,41 @@ Tests run: 70, Failures: 0, Errors: 0, Skipped: 0; BUILD SUCCESS
 ```
 
 Review-fix limits: per instruction, no live/shared database was accessed. This repository has no isolated database/testcontainer harness, so the concurrency proof is the strongest available service/repository-boundary test (two real threads with detached stale snapshots and an atomic CAS repository double), rather than a live MySQL two-connection test. Microsecond behavior is verified at generated migration SQL and JPA mapping level, not by live persistence round-trip.
+
+## Second review fix round (2026-09-19)
+
+Fixed the two follow-up integration findings while preserving the atomic reservation owner CAS, source-progress validation, `DATETIME(6)`, and reset behavior:
+
+- Removed `clearAutomatically=true` from both native reservation updates. They still flush before the conditional update, but no longer detach every assignment buffered by an automatic event tick.
+- After each successful reserve or release CAS, `TransportRandomEventService` refreshes only the affected vehicle with `PESSIMISTIC_WRITE`. This replaces the stale first-level-cache state with the current database status/owner without invalidating unrelated managed assignments or their lazy node collections.
+- Added coverage for two buffered automatic replacement assignments in one tick, each reserving a distinct candidate, plus a stale-managed-candidate test that only succeeds after targeted refresh.
+- The active monitor now loads replacement vehicle IDs from active events in addition to assignment-owned vehicles. Before handoff it therefore shows both the original `SCRAPPED` vehicle (still owning the assignment) and the unassigned `RESERVED_REPLACEMENT` candidate, with the same active event attached to both rows.
+- `BREAKDOWN`, `SCRAPPED`, and `RESERVED_REPLACEMENT` monitor rows explicitly report effective speed factor `0.0`; scrapped/reserved statuses also have distinct status text.
+
+Initial RED:
+
+```text
+.\mvnw.cmd '-Dtest=TransportRandomEventServiceTest,WeatherMonitorConsistencyTest' test
+Tests run: 29, Failures: 3, Errors: 0
+```
+
+The three expected failures proved that the CAS annotations still globally cleared the persistence context, a successful CAS left a managed candidate stale (`replacementVehicleId` remained null), and the realistic unassigned replacement candidate was missing from the monitor (`expected 2 rows, was 1`).
+
+Additional monitor-factor RED:
+
+```text
+.\mvnw.cmd '-Dtest=WeatherMonitorConsistencyTest' test
+Tests run: 2, Failures: 1, Errors: 0
+```
+
+Expected failure: the scrapped row reported the mocked moving factor `0.75` instead of `0.0`.
+
+Fresh final GREEN evidence:
+
+```text
+Review-focused: 40 tests, 0 failures, 0 errors, 0 skipped
+Broader focused: 59 tests, 0 failures, 0 errors, 0 skipped
+Named 17-class regression: 73 tests, 0 failures, 0 errors, 0 skipped
+```
+
+Second-round limit: no live/shared database was accessed. Persistence behavior is covered by the repository annotation contract, targeted-refresh service behavior, and the strongest available two-assignment tick regression in this repository; a live MySQL persistence-context test remains outside the authorized environment.

@@ -23,7 +23,7 @@ public interface VehicleRepository extends JpaRepository<Vehicle, Long> {
     @Query("SELECT v FROM Vehicle v WHERE v.id = :id")
     Optional<Vehicle> findByIdForUpdate(@Param("id") Long id);
 
-    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Modifying(flushAutomatically = true)
     @Query(value = """
             UPDATE vehicle
                SET previous_status = current_status,
@@ -38,7 +38,7 @@ public interface VehicleRepository extends JpaRepository<Vehicle, Long> {
     int reserveReplacementIfIdle(@Param("vehicleId") Long vehicleId,@Param("eventId") Long eventId,
             @Param("reservedAt") LocalDateTime reservedAt);
 
-    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Modifying(flushAutomatically = true)
     @Query(value = """
             UPDATE vehicle
                SET previous_status = current_status,

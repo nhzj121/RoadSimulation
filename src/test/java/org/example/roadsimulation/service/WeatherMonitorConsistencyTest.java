@@ -33,24 +33,38 @@ class WeatherMonitorConsistencyTest {
         vehicle.transitionToStatus(Vehicle.VehicleStatus.TRANSPORT_DRIVING,driving.now(),Duration.ofMinutes(30));
         assertEquals(.6,service.getActiveMonitor().getVehicles().get(0).getEffectiveSpeedFactor());
     }
-    @Test void replacementFieldsAppearOnMonitorAndReservedCandidate() {
+    @Test void monitorIncludesScrappedOriginalAndUnassignedReservedReplacement() {
         var service=new TransportMonitorService();var shipments=mock(ShipmentRepository.class);var assignments=mock(AssignmentRepository.class);
+        var vehicles=mock(VehicleRepository.class);
+        var driving=mock(DrivingProgressService.class);
         var eventService=mock(TransportRandomEventService.class);ReflectionTestUtils.setField(service,"shipmentRepository",shipments);
         ReflectionTestUtils.setField(service,"shipmentItemRepository",mock(ShipmentItemRepository.class));
         ReflectionTestUtils.setField(service,"assignmentRepository",assignments);ReflectionTestUtils.setField(service,"transportRandomEventService",eventService);
-        ReflectionTestUtils.setField(service,"drivingProgressService",mock(DrivingProgressService.class));
+        ReflectionTestUtils.setField(service,"drivingProgressService",driving);
+        ReflectionTestUtils.setField(service,"vehicleRepository",vehicles);
+        when(driving.enabled()).thenReturn(true);when(driving.now()).thenReturn(LocalDateTime.of(2026,1,1,8,0));
+        when(driving.effectiveFactor(anyLong(),any())).thenReturn(.75);
         when(shipments.findByStatusIn(any())).thenReturn(new ArrayList<>());
-        var candidate=new Vehicle();candidate.setId(21L);candidate.setLicensePlate("T");candidate.reserveAsReplacement(LocalDateTime.of(2026,1,1,8,0));
-        var assignment=new Assignment();assignment.setId(88L);assignment.setStatus(Assignment.AssignmentStatus.IN_PROGRESS);candidate.addAssignment(assignment);
+        var original=new Vehicle();original.setId(12L);original.setLicensePlate("O");original.markScrapped(LocalDateTime.of(2026,1,1,8,0));
+        var candidate=new Vehicle();candidate.setId(21L);candidate.setLicensePlate("T");candidate.reserveAsReplacement(101L,LocalDateTime.of(2026,1,1,8,0));
+        var assignment=new Assignment();assignment.setId(88L);assignment.setStatus(Assignment.AssignmentStatus.IN_PROGRESS);original.addAssignment(assignment);
         when(assignments.findRuntimeActiveAssignments()).thenReturn(List.of(assignment));
+        when(vehicles.findAllById(any())).thenReturn(List.of(candidate));
         var event=new TransportRandomEvent();event.setId(101L);event.setStatus(TransportRandomEvent.EventStatus.ACTIVE);
         event.setEventType(TransportRandomEvent.EventType.VEHICLE_BREAKDOWN);event.setTriggerSource(TransportRandomEvent.TriggerSource.MANUAL);
         event.setVehicleId(12L);event.setAssignmentId(88L);event.setReplacementVehicleId(21L);event.setReplacementLicensePlate("T");
         event.setReplacementWaitMinutes(60);event.setRequiredLoad(8.0);event.setRequiredVolume(6.0);
         when(eventService.getActiveEvents()).thenReturn(List.of(event));
         var monitor=service.getActiveMonitor();
+        assertEquals(2,monitor.getVehicles().size());
+        var originalRow=monitor.getVehicles().stream().filter(v->v.getVehicleId()==12L).findFirst().orElseThrow();
+        var candidateRow=monitor.getVehicles().stream().filter(v->v.getVehicleId()==21L).findFirst().orElseThrow();
+        assertEquals("SCRAPPED",originalRow.getStatus());assertEquals(List.of(88L),originalRow.getAssignmentIds());
+        assertEquals("RESERVED_REPLACEMENT",candidateRow.getStatus());assertTrue(candidateRow.getAssignmentIds().isEmpty());
+        assertEquals(0.0,originalRow.getEffectiveSpeedFactor());assertEquals(0.0,candidateRow.getEffectiveSpeedFactor());
+        assertNull(candidateRow.getAssignmentId());assertEquals(101L,originalRow.getActiveEvent().getEventId());
+        assertEquals(101L,candidateRow.getActiveEvent().getEventId());
         assertEquals(21L,monitor.getActiveEvents().get(0).getReplacementVehicleId());
         assertEquals(60,monitor.getActiveEvents().get(0).getReplacementWaitMinutes());
-        assertEquals(101L,monitor.getVehicles().get(0).getActiveEvent().getEventId());
     }
 }

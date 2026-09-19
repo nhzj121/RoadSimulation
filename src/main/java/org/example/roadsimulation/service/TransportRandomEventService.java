@@ -12,6 +12,9 @@ import org.example.roadsimulation.repository.VehicleReplacementAttemptRepository
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.LockModeType;
+import jakarta.persistence.PersistenceContext;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -24,6 +27,8 @@ import java.util.Objects;
 
 @Service
 public class TransportRandomEventService {
+    @PersistenceContext
+    private EntityManager entityManager;
     @org.springframework.beans.factory.annotation.Autowired
     private DrivingProgressService drivingProgressService;
     @org.springframework.beans.factory.annotation.Autowired
@@ -465,6 +470,7 @@ public class TransportRandomEventService {
                 .filter(v->eligibleCandidate(v,event)).sorted(order).toList()){
             if(vehicleRepository.reserveReplacementIfIdle(listed.getId(),event.getId(),simNow)!=1)continue;
             Vehicle candidate=vehicleRepository.findByIdForUpdate(listed.getId()).orElse(null);
+            if(candidate!=null)entityManager.refresh(candidate,LockModeType.PESSIMISTIC_WRITE);
             if(!eligibleReservedCandidate(candidate,event)){
                 releaseReservationClaim(candidate,event,simNow);continue;
             }
@@ -512,8 +518,8 @@ public class TransportRandomEventService {
     }
     private void releaseReservationClaim(Vehicle candidate,TransportRandomEvent event,LocalDateTime time){
         if(candidate!=null&&candidate.getId()!=null&&event.getId()!=null
-                &&vehicleRepository.releaseReplacementIfOwned(candidate.getId(),event.getId(),time)==1
-                &&Objects.equals(candidate.getReplacementReservationEventId(),event.getId()))candidate.releaseReplacementReservation(time);
+                &&vehicleRepository.releaseReplacementIfOwned(candidate.getId(),event.getId(),time)==1)
+            entityManager.refresh(candidate,LockModeType.PESSIMISTIC_WRITE);
     }
     private void clearReservation(TransportRandomEvent event){event.setReplacementVehicleId(null);event.setReplacementLicensePlate(null);
         event.setReplacementSelectedTime(null);event.setReplacementReadyTime(null);event.setPlannedEndTime(null);
