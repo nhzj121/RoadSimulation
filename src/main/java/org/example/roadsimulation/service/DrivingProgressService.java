@@ -94,14 +94,23 @@ public class DrivingProgressService {
         return v.getCurrentStatus()!=Vehicle.VehicleStatus.BREAKDOWN && (p==null || p.getRemainingWorkSeconds()<=1e-7);
     }
     @Transactional(readOnly=true) public DrivingProgress latest(Long vehicleId){return repository.findFirstByVehicleIdOrderByPhaseStartDesc(vehicleId).orElse(null);}
+    public boolean isTransferSourceValid(Long originalVehicleId,Assignment assignment,String capturedPhaseKey){
+        return validTransferSource(latest(originalVehicleId),assignment,capturedPhaseKey);
+    }
+    private boolean validTransferSource(DrivingProgress source,Assignment assignment,String capturedPhaseKey){
+        return source!=null&&assignment!=null&&capturedPhaseKey!=null
+                &&Objects.equals(source.getRunId(),weather.runId())
+                &&Objects.equals(source.getAssignmentId(),assignment.getId())
+                &&Objects.equals(source.getPhaseKey(),capturedPhaseKey);
+    }
     @Transactional public DrivingProgress transferAndSettle(Long originalVehicleId,Vehicle replacement,Assignment assignment,
-            LocalDateTime readyTime,LocalDateTime simNow){
+            String capturedPhaseKey,LocalDateTime readyTime,LocalDateTime simNow){
         DrivingProgress source=latest(originalVehicleId);
-        if(source==null||replacement==null||assignment==null)return settle(replacement,simNow);
+        if(replacement==null||!validTransferSource(source,assignment,capturedPhaseKey))return null;
         String key=weather.runId()+":"+assignment.getId()+":"+replacement.getCurrentStatus()+":"+legIndex(assignment)+":"+readyTime;
         DrivingProgress copy=new DrivingProgress();copy.setPhaseKey(key);copy.setRunId(source.getRunId());copy.setAssignmentId(source.getAssignmentId());
         copy.setVehicleId(replacement.getId());copy.setLegIndex(source.getLegIndex());copy.setDrivingStatus(source.getDrivingStatus());
-        copy.setPhaseStart(source.getPhaseStart());copy.setLastSettledTime(readyTime);copy.setInitialWorkSeconds(source.getInitialWorkSeconds());
+        copy.setPhaseStart(readyTime);copy.setLastSettledTime(readyTime);copy.setInitialWorkSeconds(source.getInitialWorkSeconds());
         copy.setRemainingWorkSeconds(source.getRemainingWorkSeconds());copy.setAffectedSeconds(source.getAffectedSeconds());
         copy.setLostWorkSeconds(source.getLostWorkSeconds());copy.setModelCompletedTime(source.getModelCompletedTime());
         copy.setObservedCompletedTime(source.getObservedCompletedTime());repository.save(copy);

@@ -78,4 +78,51 @@ class DrivingProgressServiceTest {
         var service=new DrivingProgressService(repo,vehicles,events,weather,new SimulationContext(),mock(SimulationModeGuard.class));
         assertEquals(0.0,service.effectiveFactor(12L,start.plusDays(2)));
     }
+
+    @Test void transferredProgressIsCurrentForReplacementAndSettlesOnlyAfterReady() {
+        var repo=mock(DrivingProgressRepository.class);var vehicles=mock(VehicleRepository.class);
+        var events=mock(TransportRandomEventRepository.class);var weather=mock(WeatherEnvironmentService.class);
+        var state=new HashMap<String,DrivingProgress>();
+        when(weather.runId()).thenReturn("run1");
+        when(weather.at(any())).thenAnswer(i->new WeatherCurrentDTO(null,null,"SUNNY",1,null,false,false,false,i.getArgument(0)));
+        when(weather.boundaries(any(),any())).thenReturn(List.of());when(events.findByVehicleId(21L)).thenReturn(List.of());
+        when(repo.findById(anyString())).thenAnswer(i->Optional.ofNullable(state.get(i.getArgument(0))));
+        when(repo.save(any())).thenAnswer(i->{DrivingProgress p=i.getArgument(0);state.put(p.getPhaseKey(),p);return p;});
+        when(repo.findFirstByVehicleIdOrderByPhaseStartDesc(anyLong())).thenAnswer(i->state.values().stream()
+                .filter(p->Objects.equals(p.getVehicleId(),i.getArgument(0)))
+                .max(Comparator.comparing(DrivingProgress::getPhaseStart)));
+        DrivingProgress source=progress("source",12L,88L,"run1",start,3600,3600,120,30);
+        DrivingProgress priorReplacement=progress("prior",21L,77L,"run1",start.plusMinutes(50),600,0,5,2);
+        state.put(source.getPhaseKey(),source);state.put(priorReplacement.getPhaseKey(),priorReplacement);
+        var service=new DrivingProgressService(repo,vehicles,events,weather,new SimulationContext(),mock(SimulationModeGuard.class));
+        var replacement=new Vehicle();replacement.setId(21L);
+        LocalDateTime ready=start.plusHours(1);replacement.activateReplacement(Vehicle.VehicleStatus.TRANSPORT_DRIVING,ready,Duration.ofHours(1));
+        var assignment=new Assignment();assignment.setId(88L);assignment.setStatus(Assignment.AssignmentStatus.IN_PROGRESS);replacement.addAssignment(assignment);
+
+        DrivingProgress transferred=service.transferAndSettle(12L,replacement,assignment,"source",ready,ready.plusMinutes(30));
+
+        assertEquals(ready,transferred.getPhaseStart());assertEquals(ready.plusMinutes(30),transferred.getLastSettledTime());
+        assertEquals(1800,transferred.getRemainingWorkSeconds(),1e-7);assertEquals(120,transferred.getAffectedSeconds(),1e-7);
+        assertEquals(30,transferred.getLostWorkSeconds(),1e-7);assertSame(transferred,service.latest(21L));
+    }
+
+    @Test void transferRejectsSourceFromWrongRunAssignmentOrCapturedPhase() {
+        var repo=mock(DrivingProgressRepository.class);var weather=mock(WeatherEnvironmentService.class);
+        when(weather.runId()).thenReturn("run1");
+        var source=progress("other-phase",12L,99L,"other-run",start,3600,3600,0,0);
+        when(repo.findFirstByVehicleIdOrderByPhaseStartDesc(12L)).thenReturn(Optional.of(source));
+        var service=new DrivingProgressService(repo,mock(VehicleRepository.class),mock(TransportRandomEventRepository.class),weather,
+                new SimulationContext(),mock(SimulationModeGuard.class));
+        var replacement=new Vehicle();replacement.setId(21L);replacement.activateReplacement(Vehicle.VehicleStatus.TRANSPORT_DRIVING,start,Duration.ofHours(1));
+        var assignment=new Assignment();assignment.setId(88L);assignment.setStatus(Assignment.AssignmentStatus.IN_PROGRESS);replacement.addAssignment(assignment);
+        assertNull(service.transferAndSettle(12L,replacement,assignment,"captured",start,start.plusMinutes(30)));
+        verify(repo,never()).save(any());
+    }
+
+    private DrivingProgress progress(String key,long vehicleId,long assignmentId,String run,LocalDateTime phaseStart,
+            double initial,double remaining,double affected,double lost){
+        var p=new DrivingProgress();p.setPhaseKey(key);p.setVehicleId(vehicleId);p.setAssignmentId(assignmentId);p.setRunId(run);
+        p.setDrivingStatus(Vehicle.VehicleStatus.TRANSPORT_DRIVING);p.setPhaseStart(phaseStart);p.setLastSettledTime(phaseStart);
+        p.setInitialWorkSeconds(initial);p.setRemainingWorkSeconds(remaining);p.setAffectedSeconds(affected);p.setLostWorkSeconds(lost);return p;
+    }
 }

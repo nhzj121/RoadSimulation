@@ -49,7 +49,7 @@ public class RandomEventSchemaMigration {
                   AND COLUMN_NAME = 'planned_end_time'
                 """,String.class);
         if("NO".equalsIgnoreCase(nullable)){
-            jdbcTemplate.execute("ALTER TABLE transport_random_event MODIFY planned_end_time DATETIME NULL");
+            jdbcTemplate.execute("ALTER TABLE transport_random_event MODIFY planned_end_time DATETIME(6) NULL");
             logger.info("Made transport_random_event.planned_end_time nullable");
         }
     }

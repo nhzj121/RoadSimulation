@@ -69,6 +69,9 @@ public class Vehicle {
     @Column(name = "status_duration_seconds")
     private Long statusDurationSeconds;
 
+    @Column(name = "replacement_reservation_event_id", unique = true)
+    private Long replacementReservationEventId;
+
     @Column(name = "current_load", precision = 10)
     private Double currentLoad;
 
@@ -333,12 +336,17 @@ public class Vehicle {
     }
 
     public void markScrapped(LocalDateTime time) { forceStatus(VehicleStatus.SCRAPPED,time,Duration.ZERO); }
-    public void reserveAsReplacement(LocalDateTime time) { forceStatus(VehicleStatus.RESERVED_REPLACEMENT,time,Duration.ZERO); }
-    public void activateReplacement(VehicleStatus status,LocalDateTime time,Duration duration) { forceStatus(status,time,duration); }
-    public void releaseReplacementReservation(LocalDateTime time) {
-        if(currentStatus==VehicleStatus.RESERVED_REPLACEMENT) forceStatus(VehicleStatus.IDLE,time,Duration.ZERO);
+    public void reserveAsReplacement(LocalDateTime time) { reserveAsReplacement(null,time); }
+    public void reserveAsReplacement(Long eventId,LocalDateTime time) {
+        this.replacementReservationEventId=eventId;forceStatus(VehicleStatus.RESERVED_REPLACEMENT,time,Duration.ZERO);
     }
-    public void resetToIdle(LocalDateTime time) { forceStatus(VehicleStatus.IDLE,time,Duration.ZERO); }
+    public void activateReplacement(VehicleStatus status,LocalDateTime time,Duration duration) {
+        this.replacementReservationEventId=null;forceStatus(status,time,duration);
+    }
+    public void releaseReplacementReservation(LocalDateTime time) {
+        if(currentStatus==VehicleStatus.RESERVED_REPLACEMENT) {this.replacementReservationEventId=null;forceStatus(VehicleStatus.IDLE,time,Duration.ZERO);}
+    }
+    public void resetToIdle(LocalDateTime time) { this.replacementReservationEventId=null;forceStatus(VehicleStatus.IDLE,time,Duration.ZERO); }
     private void forceStatus(VehicleStatus status,LocalDateTime time,Duration duration) {
         if(this.currentStatus!=status)this.previousStatus=this.currentStatus;
         this.currentStatus=status;this.statusStartTime=time!=null?time:LocalDateTime.now();setStatusDuration(duration);
@@ -369,6 +377,8 @@ public class Vehicle {
         this.statusDurationSeconds = statusDurationSeconds;
     }
     public Long getStatusDurationSeconds() { return statusDurationSeconds; }
+    public Long getReplacementReservationEventId() { return replacementReservationEventId; }
+    public void setReplacementReservationEventId(Long replacementReservationEventId) { this.replacementReservationEventId = replacementReservationEventId; }
 
     public Double getCurrentLoad() { return currentLoad; }
     public void setCurrentLoad(Double currentLoad) { this.currentLoad = currentLoad; }

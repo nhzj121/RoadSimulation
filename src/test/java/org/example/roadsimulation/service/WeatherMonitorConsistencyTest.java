@@ -33,4 +33,24 @@ class WeatherMonitorConsistencyTest {
         vehicle.transitionToStatus(Vehicle.VehicleStatus.TRANSPORT_DRIVING,driving.now(),Duration.ofMinutes(30));
         assertEquals(.6,service.getActiveMonitor().getVehicles().get(0).getEffectiveSpeedFactor());
     }
+    @Test void replacementFieldsAppearOnMonitorAndReservedCandidate() {
+        var service=new TransportMonitorService();var shipments=mock(ShipmentRepository.class);var assignments=mock(AssignmentRepository.class);
+        var eventService=mock(TransportRandomEventService.class);ReflectionTestUtils.setField(service,"shipmentRepository",shipments);
+        ReflectionTestUtils.setField(service,"shipmentItemRepository",mock(ShipmentItemRepository.class));
+        ReflectionTestUtils.setField(service,"assignmentRepository",assignments);ReflectionTestUtils.setField(service,"transportRandomEventService",eventService);
+        ReflectionTestUtils.setField(service,"drivingProgressService",mock(DrivingProgressService.class));
+        when(shipments.findByStatusIn(any())).thenReturn(new ArrayList<>());
+        var candidate=new Vehicle();candidate.setId(21L);candidate.setLicensePlate("T");candidate.reserveAsReplacement(LocalDateTime.of(2026,1,1,8,0));
+        var assignment=new Assignment();assignment.setId(88L);assignment.setStatus(Assignment.AssignmentStatus.IN_PROGRESS);candidate.addAssignment(assignment);
+        when(assignments.findRuntimeActiveAssignments()).thenReturn(List.of(assignment));
+        var event=new TransportRandomEvent();event.setId(101L);event.setStatus(TransportRandomEvent.EventStatus.ACTIVE);
+        event.setEventType(TransportRandomEvent.EventType.VEHICLE_BREAKDOWN);event.setTriggerSource(TransportRandomEvent.TriggerSource.MANUAL);
+        event.setVehicleId(12L);event.setAssignmentId(88L);event.setReplacementVehicleId(21L);event.setReplacementLicensePlate("T");
+        event.setReplacementWaitMinutes(60);event.setRequiredLoad(8.0);event.setRequiredVolume(6.0);
+        when(eventService.getActiveEvents()).thenReturn(List.of(event));
+        var monitor=service.getActiveMonitor();
+        assertEquals(21L,monitor.getActiveEvents().get(0).getReplacementVehicleId());
+        assertEquals(60,monitor.getActiveEvents().get(0).getReplacementWaitMinutes());
+        assertEquals(101L,monitor.getVehicles().get(0).getActiveEvent().getEventId());
+    }
 }

@@ -86,3 +86,41 @@ Core changes:
 
 - Per instruction, no live database or running service was used. Schema behavior is covered by the idempotent migration unit test and JPA compilation, not a live MySQL migration.
 - The repository still emits its existing Maven model and Mockito agent warnings; these are unrelated to this change.
+
+## Review fix round (2026-09-19)
+
+Addressed all three confirmed review findings without changing frontend code:
+
+- Replacement reservation now uses a MySQL conditional update (`IDLE` plus an unowned reservation) carrying an event-owner token. The update clears the persistence context, after which the service reloads the vehicle under a pessimistic lock and rechecks current capacity, assignment, and event eligibility. Release is another owner-matched conditional update, so one event cannot clear another event's reservation. A nullable unique owner column additionally prevents one event from owning multiple candidates.
+- The concurrency test starts two independent threads from detached, stale `IDLE` snapshots and synchronizes their reads before an atomic repository claim. It proves exactly one event reserves the shared candidate and the loser remains waiting. A focused assertion verifies the post-claim active-assignment recheck uses the locking repository query.
+- Progress transfer validates the latest source against the current run, current assignment, and event-captured phase key before ownership changes. The replacement row is ordered at `replacementReadyTime`, retains all work/impact counters, and settles through the large observing tick so only `[readyTime, simNow]` is deducted. A prior, newer completed replacement task no longer hides the transferred row.
+- Both the migration DDL and entity mapping preserve `DATETIME(6)` while allowing `planned_end_time` to be null.
+- Focused monitor coverage verifies replacement fields and reserved-candidate event association. Focused reset coverage verifies a reserved vehicle returns to `IDLE` and clears its reservation owner.
+
+Review RED evidence, written and run before the production fixes:
+
+```text
+.\mvnw.cmd '-Dtest=TransportRandomEventServiceTest,DrivingProgressServiceTest,RandomEventSchemaMigrationTest,WeatherMonitorConsistencyTest,SimulationDataCleanupReplacementTest' test
+```
+
+Expected RED: test compilation failed with eight missing-contract errors for the reservation owner accessors, atomic repository operations, and phase-validating transfer signature. After the first implementation pass, a further focused RED failed compilation on the missing `findActiveAssignmentByVehicleForUpdate` contract, proving the fresh assignment eligibility check was not yet locked.
+
+Final review-focused GREEN:
+
+```text
+Tests run: 37, Failures: 0, Errors: 0, Skipped: 0; BUILD SUCCESS
+```
+
+Re-run of the implementer's focused suite:
+
+```text
+Tests run: 56, Failures: 0, Errors: 0, Skipped: 0; BUILD SUCCESS
+```
+
+Re-run of the named 17-class regression:
+
+```text
+Tests run: 70, Failures: 0, Errors: 0, Skipped: 0; BUILD SUCCESS
+```
+
+Review-fix limits: per instruction, no live/shared database was accessed. This repository has no isolated database/testcontainer harness, so the concurrency proof is the strongest available service/repository-boundary test (two real threads with detached stale snapshots and an atomic CAS repository double), rather than a live MySQL two-connection test. Microsecond behavior is verified at generated migration SQL and JPA mapping level, not by live persistence round-trip.

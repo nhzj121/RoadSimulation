@@ -10,6 +10,13 @@ import static org.mockito.Mockito.*;
 
 class RandomEventSchemaMigrationTest {
 
+    @Test void plannedEndMappingKeepsMicrosecondPrecision() throws Exception {
+        var column=org.example.roadsimulation.entity.TransportRandomEvent.class.getDeclaredField("plannedEndTime")
+                .getAnnotation(jakarta.persistence.Column.class);
+        org.junit.jupiter.api.Assertions.assertEquals("DATETIME(6)",column.columnDefinition());
+        org.junit.jupiter.api.Assertions.assertTrue(column.nullable());
+    }
+
     @Test
     void removesOnlyLegacyEventForeignKeysReturnedByMetadata() {
         JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
@@ -31,7 +38,7 @@ class RandomEventSchemaMigrationTest {
         when(jdbcTemplate.queryForList(contains("KEY_COLUMN_USAGE"),eq(String.class))).thenReturn(List.of());
         when(jdbcTemplate.queryForObject(contains("IS_NULLABLE"),eq(String.class))).thenReturn("NO");
         new RandomEventSchemaMigration(jdbcTemplate).removeLegacyForeignKeys();
-        verify(jdbcTemplate).execute("ALTER TABLE transport_random_event MODIFY planned_end_time DATETIME NULL");
+        verify(jdbcTemplate).execute("ALTER TABLE transport_random_event MODIFY planned_end_time DATETIME(6) NULL");
         reset(jdbcTemplate);
         when(jdbcTemplate.queryForList(anyString(),eq(String.class))).thenReturn(List.of());
         when(jdbcTemplate.queryForObject(contains("IS_NULLABLE"),eq(String.class))).thenReturn("YES");

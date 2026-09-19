@@ -50,7 +50,7 @@ public class TransportRandomEvent {
     @Column(name = "start_time", nullable = false)
     private LocalDateTime startTime;
 
-    @Column(name = "planned_end_time")
+    @Column(name = "planned_end_time", columnDefinition = "DATETIME(6)")
     private LocalDateTime plannedEndTime;
 
     @Column(name = "resolved_time")

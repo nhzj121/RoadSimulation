@@ -411,7 +411,8 @@ public class TransportRandomEventService {
     private void processReplacement(TransportRandomEvent event,LocalDateTime simNow){
         if(event.getReplacementVehicleId()==null){tryReserveReplacement(event,simNow);return;}
         Vehicle candidate=vehicleRepository.findByIdForUpdate(event.getReplacementVehicleId()).orElse(null);
-        if(candidate==null||candidate.getCurrentStatus()!=Vehicle.VehicleStatus.RESERVED_REPLACEMENT){
+        if(candidate==null||candidate.getCurrentStatus()!=Vehicle.VehicleStatus.RESERVED_REPLACEMENT
+                ||!Objects.equals(candidate.getReplacementReservationEventId(),event.getId())){
             cancelAttempt(event,candidate,"REPLACEMENT_UNAVAILABLE",simNow);clearReservation(event);tryReserveReplacement(event,simNow);return;
         }
         if(simNow.isBefore(event.getReplacementReadyTime())){
@@ -432,7 +433,7 @@ public class TransportRandomEventService {
                 Duration.ofSeconds(Math.max(0,Optional.ofNullable(event.getRemainingStatusSeconds()).orElse(0L))));
         assignmentRepository.save(assignment);vehicleRepository.save(original);vehicleRepository.save(candidate);
         if(drivingProgressService!=null&&drivingProgressService.enabled())
-            drivingProgressService.transferAndSettle(original.getId(),candidate,assignment,event.getReplacementReadyTime(),simNow);
+            drivingProgressService.transferAndSettle(original.getId(),candidate,assignment,event.getOriginalDrivingPhaseKey(),event.getReplacementReadyTime(),simNow);
         event.setStatus(TransportRandomEvent.EventStatus.RESOLVED);event.setBreakdownPhase(TransportRandomEvent.BreakdownPhase.REPLACED);
         event.setResolvedTime(event.getReplacementReadyTime());event.setReplacementProcessedTime(simNow);
         event.setReplacementOutcome("REPLACED");event.setDelaySeconds(elapsedSeconds(event.getStartTime(),event.getReplacementReadyTime()));
@@ -445,9 +446,12 @@ public class TransportRandomEventService {
     private String replacementGuardFailure(TransportRandomEvent event,Vehicle original,Vehicle candidate,Assignment assignment){
         if(original==null)return "ORIGINAL_VEHICLE_MISSING";
         if(original.getCurrentStatus()!=Vehicle.VehicleStatus.SCRAPPED)return "ORIGINAL_STATUS_CHANGED";
-        if(candidate==null||candidate.getCurrentStatus()!=Vehicle.VehicleStatus.RESERVED_REPLACEMENT)return "REPLACEMENT_UNAVAILABLE";
+        if(candidate==null||candidate.getCurrentStatus()!=Vehicle.VehicleStatus.RESERVED_REPLACEMENT
+                ||!Objects.equals(candidate.getReplacementReservationEventId(),event.getId()))return "REPLACEMENT_UNAVAILABLE";
         if(assignment==null||assignment.getAssignedVehicle()==null||!Objects.equals(assignment.getAssignedVehicle().getId(),original.getId()))return "ASSIGNMENT_CHANGED";
         if(assignment.getStatus()!=Assignment.AssignmentStatus.ASSIGNED&&assignment.getStatus()!=Assignment.AssignmentStatus.IN_PROGRESS)return "ASSIGNMENT_STATUS_CHANGED";
+        if(drivingProgressService!=null&&drivingProgressService.enabled()
+                &&!drivingProgressService.isTransferSourceValid(original.getId(),assignment,event.getOriginalDrivingPhaseKey()))return "DRIVING_PHASE_CHANGED";
         return null;
     }
 
@@ -459,9 +463,11 @@ public class TransportRandomEventService {
                 .thenComparing(Vehicle::getId);
         for(Vehicle listed:vehicleRepository.findByCurrentStatus(Vehicle.VehicleStatus.IDLE).stream()
                 .filter(v->eligibleCandidate(v,event)).sorted(order).toList()){
+            if(vehicleRepository.reserveReplacementIfIdle(listed.getId(),event.getId(),simNow)!=1)continue;
             Vehicle candidate=vehicleRepository.findByIdForUpdate(listed.getId()).orElse(null);
-            if(!eligibleCandidate(candidate,event))continue;
-            candidate.reserveAsReplacement(simNow);vehicleRepository.save(candidate);
+            if(!eligibleReservedCandidate(candidate,event)){
+                releaseReservationClaim(candidate,event,simNow);continue;
+            }
             LocalDateTime ready=simNow.plusMinutes(event.getReplacementWaitMinutes());
             event.setReplacementVehicleId(candidate.getId());event.setReplacementLicensePlate(candidate.getLicensePlate());
             event.setReplacementSelectedTime(simNow);event.setReplacementReadyTime(ready);event.setPlannedEndTime(ready);
@@ -488,10 +494,26 @@ public class TransportRandomEventService {
                     .noneMatch(e->Objects.equals(e.getReplacementVehicleId(),v.getId()));
     }
 
+    private boolean eligibleReservedCandidate(Vehicle v,TransportRandomEvent event){
+        return v!=null&&v.getCurrentStatus()==Vehicle.VehicleStatus.RESERVED_REPLACEMENT
+                &&Objects.equals(v.getReplacementReservationEventId(),event.getId())
+                &&v.getMaxLoadCapacity()!=null&&v.getCargoVolume()!=null&&v.getMaxLoadCapacity()>=event.getRequiredLoad()
+                &&v.getCargoVolume()>=event.getRequiredVolume()
+                &&assignmentRepository.findActiveAssignmentByVehicleForUpdate(v.getId()).isEmpty()
+                &&eventRepository.findFirstByVehicleIdAndStatus(v.getId(),TransportRandomEvent.EventStatus.ACTIVE).isEmpty()
+                &&eventRepository.findByStatus(TransportRandomEvent.EventStatus.ACTIVE).stream()
+                    .noneMatch(e->!Objects.equals(e.getId(),event.getId())&&Objects.equals(e.getReplacementVehicleId(),v.getId()));
+    }
+
     private void cancelAttempt(TransportRandomEvent event,Vehicle candidate,String outcome,LocalDateTime time){
-        if(candidate!=null)candidate.releaseReplacementReservation(time);
+        releaseReservationClaim(candidate,event,time);
         replacementAttemptRepository.findFirstByEventIdAndStatusOrderByIdDesc(event.getId(),VehicleReplacementAttempt.AttemptStatus.RESERVED)
                 .ifPresent(a->{a.setStatus(VehicleReplacementAttempt.AttemptStatus.CANCELLED);a.setOutcome(outcome);replacementAttemptRepository.save(a);});
+    }
+    private void releaseReservationClaim(Vehicle candidate,TransportRandomEvent event,LocalDateTime time){
+        if(candidate!=null&&candidate.getId()!=null&&event.getId()!=null
+                &&vehicleRepository.releaseReplacementIfOwned(candidate.getId(),event.getId(),time)==1
+                &&Objects.equals(candidate.getReplacementReservationEventId(),event.getId()))candidate.releaseReplacementReservation(time);
     }
     private void clearReservation(TransportRandomEvent event){event.setReplacementVehicleId(null);event.setReplacementLicensePlate(null);
         event.setReplacementSelectedTime(null);event.setReplacementReadyTime(null);event.setPlannedEndTime(null);
