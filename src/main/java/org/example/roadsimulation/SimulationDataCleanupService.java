@@ -3,6 +3,7 @@ package org.example.roadsimulation;
 import org.example.roadsimulation.entity.*;
 import org.example.roadsimulation.repository.*;
 import jakarta.persistence.EntityManager;
+import org.hibernate.Session;
 import org.example.roadsimulation.service.TransportLifecycleService;
 import org.example.roadsimulation.evaluation.NodeServiceLedgerHealth;
 import org.example.roadsimulation.evaluation.WaitFactLedgerHealth;
@@ -88,6 +89,15 @@ public class SimulationDataCleanupService {
     private ProductionBatchRepository productionBatchRepository;
 
     @Autowired
+    private ProductionPlanFlowRepository productionPlanFlowRepository;
+
+    @Autowired
+    private ProductionPlanNodeRepository productionPlanNodeRepository;
+
+    @Autowired
+    private ProductionPlanRepository productionPlanRepository;
+
+    @Autowired
     private VehicleRepository vehicleRepository;
 
     @Autowired
@@ -146,7 +156,7 @@ public class SimulationDataCleanupService {
             System.out.println("Deleted " + nodeServiceEpisodeCount + " node_service_episode records");
             clearPersistenceContext();
 
-            // 生产运行数据按外键叶子到父级清理；加工链定义和生产计划不在 reset 范围内。
+            // 生产运行数据按外键叶子到父级清理。
             long executionFlowCount = processingExecutionFlowRepository.count();
             processingExecutionFlowRepository.deleteAllInBatch();
             processingExecutionFlowRepository.flush();
@@ -164,6 +174,19 @@ public class SimulationDataCleanupService {
             productionBatchRepository.flush();
             System.out.println("Deleted " + productionBatchCount + " production_batch records");
             clearPersistenceContext();
+
+            // 自动计划属于本次仿真的动态需求；人工计划与加工链模板仍保留。
+            int automaticFlowCount = productionPlanFlowRepository.deleteAutomaticPlanFlows();
+            productionPlanFlowRepository.flush();
+            clearPersistenceContext();
+            int automaticNodeCount = productionPlanNodeRepository.deleteAutomaticPlanNodes();
+            productionPlanNodeRepository.flush();
+            clearPersistenceContext();
+            int automaticPlanCount = productionPlanRepository.deleteAutomaticPlans();
+            productionPlanRepository.flush();
+            clearPersistenceContext();
+            System.out.println("Deleted " + automaticPlanCount + " automatic production plans, "
+                    + automaticNodeCount + " nodes and " + automaticFlowCount + " flows");
 
             // assignment_leg -> assignment_nodes -> shipment_item -> assignment -> shipment -> enrollment
             long assignmentLegCount = assignmentLegRepository.count();
@@ -226,16 +249,25 @@ public class SimulationDataCleanupService {
     }
 
     private void clearShipmentUpstreamRelationsIfPresent() {
-        try {
-            int deleted = entityManager
-                    .createNativeQuery("DELETE FROM shipment_upstream_relations")
-                    .executeUpdate();
-            System.out.println("已删除 " + deleted + " 条shipment_upstream_relations记录");
-            clearPersistenceContext();
-        } catch (Exception e) {
-            System.out.println("shipment_upstream_relations无需清理或不存在: " + e.getMessage());
-            entityManager.clear();
+        boolean tableExists = entityManager.unwrap(Session.class).doReturningWork(connection -> {
+            try (var tables = connection.getMetaData().getTables(
+                    connection.getCatalog(), null, "%", new String[]{"TABLE"})) {
+                while (tables.next()) {
+                    if ("shipment_upstream_relations".equalsIgnoreCase(tables.getString("TABLE_NAME"))) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+        });
+        if (!tableExists) {
+            return;
         }
+        int deleted = entityManager
+                .createNativeQuery("DELETE FROM shipment_upstream_relations")
+                .executeUpdate();
+        System.out.println("已删除 " + deleted + " 条shipment_upstream_relations记录");
+        clearPersistenceContext();
     }
 
     /**

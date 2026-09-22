@@ -15,6 +15,8 @@ public record ProductionPlanResponse(
         String sourcePoiName,
         String status,
         Long randomSeed,
+        String simulationRunId,
+        Integer generationRound,
         LocalDateTime createdAt,
         List<NodeResponse> nodes,
         List<FlowResponse> flows
@@ -24,10 +26,13 @@ public record ProductionPlanResponse(
             Long stageId,
             Integer stageOrder,
             String stageName,
+            Long selectedPoiId,
+            String selectedPoiName,
             String inputSku,
             String outputSku,
             Double plannedInputWeight,
             Double plannedOutputWeight,
+            String nodeRole,
             String status
     ) {}
 

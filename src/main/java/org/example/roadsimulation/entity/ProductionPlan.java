@@ -15,10 +15,17 @@ import java.util.List;
 @Entity
 @Table(
         name = "production_plan",
-        uniqueConstraints = @UniqueConstraint(name = "uk_production_plan_no", columnNames = "plan_no"),
+        uniqueConstraints = {
+                @UniqueConstraint(name = "uk_production_plan_no", columnNames = "plan_no"),
+                @UniqueConstraint(
+                        name = "uk_production_plan_generation",
+                        columnNames = {"simulation_run_id", "generation_round", "chain_id"}
+                )
+        },
         indexes = {
                 @Index(name = "idx_production_plan_chain", columnList = "chain_id"),
-                @Index(name = "idx_production_plan_status", columnList = "status")
+                @Index(name = "idx_production_plan_status", columnList = "status"),
+                @Index(name = "idx_production_plan_run_round", columnList = "simulation_run_id,generation_round")
         }
 )
 public class ProductionPlan {
@@ -55,6 +62,12 @@ public class ProductionPlan {
     @Column(name = "random_seed")
     private Long randomSeed;
 
+    @Column(name = "simulation_run_id", length = 64)
+    private String simulationRunId;
+
+    @Column(name = "generation_round")
+    private Integer generationRound;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt = LocalDateTime.now();
 
@@ -87,6 +100,10 @@ public class ProductionPlan {
     public void setStatus(PlanStatus status) { this.status = status; }
     public Long getRandomSeed() { return randomSeed; }
     public void setRandomSeed(Long randomSeed) { this.randomSeed = randomSeed; }
+    public String getSimulationRunId() { return simulationRunId; }
+    public void setSimulationRunId(String simulationRunId) { this.simulationRunId = simulationRunId; }
+    public Integer getGenerationRound() { return generationRound; }
+    public void setGenerationRound(Integer generationRound) { this.generationRound = generationRound; }
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
     public LocalDateTime getUpdatedAt() { return updatedAt; }

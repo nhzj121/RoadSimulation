@@ -26,11 +26,13 @@ START TRANSACTION;
 
 DROP TEMPORARY TABLE IF EXISTS dag_stage_compat_map;
 CREATE TEMPORARY TABLE dag_stage_compat_map (
-    chain_code VARCHAR(50) NOT NULL,
+    -- The legacy baseline uses utf8mb4_general_ci even on MySQL 8.4, whose
+    -- database default may be utf8mb4_0900_ai_ci. Match joined columns here.
+    chain_code VARCHAR(50) COLLATE utf8mb4_general_ci NOT NULL,
     stage_order INT NOT NULL,
-    stage_key VARCHAR(50) NOT NULL,
-    input_sku VARCHAR(100) NOT NULL,
-    output_sku VARCHAR(100) NOT NULL,
+    stage_key VARCHAR(50) COLLATE utf8mb4_general_ci NOT NULL,
+    input_sku VARCHAR(100) COLLATE utf8mb4_general_ci NOT NULL,
+    output_sku VARCHAR(100) COLLATE utf8mb4_general_ci NOT NULL,
     PRIMARY KEY (chain_code, stage_order),
     UNIQUE KEY uk_dag_stage_compat_key (chain_code, stage_key)
 );
@@ -110,6 +112,12 @@ WHERE NOT EXISTS (
 -- Reconstruct the four legacy linear chains as explicit DAG edges. The
 -- resulting model is DAG-compatible; it does not invent an unsupported
 -- output split or merge that was absent from the legacy definitions.
+-- MySQL cannot join the same temporary table twice in one statement.
+DROP TEMPORARY TABLE IF EXISTS dag_stage_compat_map_to;
+CREATE TEMPORARY TABLE dag_stage_compat_map_to LIKE dag_stage_compat_map;
+INSERT INTO dag_stage_compat_map_to
+    SELECT * FROM dag_stage_compat_map;
+
 INSERT INTO processing_stage_edge
     (chain_id, from_stage_id, to_stage_id, to_stage_input_id, created_at)
 SELECT
@@ -119,7 +127,7 @@ SELECT
     to_input.id,
     NOW()
 FROM dag_stage_compat_map AS from_map
-JOIN dag_stage_compat_map AS to_map
+JOIN dag_stage_compat_map_to AS to_map
   ON to_map.chain_code = from_map.chain_code
  AND to_map.stage_order = from_map.stage_order + 1
 JOIN processing_chain AS pc
@@ -143,5 +151,6 @@ WHERE NOT EXISTS (
 );
 
 DROP TEMPORARY TABLE IF EXISTS dag_stage_compat_map;
+DROP TEMPORARY TABLE IF EXISTS dag_stage_compat_map_to;
 
 COMMIT;

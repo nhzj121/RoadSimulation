@@ -1,5 +1,7 @@
 package org.example.roadsimulation.service;
 
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import org.example.roadsimulation.core.SimulationContext;
 import org.example.roadsimulation.evaluation.NodeServiceEpisode;
 import org.example.roadsimulation.evaluation.NodeServiceObservationPublisher;
@@ -51,6 +53,9 @@ public class TransportLifecycleService {
     private final ApplicationEventPublisher eventPublisher;
     // Phase 7B：观察器只复制已完成的生命周期事实，绝不参与状态选择或路段推进。
     private final NodeServiceObservationPublisher nodeServiceObservationPublisher;
+
+    @PersistenceContext
+    private EntityManager entityManager;
 
     /**
      * Phase 1：保留四参数构造器供现有纯单元测试使用；测试应优先显式传入 simNow。
@@ -447,9 +452,10 @@ public class TransportLifecycleService {
 
         // Phase 4：到达坐标与路段完成同事务落库，后续前端只需投影后端位置。
         if (leg.getToPOI() != null) {
-            managedVehicle.setCurrentPOI(leg.getToPOI());
-            managedVehicle.setCurrentLongitude(leg.getToPOI().getLongitude());
-            managedVehicle.setCurrentLatitude(leg.getToPOI().getLatitude());
+            POI destination = resolvePoi(leg.getToPOI());
+            managedVehicle.setCurrentPOI(destination);
+            managedVehicle.setCurrentLongitude(destination.getLongitude());
+            managedVehicle.setCurrentLatitude(destination.getLatitude());
         }
 
         Vehicle.VehicleStatus nextStatus = resolveArrivalActionStatus(leg, allLegsCompleted);
@@ -538,9 +544,10 @@ public class TransportLifecycleService {
         if (managedVehicle != null) {
             managedVehicle.transitionToStatus(Vehicle.VehicleStatus.IDLE, now, Duration.ZERO);
             if (endPOI != null) {
-                managedVehicle.setCurrentPOI(endPOI);
-                managedVehicle.setCurrentLongitude(endPOI.getLongitude());
-                managedVehicle.setCurrentLatitude(endPOI.getLatitude());
+                POI destination = resolvePoi(endPOI);
+                managedVehicle.setCurrentPOI(destination);
+                managedVehicle.setCurrentLongitude(destination.getLongitude());
+                managedVehicle.setCurrentLatitude(destination.getLatitude());
             }
             // Phase 1：交付完成释放车辆时，吨制运行载重归零。
             managedVehicle.setCurrentLoadTonnes(0.0);
@@ -712,6 +719,13 @@ public class TransportLifecycleService {
         if (shipment == null || shipment.getId() == null) {
             return shipment;
         }
+
+        // Assignment items may carry a detached Shipment proxy from an earlier
+        // transaction. Always update the managed instance in this transaction.
+        Long shipmentId = shipment.getId();
+        shipment = shipmentRepository.findById(shipmentId)
+                .orElseThrow(() -> new IllegalStateException(
+                        "Shipment not found while refreshing status: " + shipmentId));
 
         List<ShipmentItem> items = shipmentItemRepository.findByShipmentId(shipment.getId());
         if (items.isEmpty()) {
@@ -895,6 +909,17 @@ public class TransportLifecycleService {
         return assignment.getStatus() == Assignment.AssignmentStatus.COMPLETED
                 || assignment.getStatus() == Assignment.AssignmentStatus.CANCELLED
                 || assignment.getStatus() == Assignment.AssignmentStatus.FAILED;
+    }
+
+    private POI resolvePoi(POI poi) {
+        if (poi == null || poi.getId() == null || entityManager == null) {
+            return poi;
+        }
+        POI managedPoi = entityManager.find(POI.class, poi.getId());
+        if (managedPoi == null) {
+            throw new IllegalStateException("POI not found during transport lifecycle: " + poi.getId());
+        }
+        return managedPoi;
     }
 
     private Vehicle resolveVehicle(Vehicle vehicle, Assignment assignment) {

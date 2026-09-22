@@ -95,7 +95,26 @@ public class EvaluationSnapshotService {
                 }
                 return activeRun.runId;
             }
-            activeRun = new RunState(UUID.randomUUID().toString(), EvaluationRunKind.REGULAR);
+            return beginRegularRunIfAbsent(UUID.randomUUID().toString());
+        }
+    }
+
+    /** R1：普通仿真的 runId 由 SimulationContext 统一创建，评价模块只接受并校验它。 */
+    public String beginRegularRunIfAbsent(String simulationRunId) {
+        if (simulationRunId == null || simulationRunId.isBlank()) {
+            throw new IllegalArgumentException("simulation run id is required");
+        }
+        synchronized (lifecycleMonitor) {
+            if (activeRun != null) {
+                if (activeRun.kind != EvaluationRunKind.REGULAR) {
+                    throw new IllegalStateException("dispatch comparison evaluation run is still active");
+                }
+                if (!activeRun.runId.equals(simulationRunId)) {
+                    throw new IllegalStateException("evaluation run id does not match simulation context");
+                }
+                return activeRun.runId;
+            }
+            activeRun = new RunState(simulationRunId, EvaluationRunKind.REGULAR);
             // Phase 6B：新运行在首轮完成前没有 latest，禁止暴露上一运行的陈旧快照。
             latestSnapshot.set(null);
             return activeRun.runId;

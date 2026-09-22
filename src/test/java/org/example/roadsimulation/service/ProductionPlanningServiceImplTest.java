@@ -8,8 +8,6 @@ import org.example.roadsimulation.entity.ProcessingChain;
 import org.example.roadsimulation.entity.ProcessingStage;
 import org.example.roadsimulation.entity.ProductionPlan;
 import org.example.roadsimulation.entity.ProductionPlanFlow;
-import org.example.roadsimulation.repository.EnrollmentRepository;
-import org.example.roadsimulation.repository.POIRepository;
 import org.example.roadsimulation.repository.ProcessingChainRepository;
 import org.example.roadsimulation.repository.ProcessingExecutionFlowRepository;
 import org.example.roadsimulation.repository.ProcessingStageExecutionRepository;
@@ -22,6 +20,7 @@ import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.IdentityHashMap;
 import java.util.Map;
 import java.util.Optional;
 
@@ -43,9 +42,8 @@ class ProductionPlanningServiceImplTest {
                 mock(ProcessingStageExecutionRepository.class);
         ProcessingExecutionFlowRepository executionFlowRepository =
                 mock(ProcessingExecutionFlowRepository.class);
-        POIRepository poiRepository = mock(POIRepository.class);
-        EnrollmentRepository enrollmentRepository = mock(EnrollmentRepository.class);
         TransportDemandService transportDemandService = mock(TransportDemandService.class);
+        ProductionPlanPoiSelector poiSelector = mock(ProductionPlanPoiSelector.class);
 
         ProductionPlanningServiceImpl service = new ProductionPlanningServiceImpl(
                 chainRepository,
@@ -55,9 +53,8 @@ class ProductionPlanningServiceImplTest {
                 batchRepository,
                 executionRepository,
                 executionFlowRepository,
-                poiRepository,
-                enrollmentRepository,
-                transportDemandService
+                transportDemandService,
+                poiSelector
         );
 
         POI source = poi(1L, "SOURCE");
@@ -79,8 +76,14 @@ class ProductionPlanningServiceImplTest {
         stage2.setProcessingChain(chain);
         stage3.setProcessingChain(chain);
 
+        when(poiSelector.select(any(), any(), any(), any())).thenAnswer(invocation -> {
+            List<ProcessingStage> selectedStages = invocation.getArgument(0);
+            IdentityHashMap<ProcessingStage, POI> result = new IdentityHashMap<>();
+            selectedStages.forEach(stage -> result.put(stage, stage.getProcessingPOI()));
+            return result;
+        });
+
         when(chainRepository.findById(10L)).thenReturn(Optional.of(chain));
-        when(poiRepository.findById(1L)).thenReturn(Optional.of(source));
         when(planRepository.save(any(ProductionPlan.class))).thenAnswer(invocation -> {
             ProductionPlan plan = invocation.getArgument(0);
             plan.setId(100L);
@@ -101,7 +104,7 @@ class ProductionPlanningServiceImplTest {
             return flows;
         });
 
-        ProductionPlanResponse response = service.createRandomPlan(new CreateProductionPlanRequest(
+        ProductionPlanResponse response = service.createAutomaticPlan(new CreateProductionPlanRequest(
                 10L,
                 63.0,
                 63.0,
@@ -110,17 +113,28 @@ class ProductionPlanningServiceImplTest {
                 1L,
                 "test",
                 Map.of()
-        ));
+        ), "run-1", 6);
 
         assertThat(response.finalDemandWeight()).isEqualTo(63.0);
+        assertThat(response.simulationRunId()).isEqualTo("run-1");
+        assertThat(response.generationRound()).isEqualTo(6);
+        assertThat(response.finalSku()).isEqualTo("SEMI_2");
         assertThat(response.nodes()).hasSize(3);
-        assertThat(response.nodes().get(0).plannedInputWeight()).isEqualTo(100.0);
-        assertThat(response.nodes().get(0).plannedOutputWeight()).isEqualTo(80.0);
-        assertThat(response.nodes().get(1).plannedInputWeight()).isEqualTo(80.0);
-        assertThat(response.nodes().get(1).plannedOutputWeight()).isEqualTo(70.0);
-        assertThat(response.nodes().get(2).plannedInputWeight()).isEqualTo(70.0);
+        assertThat(response.nodes()).allSatisfy(node -> assertThat(node.selectedPoiId()).isNotNull());
+        assertThat(response.nodes().get(0).nodeRole()).isEqualTo("SOURCE");
+        assertThat(response.nodes().get(0).plannedInputWeight()).isZero();
+        assertThat(response.nodes().get(0).plannedOutputWeight()).isEqualTo(72.0);
+        assertThat(response.nodes().get(1).nodeRole()).isEqualTo("PROCESSING");
+        assertThat(response.nodes().get(1).plannedInputWeight()).isEqualTo(72.0);
+        assertThat(response.nodes().get(1).plannedOutputWeight()).isEqualTo(63.0);
+        assertThat(response.nodes().get(2).nodeRole()).isEqualTo("SINK");
+        assertThat(response.nodes().get(2).plannedInputWeight()).isEqualTo(63.0);
         assertThat(response.nodes().get(2).plannedOutputWeight()).isEqualTo(63.0);
-        assertThat(response.flows()).hasSize(3);
+        assertThat(response.flows()).hasSize(2);
+        assertThat(response.flows()).allSatisfy(flow -> {
+            assertThat(flow.fromNodeId()).isNotNull();
+            assertThat(flow.sourcePoiId()).isNull();
+        });
     }
 
     private POI poi(Long id, String name) {

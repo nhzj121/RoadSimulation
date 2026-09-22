@@ -69,6 +69,10 @@ public class Shipment {
     @Column(name = "status", length = 20, nullable = false)
     private ShipmentStatus status = ShipmentStatus.CREATED;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "demand_source", length = 20, nullable = false)
+    private ShipmentDemandSource demandSource = ShipmentDemandSource.MANUAL;
+
     // 与客户的多对一关系
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "customer_id")
@@ -226,6 +230,14 @@ public class Shipment {
         this.status = status;
     }
 
+    public ShipmentDemandSource getDemandSource() {
+        return demandSource;
+    }
+
+    public void setDemandSource(ShipmentDemandSource demandSource) {
+        this.demandSource = demandSource == null ? ShipmentDemandSource.MANUAL : demandSource;
+    }
+
     public Customer getCustomer() {
         return customer;
     }
@@ -334,6 +346,7 @@ public class Shipment {
                 "id=" + id +
                 ", refNo='" + refNo + '\'' +
                 ", status=" + status +
+                ", demandSource=" + demandSource +
                 ", customer=" + (customer != null ? customer.getId() : "null") +
                 ", originPOI=" + (originPOI != null ? originPOI.getId() : "null") +
                 ", destPOI=" + (destPOI != null ? destPOI.getId() : "null") +

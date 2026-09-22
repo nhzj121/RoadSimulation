@@ -13,6 +13,7 @@ import org.example.roadsimulation.repository.AssignmentRepository;
 import org.example.roadsimulation.repository.ShipmentItemRepository;
 import org.example.roadsimulation.repository.VehicleRepository;
 import org.example.roadsimulation.service.CostBaselineNormalizationService;
+import org.example.roadsimulation.service.DemandGenerationCoordinator;
 import org.example.roadsimulation.service.GetCostService;
 import org.example.roadsimulation.service.POIShipmentManager;
 import org.example.roadsimulation.service.ProductionExecutionService;
@@ -42,6 +43,7 @@ public class SimulationMainLoop {
     private final TransportProgressService transportProgressService;
     // Phase 6B：主循环在业务推进结束后通过该服务原子发布唯一评价快照。
     private final EvaluationSnapshotService evaluationSnapshotService;
+    private final DemandGenerationCoordinator demandGenerationCoordinator;
 
     @Autowired
     private VehicleInitializationService vehicleInitializationService;
@@ -81,7 +83,8 @@ public class SimulationMainLoop {
                        StateUpdateService stateUpdateService,
                        SimulationContext simulationContext,
                        TransportProgressService transportProgressService,
-                       EvaluationSnapshotService evaluationSnapshotService) {
+                       EvaluationSnapshotService evaluationSnapshotService,
+                       DemandGenerationCoordinator demandGenerationCoordinator) {
         this.dataInitializer = dataInitializer;
         this.stateUpdateService = stateUpdateService;
         this.simulationContext = simulationContext;
@@ -89,6 +92,7 @@ public class SimulationMainLoop {
         this.transportProgressService = transportProgressService;
         // Phase 6B：构造器强制注入，避免运行时漏采某个已完成 tick。
         this.evaluationSnapshotService = evaluationSnapshotService;
+        this.demandGenerationCoordinator = demandGenerationCoordinator;
     }
 
     /**
@@ -133,11 +137,9 @@ public class SimulationMainLoop {
                 }
             }
 
-            if (simulationContext.getLoopCount() % 2 == 0) {
-                dataInitializer.generateGoods(simulationContext.getLoopCount());
-                if (shouldAbortLoop()) {
-                    return;
-                }
+            demandGenerationCoordinator.generateForTick(currentTick);
+            if (shouldAbortLoop()) {
+                return;
             }
 
             if (simulationContext.getLoopCount() % 10 == 0) {
@@ -230,8 +232,9 @@ public class SimulationMainLoop {
     }
 
     public void start() {
-        // Phase 6B：stop/start 是暂停恢复；仅首次启动创建 UUID，不清除已有 revision。
-        evaluationSnapshotService.beginRegularRunIfAbsent();
+        // R1：仿真上下文生成唯一 runId，评价模块不得再建立平行标识。
+        String runId = simulationContext.beginRunIfAbsent();
+        evaluationSnapshotService.beginRegularRunIfAbsent(runId);
         simulationContext.finishReset();
         simulationContext.setRunning(true);
         System.out.println("仿真主循环已启动");
@@ -257,7 +260,8 @@ public class SimulationMainLoop {
             return;
         }
         // Phase 6B：未调用 start 的单步执行也必须建立普通评价运行。
-        evaluationSnapshotService.beginRegularRunIfAbsent();
+        String runId = simulationContext.beginRunIfAbsent();
+        evaluationSnapshotService.beginRegularRunIfAbsent(runId);
         simulationContext.setRunning(true);
         executeMainLoop();
         simulationContext.setRunning(false);

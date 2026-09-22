@@ -1821,6 +1821,7 @@ public class DataInitializer implements CommandLineRunner {
             Double totalVolume = quantity * goods.getVolumePerUnit();
 
             Shipment shipment = new Shipment(refNo, startPOI, endPOI, totalWeight, totalVolume);
+            shipment.setDemandSource(ShipmentDemandSource.LEGACY);
             // 设置状态为已创建
             shipment.setStatus(Shipment.ShipmentStatus.CREATED);
 

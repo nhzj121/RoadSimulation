@@ -271,6 +271,47 @@ class ProductionExecutionServiceImplTest {
         assertThat(merge.getActualInputWeight()).isEqualTo(100.0);
     }
 
+    @Test
+    void finalDeliveryCompletesSinkAndBatchWithoutRunningSinkProcessing() {
+        ProcessingStageExecutionRepository executionRepository =
+                mock(ProcessingStageExecutionRepository.class);
+        ProcessingExecutionFlowRepository executionFlowRepository =
+                mock(ProcessingExecutionFlowRepository.class);
+        ProductionBatchRepository batchRepository = mock(ProductionBatchRepository.class);
+        ProductionDeliveryProcessor deliveryProcessor = new ProductionDeliveryProcessor(
+                executionRepository,
+                executionFlowRepository,
+                batchRepository
+        );
+
+        ProductionBatch batch = new ProductionBatch();
+        batch.setId(1L);
+        batch.setStatus(ProductionBatch.BatchStatus.INTER_STAGE_TRANSPORT);
+        ProcessingStageExecution sink = execution(30L, batch, 4);
+        sink.getPlanNode().setNodeRole(ProductionPlanNode.NodeRole.SINK);
+        ProcessingExecutionFlow finalFlow = inboundFlow(
+                40L, batch, sink, "final", 63.0, 90L
+        );
+        LocalDateTime deliveredAt = LocalDateTime.of(2026, 1, 1, 10, 0);
+
+        when(executionFlowRepository.findByShipmentId(90L)).thenReturn(Optional.of(finalFlow));
+        when(executionFlowRepository.findByToExecutionId(30L)).thenReturn(List.of(finalFlow));
+        when(executionRepository.findById(30L)).thenReturn(Optional.of(sink));
+
+        deliveryProcessor.processShipment(90L, deliveredAt);
+
+        assertThat(sink.getStatus()).isEqualTo(ProcessingStageExecution.ExecutionStatus.COMPLETED);
+        assertThat(sink.getActualInputWeight()).isEqualTo(63.0);
+        assertThat(sink.getActualOutputWeight()).isEqualTo(63.0);
+        assertThat(sink.getStartedAt()).isEqualTo(deliveredAt);
+        assertThat(sink.getCompletedAt()).isEqualTo(deliveredAt);
+        assertThat(batch.getStatus()).isEqualTo(ProductionBatch.BatchStatus.COMPLETED);
+        assertThat(batch.getActualFinalOutputWeight()).isEqualTo(63.0);
+        assertThat(batch.getCompletedAt()).isEqualTo(deliveredAt);
+        verify(executionRepository).save(sink);
+        verify(batchRepository).save(batch);
+    }
+
     private ProcessingStageExecution execution(Long id, ProductionBatch batch, int order) {
         ProcessingStage stage = new ProcessingStage();
         stage.setId(10L);

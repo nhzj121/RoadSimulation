@@ -4,6 +4,8 @@ import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.Optional;
+import java.util.UUID;
 
 /**
  * 仿真上下文 - 统一时间框架
@@ -53,6 +55,9 @@ public class SimulationContext {
      */
     private volatile boolean resetting = false;
 
+    /** 一次普通仿真从首次 start/step 到 reset 的唯一标识。 */
+    private volatile String simulationRunId;
+
     /**
      * 获取当前仿真时间
      * 
@@ -100,6 +105,19 @@ public class SimulationContext {
     public void reset() {
         loopCount = 0;
         isRunning = false;
+        simulationRunId = null;
+    }
+
+    /** 暂停后恢复沿用原标识；只有 reset 后的下一次启动才生成新标识。 */
+    public synchronized String beginRunIfAbsent() {
+        if (simulationRunId == null) {
+            simulationRunId = UUID.randomUUID().toString();
+        }
+        return simulationRunId;
+    }
+
+    public Optional<String> getSimulationRunId() {
+        return Optional.ofNullable(simulationRunId);
     }
 
     public void beginReset() {

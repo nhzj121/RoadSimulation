@@ -30,6 +30,7 @@ import org.example.roadsimulation.entity.Goods;
 import org.example.roadsimulation.entity.POI;
 import org.example.roadsimulation.entity.Route;
 import org.example.roadsimulation.entity.Shipment;
+import org.example.roadsimulation.entity.ShipmentDemandSource;
 import org.example.roadsimulation.entity.ShipmentItem;
 import org.example.roadsimulation.entity.Vehicle;
 import org.example.roadsimulation.evaluation.EvaluationLoopExecutionReport;
@@ -731,6 +732,7 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
                     + "_" + source.getTemplateCode();
 
             Shipment shipment = new Shipment(refNo, origin, destination, source.getTotalWeight(), source.getTotalVolume());
+            shipment.setDemandSource(ShipmentDemandSource.EXPERIMENT);
             shipment.setStatus(Shipment.ShipmentStatus.CREATED);
             shipment.setUpdatedBy("DispatchComparisonExperiment");
             Shipment savedShipment = shipmentRepository.save(shipment);
@@ -851,6 +853,7 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
         String refNo = "EXP_" + experimentId + "_" + String.format("%02d", index + 1) + "_" + template.code();
 
         Shipment shipment = new Shipment(refNo, origin, destination, totalWeight, totalVolume);
+        shipment.setDemandSource(ShipmentDemandSource.EXPERIMENT);
         shipment.setStatus(Shipment.ShipmentStatus.CREATED);
         Shipment savedShipment = shipmentRepository.save(shipment);
 

@@ -9,8 +9,6 @@ import org.example.roadsimulation.entity.ProcessingStageEdge;
 import org.example.roadsimulation.entity.ProcessingStageInput;
 import org.example.roadsimulation.entity.ProductionPlan;
 import org.example.roadsimulation.entity.ProductionPlanFlow;
-import org.example.roadsimulation.repository.EnrollmentRepository;
-import org.example.roadsimulation.repository.POIRepository;
 import org.example.roadsimulation.repository.ProcessingChainRepository;
 import org.example.roadsimulation.repository.ProcessingExecutionFlowRepository;
 import org.example.roadsimulation.repository.ProcessingStageExecutionRepository;
@@ -24,6 +22,7 @@ import org.junit.jupiter.api.Test;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.IdentityHashMap;
 import java.util.Map;
 import java.util.Optional;
 
@@ -45,20 +44,22 @@ class ProductionPlanningServiceImplYShapeTest {
                 mock(ProcessingStageExecutionRepository.class);
         ProcessingExecutionFlowRepository executionFlowRepository =
                 mock(ProcessingExecutionFlowRepository.class);
-        POIRepository poiRepository = mock(POIRepository.class);
-        EnrollmentRepository enrollmentRepository = mock(EnrollmentRepository.class);
         TransportDemandService transportDemandService = mock(TransportDemandService.class);
+        ProductionPlanPoiSelector poiSelector = mock(ProductionPlanPoiSelector.class);
         ProductionPlanningServiceImpl service = new ProductionPlanningServiceImpl(
                 chainRepository, planRepository, nodeRepository, planFlowRepository,
                 batchRepository, executionRepository, executionFlowRepository,
-                poiRepository, enrollmentRepository, transportDemandService
+                transportDemandService, poiSelector
         );
 
         ProcessingChain chain = yChain();
-        POI source = poi(1L, "Material source");
-
         when(chainRepository.findById(10L)).thenReturn(Optional.of(chain));
-        when(poiRepository.findById(1L)).thenReturn(Optional.of(source));
+        when(poiSelector.select(any(), any(), any(), any())).thenAnswer(invocation -> {
+            List<ProcessingStage> selectedStages = invocation.getArgument(0);
+            IdentityHashMap<ProcessingStage, POI> result = new IdentityHashMap<>();
+            selectedStages.forEach(stage -> result.put(stage, stage.getProcessingPOI()));
+            return result;
+        });
         when(planRepository.save(any(ProductionPlan.class))).thenAnswer(invocation -> {
             ProductionPlan plan = invocation.getArgument(0);
             plan.setId(100L);
@@ -84,19 +85,26 @@ class ProductionPlanningServiceImplYShapeTest {
         ));
 
         assertThat(response.finalDemandWeight()).isEqualTo(95.0);
-        assertThat(response.nodes()).hasSize(3);
+        assertThat(response.nodes()).hasSize(4);
 
         ProductionPlanResponse.NodeResponse steel = response.nodes().get(0);
         ProductionPlanResponse.NodeResponse wood = response.nodes().get(1);
         ProductionPlanResponse.NodeResponse merge = response.nodes().get(2);
-        assertThat(steel.plannedInputWeight()).isEqualTo(80.0);
+        ProductionPlanResponse.NodeResponse sink = response.nodes().get(3);
+        assertThat(steel.nodeRole()).isEqualTo("SOURCE");
+        assertThat(steel.plannedInputWeight()).isZero();
         assertThat(steel.plannedOutputWeight()).isEqualTo(80.0);
-        assertThat(wood.plannedInputWeight()).isEqualTo(20.0);
+        assertThat(wood.nodeRole()).isEqualTo("SOURCE");
+        assertThat(wood.plannedInputWeight()).isZero();
         assertThat(wood.plannedOutputWeight()).isEqualTo(20.0);
+        assertThat(merge.nodeRole()).isEqualTo("PROCESSING");
         assertThat(merge.plannedInputWeight()).isEqualTo(100.0);
         assertThat(merge.plannedOutputWeight()).isEqualTo(95.0);
+        assertThat(sink.nodeRole()).isEqualTo("SINK");
+        assertThat(sink.plannedInputWeight()).isEqualTo(95.0);
+        assertThat(sink.plannedOutputWeight()).isEqualTo(95.0);
 
-        assertThat(response.flows()).hasSize(4);
+        assertThat(response.flows()).hasSize(3);
         assertThat(response.flows())
                 .filteredOn(flow -> flow.inputKey().equals("steel"))
                 .allSatisfy(flow -> assertThat(flow.plannedWeight()).isEqualTo(80.0));
@@ -119,15 +127,19 @@ class ProductionPlanningServiceImplYShapeTest {
         ProcessingStage steel = stage(1L, 1, "steel", steelPoi, "ORE", "STEEL", 1.0);
         ProcessingStage wood = stage(2L, 2, "wood", woodPoi, "TIMBER", "WOOD", 1.0);
         ProcessingStage merge = stage(3L, 3, "merge", mergePoi, null, "FINAL", 0.95);
+        ProcessingStage sink = stage(4L, 4, "sink", poi(5L, "Demand receiver"), "FINAL", "RECEIVED", 0.5);
         ProcessingStageInput steelInput = new ProcessingStageInput(merge, "steel", "STEEL", 0.8);
         ProcessingStageInput woodInput = new ProcessingStageInput(merge, "wood", "WOOD", 0.2);
+        ProcessingStageInput finalInput = new ProcessingStageInput(sink, "final", "FINAL", 1.0);
         merge.setInputs(new ArrayList<>(List.of(steelInput, woodInput)));
+        sink.setInputs(new ArrayList<>(List.of(finalInput)));
 
-        List.of(steel, wood, merge).forEach(stage -> stage.setProcessingChain(chain));
-        chain.setStages(new ArrayList<>(List.of(steel, wood, merge)));
+        List.of(steel, wood, merge, sink).forEach(stage -> stage.setProcessingChain(chain));
+        chain.setStages(new ArrayList<>(List.of(steel, wood, merge, sink)));
         chain.setEdges(new ArrayList<>(List.of(
                 new ProcessingStageEdge(chain, steel, merge, steelInput),
-                new ProcessingStageEdge(chain, wood, merge, woodInput)
+                new ProcessingStageEdge(chain, wood, merge, woodInput),
+                new ProcessingStageEdge(chain, merge, sink, finalInput)
         )));
         return chain;
     }

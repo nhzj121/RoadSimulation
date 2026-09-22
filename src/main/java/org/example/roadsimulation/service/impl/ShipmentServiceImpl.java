@@ -60,6 +60,9 @@ public class ShipmentServiceImpl implements ShipmentService {
 
     @Override
     public Shipment createShipment(@NotNull Shipment shipment){
+        if (shipment.getDemandSource() == null) {
+            shipment.setDemandSource(ShipmentDemandSource.MANUAL);
+        }
         // 检查系统参考号是否已存在
         if(shipmentRepository.existsByRefNo(shipment.getRefNo())){
             throw new IllegalArgumentException("运单系统参考号已存在：" + shipment.getRefNo());
@@ -365,6 +368,7 @@ public class ShipmentServiceImpl implements ShipmentService {
             // 6. 生成运单
             String refNo = generateUniqueRefNo(goods.getSku(), generated);
             Shipment shipment = new Shipment(refNo, startPOI, endPOI, totalWeight, totalVolume);
+            shipment.setDemandSource(ShipmentDemandSource.MANUAL);
             shipment.setStatus(Shipment.ShipmentStatus.CREATED);
 
             shipmentsToSave.add(shipment);

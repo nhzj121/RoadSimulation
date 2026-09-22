@@ -7,6 +7,12 @@ import org.example.roadsimulation.dto.ProductionPlanResponse;
 public interface ProductionPlanningService {
     ProductionPlanResponse createRandomPlan(CreateProductionPlanRequest request);
 
+    ProductionPlanResponse createAutomaticPlan(
+            CreateProductionPlanRequest request,
+            String simulationRunId,
+            int generationRound
+    );
+
     ProductionPlanResponse getPlan(Long planId);
 
     ProductionBatchResponse releasePlan(Long planId, String actor);
