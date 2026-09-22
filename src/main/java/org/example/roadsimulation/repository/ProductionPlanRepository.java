@@ -14,6 +14,15 @@ public interface ProductionPlanRepository extends JpaRepository<ProductionPlan, 
     Optional<ProductionPlan> findByPlanNo(String planNo);
     boolean existsByChainId(Long chainId);
     boolean existsByPlanNo(String planNo);
+    Optional<ProductionPlan> findBySimulationRunIdAndGenerationRoundAndChainId(
+            String simulationRunId,
+            Integer generationRound,
+            Long chainId
+    );
+
+    @Modifying
+    @Query(value = "DELETE FROM production_plan WHERE simulation_run_id IS NOT NULL", nativeQuery = true)
+    int deleteAutomaticPlans();
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""

@@ -31,7 +31,7 @@ import java.util.Set;
 import static org.example.roadsimulation.evaluation.EvaluationMetricId.*;
 
 /**
- * Phase 6B：在单个只读、一致性事务中采集事实并计算 Phase 6A 已就绪指标。
+ * 在单个只读、一致性事务中采集事实并计算已就绪指标。
  *
  * <p>该组件不保存快照、不写运输实体，也不调用调度或生命周期服务。数据库读取与纯计算
  * 放在同一 REPEATABLE_READ 边界中，防止一张快照混合两个业务时刻。</p>
@@ -48,20 +48,20 @@ public class EvaluationSnapshotCalculator {
     private final AssignmentRepository assignmentRepository;
     private final AssignmentLegRepository assignmentLegRepository;
     private final ShipmentItemRepository shipmentItemRepository;
-    // Phase 7B：服务账本是第五类只读根事实，不从车辆当前状态反推历史服务时长。
+    // 服务时长来自只读节点账本，不从车辆当前状态反推历史记录。
     private final NodeServiceEpisodeRepository nodeServiceEpisodeRepository;
-    // Phase 7B：观察写入失败时显式令节点指标 INVALID，禁止少记事件后继续显示“正常”数值。
+    // 节点观察写入失败后，将相关指标标为 INVALID，避免用缺失事件计算偏低的数值。
     private final NodeServiceLedgerHealth nodeServiceLedgerHealth;
-    // Phase 7C：环境场景提供器是无状态只读依赖，不接触运输推进和路线规划。
+    // 环境场景仅作为只读评价事实，不参与运输推进或路线规划。
     private final ReproducibleEnvironmentScenarioService environmentScenarioService;
-    // Phase 8：评价读取已持久化累计事实，并用同一模型校验排放换算与环境能耗因子。
+    // 能耗评价读取已持久化的累计事实，并使用统一模型校验排放换算与环境因子。
     private final VehicleEnergyEmissionModel energyEmissionModel;
-    // Phase 9A-2：等待指标只读取评价账本，不从当前业务状态反推历史等待。
+    // 等待指标只读取评价账本，不从当前业务状态推断历史等待。
     private final WaitMetricFactReader waitMetricFactReader;
-    // Phase 9B-3：交付指标只读取按 runId 隔离的截止与后端卸货完成事实。
+    // 交付指标读取按运行隔离的截止时间与后端卸货完成事实。
     private final DeliverySlaMetricFactReader deliverySlaMetricFactReader;
 
-    /** Phase 6B/7B/7C/8/9A/9B：保留旧构造器供既有测试逐步迁移；生产 Spring 使用完整依赖构造器。 */
+    /** 兼容既有测试的简化构造器；生产环境使用完整依赖构造器。 */
     public EvaluationSnapshotCalculator(
             EvaluationMetricCatalog catalog,
             EvaluationMetricPolicy policy,
@@ -210,7 +210,7 @@ public class EvaluationSnapshotCalculator {
             WaitMetricFactReader waitMetricFactReader,
             DeliverySlaMetricFactReader deliverySlaMetricFactReader
     ) {
-        // Phase 7C：生产构造器显式包含场景提供器，旧构造器仅供旧测试兼容。
+        // 生产环境必须显式提供场景服务；缺省依赖只用于兼容既有测试。
         this.catalog = catalog;
         this.policy = policy;
         this.vehicleRepository = vehicleRepository;
@@ -220,25 +220,25 @@ public class EvaluationSnapshotCalculator {
         this.nodeServiceEpisodeRepository = nodeServiceEpisodeRepository;
         this.nodeServiceLedgerHealth = nodeServiceLedgerHealth;
         this.environmentScenarioService = environmentScenarioService;
-        // Phase 8：生产构造器强制注入已校验模型；旧构造器使用同参数默认模型。
+        // 生产环境注入已校验的能耗模型；简化构造器使用相同参数的默认模型。
         this.energyEmissionModel = energyEmissionModel;
         this.waitMetricFactReader = waitMetricFactReader;
         this.deliverySlaMetricFactReader = deliverySlaMetricFactReader;
     }
 
-    /** Phase 6B 兼容入口：缺少明确 tick 时节点本轮吞吐量会保持不可用。 */
+    /** 无明确 tick 的兼容入口；本轮节点吞吐量因此保持不可用。 */
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public Calculation calculate() {
         return calculateInternal(null, null);
     }
 
-    /** Phase 7B：每次调用只执行一次五类根事实扫描，并按传入 tick 计算本轮节点吞吐量。 */
+    /** 每次调用只扫描一次各类根事实，并按传入 tick 计算本轮节点吞吐量。 */
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public Calculation calculate(SimulationTick tick) {
         return calculateInternal(tick, null);
     }
 
-    /** Phase 9A-2：生产快照必须携带 runId，确保等待事实不会跨运行混算。 */
+    /** 生产快照需要运行标识，防止等待事实跨运行混算。 */
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public Calculation calculate(SimulationTick tick, String simulationRunId) {
         return calculateInternal(tick, simulationRunId);
@@ -247,7 +247,7 @@ public class EvaluationSnapshotCalculator {
     private Calculation calculateInternal(SimulationTick tick, String simulationRunId) {
         MetricAccumulator metrics = new MetricAccumulator(catalog);
 
-        // Phase 7B：五组 findAll 均位于同一事务；HTTP 接口不会再次执行这些查询。
+        // 各类事实查询位于同一事务，接口层直接使用计算结果，不再重复读取。
         List<Vehicle> vehicles = List.copyOf(vehicleRepository.findAll());
         List<Assignment> assignments = List.copyOf(assignmentRepository.findAll());
         List<AssignmentLeg> legs = List.copyOf(assignmentLegRepository.findAll());
@@ -261,15 +261,15 @@ public class EvaluationSnapshotCalculator {
         calculateCargoFacts(metrics, shipmentItems, legFacts);
         calculateTaskFacts(metrics, assignments, legs, legFacts);
         calculateGlobalFacts(metrics, legFacts);
-        // Phase 7C：场景只在评价侧读取；这里不向任何运输实体或路径服务回写结果。
+        // 场景只在评价侧读取，不向运输实体或路径服务回写结果。
         calculateEnvironmentFacts(metrics, tick);
         calculateNodeServiceFacts(metrics, nodeServiceEpisodes, tick);
-        // Phase 9A-2：等待事实已在本轮采集前投影完成，使用同一 tickEnd 统计开放样本。
+        // 等待事实已在采集前投影完成，开放样本统一统计到本轮 tickEnd。
         calculateWaitingFacts(metrics, tick, simulationRunId);
-        // Phase 9B-3：交付事实同样在本轮计算前投影完成；该计算不反向修改 Assignment。
+        // 交付事实已在本轮计算前投影完成，这里不反向修改任务。
         calculateDeliverySlaFacts(metrics, tick, simulationRunId, assignments, shipmentItems);
 
-        // Phase 6B：车辆里程类值来自同一份路段事实；这里在路段校验后统一覆盖占位结果。
+        // 车辆里程取自同一份路段事实，在校验后统一写入计算结果。
         if (legFacts.distanceFactsValid()) {
             metrics.available(VEHICLE_TOTAL_EXECUTED_DISTANCE_KM, legFacts.totalDistanceKm());
             metrics.available(VEHICLE_EMPTY_EXECUTED_DISTANCE_KM, legFacts.emptyDistanceKm());
@@ -281,17 +281,17 @@ public class EvaluationSnapshotCalculator {
                     legFacts.executedTonneKm(), legFacts.capacityTonneKm(),
                     "不存在正载重且正额定载重的已执行有载里程");
         }
-        // Phase 8：能耗、排放与强度统一从同一份路段累计事实计算，避免车辆/任务口径分叉。
+        // 能耗、排放和强度使用同一份路段累计事实，保持车辆与任务口径一致。
         calculateEnergyEmissionFacts(metrics, legFacts);
 
-        // Phase 6B：显式引用结果，保留车辆事实计算与路段事实计算的独立校验边界。
+        // 保留车辆事实与路段事实各自的校验结果，不在此处混合校验边界。
         if (!vehicleFacts.statusFactsValid()) {
             metrics.error(INVALID_FACT_ERROR);
         }
         return metrics.finish();
     }
 
-    /** Phase 9A-2：统一计算九项等待指标及货物/任务 P95 服务约束。 */
+    /** 计算等待指标以及货物、任务的 P95 服务约束。 */
     private void calculateWaitingFacts(
             MetricAccumulator metrics,
             SimulationTick tick,
@@ -310,7 +310,7 @@ public class EvaluationSnapshotCalculator {
         );
         if (tick == null || simulationRunId == null || simulationRunId.isBlank()
                 || waitMetricFactReader == null) {
-            // Phase 9A-2：旧测试兼容入口没有 runId；明确 N/A，但不把其它既有指标降级。
+            // 缺少运行标识时无法定位等待账本，仅将等待指标标为不适用。
             dependent.forEach(id -> metrics.zeroDenominator(
                     id, "缺少评价运行标识或等待账本读取器，兼容入口不计算等待指标"));
             return;
@@ -320,7 +320,7 @@ public class EvaluationSnapshotCalculator {
         try {
             facts = waitMetricFactReader.read(simulationRunId);
         } catch (RuntimeException ex) {
-            // Phase 9A-2：局部读取或结构异常只污染等待指标，不能修改业务或伪造零值。
+            // 等待账本读取或结构异常只影响等待指标，不修改业务事实或伪造零值。
             dependent.forEach(id -> metrics.invalid(id, "等待事实账本读取失败"));
             return;
         }
@@ -341,7 +341,7 @@ public class EvaluationSnapshotCalculator {
             } else {
                 boolean compliant = Math.max(result.cargoP95Seconds(), result.taskP95Seconds())
                         <= policy.getMaxServiceWaitSeconds();
-                // Phase 9A-2：boolean 指标沿用数值契约，1 表示满足，0 表示违反。
+                // 布尔指标沿用数值契约：1 表示满足，0 表示违反。
                 metrics.available(GLOBAL_WAITING_SERVICE_COMPLIANT, compliant ? 1.0 : 0.0);
             }
         } catch (RuntimeException ex) {
@@ -349,7 +349,7 @@ public class EvaluationSnapshotCalculator {
         }
     }
 
-    /** Phase 9B-3：从当前运行交付账本计算任务逾期数和准时完成率。 */
+    /** 从当前运行的交付账本计算逾期任务数和准时完成率。 */
     private void calculateDeliverySlaFacts(
             MetricAccumulator metrics,
             SimulationTick tick,
@@ -363,7 +363,7 @@ public class EvaluationSnapshotCalculator {
         );
         if (tick == null || simulationRunId == null || simulationRunId.isBlank()
                 || deliverySlaMetricFactReader == null) {
-            // Phase 9B-3：旧测试兼容入口缺少运行边界时明确 N/A，不用墙钟或跨运行事实补算。
+            // 缺少运行边界时标为不适用，不用墙钟或其他运行的事实补算。
             dependent.forEach(id -> metrics.zeroDenominator(
                     id, "缺少评价运行标识、仿真 tick 或交付 SLA 账本读取器"));
             return;
@@ -387,7 +387,7 @@ public class EvaluationSnapshotCalculator {
                     facts.facts(), assignments, shipmentItems, tick.tickEnd());
             metrics.available(TASK_OVERDUE_COUNT, result.overdueTaskCount());
             if (result.completedTaskCount() == 0L) {
-                // Phase 9B-3：零已完成样本不是 0% 准时，也不是 100% 准时。
+                // 没有已完成样本时，准时率既不是 0% 也不是 100%。
                 metrics.zeroDenominator(TASK_ON_TIME_COMPLETION_RATIO, "当前运行尚无已完成任务样本");
             } else {
                 metrics.ratio(
@@ -429,7 +429,7 @@ public class EvaluationSnapshotCalculator {
                 throw new IllegalStateException("duplicate delivery SLA fact for shipment item");
             }
         }
-        // Phase 9B-3：当前运行业务项与账本必须一一对应；多记和少记均禁止静默排除。
+        // 当前运行的业务项必须与账本一一对应，不能静默忽略多记或漏记。
         requireRunFact(itemsById.keySet().equals(factsByItem.keySet()), "delivery SLA fact coverage");
 
         for (Map.Entry<Long, ShipmentItem> entry : itemsById.entrySet()) {
@@ -477,7 +477,7 @@ public class EvaluationSnapshotCalculator {
                                 .isAfter(fact.getDeliveryDeadlineSimTime()));
                 if (allOnTime) onTimeCompletedTaskCount++;
             }
-            // Phase 9B-3：FAILED/CANCELLED 不进入分母，且不伪装成当前活动逾期任务。
+            // 失败和取消的任务不进入分母，也不计作仍在活动的逾期任务。
         }
         return new DeliveryMetricResult(
                 overdueTaskCount, completedTaskCount, onTimeCompletedTaskCount);
@@ -523,14 +523,14 @@ public class EvaluationSnapshotCalculator {
                 || status == Assignment.AssignmentStatus.DELAYED;
     }
 
-    /** Phase 9B-3：任务级交付汇总只包含指标所需的三个计数。 */
+    /** 任务级交付汇总只保留计算指标所需的三个计数。 */
     private record DeliveryMetricResult(
             long overdueTaskCount,
             long completedTaskCount,
             long onTimeCompletedTaskCount
     ) { }
 
-    /** Phase 9A-2：开放、成功和终止样本采用冻结契约中不同的统计集合。 */
+    /** 开放、成功和终止等待样本按各自的统计口径归集。 */
     private WaitingMetricResult aggregateWaitingFacts(
             WaitMetricFactReader.WaitFacts facts,
             java.time.LocalDateTime tickEnd
@@ -561,7 +561,7 @@ public class EvaluationSnapshotCalculator {
                 cargoCompletedSum += seconds;
                 cargoCompletedCount++;
             } else if (seconds > policy.getMaxServiceWaitSeconds()) {
-                // Phase 9A-2：只有尚未首次有载运输的开放/取消样本计入超时吨位。
+                // 只有尚未首次有载运输的开放或取消样本计入超时吨位。
                 overdueTonnes += tonnes;
             }
         }
@@ -642,7 +642,7 @@ public class EvaluationSnapshotCalculator {
         }
     }
 
-    /** Phase 9A-2：nearest-rank 的索引为 ceil(0.95*n)-1，不做线性插值。 */
+    /** P95 使用 nearest-rank：索引为 ceil(0.95*n)-1，不做线性插值。 */
     private Double nearestRankP95(List<Long> samples) {
         if (samples.isEmpty()) {
             return null;
@@ -665,7 +665,7 @@ public class EvaluationSnapshotCalculator {
         }
     }
 
-    /** Phase 9A-2：内部汇总结果只包含统计标量，不暴露账本实体。 */
+    /** 内部汇总结果只保留统计标量，不暴露账本实体。 */
     private record WaitingMetricResult(
             double vehicleCumulativeSeconds,
             Double vehicleP95Seconds,
@@ -690,12 +690,12 @@ public class EvaluationSnapshotCalculator {
                 ENV_ENERGY_FACTOR
         );
         if (tick == null) {
-            // Phase 7C：环境是逐 tick 事实，兼容 calculate() 入口不能用 revision 或墙上时间补造。
+            // 环境是逐 tick 事实；无 tick 时不能用快照版本或墙钟时间补造。
             dependent.forEach(id -> metrics.missing(id, "缺少当前 simulation tick，无法生成环境快照"));
             return;
         }
         if (environmentScenarioService == null) {
-            // Phase 7C：仅旧测试构造器允许缺少依赖；生产 Spring 构造器不会进入此分支。
+            // 简化测试构造器可能缺少场景服务，生产构造器不会进入此分支。
             dependent.forEach(id -> metrics.missing(id, "可复现环境场景提供器不可用"));
             return;
         }
@@ -703,14 +703,14 @@ public class EvaluationSnapshotCalculator {
         final EnvironmentScenarioSnapshot snapshot;
         try {
             snapshot = environmentScenarioService.snapshotFor(tick);
-            // Phase 7D：Shadow 与进度影响模式都可评价，但快照必须属于当前完整 tick。
+            // 不论场景是否影响运输进度，环境快照都必须与当前完整 tick 对齐。
             if (snapshot.loopIndex() != tick.loopIndex()
                     || !snapshot.validFrom().equals(tick.tickStart())
                     || !snapshot.validTo().equals(tick.tickEnd())) {
                 throw new IllegalStateException("environment snapshot does not match current tick");
             }
         } catch (RuntimeException ex) {
-            // Phase 7C：环境局部失败只令七项环境指标 INVALID；其它业务事实仍可形成 PARTIAL 快照。
+            // 环境事实读取失败仅令相关环境指标无效，其余事实仍可形成部分完成快照。
             dependent.forEach(id -> metrics.invalid(id, "本轮环境快照生成或校验失败"));
             return;
         }
@@ -723,7 +723,7 @@ public class EvaluationSnapshotCalculator {
         metrics.available(ENV_WEATHER_RISK_LEVEL, snapshot.weatherRiskLevel());
         metrics.available(ENV_TRAVEL_TIME_FACTOR, snapshot.travelTimeFactor());
         try {
-            // Phase 8：环境能耗因子由独立能耗模型转换，不把旅行时间放大系数直接冒充为能耗值。
+            // 环境能耗因子由能耗模型转换，不直接复用旅行时间放大系数。
             metrics.available(ENV_ENERGY_FACTOR,
                     energyEmissionModel.environmentEnergyFactor(snapshot.travelTimeFactor()));
         } catch (RuntimeException ex) {
@@ -731,7 +731,7 @@ public class EvaluationSnapshotCalculator {
         }
     }
 
-    /** Phase 8：将可信路段累计事实映射为车辆、任务和全局碳排核心指标。 */
+    /** 将可信的路段累计事实映射为车辆、任务及全局碳排指标。 */
     private void calculateEnergyEmissionFacts(MetricAccumulator metrics, LegFacts legFacts) {
         List<EvaluationMetricId> dependent = List.of(
                 VEHICLE_TOTAL_ENERGY,
@@ -770,14 +770,14 @@ public class EvaluationSnapshotCalculator {
             SimulationTick tick
     ) {
         if (nodeServiceEpisodeRepository == null) {
-            // Phase 7B：仅旧单元测试构造器可能缺少仓库；生产环境不得用默认 0 掩盖依赖缺失。
+            // 简化测试构造器可能缺少仓库；生产环境不能用零值掩盖依赖缺失。
             metrics.missing(ENV_NODE_AVERAGE_SERVICE_SECONDS, "节点服务账本仓库不可用");
             metrics.missing(ENV_NODE_THROUGHPUT_TONNES, "节点服务账本仓库不可用");
             return;
         }
         if (nodeServiceLedgerHealth != null && nodeServiceLedgerHealth.hasProjectionFailures()) {
-            // Phase 7B：发生过漏记风险后整轮失败封闭，不以残缺账本计算偏低的平均值或吞吐量。
-            // Phase 7E：沿用指标 reason 字段返回首错上下文，顶层机器错误码仍保持稳定。
+            // 存在漏记风险时使本轮节点指标失效，避免用残缺账本计算偏低的值。
+            // 首个错误的上下文放在指标原因中，顶层错误码保持稳定。
             String reason = "当前运行存在节点服务账本投影失败；"
                     + nodeServiceLedgerHealth.describeFirstFailure();
             metrics.invalid(ENV_NODE_AVERAGE_SERVICE_SECONDS, reason);
@@ -798,7 +798,7 @@ public class EvaluationSnapshotCalculator {
                 continue;
             }
             if (episode.getStatus() != NodeServiceEpisode.Status.COMPLETED) {
-                // Phase 7B：进行中的服务是合法事实，但尚不能进入完成样本或本轮吞吐量。
+                // 进行中的服务属于有效事实，但不计入完成样本和本轮吞吐量。
                 continue;
             }
             if (episode.getServiceCompletedAt() == null || episode.getProcessedTonnes() == null
@@ -816,7 +816,7 @@ public class EvaluationSnapshotCalculator {
             totalServiceSeconds += serviceSeconds;
             completedCount++;
 
-            // Phase 7B：主循环在 tickStart 处理到期动作，因此采用左闭右开区间，避免边界遗漏或重复。
+            // 主循环在 tickStart 处理到期动作；使用左闭右开区间避免边界重复计数。
             if (tick != null
                     && !episode.getServiceCompletedAt().isBefore(tick.tickStart())
                     && episode.getServiceCompletedAt().isBefore(tick.tickEnd())) {
@@ -838,17 +838,17 @@ public class EvaluationSnapshotCalculator {
         if (tick == null) {
             metrics.missing(ENV_NODE_THROUGHPUT_TONNES, "缺少当前 simulation tick，无法确定本轮处理量");
         } else {
-            // Phase 7B：有效账本中“本轮无完成事件”是事实零值，不是缺失值。
+            // 账本有效但本轮没有完成事件时，吞吐量为事实零值。
             metrics.available(ENV_NODE_THROUGHPUT_TONNES, tickThroughputTonnes);
         }
     }
 
-    /** Phase 9A-0：采集整体失败时仍返回完整 70 项结构，而不是生成字段不齐的半对象。 */
+    /** 即使整体采集失败，也返回字段齐全的指标结构。 */
     public Map<String, EvaluationMetricValue> failedMetricValues(String reason) {
         MetricAccumulator metrics = new MetricAccumulator(catalog);
         for (EvaluationMetricDefinition definition : catalog.all()) {
             EvaluationMetricValueStatus status = unresolvedStatus(definition);
-            // Phase 7E-R：整体采集失败不能覆盖“不适用/不支持”的稳定契约原因。
+            // 整体采集失败不覆盖“不适用”或“不支持”的既定原因。
             String metricReason = status == EvaluationMetricValueStatus.NOT_AVAILABLE
                     ? reason
                     : definition.readinessReason();
@@ -858,7 +858,7 @@ public class EvaluationSnapshotCalculator {
     }
 
     private static EvaluationMetricValueStatus unresolvedStatus(EvaluationMetricDefinition definition) {
-        // Phase 7E-R：初始化和失败快照必须使用同一状态映射，防止同一指标跨入口改变语义。
+        // 初始化与失败快照使用同一状态映射，保持指标语义一致。
         return switch (definition.readiness()) {
             case NOT_APPLICABLE -> EvaluationMetricValueStatus.NOT_APPLICABLE;
             case NOT_SUPPORTED -> EvaluationMetricValueStatus.NOT_SUPPORTED;
@@ -968,12 +968,12 @@ public class EvaluationSnapshotCalculator {
                     && currentLeg.getLoadState() == AssignmentLeg.LoadState.LOADED) {
                 loadedDrivingVehicleIds.add(vehicle.getId());
             } else {
-                // Phase 6B：状态与冻结载货语义冲突时拒绝把车辆放入错误类别。
+                // 车辆状态与冻结载货事实冲突时，不把车辆计入错误类别。
                 drivingFactsValid = false;
             }
         }
         if (drivingFactsValid) {
-            // Phase 6B：指标单位是 vehicle，同一车辆即使出现多个活动任务也只能计数一次。
+            // 车辆数量按车辆去重，不因多个活动任务重复计数。
             metrics.available(VEHICLE_EMPTY_DRIVING_COUNT, emptyDrivingVehicleIds.size());
             metrics.available(VEHICLE_LOADED_DRIVING_COUNT, loadedDrivingVehicleIds.size());
         } else {
@@ -1048,14 +1048,14 @@ public class EvaluationSnapshotCalculator {
         double emptyDistanceKm = 0.0;
         double executedTonneKm = 0.0;
         double capacityTonneKm = 0.0;
-        // Phase 8：能耗与排放都是当前运行的路段累计事实，不从计划路线或旧 Vehicle 汇总字段读取。
+        // 能耗与排放来自当前运行的路段累计事实，不读取计划路线或车辆旧汇总字段。
         double totalEnergyLiters = 0.0;
         double totalEmissionKg = 0.0;
         boolean distanceFactsValid = true;
         boolean loadFactsValid = true;
         boolean capacityFactsValid = true;
         boolean energyFactsValid = true;
-        // Phase 8：一次扫描只冻结一次模型元数据，避免循环内反复构造快照或读出不同口径。
+        // 每次扫描只冻结一次模型参数，避免同轮计算使用不同口径。
         EnergyEmissionModelSnapshot emissionModelSnapshot = energyEmissionModel.snapshot();
 
         for (AssignmentLeg leg : legs) {
@@ -1077,7 +1077,7 @@ public class EvaluationSnapshotCalculator {
             double distanceKm = distanceMeters / 1000.0;
             totalDistanceKm += distanceKm;
 
-            // Phase 8：升级前已有执行距离但没有能耗账本时必须显式 INVALID，不能用当前环境补算历史。
+            // 有执行距离却缺少对应能耗账本时标为无效，不用当前环境补算历史。
             double energyLiters = leg.getExecutedEnergyLiters();
             double emissionKg = leg.getExecutedEmissionKg();
             AssignmentLeg.EnergyFactStatus energyStatus = leg.getEnergyFactStatus();
@@ -1185,7 +1185,7 @@ public class EvaluationSnapshotCalculator {
                 case LOADED, IN_TRANSIT -> inTransit += weight;
                 case DELIVERED -> delivered += weight;
                 case CANCELLED -> {
-                    // Phase 6B：取消货物保留在 required 分母中，但不进入任何已完成吨位。
+                    // 取消货物保留在需求分母中，但不计入已完成吨位。
                 }
             }
         }
@@ -1239,7 +1239,7 @@ public class EvaluationSnapshotCalculator {
                 case IN_PROGRESS -> inProgress++;
                 case COMPLETED -> completed++;
                 default -> {
-                    // Phase 6B：WAITING/FAILED/CANCELLED/DELAYED 只进入任务总数和完成率分母。
+                    // 待执行、失败、取消和延迟任务只进入任务总数及完成率分母。
                 }
             }
         }
@@ -1397,20 +1397,20 @@ public class EvaluationSnapshotCalculator {
         return Double.isFinite(value) && value >= 0.0;
     }
 
-    /** Phase 8：允许连续浮点累计产生的极小舍入差，但拒绝不同排放因子形成的实质偏差。 */
+    /** 容忍浮点累计带来的微小舍入差，但拒绝排放口径不一致造成的实质偏差。 */
     private boolean approximatelyEqual(double left, double right) {
         double scale = Math.max(1.0, Math.max(Math.abs(left), Math.abs(right)));
         return Math.abs(left - right) <= 1.0e-9 * scale;
     }
 
-    /** Phase 6B：纯计算结果包含是否降级及机器可读错误码，供快照层决定整体状态。 */
+    /** 计算结果携带降级状态和机器错误码，供快照层确定整体状态。 */
     public record Calculation(
             Map<String, EvaluationMetricValue> metrics,
             boolean degraded,
             List<String> errorCodes
     ) {
         public Calculation {
-            // Phase 6B：保持 Phase 6A 目录顺序，便于接口稳定展示与快照比对。
+            // 按指标目录顺序输出，便于接口展示和快照比对。
             metrics = Collections.unmodifiableMap(new LinkedHashMap<>(metrics));
             errorCodes = List.copyOf(errorCodes);
         }
@@ -1433,7 +1433,7 @@ public class EvaluationSnapshotCalculator {
     ) {
     }
 
-    /** Phase 9A-0：集中执行状态和值约束，避免 70 个指标各自形成不同缺失策略。 */
+    /** 集中校验指标状态和值，避免各指标采用不同的缺失值策略。 */
     private static final class MetricAccumulator {
         private final EvaluationMetricCatalog catalog;
         private final Map<EvaluationMetricId, EvaluationMetricValue> values = new EnumMap<>(EvaluationMetricId.class);
@@ -1471,7 +1471,7 @@ public class EvaluationSnapshotCalculator {
         }
 
         private void zeroDenominator(EvaluationMetricId id, String reason) {
-            // Phase 6B：契约明确允许的零分母只影响单指标，不把完整快照降为 PARTIAL。
+            // 契约允许的零分母只影响对应指标，不降低整张快照的状态。
             replace(id, EvaluationMetricValue.unavailable(
                     catalog.require(id), EvaluationMetricValueStatus.NOT_AVAILABLE, reason));
         }
@@ -1502,7 +1502,7 @@ public class EvaluationSnapshotCalculator {
             LinkedHashMap<String, EvaluationMetricValue> ordered = new LinkedHashMap<>();
             for (EvaluationMetricDefinition definition : catalog.all()) {
                 EvaluationMetricValue value = values.get(definition.id());
-                // Phase 6B：任何 READY 指标若仍停留在初始化占位状态，属于实现遗漏而非合法零分母。
+                // 已就绪指标若仍处于初始占位状态，属于计算遗漏而非合法零分母。
                 if (definition.readiness() == EvaluationMetricReadiness.READY
                         && value.status() == EvaluationMetricValueStatus.NOT_AVAILABLE
                         && "本轮尚未生成该 READY 指标".equals(value.reason())) {

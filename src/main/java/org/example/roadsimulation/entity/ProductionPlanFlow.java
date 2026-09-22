@@ -6,7 +6,7 @@ import jakarta.validation.constraints.Size;
 
 import java.time.LocalDateTime;
 
-/** Planned material flow into one stage input. External flows have no upstream node. */
+/** Planned transport flow between two nodes in one processing chain. */
 @Entity
 @Table(
         name = "production_plan_flow",

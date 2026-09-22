@@ -20,6 +20,12 @@ import java.time.LocalDateTime;
 )
 public class ProductionPlanNode {
 
+    public enum NodeRole {
+        SOURCE,
+        PROCESSING,
+        SINK
+    }
+
     public enum NodeStatus {
         PLANNED, READY, WAITING_TRANSPORT, IN_TRANSIT,
         READY_TO_PROCESS, PROCESSING, COMPLETED, CANCELLED
@@ -37,6 +43,11 @@ public class ProductionPlanNode {
     @JoinColumn(name = "stage_id", nullable = false)
     private ProcessingStage stage;
 
+    /** POI snapshot chosen for this plan; chain definitions remain reusable templates. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "selected_poi_id")
+    private POI selectedPOI;
+
     @Column(name = "stage_order", nullable = false)
     private Integer stageOrder;
 
@@ -51,6 +62,10 @@ public class ProductionPlanNode {
 
     @Column(name = "planned_output_weight", nullable = false)
     private Double plannedOutputWeight;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "node_role", length = 20, nullable = false)
+    private NodeRole nodeRole = NodeRole.PROCESSING;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "status", length = 25, nullable = false)
@@ -70,6 +85,8 @@ public class ProductionPlanNode {
     public void setPlan(ProductionPlan plan) { this.plan = plan; }
     public ProcessingStage getStage() { return stage; }
     public void setStage(ProcessingStage stage) { this.stage = stage; }
+    public POI getSelectedPOI() { return selectedPOI; }
+    public void setSelectedPOI(POI selectedPOI) { this.selectedPOI = selectedPOI; }
     public Integer getStageOrder() { return stageOrder; }
     public void setStageOrder(Integer stageOrder) { this.stageOrder = stageOrder; }
     public String getInputSku() { return inputSku; }
@@ -80,6 +97,10 @@ public class ProductionPlanNode {
     public void setPlannedInputWeight(Double plannedInputWeight) { this.plannedInputWeight = plannedInputWeight; }
     public Double getPlannedOutputWeight() { return plannedOutputWeight; }
     public void setPlannedOutputWeight(Double plannedOutputWeight) { this.plannedOutputWeight = plannedOutputWeight; }
+    public NodeRole getNodeRole() { return nodeRole; }
+    public void setNodeRole(NodeRole nodeRole) {
+        this.nodeRole = nodeRole == null ? NodeRole.PROCESSING : nodeRole;
+    }
     public NodeStatus getStatus() { return status; }
     public void setStatus(NodeStatus status) { this.status = status; }
     public LocalDateTime getCreatedAt() { return createdAt; }

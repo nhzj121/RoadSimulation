@@ -333,6 +333,7 @@ public class SimulationController {
     private Map<String, Object> buildRuntimeConfigResponse() {
         Map<String, Object> response = new HashMap<>();
         response.put("dispatchStrategy", simulationRuntimeConfig.getDispatchStrategy().name());
+        response.put("demandGenerationMode", simulationRuntimeConfig.getDemandGenerationMode().name());
         response.put("useHeuristic", simulationRuntimeConfig.useHeuristic());
         response.put("running", simulationMainLoop.isRunning());
         response.put("loopCount", simulationMainLoop.getLoopCount());

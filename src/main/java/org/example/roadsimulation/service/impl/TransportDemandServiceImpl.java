@@ -8,17 +8,19 @@ import org.example.roadsimulation.entity.ProcessingStageExecution;
 import org.example.roadsimulation.entity.ProductionBatch;
 import org.example.roadsimulation.entity.ProductionPlanNode;
 import org.example.roadsimulation.entity.Shipment;
+import org.example.roadsimulation.entity.ShipmentDemandSource;
 import org.example.roadsimulation.entity.ShipmentItem;
 import org.example.roadsimulation.repository.GoodsRepository;
 import org.example.roadsimulation.repository.ProcessingExecutionFlowRepository;
 import org.example.roadsimulation.repository.ShipmentItemRepository;
 import org.example.roadsimulation.repository.ShipmentRepository;
+import org.example.roadsimulation.service.ProductionTransportLoadSplitter;
 import org.example.roadsimulation.service.TransportDemandService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
-import java.util.Optional;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -34,19 +36,22 @@ public class TransportDemandServiceImpl implements TransportDemandService {
     private final GoodsRepository goodsRepository;
     private final ProcessingExecutionFlowRepository executionFlowRepository;
     private final SimulationContext simulationContext;
+    private final ProductionTransportLoadSplitter loadSplitter;
 
     public TransportDemandServiceImpl(
             ShipmentRepository shipmentRepository,
             ShipmentItemRepository shipmentItemRepository,
             GoodsRepository goodsRepository,
             ProcessingExecutionFlowRepository executionFlowRepository,
-            SimulationContext simulationContext
+            SimulationContext simulationContext,
+            ProductionTransportLoadSplitter loadSplitter
     ) {
         this.shipmentRepository = shipmentRepository;
         this.shipmentItemRepository = shipmentItemRepository;
         this.goodsRepository = goodsRepository;
         this.executionFlowRepository = executionFlowRepository;
         this.simulationContext = simulationContext;
+        this.loadSplitter = loadSplitter;
     }
 
     @Override
@@ -56,9 +61,10 @@ public class TransportDemandServiceImpl implements TransportDemandService {
             String actor
     ) {
         validateFlow(flow);
-        POI origin = sourcePOI != null
-                ? sourcePOI
-                : flow.getFromExecution().getProcessingPOI();
+        POI origin = flow.getFromExecution().getProcessingPOI();
+        if (sourcePOI != null && !sourcePOI.getId().equals(origin.getId())) {
+            throw new IllegalArgumentException("运输起点必须是上游加工链节点 POI");
+        }
         ProcessingStageExecution target = flow.getToExecution();
         double weight = flow.getActualWeight() == null
                 ? flow.getPlannedWeight()
@@ -79,9 +85,7 @@ public class TransportDemandServiceImpl implements TransportDemandService {
         target.getPlanNode().setStatus(ProductionPlanNode.NodeStatus.WAITING_TRANSPORT);
 
         ProductionBatch batch = flow.getBatch();
-        batch.setStatus(flow.getFromExecution() == null
-                ? ProductionBatch.BatchStatus.INBOUND_TRANSPORT
-                : ProductionBatch.BatchStatus.INTER_STAGE_TRANSPORT);
+        batch.setStatus(ProductionBatch.BatchStatus.INTER_STAGE_TRANSPORT);
         return executionFlowRepository.save(flow).getShipment();
     }
 
@@ -110,7 +114,15 @@ public class TransportDemandServiceImpl implements TransportDemandService {
         String safeActor = actor == null || actor.isBlank() ? "production-system" : actor;
         LocalDateTime createdSimTime = simulationContext.getCurrentSimTime();
 
-        Shipment shipment = new Shipment(refNo, origin, destination, weight, 0.0);
+        Goods goods = goodsRepository.findBySku(sku)
+                .orElseThrow(() -> new IllegalStateException("生产运输货物缺少 Goods 主数据: " + sku));
+        List<ProductionTransportLoadSplitter.LoadPart> loadParts = loadSplitter.split(goods, weight);
+        double totalVolume = loadParts.stream()
+                .mapToDouble(ProductionTransportLoadSplitter.LoadPart::volume)
+                .sum();
+
+        Shipment shipment = new Shipment(refNo, origin, destination, weight, totalVolume);
+        shipment.setDemandSource(ShipmentDemandSource.PRODUCTION);
         shipment.setCargoType(sku);
         shipment.setStatus(Shipment.ShipmentStatus.CREATED);
         // 合并修复：生产运输需求与普通需求共享评价口径，创建时间必须来自权威仿真时钟。
@@ -118,20 +130,23 @@ public class TransportDemandServiceImpl implements TransportDemandService {
         shipment.setUpdatedBy(safeActor);
         Shipment savedShipment = shipmentRepository.save(shipment);
 
-        Optional<Goods> goods = goodsRepository.findBySku(sku);
-        ShipmentItem item = new ShipmentItem(
-                savedShipment,
-                flow.getToExecution().getStage().getStageName() + "-" + flow.getInputKey() + "运输",
-                1,
-                sku,
-                weight,
-                0.0
-        );
-        goods.ifPresent(item::setGoods);
-        item.setStatus(ShipmentItem.ShipmentItemStatus.NOT_ASSIGNED);
-        item.setCreatedTime(createdSimTime);
-        item.setUpdatedBy(safeActor);
-        shipmentItemRepository.save(item);
+        for (int index = 0; index < loadParts.size(); index++) {
+            ProductionTransportLoadSplitter.LoadPart part = loadParts.get(index);
+            ShipmentItem item = new ShipmentItem();
+            savedShipment.addItem(item);
+            item.setName(flow.getToExecution().getStage().getStageName()
+                    + "-" + flow.getInputKey() + "运输"
+                    + (loadParts.size() == 1 ? "" : "-" + (index + 1) + "/" + loadParts.size()));
+            item.setQty(part.quantity());
+            item.setSku(sku);
+            item.setWeightTonnes(part.weight());
+            item.setVolume(part.volume());
+            item.setGoods(goods);
+            item.setStatus(ShipmentItem.ShipmentItemStatus.NOT_ASSIGNED);
+            item.setCreatedTime(createdSimTime);
+            item.setUpdatedBy(safeActor);
+            shipmentItemRepository.save(item);
+        }
         return savedShipment;
     }
 
@@ -142,9 +157,10 @@ public class TransportDemandServiceImpl implements TransportDemandService {
         if (flow.getBatch() == null || flow.getPlanFlow() == null || flow.getToExecution() == null) {
             throw new IllegalArgumentException("生产物料流缺少执行关联");
         }
-        if (flow.getFromExecution() == null && (flow.getPlanFlow().getSourcePOI() == null
-                || flow.getPlanFlow().getSourcePOI().getId() == null)) {
-            throw new IllegalArgumentException("外部原材料流缺少来源 POI");
+        if (flow.getFromExecution() == null
+                || flow.getFromExecution().getProcessingPOI() == null
+                || flow.getFromExecution().getProcessingPOI().getId() == null) {
+            throw new IllegalArgumentException("生产运输必须来自加工链上游节点");
         }
         if (flow.getSku() == null || flow.getSku().isBlank()) {
             throw new IllegalArgumentException("生产物料流缺少 SKU");

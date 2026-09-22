@@ -135,7 +135,14 @@ public class ProductionDeliveryProcessor {
                 throw new IllegalStateException("工序实际输入重量汇总无效: " + execution.getStage().getStageName());
             }
 
-            execution.setActualInputWeight(round(actualInput));
+            double roundedInput = round(actualInput);
+            execution.setActualInputWeight(roundedInput);
+
+            if (execution.getPlanNode().getNodeRole() == ProductionPlanNode.NodeRole.SINK) {
+                completeSinkDelivery(execution, roundedInput, deliveredAt);
+                return;
+            }
+
             execution.setStatus(ProcessingStageExecution.ExecutionStatus.PROCESSING);
             execution.setProgressPercent(0);
             execution.setStartedAt(deliveredAt);
@@ -149,6 +156,30 @@ public class ProductionDeliveryProcessor {
             executionRepository.save(execution);
             batchRepository.save(batch);
         });
+    }
+
+    /** 末端节点只接收最终货物，不再执行一轮虚构加工。 */
+    private void completeSinkDelivery(
+            ProcessingStageExecution execution,
+            double deliveredWeight,
+            LocalDateTime deliveredAt
+    ) {
+        execution.setActualOutputWeight(deliveredWeight);
+        execution.setStatus(ProcessingStageExecution.ExecutionStatus.COMPLETED);
+        execution.setProgressPercent(100);
+        execution.setStartedAt(deliveredAt);
+        execution.setCompletedAt(deliveredAt);
+        execution.getPlanNode().setStatus(ProductionPlanNode.NodeStatus.COMPLETED);
+
+        ProductionBatch batch = execution.getBatch();
+        batch.setActualFinalOutputWeight(deliveredWeight);
+        batch.setStatus(ProductionBatch.BatchStatus.COMPLETED);
+        if (batch.getStartedAt() == null) {
+            batch.setStartedAt(deliveredAt);
+        }
+        batch.setCompletedAt(deliveredAt);
+        executionRepository.save(execution);
+        batchRepository.save(batch);
     }
 
     private boolean isValidWeight(Double weight) {

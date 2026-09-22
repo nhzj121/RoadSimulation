@@ -3,7 +3,6 @@ package org.example.roadsimulation.service.impl;
 import org.example.roadsimulation.dto.CreateProductionPlanRequest;
 import org.example.roadsimulation.dto.ProductionBatchResponse;
 import org.example.roadsimulation.dto.ProductionPlanResponse;
-import org.example.roadsimulation.entity.Enrollment;
 import org.example.roadsimulation.entity.POI;
 import org.example.roadsimulation.entity.ProcessingChain;
 import org.example.roadsimulation.entity.ProcessingExecutionFlow;
@@ -13,8 +12,6 @@ import org.example.roadsimulation.entity.ProductionBatch;
 import org.example.roadsimulation.entity.ProductionPlan;
 import org.example.roadsimulation.entity.ProductionPlanFlow;
 import org.example.roadsimulation.entity.ProductionPlanNode;
-import org.example.roadsimulation.repository.EnrollmentRepository;
-import org.example.roadsimulation.repository.POIRepository;
 import org.example.roadsimulation.repository.ProcessingChainRepository;
 import org.example.roadsimulation.repository.ProcessingExecutionFlowRepository;
 import org.example.roadsimulation.repository.ProcessingStageExecutionRepository;
@@ -25,6 +22,7 @@ import org.example.roadsimulation.repository.ProductionPlanRepository;
 import org.example.roadsimulation.service.ProcessingChainGraphValidator;
 import org.example.roadsimulation.service.ProcessingChainSkuValidator;
 import org.example.roadsimulation.service.ProductionPlanningService;
+import org.example.roadsimulation.service.ProductionPlanPoiSelector;
 import org.example.roadsimulation.service.TransportDemandService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -33,7 +31,9 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -57,9 +57,8 @@ public class ProductionPlanningServiceImpl implements ProductionPlanningService 
     private final ProductionBatchRepository batchRepository;
     private final ProcessingStageExecutionRepository executionRepository;
     private final ProcessingExecutionFlowRepository executionFlowRepository;
-    private final POIRepository poiRepository;
-    private final EnrollmentRepository enrollmentRepository;
     private final TransportDemandService transportDemandService;
+    private final ProductionPlanPoiSelector poiSelector;
 
     public ProductionPlanningServiceImpl(
             ProcessingChainRepository chainRepository,
@@ -69,9 +68,8 @@ public class ProductionPlanningServiceImpl implements ProductionPlanningService 
             ProductionBatchRepository batchRepository,
             ProcessingStageExecutionRepository executionRepository,
             ProcessingExecutionFlowRepository executionFlowRepository,
-            POIRepository poiRepository,
-            EnrollmentRepository enrollmentRepository,
-            TransportDemandService transportDemandService
+            TransportDemandService transportDemandService,
+            ProductionPlanPoiSelector poiSelector
     ) {
         this.chainRepository = chainRepository;
         this.planRepository = planRepository;
@@ -80,13 +78,35 @@ public class ProductionPlanningServiceImpl implements ProductionPlanningService 
         this.batchRepository = batchRepository;
         this.executionRepository = executionRepository;
         this.executionFlowRepository = executionFlowRepository;
-        this.poiRepository = poiRepository;
-        this.enrollmentRepository = enrollmentRepository;
         this.transportDemandService = transportDemandService;
+        this.poiSelector = poiSelector;
     }
 
     @Override
     public ProductionPlanResponse createRandomPlan(CreateProductionPlanRequest request) {
+        return createPlan(request, null, null);
+    }
+
+    @Override
+    public ProductionPlanResponse createAutomaticPlan(
+            CreateProductionPlanRequest request,
+            String simulationRunId,
+            int generationRound
+    ) {
+        if (simulationRunId == null || simulationRunId.isBlank()) {
+            throw new IllegalArgumentException("simulationRunId is required");
+        }
+        if (generationRound < 0) {
+            throw new IllegalArgumentException("generationRound must not be negative");
+        }
+        return createPlan(request, simulationRunId, generationRound);
+    }
+
+    private ProductionPlanResponse createPlan(
+            CreateProductionPlanRequest request,
+            String simulationRunId,
+            Integer generationRound
+    ) {
         if (request == null || request.chainId() == null) {
             throw new IllegalArgumentException("chainId is required");
         }
@@ -108,19 +128,22 @@ public class ProductionPlanningServiceImpl implements ProductionPlanningService 
         ProductionPlan plan = new ProductionPlan();
         plan.setPlanNo(generatePlanNo());
         plan.setChain(chain);
-        plan.setFinalSku(ProcessingChainSkuValidator.resolveOutputSku(sink));
+        plan.setFinalSku(resolveFinalDemandSku(sink, edges));
         plan.setFinalDemandWeight(finalDemand);
         plan.setRandomSeed(request.randomSeed());
+        plan.setSimulationRunId(simulationRunId);
+        plan.setGenerationRound(generationRound);
         plan.setStatus(ProductionPlan.PlanStatus.CALCULATED);
         plan.setUpdatedAt(LocalDateTime.now());
         ProductionPlan savedPlan = planRepository.save(plan);
 
         PlanCalculation calculation = calculatePlan(stages, edges, topologicalOrder, sink, finalDemand);
-        List<ProductionPlanNode> nodes = createPlanNodes(savedPlan, stages, calculation);
+        Map<ProcessingStage, POI> selectedPois = poiSelector.select(
+                stages, edges, sink, request.randomSeed());
+        List<ProductionPlanNode> nodes = createPlanNodes(
+                savedPlan, stages, edges, sink, calculation, selectedPois);
         List<ProductionPlanFlow> flows = createPlanFlows(
                 savedPlan,
-                request,
-                stages,
                 edges,
                 calculation,
                 nodes
@@ -128,7 +151,7 @@ public class ProductionPlanningServiceImpl implements ProductionPlanningService 
 
         savedPlan.getNodes().addAll(nodes);
         savedPlan.getFlows().addAll(flows);
-        savedPlan.setSourcePOI(firstExternalSource(flows));
+        savedPlan.setSourcePOI(firstSourcePOI(nodes));
         return mapPlan(savedPlan, nodes, flows);
     }
 
@@ -175,16 +198,12 @@ public class ProductionPlanningServiceImpl implements ProductionPlanningService 
         batch.setBatchNo(generateBatchNo());
         batch.setPlan(plan);
         batch.setChain(plan.getChain());
-        batch.setPlannedFinalOutputWeight(nodes.stream()
-                .filter(node -> node.getStage().equals(sinkStage(plan, nodes)))
-                .findFirst()
-                .map(ProductionPlanNode::getPlannedOutputWeight)
-                .orElseThrow(() -> new IllegalStateException("生产计划缺少最终工序")));
+        batch.setPlannedFinalOutputWeight(plan.getFinalDemandWeight());
         batch.setStatus(ProductionBatch.BatchStatus.WAITING_MATERIAL);
         batch.setUpdatedAt(LocalDateTime.now());
         ProductionBatch savedBatch = batchRepository.save(batch);
 
-        Map<Long, ProcessingStageExecution> executionsByNode = new IdentityHashMap<>();
+        Map<Long, ProcessingStageExecution> executionsByNode = new HashMap<>();
         List<ProcessingStageExecution> executions = new ArrayList<>();
         for (ProductionPlanNode node : nodes) {
             ProcessingStageExecution execution = new ProcessingStageExecution();
@@ -192,8 +211,18 @@ public class ProductionPlanningServiceImpl implements ProductionPlanningService 
             execution.setPlanNode(node);
             execution.setStage(node.getStage());
             execution.setStageOrder(node.getStageOrder());
-            execution.setProcessingPOI(node.getStage().getProcessingPOI());
-            execution.setStatus(ProcessingStageExecution.ExecutionStatus.WAITING_INPUT);
+            execution.setProcessingPOI(node.getSelectedPOI() == null
+                    ? node.getStage().getProcessingPOI()
+                    : node.getSelectedPOI());
+            if (node.getNodeRole() == ProductionPlanNode.NodeRole.SOURCE) {
+                execution.setStatus(ProcessingStageExecution.ExecutionStatus.COMPLETED);
+                execution.setActualInputWeight(0.0);
+                execution.setActualOutputWeight(node.getPlannedOutputWeight());
+                execution.setProgressPercent(100);
+                node.setStatus(ProductionPlanNode.NodeStatus.COMPLETED);
+            } else {
+                execution.setStatus(ProcessingStageExecution.ExecutionStatus.WAITING_INPUT);
+            }
             ProcessingStageExecution saved = executionRepository.save(execution);
             executions.add(saved);
             executionsByNode.put(node.getId(), saved);
@@ -205,10 +234,17 @@ public class ProductionPlanningServiceImpl implements ProductionPlanningService 
             ProcessingExecutionFlow flow = new ProcessingExecutionFlow();
             flow.setBatch(savedBatch);
             flow.setPlanFlow(planFlow);
-            flow.setFromExecution(planFlow.getFromNode() == null
-                    ? null
-                    : executionsByNode.get(planFlow.getFromNode().getId()));
-            flow.setToExecution(executionsByNode.get(planFlow.getToNode().getId()));
+            if (planFlow.getFromNode() == null) {
+                throw new IllegalStateException("R2 生产计划不允许外部入厂物料流");
+            }
+            ProcessingStageExecution fromExecution = executionsByNode.get(planFlow.getFromNode().getId());
+            ProcessingStageExecution toExecution = executionsByNode.get(planFlow.getToNode().getId());
+            if (fromExecution == null || toExecution == null) {
+                throw new IllegalStateException("生产计划物料流引用了不存在的执行节点: flowId="
+                        + planFlow.getId());
+            }
+            flow.setFromExecution(fromExecution);
+            flow.setToExecution(toExecution);
             flow.setInputKey(planFlow.getInputKey());
             flow.setSku(planFlow.getSku());
             flow.setPlannedWeight(planFlow.getPlannedWeight());
@@ -217,15 +253,18 @@ public class ProductionPlanningServiceImpl implements ProductionPlanningService 
         }
         savedBatch.getFlows().addAll(executionFlows);
 
-        for (int i = 0; i < executionFlows.size(); i++) {
-            ProcessingExecutionFlow flow = executionFlows.get(i);
-            if (flow.getFromExecution() == null) {
-                transportDemandService.createTransport(
-                        flow,
-                        planFlows.get(i).getSourcePOI(),
-                        actor
-                );
+        int initialTransportCount = 0;
+        for (ProcessingExecutionFlow flow : executionFlows) {
+            if (flow.getFromExecution().getPlanNode().getNodeRole()
+                    == ProductionPlanNode.NodeRole.SOURCE) {
+                flow.setActualWeight(flow.getPlannedWeight());
+                executionFlowRepository.save(flow);
+                transportDemandService.createTransport(flow, null, actor);
+                initialTransportCount++;
             }
+        }
+        if (initialTransportCount == 0) {
+            throw new IllegalStateException("生产计划没有可发布的起点运输流");
         }
 
         plan.setUpdatedAt(LocalDateTime.now());
@@ -243,17 +282,38 @@ public class ProductionPlanningServiceImpl implements ProductionPlanningService 
         Map<ProcessingStage, Map<String, Double>> inputWeights = new IdentityHashMap<>();
         outputs.put(sink, finalDemand);
 
+        List<ProcessingChainGraphValidator.InputSpec> sinkInputs =
+                ProcessingChainGraphValidator.inputs(sink);
+        if (sinkInputs.size() != 1) {
+            throw new IllegalArgumentException("末端接收节点必须且只能接收一种最终阶段货物");
+        }
+        ProcessingChainGraphValidator.InputSpec sinkInput = sinkInputs.get(0);
+        ProcessingChainGraphValidator.EdgeSpec finalEdge = requireIncomingEdge(
+                edges, sink, sinkInput);
+        inputWeights.put(sink, Map.of(sinkInput.inputKey(), finalDemand));
+        outputs.merge(finalEdge.fromStage(), finalDemand, Double::sum);
+
         for (int i = topologicalOrder.size() - 1; i >= 0; i--) {
             ProcessingStage stage = topologicalOrder.get(i);
+            if (stage == sink) {
+                continue;
+            }
             double output = outputs.getOrDefault(stage, 0.0);
             if (output <= 0 || !Double.isFinite(output)) {
                 throw new IllegalStateException("工序需求量无效: " + stage.getStageName());
             }
+
+            if (isSourceStage(stage, edges)) {
+                validateCapacity(stage, output);
+                inputWeights.put(stage, Map.of());
+                continue;
+            }
+
             double ratio = outputRatio(stage);
             double totalInput = round(output / ratio);
             validateCapacity(stage, totalInput);
 
-            Map<String, Double> weights = new IdentityHashMap<>();
+            Map<String, Double> weights = new LinkedHashMap<>();
             for (ProcessingChainGraphValidator.InputSpec input :
                     ProcessingChainGraphValidator.inputs(stage)) {
                 double weight = round(totalInput * input.inputShare());
@@ -261,12 +321,9 @@ public class ProductionPlanningServiceImpl implements ProductionPlanningService 
                     throw new IllegalStateException("工序输入量无效: " + stage.getStageName());
                 }
                 weights.put(input.inputKey(), weight);
-
-                edges.stream()
-                        .filter(edge -> edge.toStage() == stage
-                                && edge.input().inputKey().equals(input.inputKey()))
-                        .findFirst()
-                        .ifPresent(edge -> outputs.merge(edge.fromStage(), weight, Double::sum));
+                ProcessingChainGraphValidator.EdgeSpec incoming =
+                        requireIncomingEdge(edges, stage, input);
+                outputs.merge(incoming.fromStage(), weight, Double::sum);
             }
             inputWeights.put(stage, weights);
         }
@@ -276,29 +333,47 @@ public class ProductionPlanningServiceImpl implements ProductionPlanningService 
     private List<ProductionPlanNode> createPlanNodes(
             ProductionPlan plan,
             List<ProcessingStage> stages,
-            PlanCalculation calculation
+            List<ProcessingChainGraphValidator.EdgeSpec> edges,
+            ProcessingStage sink,
+            PlanCalculation calculation,
+            Map<ProcessingStage, POI> selectedPois
     ) {
         List<ProductionPlanNode> nodes = new ArrayList<>();
         for (ProcessingStage stage : stages) {
             List<ProcessingChainGraphValidator.InputSpec> inputs =
                     ProcessingChainGraphValidator.inputs(stage);
-            double plannedInput = inputs.stream()
-                    .mapToDouble(input -> calculation.inputWeights()
-                            .get(stage)
-                            .get(input.inputKey()))
+            boolean source = isSourceStage(stage, edges);
+            boolean terminal = stage == sink;
+            double plannedInput = source ? 0.0 : calculation.inputWeights()
+                    .get(stage)
+                    .values()
+                    .stream()
+                    .mapToDouble(Double::doubleValue)
                     .sum();
 
             ProductionPlanNode node = new ProductionPlanNode();
             node.setPlan(plan);
             node.setStage(stage);
+            POI selectedPOI = selectedPois.get(stage);
+            if (selectedPOI == null) {
+                throw new IllegalStateException("计划节点缺少 POI 快照: " + stage.getStageName());
+            }
+            node.setSelectedPOI(selectedPOI);
             node.setStageOrder(stage.getStageOrder());
-            node.setInputSku(inputs.size() == 1
+            node.setInputSku(source ? null : inputs.size() == 1
                     ? inputs.get(0).sku()
                     : String.join(",", inputs.stream().map(
                             ProcessingChainGraphValidator.InputSpec::sku).toList()));
-            node.setOutputSku(ProcessingChainSkuValidator.resolveOutputSku(stage));
+            node.setOutputSku(terminal
+                    ? inputs.get(0).sku()
+                    : ProcessingChainSkuValidator.resolveOutputSku(stage));
             node.setPlannedInputWeight(round(plannedInput));
             node.setPlannedOutputWeight(round(calculation.outputs().getOrDefault(stage, 0.0)));
+            node.setNodeRole(source
+                    ? ProductionPlanNode.NodeRole.SOURCE
+                    : terminal
+                    ? ProductionPlanNode.NodeRole.SINK
+                    : ProductionPlanNode.NodeRole.PROCESSING);
             node.setStatus(ProductionPlanNode.NodeStatus.PLANNED);
             nodes.add(node);
         }
@@ -307,8 +382,6 @@ public class ProductionPlanningServiceImpl implements ProductionPlanningService 
 
     private List<ProductionPlanFlow> createPlanFlows(
             ProductionPlan plan,
-            CreateProductionPlanRequest request,
-            List<ProcessingStage> stages,
             List<ProcessingChainGraphValidator.EdgeSpec> edges,
             PlanCalculation calculation,
             List<ProductionPlanNode> nodes
@@ -317,75 +390,21 @@ public class ProductionPlanningServiceImpl implements ProductionPlanningService 
         nodes.forEach(node -> nodesByStage.put(node.getStage(), node));
 
         List<ProductionPlanFlow> flows = new ArrayList<>();
-        for (ProcessingStage stage : stages) {
-            for (ProcessingChainGraphValidator.InputSpec input :
-                    ProcessingChainGraphValidator.inputs(stage)) {
-                ProcessingChainGraphValidator.EdgeSpec incomingEdge = edges.stream()
-                        .filter(edge -> edge.toStage() == stage
-                                && edge.input().inputKey().equals(input.inputKey()))
-                        .findFirst()
-                        .orElse(null);
-
-                ProductionPlanFlow flow = new ProductionPlanFlow();
-                flow.setPlan(plan);
-                flow.setFromNode(incomingEdge == null
-                        ? null
-                        : nodesByStage.get(incomingEdge.fromStage()));
-                flow.setToNode(nodesByStage.get(stage));
-                flow.setStageInput(input.persistentInput());
-                flow.setInputKey(input.inputKey());
-                flow.setSku(input.sku());
-                flow.setPlannedWeight(calculation.inputWeights().get(stage).get(input.inputKey()));
-                if (incomingEdge == null) {
-                    flow.setSourcePOI(resolveSourcePOI(request, stage, input));
-                }
-                flows.add(flow);
-            }
+        for (ProcessingChainGraphValidator.EdgeSpec edge : edges) {
+            ProcessingChainGraphValidator.InputSpec input = edge.input();
+            ProductionPlanFlow flow = new ProductionPlanFlow();
+            flow.setPlan(plan);
+            flow.setFromNode(nodesByStage.get(edge.fromStage()));
+            flow.setToNode(nodesByStage.get(edge.toStage()));
+            flow.setStageInput(input.persistentInput());
+            flow.setInputKey(input.inputKey());
+            flow.setSku(input.sku());
+            flow.setPlannedWeight(calculation.inputWeights()
+                    .get(edge.toStage())
+                    .get(input.inputKey()));
+            flows.add(flow);
         }
         return planFlowRepository.saveAll(flows);
-    }
-
-    private POI resolveSourcePOI(
-            CreateProductionPlanRequest request,
-            ProcessingStage stage,
-            ProcessingChainGraphValidator.InputSpec input
-    ) {
-        Map<String, Long> sourcePois = request.sourcePois() == null
-                ? Map.of()
-                : request.sourcePois();
-        Long sourcePoiId = sourcePois.getOrDefault(
-                sourceKey(stage, input),
-                sourcePois.get(input.inputKey())
-        );
-        if (sourcePoiId == null) {
-            sourcePoiId = sourcePois.get(input.sku());
-        }
-        if (sourcePoiId == null) {
-            sourcePoiId = request.sourcePoiId();
-        }
-        if (sourcePoiId != null) {
-            final Long resolvedPoiId = sourcePoiId;
-            return poiRepository.findById(resolvedPoiId)
-                    .orElseThrow(() -> new IllegalArgumentException("来源 POI 不存在: " + resolvedPoiId));
-        }
-
-        return enrollmentRepository.findByGoodsSku(input.sku()).stream()
-                .filter(enrollment -> enrollment.getPoi() != null)
-                .findFirst()
-                .map(Enrollment::getPoi)
-                .orElseThrow(() -> new IllegalStateException(
-                        "无法根据 SKU 找到原材料来源 POI: " + input.sku()
-                ));
-    }
-
-    private String sourceKey(
-            ProcessingStage stage,
-            ProcessingChainGraphValidator.InputSpec input
-    ) {
-        String stageKey = stage.getStageKey() == null
-                ? String.valueOf(stage.getStageOrder())
-                : stage.getStageKey();
-        return stageKey + ":" + input.inputKey();
     }
 
     private void requireActiveChain(ProcessingChain chain) {
@@ -417,11 +436,39 @@ public class ProductionPlanningServiceImpl implements ProductionPlanningService 
         return sinks.get(0);
     }
 
-    private ProcessingStage sinkStage(ProductionPlan plan, List<ProductionPlanNode> nodes) {
-        List<ProcessingStage> stages = sortedStages(plan.getChain());
-        List<ProcessingChainGraphValidator.EdgeSpec> edges =
-                ProcessingChainGraphValidator.normalizedEdges(stages, plan.getChain().getEdges());
-        return findSink(stages, edges);
+    private String resolveFinalDemandSku(
+            ProcessingStage sink,
+            List<ProcessingChainGraphValidator.EdgeSpec> edges
+    ) {
+        List<ProcessingChainGraphValidator.InputSpec> inputs =
+                ProcessingChainGraphValidator.inputs(sink);
+        if (inputs.size() != 1) {
+            throw new IllegalArgumentException("末端接收节点必须且只能接收一种最终阶段货物");
+        }
+        requireIncomingEdge(edges, sink, inputs.get(0));
+        return inputs.get(0).sku();
+    }
+
+    private ProcessingChainGraphValidator.EdgeSpec requireIncomingEdge(
+            List<ProcessingChainGraphValidator.EdgeSpec> edges,
+            ProcessingStage stage,
+            ProcessingChainGraphValidator.InputSpec input
+    ) {
+        return edges.stream()
+                .filter(edge -> edge.toStage() == stage
+                        && edge.input().inputKey().equals(input.inputKey()))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "非起点节点输入缺少上游阶段: stage=" + stage.getStageName()
+                                + ", input=" + input.inputKey()
+                ));
+    }
+
+    private boolean isSourceStage(
+            ProcessingStage stage,
+            List<ProcessingChainGraphValidator.EdgeSpec> edges
+    ) {
+        return edges.stream().noneMatch(edge -> edge.toStage() == stage);
     }
 
     private void validateCapacity(ProcessingStage stage, double inputWeight) {
@@ -482,11 +529,10 @@ public class ProductionPlanningServiceImpl implements ProductionPlanningService 
                 + "-" + UUID.randomUUID().toString().substring(0, 8);
     }
 
-    private POI firstExternalSource(List<ProductionPlanFlow> flows) {
-        return flows.stream()
-                .filter(flow -> flow.getFromNode() == null)
-                .map(ProductionPlanFlow::getSourcePOI)
-                .filter(Objects::nonNull)
+    private POI firstSourcePOI(List<ProductionPlanNode> nodes) {
+        return nodes.stream()
+                .filter(node -> node.getNodeRole() == ProductionPlanNode.NodeRole.SOURCE)
+                .map(ProductionPlanNode::getSelectedPOI)
                 .findFirst()
                 .orElse(null);
     }
@@ -502,10 +548,13 @@ public class ProductionPlanningServiceImpl implements ProductionPlanningService 
                         node.getStage().getId(),
                         node.getStageOrder(),
                         node.getStage().getStageName(),
+                        node.getSelectedPOI() == null ? null : node.getSelectedPOI().getId(),
+                        node.getSelectedPOI() == null ? null : node.getSelectedPOI().getName(),
                         node.getInputSku(),
                         node.getOutputSku(),
                         node.getPlannedInputWeight(),
                         node.getPlannedOutputWeight(),
+                        node.getNodeRole().name(),
                         node.getStatus().name()
                 ))
                 .toList();
@@ -535,6 +584,8 @@ public class ProductionPlanningServiceImpl implements ProductionPlanningService 
                 plan.getSourcePOI() == null ? null : plan.getSourcePOI().getName(),
                 plan.getStatus().name(),
                 plan.getRandomSeed(),
+                plan.getSimulationRunId(),
+                plan.getGenerationRound(),
                 plan.getCreatedAt(),
                 nodeResponses,
                 flowResponses

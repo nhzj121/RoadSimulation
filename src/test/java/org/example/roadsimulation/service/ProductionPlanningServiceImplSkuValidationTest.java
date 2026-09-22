@@ -4,8 +4,6 @@ import org.example.roadsimulation.dto.CreateProductionPlanRequest;
 import org.example.roadsimulation.entity.ProcessingChain;
 import org.example.roadsimulation.entity.POI;
 import org.example.roadsimulation.entity.ProcessingStage;
-import org.example.roadsimulation.repository.EnrollmentRepository;
-import org.example.roadsimulation.repository.POIRepository;
 import org.example.roadsimulation.repository.ProcessingChainRepository;
 import org.example.roadsimulation.repository.ProcessingExecutionFlowRepository;
 import org.example.roadsimulation.repository.ProcessingStageExecutionRepository;
@@ -42,9 +40,8 @@ class ProductionPlanningServiceImplSkuValidationTest {
                 mock(ProcessingStageExecutionRepository.class);
         ProcessingExecutionFlowRepository executionFlowRepository =
                 mock(ProcessingExecutionFlowRepository.class);
-        POIRepository poiRepository = mock(POIRepository.class);
-        EnrollmentRepository enrollmentRepository = mock(EnrollmentRepository.class);
         TransportDemandService transportDemandService = mock(TransportDemandService.class);
+        ProductionPlanPoiSelector poiSelector = mock(ProductionPlanPoiSelector.class);
 
         service = new ProductionPlanningServiceImpl(
                 chainRepository,
@@ -54,9 +51,8 @@ class ProductionPlanningServiceImplSkuValidationTest {
                 batchRepository,
                 executionRepository,
                 executionFlowRepository,
-                poiRepository,
-                enrollmentRepository,
-                transportDemandService
+                transportDemandService,
+                poiSelector
         );
     }
 
