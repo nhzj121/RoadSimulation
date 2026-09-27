@@ -24,6 +24,63 @@ import static org.mockito.Mockito.*;
 class SimulationControllerRandomEventTest {
 
     @Test
+    void persistedOrdinaryReplacementCannotBypassReadinessWithMissingOrWrongEventId() {
+        SimulationController controller = new SimulationController();
+        AssignmentRepository assignments = mock(AssignmentRepository.class);
+        VehicleRepository vehicles = mock(VehicleRepository.class);
+        TransportRandomEventService events = mock(TransportRandomEventService.class);
+        org.example.roadsimulation.DataInitializer dataInitializer = mock(org.example.roadsimulation.DataInitializer.class);
+        ReflectionTestUtils.setField(controller,"assignmentRepository",assignments);
+        ReflectionTestUtils.setField(controller,"vehicleRepository",vehicles);
+        ReflectionTestUtils.setField(controller,"transportRandomEventService",events);
+        ReflectionTestUtils.setField(controller,"dataInitializer",dataInitializer);
+        Vehicle vehicle=new Vehicle();vehicle.setId(21L);
+        Assignment assignment=new Assignment();assignment.setId(88L);assignment.setStatus(Assignment.AssignmentStatus.IN_PROGRESS);vehicle.addAssignment(assignment);
+        when(assignments.findById(88L)).thenReturn(Optional.of(assignment));
+        when(vehicles.findByIdForUpdate(21L)).thenReturn(Optional.of(vehicle));
+        when(events.replacementRecoveryState(assignment)).thenReturn(
+                new TransportRandomEventService.ReplacementRecoveryState(true,101L,12L,21L,true));
+        SimulationController.VehicleArrivedRequest request=new SimulationController.VehicleArrivedRequest();
+        request.setAssignmentId(88L);request.setVehicleId(21L);request.setEndPOIId(20L);
+
+        assertEquals(HttpStatus.CONFLICT,controller.handleVehicleArrived(request).getStatusCode());
+        request.setReplacementEventId(999L);
+        assertEquals(HttpStatus.CONFLICT,controller.handleVehicleArrived(request).getStatusCode());
+        verifyNoInteractions(dataInitializer);
+    }
+
+    @Test
+    void legacyOrdinaryArrivalWithoutReplacementHistoryStillNeedsNoEventId() {
+        SimulationController controller = new SimulationController();
+        AssignmentRepository assignments = mock(AssignmentRepository.class);
+        VehicleRepository vehicles = mock(VehicleRepository.class);
+        POIRepository pois = mock(POIRepository.class);
+        TransportRandomEventService events = mock(TransportRandomEventService.class);
+        SimulationMainLoop loop = mock(SimulationMainLoop.class);
+        org.example.roadsimulation.DataInitializer dataInitializer = mock(org.example.roadsimulation.DataInitializer.class);
+        ReflectionTestUtils.setField(controller,"assignmentRepository",assignments);
+        ReflectionTestUtils.setField(controller,"vehicleRepository",vehicles);
+        ReflectionTestUtils.setField(controller,"poiRepository",pois);
+        ReflectionTestUtils.setField(controller,"transportRandomEventService",events);
+        ReflectionTestUtils.setField(controller,"simulationMainLoop",loop);
+        ReflectionTestUtils.setField(controller,"dataInitializer",dataInitializer);
+        Vehicle vehicle=new Vehicle();vehicle.setId(21L);
+        POI start=new POI();start.setId(10L);POI end=new POI();end.setId(20L);
+        Route route=new Route();route.setStartPOI(start);route.setEndPOI(end);
+        Assignment assignment=new Assignment();assignment.setId(88L);assignment.setStatus(Assignment.AssignmentStatus.IN_PROGRESS);assignment.setRoute(route);vehicle.addAssignment(assignment);
+        when(assignments.findById(88L)).thenReturn(Optional.of(assignment));
+        when(vehicles.findByIdForUpdate(21L)).thenReturn(Optional.of(vehicle));
+        when(pois.findById(20L)).thenReturn(Optional.of(end));
+        when(events.replacementRecoveryState(assignment)).thenReturn(
+                new TransportRandomEventService.ReplacementRecoveryState(false,null,null,null,false));
+        SimulationController.VehicleArrivedRequest request=new SimulationController.VehicleArrivedRequest();
+        request.setAssignmentId(88L);request.setVehicleId(21L);request.setEndPOIId(20L);
+
+        assertEquals(HttpStatus.OK,controller.handleVehicleArrived(request).getStatusCode());
+        verify(dataInitializer).processVehicleDelivery(start,vehicle,end);
+    }
+
+    @Test
     void replacementArrivalReturns409UntilDurableBackendStateIsReady() {
         SimulationController controller = new SimulationController();
         AssignmentRepository assignmentRepository = mock(AssignmentRepository.class);
@@ -39,12 +96,14 @@ class SimulationControllerRandomEventTest {
         vehicle.addAssignment(assignment);
         when(assignmentRepository.findById(88L)).thenReturn(Optional.of(assignment));
         when(vehicleRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(vehicle));
+        when(eventService.replacementRecoveryState(assignment)).thenReturn(
+                new TransportRandomEventService.ReplacementRecoveryState(true,101L,12L,21L,false));
 
         SimulationController.VehicleArrivedRequest request = new SimulationController.VehicleArrivedRequest();
         request.setAssignmentId(88L); request.setVehicleId(21L); request.setEndPOIId(20L); request.setReplacementEventId(101L);
 
         assertEquals(HttpStatus.CONFLICT, controller.handleVehicleArrived(request).getStatusCode());
-        verify(eventService).isReplacementArrivalReady(assignment,101L);
+        verify(eventService).replacementRecoveryState(assignment);
         verifyNoInteractions(dataInitializer);
     }
 
@@ -103,7 +162,6 @@ class SimulationControllerRandomEventTest {
         when(itemRepository.findByShipmentId(31L)).thenReturn(java.util.List.of(item));
         when(eventService.replacementRecoveryState(assignment)).thenReturn(
                 new TransportRandomEventService.ReplacementRecoveryState(true,101L,12L,21L,true));
-        when(eventService.isReplacementArrivalReady(assignment,101L)).thenReturn(true);
         @SuppressWarnings("unchecked")
         java.util.Map<String,org.example.roadsimulation.entity.Shipment> pairMap =
                 (java.util.Map<String,org.example.roadsimulation.entity.Shipment>) ReflectionTestUtils.getField(dataInitializer,"poiPairShipmentMapping");
@@ -155,6 +213,7 @@ class SimulationControllerRandomEventTest {
         verify(assignmentRepository).findById(88L);
         verify(vehicleRepository).findByIdForUpdate(12L);
         verify(simulationMainLoop).getCurrentSimTime();
+        verify(eventService).replacementRecoveryState(assignment);
         verify(eventService).isTransitionBlocked(12L, simNow);
         verifyNoMoreInteractions(assignmentRepository, vehicleRepository, eventService, simulationMainLoop);
     }

@@ -227,13 +227,20 @@ public class SimulationController {
                     .orElseThrow(() -> new RuntimeException("Vehicle not found: " + assignedVehicle.getId()));
             if (request.getVehicleId() != null && !request.getVehicleId().equals(vehicle.getId()))
                 return ResponseEntity.badRequest().build();
-            if(request.getReplacementEventId()!=null
-                    &&!transportRandomEventService.isReplacementArrivalReady(assignment,request.getReplacementEventId())){
+            var replacementState=transportRandomEventService.replacementRecoveryState(assignment);
+            boolean replacementRecovery=replacementState!=null&&replacementState.replacementRecovery();
+            boolean progressManaged=drivingProgressService!=null&&drivingProgressService.enabled();
+            boolean invalidReplacementArrival=replacementRecovery
+                    ? request.getReplacementEventId()==null
+                        ||!java.util.Objects.equals(replacementState.replacementEventId(),request.getReplacementEventId())
+                        ||(!progressManaged&&!replacementState.arrivalReady())
+                    : request.getReplacementEventId()!=null;
+            if(invalidReplacementArrival){
                 logger.info("Replacement arrival rejected until backend stage is ready: assignmentId={}, eventId={}",
                         assignment.getId(),request.getReplacementEventId());
                 return ResponseEntity.status(HttpStatus.CONFLICT).build();
             }
-            if (drivingProgressService != null && drivingProgressService.enabled()) {
+            if (progressManaged) {
                 var now = simulationMainLoop.getCurrentSimTime();
                 var nodes = assignment.getNodes();
                 if (nodes != null && !nodes.isEmpty()) {

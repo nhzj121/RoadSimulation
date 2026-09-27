@@ -17,8 +17,9 @@ const sliceBetween = (start, end) => {
 }
 
 const loadOwnership = () => import(pathToFileURL(path.join(__dirname, '../src/utils/assignmentRenderOwnership.js')).href)
+const flushAsync = () => new Promise(resolve => setImmediate(resolve))
 
-function createClassHarness({ vrp = false, vehicleStatus = 'TRANSPORT_DRIVING', event = null, replacementRecovery = true, assignmentState = {} } = {}) {
+function createClassHarness({ vrp = false, vehicleStatus = 'TRANSPORT_DRIVING', event = null, replacementRecovery = true, assignmentState = {}, arrivalHandler = null } = {}) {
   const statuses = []
   const posts = []
   const context = {
@@ -33,7 +34,10 @@ function createClassHarness({ vrp = false, vehicleStatus = 'TRANSPORT_DRIVING', 
     clearTimeout() {},
     request: { post: async (...args) => { posts.push(args); return { data: {} } } },
     isStoppedVehicleStatus: status => ['BREAKDOWN', 'SCRAPPED', 'RESERVED_REPLACEMENT'].includes(status),
-    handleVehicleArrived: async (...args) => { posts.push(['arrival', ...args]); return 'acknowledged' },
+    handleVehicleArrived: async (...args) => {
+      posts.push(['arrival', ...args])
+      return arrivalHandler ? arrivalHandler(...args) : 'acknowledged'
+    },
     map: null,
     activeRoutes: { value: new Map() }
   }
@@ -122,6 +126,74 @@ test('durable ordinary replacement recovery acknowledges exactly once only after
   assert.equal(arrivals.length, 1)
   assert.deepEqual(arrivals[0], ['arrival', 88, 18, 20, '川A018', 101])
   assert.equal(animation.isCompleted, false, 'ack does not replay or infer local animation completion')
+})
+
+test('blocked, failed and pending replacement arrivals release the latch until acknowledgement succeeds', async () => {
+  const outcomes = ['blocked', 'failed', 'pending', new Error('network unavailable'), 'acknowledged']
+  const { manager, posts } = createClassHarness({
+    replacementRecovery: true,
+    vehicleStatus: 'UNLOADING',
+    assignmentState: {
+      replacementRecovery: true,
+      replacementEventId: 101,
+      currentOwnerVehicleId: 18,
+      replacementArrivalReady: false
+    },
+    arrivalHandler: async () => {
+      const outcome = outcomes.shift()
+      if (outcome instanceof Error) throw outcome
+      return outcome
+    }
+  })
+  const ready = {
+    vehicleId: 18, assignmentId: 88, assignmentIds: [88], status: 'UNLOADING',
+    replacementRecovery: true, replacementEventId: 101,
+    currentOwnerVehicleId: 18, replacementArrivalReady: true
+  }
+
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    manager.setDrivingSnapshots([ready], false)
+    await flushAsync()
+    assert.equal(posts.filter(call => call[0] === 'arrival').length, attempt)
+  }
+  manager.setDrivingSnapshots([ready], false)
+  await flushAsync()
+  assert.equal(posts.filter(call => call[0] === 'arrival').length, 5, 'success permanently deduplicates later polls')
+})
+
+test('replacement arrival keeps one request in flight and retries after a non-success result', async () => {
+  let resolveFirst
+  let calls = 0
+  const { manager, posts } = createClassHarness({
+    replacementRecovery: true,
+    vehicleStatus: 'UNLOADING',
+    assignmentState: {
+      replacementRecovery: true,
+      replacementEventId: 101,
+      currentOwnerVehicleId: 18,
+      replacementArrivalReady: false
+    },
+    arrivalHandler: async () => {
+      calls += 1
+      if (calls === 1) return new Promise(resolve => { resolveFirst = resolve })
+      return 'acknowledged'
+    }
+  })
+  const ready = {
+    vehicleId: 18, assignmentId: 88, assignmentIds: [88], status: 'UNLOADING',
+    replacementRecovery: true, replacementEventId: 101,
+    currentOwnerVehicleId: 18, replacementArrivalReady: true
+  }
+
+  manager.setDrivingSnapshots([ready], false)
+  manager.setDrivingSnapshots([ready], false)
+  await Promise.resolve()
+  assert.equal(posts.filter(call => call[0] === 'arrival').length, 1)
+  resolveFirst('blocked')
+  await flushAsync()
+  manager.setDrivingSnapshots([ready], false)
+  await flushAsync()
+  assert.equal(posts.filter(call => call[0] === 'arrival').length, 2)
 })
 
 test('VRP replacement recovery never emits the ordinary arrival acknowledgement', async () => {

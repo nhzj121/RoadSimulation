@@ -3640,7 +3640,8 @@ class VehicleAnimation {
     this.activeRandomEvent = null;
     this.drivingSnapshot = null;
     this.replacementRecoveryMode = Boolean(routeData.replacementRecovery || assignment.replacementRecovery);
-    this.replacementArrivalAckSent = false;
+    this.replacementArrivalAckCompleted = false;
+    this.replacementArrivalAckInFlight = false;
     this.backendVehicleStatus = assignment.vehicleStatus || null;
     this.authoritativeEnvironment = Boolean(this.manager?.authoritativeEnvironment);
     this.acknowledgedPhase = null;
@@ -3810,15 +3811,30 @@ class VehicleAnimation {
         && state.replacementArrivalReady === true
         && Number(state.currentOwnerVehicleId) === Number(this.vehicleId)
         && state.replacementEventId != null
-        && !this.replacementArrivalAckSent) {
-      this.replacementArrivalAckSent = true;
-      void handleVehicleArrived(
+        && !this.replacementArrivalAckCompleted
+        && !this.replacementArrivalAckInFlight) {
+      void this._acknowledgeReplacementArrival(state.replacementEventId);
+    }
+  }
+
+  async _acknowledgeReplacementArrival(replacementEventId) {
+    if (this.replacementArrivalAckCompleted || this.replacementArrivalAckInFlight) return;
+    this.replacementArrivalAckInFlight = true;
+    try {
+      const result = await handleVehicleArrived(
           this.assignmentId,
           this.vehicleId,
           this.routeData.assignment.endPOIId,
           this.licensePlate,
-          state.replacementEventId
+          replacementEventId
       );
+      // HTTP success includes the backend's idempotent "already closed" response.
+      // All other results must remain retryable on a later authoritative monitor poll.
+      if (result === 'acknowledged') this.replacementArrivalAckCompleted = true;
+    } catch (error) {
+      console.warn(`[VehicleAnimation] ${this.licensePlate} replacement arrival acknowledgement failed`, error);
+    } finally {
+      this.replacementArrivalAckInFlight = false;
     }
   }
 
@@ -4055,10 +4071,14 @@ class VehicleAnimation {
             ? this.stages[snapshot.drivingLegIndex]?.nodeInfo?.poiId
             : this.routeData.assignment.endPOIId;
         if (endPOIId == null) return;
-        await request.post('/api/simulation/vehicle-arrived', {
+        const arrivalPayload = {
           assignmentId: this.assignmentId, endPOIId,
           phaseKey: snapshot.drivingPhaseKey, legIndex: snapshot.drivingLegIndex
-        });
+        };
+        if (snapshot.replacementRecovery === true && snapshot.replacementEventId != null) {
+          arrivalPayload.replacementEventId = snapshot.replacementEventId;
+        }
+        await request.post('/api/simulation/vehicle-arrived', arrivalPayload);
       }
       this.acknowledgedPhase = snapshot.drivingPhaseKey;
     } catch (error) {

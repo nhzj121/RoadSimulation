@@ -183,7 +183,37 @@ ReplacementRecoveryState, DTO accessors, repository lookup, and request field.
 Final named 18-class backend regression:
 
 ```text
-82 tests, 0 failures, 0 errors, 0 skipped
+84 tests, 0 failures, 0 errors, 0 skipped
 ```
 
 No database, service, port, or shared configuration was used or changed. The existing Maven model and Mockito agent warnings remain.
+
+### Follow-up P1: retryable arrival acknowledgement and mandatory event identity
+
+The frontend now tracks replacement-arrival requests with separate in-flight and completed states. Concurrent monitor polls cannot duplicate an active request; blocked, failed, pending, or thrown requests release the in-flight latch and can retry; only an explicit `acknowledged` result (including the backend's idempotent closed response) sets the permanent completion latch.
+
+The controller now derives replacement ownership from persisted `ReplacementRecoveryState` before accepting any arrival. A current-owner `REPLACED` assignment must provide the exact persisted `replacementEventId`; node-less non-progress recovery must additionally be backend-ready. Ordinary assignments without replacement history remain compatible without an event ID, while VRP/progress-managed assignments retain their existing phase, leg, progress, and transition checks.
+
+Follow-up RED evidence:
+
+```text
+Frontend replacement focus: 15 tests, 2 expected failures
+- blocked/failed/pending outcomes permanently suppressed later retries
+- an in-flight request that returned blocked could not retry
+
+Backend controller focus: omitted replacementEventId expected 409 but reached
+the ordinary delivery path (500 in the isolated test because downstream loop
+state was intentionally absent), proving the readiness gate was bypassed.
+```
+
+Final GREEN evidence:
+
+```text
+Frontend replacement focus: 15/15
+Frontend Node suite: 43/43
+Backend controller focus: 6/6
+Named 18-class backend regression: 84/84
+Vite production build: 1519 modules transformed; temporary output removed
+```
+
+This follow-up also used no live database, external service, shared port, or shared configuration.
