@@ -1,42 +1,74 @@
 <template>
   <ElCard shadow="never" class="box-card weather-panel">
-    <template #header>天气与实验环境</template>
+    <template #header>天气与运行环境</template>
     <div class="weather-form">
       <ElSelect v-model="selected" :disabled="locked || disabled" aria-label="天气场景">
-        <ElOption label="晴天基线 · 自动事件关闭" value="BASELINE" />
-        <ElOption label="天气演示 · 自动事件关闭" value="DEMO" />
-        <ElOption label="固定种子自动 · 自动事件开启" value="AUTO" />
+        <ElOption label="晴天基线" value="BASELINE" />
+        <ElOption label="天气演示" value="DEMO" />
+        <ElOption label="固定种子自动场景" value="AUTO" />
         <ElOption v-for="scene in scenarios" :key="scene.id" :label="`已保存：${scene.name}`" :value="`saved:${scene.id}`" />
       </ElSelect>
       <template v-if="selected === 'AUTO'">
-        <label>随机种子</label>
-        <ElInputNumber v-model="seed" :min="0" :max="2147483647" :disabled="locked || disabled" />
+        <div class="seed-row">
+          <span>随机种子</span>
+          <ElInputNumber v-model="seed" :min="0" :max="2147483647" :disabled="locked || disabled" controls-position="right" />
+        </div>
       </template>
-      <small>{{ presetDescription }}</small>
-      <small>默认：晴 ×1 · 雨 ×0.8 · 雪 ×0.5 · 雾 ×0.6（演示初值，导入可调整）</small>
-      <small>{{ eventDescription }}</small>
+
+      <div class="environment-summary" aria-live="polite">
+        <template v-if="current?.runId">
+          <div>
+            <span>当前天气</span>
+            <strong>{{ weatherNames[current.weatherType] || current.weatherType }} · ×{{ current.speedFactor }}</strong>
+          </div>
+          <div>
+            <span>自动事件</span>
+            <strong>{{ current.autoEvents ? '开启' : '关闭' }}</strong>
+          </div>
+          <div>
+            <span>下次变化</span>
+            <strong>{{ formatTime(current.nextChangeTime) }}</strong>
+          </div>
+        </template>
+        <template v-else>
+          <div>
+            <span>已选场景</span>
+            <strong>{{ selectedSceneName }}</strong>
+          </div>
+          <div>
+            <span>自动事件</span>
+            <strong>{{ selectedAutoEvents ? '开启' : '关闭' }}</strong>
+          </div>
+          <div>
+            <span>运行状态</span>
+            <strong>等待启动</strong>
+          </div>
+        </template>
+      </div>
+
       <div class="weather-actions">
         <ElButton size="small" :disabled="locked || disabled" @click="importInput?.click()">导入场景</ElButton>
         <ElButton size="small" :disabled="busy || disabled" @click="exportScene">导出场景</ElButton>
         <ElButton v-if="current?.runId" size="small" @click="exportRun">运行记录</ElButton>
       </div>
       <input ref="importInput" type="file" accept="application/json,.json" hidden @change="importScene" />
-      <div v-if="current?.runId" class="weather-current" aria-live="polite">
-        <strong>{{ weatherNames[current.weatherType] || current.weatherType }} · 速度 ×{{ current.speedFactor }}</strong>
-        <span>单车自动事件：{{ current.autoEvents ? '开启' : '关闭' }}</span>
-        <span>下次变化：{{ formatTime(current.nextChangeTime) }}</span>
-        <span>场景 {{ current.scenarioId }} · 运行 {{ current.runId }}</span>
-        <ElTag v-if="current.manuallyIntervened" type="warning">本次含人工干预</ElTag>
-        <small>运行配置已锁定；重置后可以选择新场景。</small>
-      </div>
-      <small v-else>启动前可选择。天气时间表结束后恢复晴天。</small>
+      <ElTag v-if="current?.manuallyIntervened" class="manual-tag" type="warning">本次含人工干预</ElTag>
+      <ElCollapse v-model="expandedDetails" class="environment-details">
+        <ElCollapseItem title="场景规则与运行详情" name="details">
+          <p>{{ presetDescription }}</p>
+          <p>{{ eventDescription }}</p>
+          <p>天气系数：晴 ×1 · 雨 ×0.8 · 雪 ×0.5 · 雾 ×0.6。</p>
+          <p v-if="current?.runId">运行配置已锁定；重置后可选择新场景。</p>
+          <p v-else>天气时间表结束后恢复晴天。</p>
+        </ElCollapseItem>
+      </ElCollapse>
     </div>
   </ElCard>
 </template>
 
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
-import { ElButton, ElCard, ElInputNumber, ElMessage, ElOption, ElSelect, ElTag } from 'element-plus'
+import { ElButton, ElCard, ElCollapse, ElCollapseItem, ElInputNumber, ElMessage, ElOption, ElSelect, ElTag } from 'element-plus'
 import { weatherApi } from '../api/weatherApi'
 import { describeBreakdownPolicy } from '../utils/breakdownPresentation'
 
@@ -47,9 +79,12 @@ const current = ref(null)
 const scenarios = ref([])
 const busy = ref(false)
 const importInput = ref(null)
+const expandedDetails = ref([])
 const locked = computed(() => Boolean(current.value?.locked))
 const weatherNames = { CLEAR: '晴', SUNNY: '晴', RAIN: '雨', SNOW: '雪', FOG: '雾' }
 const selectedScene = computed(() => scenarios.value.find(scene => `saved:${scene.id}` === selected.value))
+const selectedSceneName = computed(() => selectedScene.value?.name || ({ BASELINE: '晴天基线', DEMO: '天气演示', AUTO: '固定种子自动场景' }[selected.value] || '已保存场景'))
+const selectedAutoEvents = computed(() => selectedScene.value ? Boolean(selectedScene.value.autoEvents) : selected.value === 'AUTO')
 const presetDescription = computed(() => selectedScene.value
     ? selectedScene.value.timeSlices?.map(slice => `${slice.startMinute}–${slice.endMinute}分 ${weatherNames[slice.weatherType]} ×${slice.speedFactor}`).join(' → ') || '回放保存的天气时间表。'
     : ({
@@ -138,9 +173,18 @@ defineExpose({ prepareStart, refresh })
 </script>
 
 <style scoped>
-.weather-form, .weather-current { display: grid; gap: 9px; }
-.weather-form small { color: #606266; line-height: 1.6; }
+.weather-form { display: grid; gap: 10px; }
+.seed-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: #606266; font-size: 13px; }
+.seed-row .el-input-number { width: 180px; }
 .weather-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .weather-actions .el-button { margin: 0; }
-.weather-current { background: #eef5ff; padding: 10px; border-radius: 6px; font-size: 12px; overflow-wrap: anywhere; }
+.environment-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; padding: 10px; border-radius: 8px; background: #f3f7fd; }
+.environment-summary > div { display: grid; gap: 3px; min-width: 0; }
+.environment-summary span { color: #778397; font-size: 12px; }
+.environment-summary strong { color: #303133; font-size: 13px; overflow-wrap: anywhere; }
+.manual-tag { justify-self: start; }
+.environment-details :deep(.el-collapse-item__header) { height: 34px; color: #606266; font-size: 13px; }
+.environment-details :deep(.el-collapse-item__content) { padding-bottom: 4px; color: #606266; font-size: 12px; line-height: 1.65; }
+.environment-details p { margin: 0 0 7px; }
+@media (max-width: 480px) { .environment-summary { grid-template-columns: 1fr; } }
 </style>
