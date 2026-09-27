@@ -162,3 +162,28 @@ Named 17-class regression: 73 tests, 0 failures, 0 errors, 0 skipped
 ```
 
 Second-round limit: no live/shared database was accessed. Persistence behavior is covered by the repository annotation contract, targeted-refresh service behavior, and the strongest available two-assignment tick regression in this repository; a live MySQL persistence-context test remains outside the authorized environment.
+
+## Final review fixes (2026-09-27)
+
+- Added legacy node-less capacity projection. Pre-pickup `ORDER_DRIVING` starts at zero and adds the weight and volume of still-`ASSIGNED` items independently. Post-pickup runtime load/volume remains the baseline, while `LOADED`/`IN_TRANSIT` items are not added again. The existing ordered incomplete-node peak projection is unchanged for VRP assignments.
+- Added durable `ReplacementRecoveryState`, sourced from the latest persisted successful replacement event and checked against the Assignment's current owner. Active-assignment and monitor DTOs now expose the event, original owner, current owner, recovery flag, and backend arrival readiness.
+- Readiness is true only for an active node-less Assignment owned by the persisted replacement vehicle after the backend reaches `UNLOADING`. VRP tasks remain node-driven. A replacement acknowledgement carries `replacementEventId`; the controller revalidates readiness and event identity, and already-closed Assignments remain idempotent HTTP 200.
+
+Strict RED evidence:
+
+```text
+Capacity focus: 3 tests, 2 expected failures
+- pre-pickup expected 10.0, old result 99.0
+- partial pickup expected 8.0, old result 5.0
+
+Recovery contract focus: test compilation failed on the intentionally missing
+ReplacementRecoveryState, DTO accessors, repository lookup, and request field.
+```
+
+Final named 18-class backend regression:
+
+```text
+82 tests, 0 failures, 0 errors, 0 skipped
+```
+
+No database, service, port, or shared configuration was used or changed. The existing Maven model and Mockito agent warnings remain.

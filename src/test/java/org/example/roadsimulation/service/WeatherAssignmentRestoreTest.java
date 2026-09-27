@@ -30,4 +30,30 @@ class WeatherAssignmentRestoreTest {
         when(cache.getActiveAssignments()).thenReturn(List.of());when(progress.enabled()).thenReturn(false);
         assertTrue(service.getActiveAssignments().isEmpty());
     }
+
+    @Test void cachedActiveAssignmentIsDecoratedFromDurableReplacementHistoryAfterRefresh() {
+        var service=new AssignmentServiceImpl();var repo=mock(AssignmentRepository.class);
+        var cache=mock(DataInitializer.class);var progress=mock(DrivingProgressService.class);
+        var events=mock(TransportRandomEventService.class);
+        ReflectionTestUtils.setField(service,"assignmentRepository",repo);
+        ReflectionTestUtils.setField(service,"dataInitializer",cache);
+        ReflectionTestUtils.setField(service,"drivingProgressService",progress);
+        ReflectionTestUtils.setField(service,"transportRandomEventService",events);
+        var replacement=new Vehicle();replacement.setId(21L);replacement.setLicensePlate("T");
+        replacement.transitionToStatus(Vehicle.VehicleStatus.UNLOADING,java.time.LocalDateTime.of(2026,1,1,9,0),java.time.Duration.ofMinutes(30));
+        var assignment=new Assignment();assignment.setId(88L);assignment.setStatus(Assignment.AssignmentStatus.IN_PROGRESS);replacement.addAssignment(assignment);
+        var cached=new org.example.roadsimulation.dto.AssignmentBriefDTO();cached.setAssignmentId(88L);cached.setStatus("IN_PROGRESS");cached.setVehicleId(21L);
+        when(cache.getActiveAssignments()).thenReturn(List.of(cached));
+        when(repo.findById(88L)).thenReturn(Optional.of(assignment));
+        when(events.replacementRecoveryState(assignment)).thenReturn(
+                new TransportRandomEventService.ReplacementRecoveryState(true,101L,12L,21L,true));
+
+        var restored=service.getActiveAssignments().get(0);
+
+        assertTrue(restored.getReplacementRecovery());
+        assertEquals(101L,restored.getReplacementEventId());
+        assertEquals(12L,restored.getReplacementOriginalVehicleId());
+        assertEquals(21L,restored.getCurrentOwnerVehicleId());
+        assertTrue(restored.getReplacementArrivalReady());
+    }
 }

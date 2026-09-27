@@ -67,6 +67,11 @@ public class TransportMonitorDTO {
         private Double maxLoadCapacity;
         private Double currentVolume;
         private Double maxVolumeCapacity;
+        private Boolean replacementRecovery = false;
+        private Long replacementEventId;
+        private Long replacementOriginalVehicleId;
+        private Long currentOwnerVehicleId;
+        private Boolean replacementArrivalReady = false;
         private List<Long> shipmentIds = new ArrayList<>();
         private List<String> shipmentRefNos = new ArrayList<>();
     }
@@ -92,6 +97,11 @@ public class TransportMonitorDTO {
         private Double maxLoadCapacity;
         private Double currentVolume;
         private Double maxVolumeCapacity;
+        private Boolean replacementRecovery = false;
+        private Long replacementEventId;
+        private Long replacementOriginalVehicleId;
+        private Long currentOwnerVehicleId;
+        private Boolean replacementArrivalReady = false;
         private List<Long> assignmentIds = new ArrayList<>();
         private List<Long> shipmentIds = new ArrayList<>();
         private RandomEventDTO activeEvent;

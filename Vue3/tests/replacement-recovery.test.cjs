@@ -18,7 +18,7 @@ const sliceBetween = (start, end) => {
 
 const loadOwnership = () => import(pathToFileURL(path.join(__dirname, '../src/utils/assignmentRenderOwnership.js')).href)
 
-function createClassHarness({ vrp = false, vehicleStatus = 'TRANSPORT_DRIVING', event = null, replacementRecovery = true } = {}) {
+function createClassHarness({ vrp = false, vehicleStatus = 'TRANSPORT_DRIVING', event = null, replacementRecovery = true, assignmentState = {} } = {}) {
   const statuses = []
   const posts = []
   const context = {
@@ -58,7 +58,8 @@ function createClassHarness({ vrp = false, vehicleStatus = 'TRANSPORT_DRIVING', 
     currentLoad: 12,
     currentVolume: 3,
     endPOIId: 20,
-    vrp
+    vrp,
+    ...assignmentState
   }
   const marker = { position: null, setPosition(position) { this.position = [...position] } }
   const routeData = {
@@ -76,6 +77,73 @@ function createClassHarness({ vrp = false, vehicleStatus = 'TRANSPORT_DRIVING', 
   const animation = manager.addAnimation(assignment, routeData)
   return { animation, manager, statuses, posts, marker }
 }
+
+test('durable ordinary replacement recovery acknowledges exactly once only after backend readiness', async () => {
+  const { animation, manager, posts } = createClassHarness({
+    replacementRecovery: true,
+    vehicleStatus: 'UNLOADING',
+    assignmentState: {
+      replacementRecovery: true,
+      replacementEventId: 101,
+      currentOwnerVehicleId: 18,
+      replacementArrivalReady: false
+    }
+  })
+
+  manager.setDrivingSnapshots([{
+    vehicleId: 18,
+    assignmentId: 88,
+    assignmentIds: [88],
+    status: 'UNLOADING',
+    replacementRecovery: true,
+    replacementEventId: 101,
+    currentOwnerVehicleId: 18,
+    replacementArrivalReady: false
+  }], false)
+  await Promise.resolve()
+  assert.deepEqual(posts, [])
+
+  const ready = {
+    vehicleId: 18,
+    assignmentId: 88,
+    assignmentIds: [88],
+    status: 'UNLOADING',
+    replacementRecovery: true,
+    replacementEventId: 101,
+    currentOwnerVehicleId: 18,
+    replacementArrivalReady: true
+  }
+  manager.setDrivingSnapshots([ready], false)
+  manager.setDrivingSnapshots([ready], false)
+  await Promise.resolve()
+  await Promise.resolve()
+
+  const arrivals = posts.filter(call => call[0] === 'arrival')
+  assert.equal(arrivals.length, 1)
+  assert.deepEqual(arrivals[0], ['arrival', 88, 18, 20, '川A018', 101])
+  assert.equal(animation.isCompleted, false, 'ack does not replay or infer local animation completion')
+})
+
+test('VRP replacement recovery never emits the ordinary arrival acknowledgement', async () => {
+  const { manager, posts } = createClassHarness({
+    vrp: true,
+    replacementRecovery: true,
+    vehicleStatus: 'UNLOADING',
+    assignmentState: {
+      replacementRecovery: true,
+      replacementEventId: 101,
+      currentOwnerVehicleId: 18,
+      replacementArrivalReady: true
+    }
+  })
+  manager.setDrivingSnapshots([{
+    vehicleId: 18, assignmentId: 88, assignmentIds: [88], status: 'UNLOADING',
+    replacementRecovery: true, replacementEventId: 101,
+    currentOwnerVehicleId: 18, replacementArrivalReady: true
+  }], false)
+  await Promise.resolve()
+  assert.deepEqual(posts, [])
+})
 
 for (const vrp of [false, true]) {
   test(`running ${vrp ? 'VRP' : 'normal'} animation accepts non-weather SCRAPPED status from assignmentIds`, () => {
@@ -250,6 +318,56 @@ test('failed owner redraw remains on active polling until matching animation reg
   await scheduled.at(-1).drawer(7)
   assert.deepEqual(endpointCalls, ['/api/assignments/active', '/api/assignments/active', '/api/assignments/new'])
   assert.equal(drawAttempt, 2)
+})
+
+test('refresh without an owner tracker reconstructs static recovery from durable active assignment metadata', async () => {
+  const { assignmentRenderIdentity, reconcileAssignmentRenderOwner, createAssignmentRecoveryTracker } = await loadOwnership()
+  const assignment = {
+    assignmentId: 88, vehicleId: 18, licensePlate: '川A018', replacementRecovery: true,
+    replacementEventId: 101, currentOwnerVehicleId: 18, replacementArrivalReady: false
+  }
+  const animations = new Map()
+  const scheduled = []
+  let timerCallback
+  let drawOptions
+  const context = {
+    console: { log() {}, info() {}, warn() {}, error() {} }, Promise, Map, Set,
+    assignmentRenderIdentity, reconcileAssignmentRenderOwner, createAssignmentRecoveryTracker,
+    ref: value => ({ value }), simulationTimer: { value: null }, simulationInterval: { value: 4000 },
+    simulationGeneration: { value: 7 }, isTransportAnimationActive: () => true,
+    isActiveTransportGeneration: () => true, fetchSimulationCosts: async () => {}, updateVehicleInfo: async () => {},
+    checkAndCleanupCompletedAssignments: async () => {}, isExperimentRunActive: { value: false },
+    syncExperimentRunAfterStatusRefresh: async () => {}, monitorAssignments: [assignment], monitorWeather: { value: null },
+    assignmentPollingMode: () => 'new', animationManager: { animations },
+    scheduleAssignmentDrawing(drawer, generation, label) { scheduled.push({ drawer, generation, label }) },
+    fetchAndDrawNewAssignments: async () => { throw new Error('durable recovery must use active polling') },
+    request: { async get(url) { assert.equal(url, '/api/assignments/active'); return { data: [assignment] } } },
+    map: {}, drawnAssignmentIds: { value: new Set() }, missingRouteAssignmentIds: new Set(), stats: {},
+    clearRouteByAssignmentId() {},
+    async drawTwoStageRouteForAssignment(current, generation, options) {
+      drawOptions = options
+      const routeData = { assignment: current }
+      animations.set(current.assignmentId, { routeData })
+      return routeData
+    },
+    async drawMultiStageRouteForVrpAssignment() { throw new Error('unexpected VRP draw') },
+    ElMessage: { error() {} }, setInterval(callback) { timerCallback = callback; return 123 }, clearInterval() {},
+    arrivalMonitor: { stopMonitoring() {} }
+  }
+  vm.createContext(context)
+  const recoveryMarker = '// ==================== assignment owner recovery polling ===================='
+  const recoveryStart = source.indexOf(recoveryMarker)
+  const recoveryEnd = source.indexOf('/**\n * 启动仿真定时器', recoveryStart)
+  vm.runInContext(source.slice(recoveryStart, recoveryEnd), context)
+  vm.runInContext(`${sliceBetween('const fetchCurrentAssignments =', '// 增量获取并绘制新Assignment')}\nthis.fetchCurrentAssignments = fetchCurrentAssignments;`, context)
+  vm.runInContext(`${sliceBetween('const startSimulationTimer =', '/**\n * 停止仿真定时器')}\nthis.startTimer = startSimulationTimer;`, context)
+
+  context.startTimer()
+  await timerCallback()
+  assert.equal(scheduled.at(-1).drawer, context.fetchCurrentAssignments)
+  await scheduled.at(-1).drawer(7)
+  assert.equal(drawOptions.replacementRecovery, true)
+  assert.equal(animations.get(88).routeData.assignment.replacementEventId, 101)
 })
 
 test('pending recovery identity clears when assignment disappears and when generation changes', async () => {

@@ -227,6 +227,12 @@ public class SimulationController {
                     .orElseThrow(() -> new RuntimeException("Vehicle not found: " + assignedVehicle.getId()));
             if (request.getVehicleId() != null && !request.getVehicleId().equals(vehicle.getId()))
                 return ResponseEntity.badRequest().build();
+            if(request.getReplacementEventId()!=null
+                    &&!transportRandomEventService.isReplacementArrivalReady(assignment,request.getReplacementEventId())){
+                logger.info("Replacement arrival rejected until backend stage is ready: assignmentId={}, eventId={}",
+                        assignment.getId(),request.getReplacementEventId());
+                return ResponseEntity.status(HttpStatus.CONFLICT).build();
+            }
             if (drivingProgressService != null && drivingProgressService.enabled()) {
                 var now = simulationMainLoop.getCurrentSimTime();
                 var nodes = assignment.getNodes();
@@ -403,6 +409,7 @@ public class SimulationController {
         private Long assignmentId;
         private Long vehicleId;
         private Long endPOIId;
+        private Long replacementEventId;
 
         public Long getAssignmentId() {
             return assignmentId;
@@ -427,6 +434,8 @@ public class SimulationController {
         public void setEndPOIId(Long endPOIId) {
             this.endPOIId = endPOIId;
         }
+        public Long getReplacementEventId() { return replacementEventId; }
+        public void setReplacementEventId(Long replacementEventId) { this.replacementEventId = replacementEventId; }
     }
 
     public static class AssignmentLoadedRequest {

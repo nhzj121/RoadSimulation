@@ -8,6 +8,7 @@ import org.example.roadsimulation.repository.AssignmentRepository;
 import org.example.roadsimulation.service.AssignmentService;
 import org.example.roadsimulation.service.TransportMetricsService;
 import org.example.roadsimulation.service.TransportLifecycleService;
+import org.example.roadsimulation.service.TransportRandomEventService;
 import org.example.roadsimulation.service.VehicleService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
@@ -42,6 +43,9 @@ public class AssignmentServiceImpl implements AssignmentService {
 
     @Autowired
     private org.example.roadsimulation.service.DrivingProgressService drivingProgressService;
+
+    @Autowired
+    private TransportRandomEventService transportRandomEventService;
 
     // ==================== CRUD ====================
 
@@ -231,6 +235,7 @@ public class AssignmentServiceImpl implements AssignmentService {
                 }
             }
         }
+        result.forEach(this::decorateReplacementRecovery);
         return result;
     }
 
@@ -371,7 +376,7 @@ public class AssignmentServiceImpl implements AssignmentService {
         List<Assignment> assignments = assignmentRepository.findByIds(assignmentIds);
         List<AssignmentBriefDTO> result = new ArrayList<>();
         for (Assignment assignment : assignments) {
-            result.add(convertToBriefDTO(assignment));
+            result.add(decorateReplacementRecovery(convertToBriefDTO(assignment), assignment));
         }
         return result;
     }
@@ -456,6 +461,23 @@ public class AssignmentServiceImpl implements AssignmentService {
                     }).toList());
         }
 
+        return dto;
+    }
+
+    private void decorateReplacementRecovery(AssignmentBriefDTO dto) {
+        if(dto==null||dto.getAssignmentId()==null||transportRandomEventService==null)return;
+        assignmentRepository.findById(dto.getAssignmentId())
+                .ifPresent(assignment->decorateReplacementRecovery(dto,assignment));
+    }
+
+    private AssignmentBriefDTO decorateReplacementRecovery(AssignmentBriefDTO dto,Assignment assignment) {
+        if(dto==null||assignment==null||transportRandomEventService==null)return dto;
+        var state=transportRandomEventService.replacementRecoveryState(assignment);
+        dto.setReplacementRecovery(state.replacementRecovery());
+        dto.setReplacementEventId(state.replacementEventId());
+        dto.setReplacementOriginalVehicleId(state.originalVehicleId());
+        dto.setCurrentOwnerVehicleId(state.currentOwnerVehicleId());
+        dto.setReplacementArrivalReady(state.arrivalReady());
         return dto;
     }
 

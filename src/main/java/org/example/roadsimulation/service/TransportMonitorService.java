@@ -275,6 +275,8 @@ public class TransportMonitorService {
         dto.setGoodsName(String.join(", ", goodsNames));
         dto.setQuantity(quantity);
 
+        applyReplacementRecovery(dto, transportRandomEventService.replacementRecoveryState(assignment));
+
         return dto;
     }
 
@@ -288,7 +290,28 @@ public class TransportMonitorService {
         dto.setMaxLoadCapacity(valueOrZero(vehicle.getMaxLoadCapacity()));
         dto.setCurrentVolume(valueOrZero(vehicle.getCurrentVolumn()));
         dto.setMaxVolumeCapacity(valueOrZero(vehicle.getCargoVolume()));
+        Assignment assignment=vehicle.getCurrentAssignment();
+        if(assignment!=null&&assignment.getId()!=null){
+            dto.setAssignmentId(assignment.getId());
+            applyReplacementRecovery(dto,transportRandomEventService.replacementRecoveryState(assignment));
+        }
         return dto;
+    }
+
+    private void applyReplacementRecovery(TransportMonitorDTO.AssignmentMonitorDTO dto,
+            TransportRandomEventService.ReplacementRecoveryState state){
+        if(state==null)return;
+        dto.setReplacementRecovery(state.replacementRecovery());dto.setReplacementEventId(state.replacementEventId());
+        dto.setReplacementOriginalVehicleId(state.originalVehicleId());dto.setCurrentOwnerVehicleId(state.currentOwnerVehicleId());
+        dto.setReplacementArrivalReady(state.arrivalReady());
+    }
+
+    private void applyReplacementRecovery(TransportMonitorDTO.VehicleMonitorDTO dto,
+            TransportRandomEventService.ReplacementRecoveryState state){
+        if(state==null)return;
+        dto.setReplacementRecovery(state.replacementRecovery());dto.setReplacementEventId(state.replacementEventId());
+        dto.setReplacementOriginalVehicleId(state.originalVehicleId());dto.setCurrentOwnerVehicleId(state.currentOwnerVehicleId());
+        dto.setReplacementArrivalReady(state.arrivalReady());
     }
 
     private TransportMonitorDTO.LinkDTO buildLinkDTO(Long shipmentId, Long assignmentId, Long vehicleId) {

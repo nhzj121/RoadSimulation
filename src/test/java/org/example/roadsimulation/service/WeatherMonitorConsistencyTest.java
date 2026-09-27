@@ -67,4 +67,34 @@ class WeatherMonitorConsistencyTest {
         assertEquals(21L,monitor.getActiveEvents().get(0).getReplacementVehicleId());
         assertEquals(60,monitor.getActiveEvents().get(0).getReplacementWaitMinutes());
     }
+
+    @Test void monitorPublishesDurableReplacementOwnerAndBackendArrivalReadiness() {
+        var service=new TransportMonitorService();var shipments=mock(ShipmentRepository.class);var assignments=mock(AssignmentRepository.class);
+        var eventService=mock(TransportRandomEventService.class);
+        ReflectionTestUtils.setField(service,"shipmentRepository",shipments);
+        ReflectionTestUtils.setField(service,"shipmentItemRepository",mock(ShipmentItemRepository.class));
+        ReflectionTestUtils.setField(service,"assignmentRepository",assignments);
+        ReflectionTestUtils.setField(service,"transportRandomEventService",eventService);
+        ReflectionTestUtils.setField(service,"drivingProgressService",mock(DrivingProgressService.class));
+        ReflectionTestUtils.setField(service,"vehicleRepository",mock(VehicleRepository.class));
+        when(shipments.findByStatusIn(any())).thenReturn(new ArrayList<>());
+        var replacement=new Vehicle();replacement.setId(21L);replacement.setLicensePlate("T");
+        replacement.transitionToStatus(Vehicle.VehicleStatus.UNLOADING,LocalDateTime.of(2026,1,1,9,0),Duration.ofMinutes(30));
+        var assignment=new Assignment();assignment.setId(88L);assignment.setStatus(Assignment.AssignmentStatus.IN_PROGRESS);replacement.addAssignment(assignment);
+        when(assignments.findRuntimeActiveAssignments()).thenReturn(List.of(assignment));
+        when(eventService.replacementRecoveryState(assignment)).thenReturn(
+                new TransportRandomEventService.ReplacementRecoveryState(true,101L,12L,21L,true));
+
+        var monitor=service.getActiveMonitor();
+
+        var assignmentRow=monitor.getAssignments().get(0);
+        assertTrue(assignmentRow.getReplacementRecovery());
+        assertEquals(101L,assignmentRow.getReplacementEventId());
+        assertEquals(21L,assignmentRow.getCurrentOwnerVehicleId());
+        assertTrue(assignmentRow.getReplacementArrivalReady());
+        var vehicleRow=monitor.getVehicles().get(0);
+        assertEquals(88L,vehicleRow.getAssignmentId());
+        assertTrue(vehicleRow.getReplacementRecovery());
+        assertTrue(vehicleRow.getReplacementArrivalReady());
+    }
 }

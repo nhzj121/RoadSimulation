@@ -3639,7 +3639,8 @@ class VehicleAnimation {
     this.eventSpeedFactor = 1;
     this.activeRandomEvent = null;
     this.drivingSnapshot = null;
-    this.replacementRecoveryMode = Boolean(routeData.replacementRecovery);
+    this.replacementRecoveryMode = Boolean(routeData.replacementRecovery || assignment.replacementRecovery);
+    this.replacementArrivalAckSent = false;
     this.backendVehicleStatus = assignment.vehicleStatus || null;
     this.authoritativeEnvironment = Boolean(this.manager?.authoritativeEnvironment);
     this.acknowledgedPhase = null;
@@ -3677,6 +3678,7 @@ class VehicleAnimation {
         position: this._backendPosition(assignment) || this.stage1Path[0]
       });
     }
+    this.updateReplacementRecovery(assignment);
   }
 
   // 计算路段的长度和累积距离
@@ -3801,6 +3803,22 @@ class VehicleAnimation {
     if (position) {
       this.currentPosition = position;
       this._updateMarkerPosition();
+    }
+    if (!Array.isArray(this.stages)
+        && this.routeData.assignment.vrp !== true
+        && state.replacementRecovery === true
+        && state.replacementArrivalReady === true
+        && Number(state.currentOwnerVehicleId) === Number(this.vehicleId)
+        && state.replacementEventId != null
+        && !this.replacementArrivalAckSent) {
+      this.replacementArrivalAckSent = true;
+      void handleVehicleArrived(
+          this.assignmentId,
+          this.vehicleId,
+          this.routeData.assignment.endPOIId,
+          this.licensePlate,
+          state.replacementEventId
+      );
     }
   }
 
@@ -4747,7 +4765,7 @@ const isIgnorableExperimentArrivalError = (error) => {
       || message.includes('duplicate');
 };
 
-const handleVehicleArrived = async (assignmentId, vehicleId, endPOIId, licensePlate) => {
+const handleVehicleArrived = async (assignmentId, vehicleId, endPOIId, licensePlate, replacementEventId = null) => {
   const arrivalKey = String(assignmentId || '');
   if (!arrivalKey) {
     return 'failed';
@@ -4765,11 +4783,13 @@ const handleVehicleArrived = async (assignmentId, vehicleId, endPOIId, licensePl
     console.log(`处理车辆到达: ${licensePlate} (Assignment: ${assignmentId})`);
 
     // 1. 调用车辆到达接口
-    await request.post('/api/simulation/vehicle-arrived', {
+    const arrivalPayload = {
       assignmentId: assignmentId,
       vehicleId: vehicleId,
       endPOIId: endPOIId
-    });
+    };
+    if (replacementEventId != null) arrivalPayload.replacementEventId = replacementEventId;
+    await request.post('/api/simulation/vehicle-arrived', arrivalPayload);
 
     console.log(`车辆 ${licensePlate} 到达处理完成`);
 
@@ -5028,13 +5048,15 @@ const startSimulationTimer = () => {
         });
         assignmentRecoveryTracker.retainActive(monitorAssignments);
         const pendingOwnerRecovery = assignmentRecoveryTracker.hasPending();
-        const activeAssignmentRecovery = weatherRecovery || ownerChanged || pendingOwnerRecovery;
+        const durableReplacementRecovery = monitorAssignments.some(assignment => assignment?.replacementRecovery === true);
+        const activeAssignmentRecovery = weatherRecovery || ownerChanged || pendingOwnerRecovery || durableReplacementRecovery;
         scheduleAssignmentDrawing(
             activeAssignmentRecovery ? fetchCurrentAssignments : fetchAndDrawNewAssignments,
             runGeneration,
             ownerChanged ? 'assignment vehicle handoff'
                 : pendingOwnerRecovery ? 'pending assignment vehicle handoff'
-                    : weatherRecovery ? 'weather active assignment recovery' : 'new assignments'
+                    : durableReplacementRecovery ? 'durable replacement recovery'
+                        : weatherRecovery ? 'weather active assignment recovery' : 'new assignments'
         );
       }
 
@@ -5864,7 +5886,8 @@ const fetchCurrentAssignments = async (runGeneration = simulationGeneration.valu
               && assignmentRenderIdentity(activeAssignment) !== assignmentRenderIdentity(assignment)
           );
           if (ownerChanged) assignmentRecoveryTracker.mark(assignment);
-          const replacementRecovery = ownerChanged || assignmentRecoveryTracker.isPending(assignment);
+          const replacementRecovery = assignment.replacementRecovery === true
+              || ownerChanged || assignmentRecoveryTracker.isPending(assignment);
           const reconciliation = await reconcileAssignmentRenderOwner({
             assignment,
             currentAssignment: activeAssignment,

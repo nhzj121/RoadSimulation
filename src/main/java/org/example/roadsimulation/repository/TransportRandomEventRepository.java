@@ -19,5 +19,11 @@ public interface TransportRandomEventRepository extends JpaRepository<TransportR
 
     List<TransportRandomEvent> findByStatus(TransportRandomEvent.EventStatus status);
 
+    List<TransportRandomEvent> findByAssignmentIdAndBreakdownLevelAndReplacementOutcomeOrderByIdDesc(
+            Long assignmentId,
+            TransportRandomEvent.BreakdownLevel breakdownLevel,
+            String replacementOutcome
+    );
+
     List<TransportRandomEvent> findAllByOrderByStartTimeDesc(Pageable pageable);
 }

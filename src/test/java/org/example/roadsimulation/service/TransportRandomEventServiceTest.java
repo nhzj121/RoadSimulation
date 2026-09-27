@@ -5,6 +5,7 @@ import org.example.roadsimulation.entity.Assignment;
 import org.example.roadsimulation.entity.TransportRandomEvent;
 import org.example.roadsimulation.entity.Vehicle;
 import org.example.roadsimulation.entity.VehicleReplacementAttempt;
+import org.example.roadsimulation.entity.ShipmentItem;
 import org.example.roadsimulation.dto.WeatherScenarioDTO;
 import org.example.roadsimulation.repository.AssignmentRepository;
 import org.example.roadsimulation.repository.TransportRandomEventRepository;
@@ -354,6 +355,83 @@ class TransportRandomEventServiceTest {
         assignment.setNodes(new java.util.ArrayList<>(List.of(unload, load)));
         var required = TransportRandomEventService.requiredCapacity(vehicle, assignment);
         assertEquals(9.0, required.load(), 1e-9); assertEquals(8.0, required.volume(), 1e-9);
+    }
+
+    @Test void nodeLessReplacementProjectsAssignedCargoFromZeroBeforePickup() {
+        vehicle.transitionToStatus(Vehicle.VehicleStatus.ORDER_DRIVING, simNow, Duration.ofMinutes(30));
+        // ORDER_DRIVING is explicitly pre-pickup for a legacy ordinary assignment.  A stale
+        // runtime load must not hide the still-required cargo capacity.
+        vehicle.setCurrentLoad(99.0); vehicle.setCurrentVolumn(77.0);
+        ShipmentItem heavy = item(ShipmentItem.ShipmentItemStatus.ASSIGNED, 8.0, 1.5);
+        ShipmentItem bulky = item(ShipmentItem.ShipmentItemStatus.ASSIGNED, 2.0, 9.0);
+        assignment.setShipmentItems(new java.util.LinkedHashSet<>(List.of(heavy, bulky)));
+
+        var required = TransportRandomEventService.requiredCapacity(vehicle, assignment);
+
+        assertEquals(10.0, required.load(), 1e-9);
+        assertEquals(10.5, required.volume(), 1e-9);
+    }
+
+    @Test void nodeLessReplacementDoesNotDoubleCountLoadedCargoAndKeepsDimensionsIndependent() {
+        vehicle.transitionToStatus(Vehicle.VehicleStatus.TRANSPORT_DRIVING, simNow, Duration.ofMinutes(30));
+        vehicle.setCurrentLoad(11.0); vehicle.setCurrentVolumn(4.0);
+        ShipmentItem loaded = item(ShipmentItem.ShipmentItemStatus.LOADED, 11.0, 4.0);
+        ShipmentItem delivered = item(ShipmentItem.ShipmentItemStatus.DELIVERED, 100.0, 100.0);
+        assignment.setShipmentItems(new java.util.LinkedHashSet<>(List.of(loaded, delivered)));
+
+        var required = TransportRandomEventService.requiredCapacity(vehicle, assignment);
+
+        assertEquals(11.0, required.load(), 1e-9);
+        assertEquals(4.0, required.volume(), 1e-9);
+    }
+
+    @Test void nodeLessReplacementAddsOnlyStillAssignedCargoAfterPartialPickup() {
+        vehicle.transitionToStatus(Vehicle.VehicleStatus.TRANSPORT_DRIVING, simNow, Duration.ofMinutes(30));
+        vehicle.setCurrentLoad(5.0); vehicle.setCurrentVolumn(7.0);
+        ShipmentItem loaded = item(ShipmentItem.ShipmentItemStatus.IN_TRANSIT, 5.0, 7.0);
+        ShipmentItem remainingWeight = item(ShipmentItem.ShipmentItemStatus.ASSIGNED, 3.0, null);
+        ShipmentItem remainingVolume = item(ShipmentItem.ShipmentItemStatus.ASSIGNED, null, 2.0);
+        assignment.setShipmentItems(new java.util.LinkedHashSet<>(List.of(loaded, remainingWeight, remainingVolume)));
+
+        var required = TransportRandomEventService.requiredCapacity(vehicle, assignment);
+
+        assertEquals(8.0, required.load(), 1e-9);
+        assertEquals(9.0, required.volume(), 1e-9);
+    }
+
+    @Test void replacementRecoveryStateComesFromResolvedHistoryAndOnlyAuthorizesOrdinaryUnloadingOwner() {
+        vehicle.setId(21L);
+        vehicle.transitionToStatus(Vehicle.VehicleStatus.UNLOADING, simNow, Duration.ofMinutes(30));
+        assignment.setAssignedVehicle(vehicle);
+        TransportRandomEvent event = new TransportRandomEvent();
+        event.setId(101L); event.setAssignmentId(88L); event.setVehicleId(12L);
+        event.setReplacementVehicleId(21L); event.setBreakdownLevel(TransportRandomEvent.BreakdownLevel.REPLACEMENT_REQUIRED);
+        event.setReplacementOutcome("REPLACED"); event.setStatus(TransportRandomEvent.EventStatus.RESOLVED);
+        when(eventRepository.findByAssignmentIdAndBreakdownLevelAndReplacementOutcomeOrderByIdDesc(
+                88L, TransportRandomEvent.BreakdownLevel.REPLACEMENT_REQUIRED, "REPLACED"))
+                .thenReturn(List.of(event));
+
+        var state = service.replacementRecoveryState(assignment);
+
+        assertTrue(state.replacementRecovery());
+        assertEquals(101L, state.replacementEventId());
+        assertEquals(12L, state.originalVehicleId());
+        assertEquals(21L, state.currentOwnerVehicleId());
+        assertTrue(state.arrivalReady());
+
+        DrivingProgressService progress=mock(DrivingProgressService.class);
+        when(progress.enabled()).thenReturn(true);
+        org.springframework.test.util.ReflectionTestUtils.setField(service,"drivingProgressService",progress);
+        assertFalse(service.replacementRecoveryState(assignment).arrivalReady(), "weather progress owns its acknowledgement");
+        when(progress.enabled()).thenReturn(false);
+        assignment.addNode(new org.example.roadsimulation.entity.AssignmentNode());
+        assertFalse(service.replacementRecoveryState(assignment).arrivalReady(), "VRP completion must stay node-driven");
+    }
+
+    private ShipmentItem item(ShipmentItem.ShipmentItemStatus status, Double weight, Double volume) {
+        ShipmentItem item = new ShipmentItem();
+        item.setStatus(status); item.setWeight(weight); item.setVolume(volume);
+        return item;
     }
 
     @Test void replacementWaitsWithoutCandidateThenReservesBestSlackCandidateOnRetry() {

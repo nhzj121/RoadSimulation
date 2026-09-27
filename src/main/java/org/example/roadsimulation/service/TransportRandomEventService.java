@@ -2,6 +2,7 @@ package org.example.roadsimulation.service;
 
 import org.example.roadsimulation.config.RandomEventProperties;
 import org.example.roadsimulation.entity.Assignment;
+import org.example.roadsimulation.entity.ShipmentItem;
 import org.example.roadsimulation.entity.TransportRandomEvent;
 import org.example.roadsimulation.entity.Vehicle;
 import org.example.roadsimulation.entity.VehicleReplacementAttempt;
@@ -386,17 +387,63 @@ public class TransportRandomEventService {
     }
 
     public record RequiredCapacity(double load,double volume) {}
+    public record ReplacementRecoveryState(
+            boolean replacementRecovery,
+            Long replacementEventId,
+            Long originalVehicleId,
+            Long currentOwnerVehicleId,
+            boolean arrivalReady
+    ) {
+        private static final ReplacementRecoveryState NONE =
+                new ReplacementRecoveryState(false,null,null,null,false);
+    }
+
+    @Transactional(readOnly=true)
+    public ReplacementRecoveryState replacementRecoveryState(Assignment assignment){
+        if(assignment==null||assignment.getId()==null||assignment.getAssignedVehicle()==null
+                ||assignment.getAssignedVehicle().getId()==null)return ReplacementRecoveryState.NONE;
+        List<TransportRandomEvent> events=eventRepository
+                .findByAssignmentIdAndBreakdownLevelAndReplacementOutcomeOrderByIdDesc(
+                        assignment.getId(),TransportRandomEvent.BreakdownLevel.REPLACEMENT_REQUIRED,"REPLACED");
+        if(events==null||events.isEmpty())return ReplacementRecoveryState.NONE;
+        TransportRandomEvent event=events.get(0);
+        Long ownerId=assignment.getAssignedVehicle().getId();
+        if(event.getStatus()!=TransportRandomEvent.EventStatus.RESOLVED
+                ||!Objects.equals(event.getReplacementVehicleId(),ownerId))return ReplacementRecoveryState.NONE;
+        boolean ordinary=assignment.getNodes()==null||assignment.getNodes().isEmpty();
+        boolean backendArrivalNeeded=drivingProgressService==null||!drivingProgressService.enabled();
+        boolean ready=ordinary&&backendArrivalNeeded&&assignment.getStatus()==Assignment.AssignmentStatus.IN_PROGRESS
+                &&assignment.getAssignedVehicle().getCurrentStatus()==Vehicle.VehicleStatus.UNLOADING;
+        return new ReplacementRecoveryState(true,event.getId(),event.getVehicleId(),ownerId,ready);
+    }
+
+    public boolean isReplacementArrivalReady(Assignment assignment,Long replacementEventId){
+        ReplacementRecoveryState state=replacementRecoveryState(assignment);
+        return state.arrivalReady()&&Objects.equals(state.replacementEventId(),replacementEventId);
+    }
+
     public static RequiredCapacity requiredCapacity(Vehicle vehicle,Assignment assignment){
-        double load=Math.max(0,Optional.ofNullable(vehicle.getCurrentLoad()).orElse(0.0));
-        double volume=Math.max(0,Optional.ofNullable(vehicle.getCurrentVolumn()).orElse(0.0));
+        boolean nodeBased=assignment.getNodes()!=null&&!assignment.getNodes().isEmpty();
+        boolean prePickup=!nodeBased&&vehicle.getCurrentStatus()==Vehicle.VehicleStatus.ORDER_DRIVING;
+        double load=prePickup?0:Math.max(0,Optional.ofNullable(vehicle.getCurrentLoad()).orElse(0.0));
+        double volume=prePickup?0:Math.max(0,Optional.ofNullable(vehicle.getCurrentVolumn()).orElse(0.0));
         double peakLoad=load,peakVolume=volume;
-        if(assignment.getNodes()!=null){
+        if(nodeBased){
             for(var node:assignment.getNodes().stream().filter(n->n!=null&&!n.isCompleted())
                     .sorted(Comparator.comparing(n->n.getSequenceIndex(),Comparator.nullsLast(Integer::compareTo))).toList()){
                 load=Math.max(0,load+Optional.ofNullable(node.getWeightDelta()).orElse(0.0));
                 volume=Math.max(0,volume+Optional.ofNullable(node.getVolumeDelta()).orElse(0.0));
                 peakLoad=Math.max(peakLoad,load);peakVolume=Math.max(peakVolume,volume);
             }
+        }else if(assignment.getShipmentItems()!=null){
+            // Legacy ordinary assignments have no node deltas.  Runtime load already owns
+            // LOADED/IN_TRANSIT cargo, so only still-ASSIGNED items are future additions.
+            for(ShipmentItem item:assignment.getShipmentItems()){
+                if(item==null||item.getStatus()!=ShipmentItem.ShipmentItemStatus.ASSIGNED)continue;
+                load+=Math.max(0,Optional.ofNullable(item.getWeight()).orElse(0.0));
+                volume+=Math.max(0,Optional.ofNullable(item.getVolume()).orElse(0.0));
+            }
+            peakLoad=Math.max(peakLoad,load);peakVolume=Math.max(peakVolume,volume);
         }
         return new RequiredCapacity(peakLoad,peakVolume);
     }
