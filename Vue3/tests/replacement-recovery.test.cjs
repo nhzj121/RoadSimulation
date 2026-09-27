@@ -18,7 +18,7 @@ const sliceBetween = (start, end) => {
 
 const loadOwnership = () => import(pathToFileURL(path.join(__dirname, '../src/utils/assignmentRenderOwnership.js')).href)
 
-function createClassHarness({ vrp = false, vehicleStatus = 'TRANSPORT_DRIVING', event = null } = {}) {
+function createClassHarness({ vrp = false, vehicleStatus = 'TRANSPORT_DRIVING', event = null, replacementRecovery = true } = {}) {
   const statuses = []
   const posts = []
   const context = {
@@ -65,7 +65,7 @@ function createClassHarness({ vrp = false, vehicleStatus = 'TRANSPORT_DRIVING', 
     assignment,
     manager,
     movingMarker: marker,
-    replacementRecovery: true,
+    replacementRecovery,
     stage1Path: [[104, 30.6], [104.01, 30.6]],
     stage2Path: [[104.01, 30.6], [104.02, 30.6]],
     stages: vrp ? [
@@ -75,6 +75,39 @@ function createClassHarness({ vrp = false, vehicleStatus = 'TRANSPORT_DRIVING', 
   }
   const animation = manager.addAnimation(assignment, routeData)
   return { animation, manager, statuses, posts, marker }
+}
+
+for (const vrp of [false, true]) {
+  test(`running ${vrp ? 'VRP' : 'normal'} animation accepts non-weather SCRAPPED status from assignmentIds`, () => {
+    const activeEvent = {
+      vehicleId: 18,
+      eventType: 'VEHICLE_BREAKDOWN',
+      breakdownLevel: 'REPLACEMENT_REQUIRED',
+      status: 'ACTIVE',
+      speedFactor: 0
+    }
+    const { animation, manager, statuses, marker, posts } = createClassHarness({
+      vrp,
+      event: activeEvent,
+      replacementRecovery: false
+    })
+    manager.setDrivingSnapshots([{
+      vehicleId: 18,
+      assignmentId: null,
+      assignmentIds: [88],
+      status: 'SCRAPPED'
+    }], false)
+    const stoppedPosition = marker.position && [...marker.position]
+    manager.setEventImpacts([{ ...activeEvent, status: 'RESOLVED' }])
+    animation.animationTime = 1_000_000
+    animation._animate()
+
+    assert.equal(animation.backendVehicleStatus, 'SCRAPPED')
+    assert.equal(statuses.at(-1), 'SCRAPPED')
+    assert.deepEqual(marker.position, stoppedPosition)
+    assert.equal(animation.isCompleted, false)
+    assert.deepEqual(posts, [])
+  })
 }
 
 for (const vrp of [false, true]) {

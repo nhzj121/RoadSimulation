@@ -3964,8 +3964,23 @@ class VehicleAnimation {
   }
 
   updateDrivingSnapshot(snapshot) {
-    const matchingAssignment = snapshot && Number(snapshot.assignmentId) === Number(this.assignmentId);
-    if (matchingAssignment) this.updateBackendVehicleState(snapshot, true);
+    const matchingVehicle = snapshot && Number(snapshot.vehicleId) === Number(this.vehicleId);
+    const matchingAssignment = snapshot && (
+      Number(snapshot.assignmentId) === Number(this.assignmentId)
+      || (Array.isArray(snapshot.assignmentIds)
+          && snapshot.assignmentIds.some(id => Number(id) === Number(this.assignmentId)))
+    );
+    // Vehicle status is authoritative even when non-weather monitoring has no singular assignmentId.
+    // Driving progress remains assignment-scoped below.
+    if (matchingVehicle) {
+      this.updateBackendVehicleState(snapshot, true);
+      if (this._isBackendReplacementStopped() && this.statusManager) {
+        this.statusManager.updateVehicleStatus(this.vehicleId, this.backendVehicleStatus, {
+          assignment: this.routeData.assignment,
+          position: this.currentPosition
+        });
+      }
+    }
     if (!snapshot?.drivingPhaseKey || !matchingAssignment) {
       this.drivingSnapshot = null;
       if (this.replacementRecoveryMode && matchingAssignment) this.updateReplacementRecovery(snapshot);
