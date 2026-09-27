@@ -5,7 +5,7 @@ const vm = require('node:vm');
 const source = fs.readFileSync(require('node:path').join(__dirname, '../src/components/MapContainer.vue'), 'utf8');
 const classes = source.slice(source.indexOf('class VehicleAnimation {'), source.indexOf('// ==================== 车辆动画管理器类'));
 function createAnimation(vrp = false) {
-  const context = { console: {log(){},warn(){}}, Math, Number, Map, performance: {now:()=>100}, requestAnimationFrame:()=>1, cancelAnimationFrame(){}, setTimeout(){}, request:{post:async()=>({})} };
+  const context = { console: {log(){},warn(){}}, Math, Number, Map, performance: {now:()=>100}, requestAnimationFrame:()=>1, cancelAnimationFrame(){}, setTimeout(){}, request:{post:async()=>({})}, isStoppedVehicleStatus:status=>['BREAKDOWN','SCRAPPED','RESERVED_REPLACEMENT'].includes(status) };
   vm.createContext(context);
   vm.runInContext(classes + '\nthis.Animation = VehicleAnimation; this.Vrp = VrpVehicleAnimation;', context);
   const assignment = {assignmentId:5,vehicleId:8,licensePlate:'TEST',endPOIId:20};
@@ -26,6 +26,19 @@ test('breakdown freezes visual progress and backend status wins',()=>{
   const {animation:a,statuses}=createAnimation();
   a.updateDrivingSnapshot(snapshot({status:'BREAKDOWN',effectiveSpeedFactor:0}));
   a._animateAuthoritative(100); assert.equal(a.currentProgress,0.5); assert.equal(statuses.at(-1),'BREAKDOWN');
+});
+test('resolved replacement history has no movement impact and active replacement does not invent BREAKDOWN status',()=>{
+  const {animation:a,statuses}=createAnimation();
+  const initialStatuses=[...statuses];
+  a.updateEventImpact({eventType:'VEHICLE_BREAKDOWN',status:'RESOLVED',breakdownLevel:'REPLACEMENT_REQUIRED',speedFactor:0});
+  assert.equal(a.eventSpeedFactor,1); assert.deepEqual(statuses,initialStatuses);
+  a.updateEventImpact({eventType:'VEHICLE_BREAKDOWN',status:'ACTIVE',breakdownLevel:'REPLACEMENT_REQUIRED',speedFactor:0});
+  assert.equal(a.eventSpeedFactor,0); assert.deepEqual(statuses,initialStatuses);
+});
+for (const status of ['SCRAPPED','RESERVED_REPLACEMENT']) test(`${status} backend snapshot remains stopped`,()=>{
+  const {animation:a}=createAnimation();
+  a.updateDrivingSnapshot(snapshot({status,effectiveSpeedFactor:1,drivingProgress:0.5}));
+  a._animateAuthoritative(100); assert.equal(a.currentProgress,0.5);
 });
 test('visual interpolation cannot complete an unfinished server phase',()=>{
   const {animation:a}=createAnimation(); let calls=0; a._acknowledgeDrivingPhase=()=>calls++;

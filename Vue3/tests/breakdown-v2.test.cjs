@@ -13,6 +13,13 @@ test('builds legacy congestion and staged breakdown payloads without mixing sche
   assert.deepEqual(buildRandomEventPayload('VEHICLE_BREAKDOWN', 4, {
     breakdownLevel: 'ASSISTANCE_REQUIRED', rescueWaitMinutes: 30, repairMinutes: 90
   }), { eventType: 'VEHICLE_BREAKDOWN', vehicleId: 4, breakdownLevel: 'ASSISTANCE_REQUIRED', rescueWaitMinutes: 30, repairMinutes: 90 })
+  assert.deepEqual(buildRandomEventPayload('VEHICLE_BREAKDOWN', 12, {
+    breakdownLevel: 'REPLACEMENT_REQUIRED', replacementWaitMinutes: 60,
+    durationMinutes: 30, rescueWaitMinutes: 30, repairMinutes: 90
+  }), { eventType: 'VEHICLE_BREAKDOWN', vehicleId: 12, breakdownLevel: 'REPLACEMENT_REQUIRED', replacementWaitMinutes: 60 })
+  assert.deepEqual(buildRandomEventPayload('VEHICLE_BREAKDOWN', 12, {
+    breakdownLevel: 'REPLACEMENT_REQUIRED'
+  }), { eventType: 'VEHICLE_BREAKDOWN', vehicleId: 12, breakdownLevel: 'REPLACEMENT_REQUIRED', replacementWaitMinutes: 60 })
 })
 
 test('production random-event API posts the constructed body at the HTTP boundary', async () => {
@@ -68,6 +75,11 @@ test('validates integer stage bounds, minor wait and total staged duration', asy
   assert.equal(validateRandomEventInput('VEHICLE_BREAKDOWN', { breakdownLevel: 'MINOR', rescueWaitMinutes: 0, repairMinutes: 60 }), null)
   assert.equal(validateRandomEventInput('VEHICLE_BREAKDOWN', { breakdownLevel: 'MINOR', rescueWaitMinutes: 0, repairMinutes: 45 }), null)
   assert.equal(validateRandomEventInput('TRAFFIC_CONGESTION', { durationMinutes: 45 }), null)
+  assert.equal(validateRandomEventInput('VEHICLE_BREAKDOWN', { breakdownLevel: 'REPLACEMENT_REQUIRED', replacementWaitMinutes: 30 }), null)
+  assert.equal(validateRandomEventInput('VEHICLE_BREAKDOWN', { breakdownLevel: 'REPLACEMENT_REQUIRED', replacementWaitMinutes: 180 }), null)
+  assert.match(validateRandomEventInput('VEHICLE_BREAKDOWN', { breakdownLevel: 'REPLACEMENT_REQUIRED', replacementWaitMinutes: 29 }), /30–180/)
+  assert.match(validateRandomEventInput('VEHICLE_BREAKDOWN', { breakdownLevel: 'REPLACEMENT_REQUIRED', replacementWaitMinutes: 181 }), /30–180/)
+  assert.match(validateRandomEventInput('VEHICLE_BREAKDOWN', { breakdownLevel: 'REPLACEMENT_REQUIRED', replacementWaitMinutes: 60.5 }), /整数分钟/)
 })
 
 test('presents staged phases, legacy repairs and recovery outcomes distinctly', async () => {
@@ -76,11 +88,18 @@ test('presents staged phases, legacy repairs and recovery outcomes distinctly', 
   assert.match(describeBreakdown({ breakdownLevel: 'ASSISTANCE_REQUIRED', breakdownPhase: 'REPAIRING', repairMinutes: 90, repairStartTime: '2026-09-17T10:00:00' }), /维修中.*90 分钟/)
   assert.match(describeBreakdown({ eventType: 'VEHICLE_BREAKDOWN', breakdownLevel: null }), /原版故障维修/)
   assert.match(describeBreakdown({ breakdownPhase: 'RECOVERED', recoveryOutcome: 'ASSIGNMENT_STAGE_CHANGED' }), /维修已完成.*任务阶段已变化，未自动恢复/)
+  assert.match(describeBreakdown({ breakdownLevel: 'REPLACEMENT_REQUIRED', breakdownPhase: 'WAITING_REPLACEMENT', replacementWaitMinutes: 60, plannedEndTime: null }), /已报废.*等待兼容的空闲替换车辆/)
+  assert.match(describeBreakdown({ breakdownLevel: 'REPLACEMENT_REQUIRED', breakdownPhase: 'REPLACEMENT_PREPARING', replacementVehicleId: 18, replacementLicensePlate: '川A018', replacementReadyTime: '2026-09-18T11:30:00' }), /川A018.*车辆 18.*准备中.*2026-09-18 11:30:00/)
+  assert.match(describeBreakdown({ breakdownLevel: 'REPLACEMENT_REQUIRED', breakdownPhase: 'REPLACED', replacementVehicleId: 18, replacementLicensePlate: '川A018', replacementOutcome: 'REPLACED' }), /换车成功.*川A018.*车辆 18/)
+  const failed = describeBreakdown({ breakdownLevel: 'REPLACEMENT_REQUIRED', status: 'RESOLVED', breakdownPhase: 'REPLACEMENT_PREPARING', replacementOutcome: 'ASSIGNMENT_CHANGED' })
+  assert.match(failed, /换车未完成.*任务已变化/)
+  assert.doesNotMatch(failed, /换车成功/)
 })
 
 test('weather breakdown text uses v2 policy while old saved scenes remain legacy', async () => {
   const { describeBreakdownPolicy } = await load('breakdownPresentation')
   assert.match(describeBreakdownPolicy({ version: 'breakdown-v2', minorProbability: .7, minorRepairMin: 30, minorRepairMax: 60, rescueWaitMin: 30, rescueWaitMax: 60, assistanceRepairMin: 60, assistanceRepairMax: 120 }), /轻微 70%.*30–60.*救援等待 30–60.*维修 60–120/)
+  assert.match(describeBreakdownPolicy({ version: 'breakdown-v3', minorProbability: .6, minorRepairMin: 30, minorRepairMax: 60, rescueWaitMin: 30, rescueWaitMax: 60, assistanceRepairMin: 60, assistanceRepairMax: 120, replacementProbability: .1, replacementWaitMin: 60, replacementWaitMax: 90 }), /轻微 60%.*需救援 30%.*报废换车 10%.*换车等待 60–90/)
   assert.equal(describeBreakdownPolicy(null, { minDurationMinutes: 60, maxDurationMinutes: 120 }), '原版故障维修 60–120 分钟')
 })
 

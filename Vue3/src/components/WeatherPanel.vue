@@ -62,8 +62,9 @@ const eventDescription = computed(() => {
   const congestion = scene?.congestion || { hourlyProbability: .08, minDurationMinutes: 30, maxDurationMinutes: 90 }
   const breakdown = scene?.breakdown || { hourlyProbability: .02, minDurationMinutes: 60, maxDurationMinutes: 120 }
   const breakdownPolicy = scene ? scene.breakdownPolicy : {
-    version: 'breakdown-v2', minorProbability: .7, minorRepairMin: 30, minorRepairMax: 60,
-    rescueWaitMin: 30, rescueWaitMax: 60, assistanceRepairMin: 60, assistanceRepairMax: 120
+    version: 'breakdown-v3', minorProbability: .6, minorRepairMin: 30, minorRepairMax: 60,
+    rescueWaitMin: 30, rescueWaitMax: 60, assistanceRepairMin: 60, assistanceRepairMax: 120,
+    replacementProbability: .1, replacementWaitMin: 60, replacementWaitMax: 90
   }
   const auto = scene ? scene.autoEvents : selected.value === 'AUTO'
   return `自动事件${auto ? '开启' : '关闭'}；拥堵 ${Math.round(congestion.hourlyProbability * 100)}%/小时、${congestion.minDurationMinutes}–${congestion.maxDurationMinutes} 分钟；故障 ${Math.round(breakdown.hourlyProbability * 100)}%/小时，${describeBreakdownPolicy(breakdownPolicy, breakdown)}。`

@@ -32,14 +32,22 @@
       <ElSelect id="breakdown-level" v-model="breakdownLevel" size="small" :disabled="disabled" aria-label="故障等级">
         <ElOption label="轻微故障（无需救援）" value="MINOR" />
         <ElOption label="需救援故障" value="ASSISTANCE_REQUIRED" />
+        <ElOption label="报废并换车续运" value="REPLACEMENT_REQUIRED" />
       </ElSelect>
-      <template v-if="breakdownLevel === 'ASSISTANCE_REQUIRED'">
-        <label for="rescue-wait">救援等待时长（分钟）</label>
-        <ElInputNumber id="rescue-wait" v-model="rescueWaitMinutes" aria-label="救援等待时长（分钟）" :min="30" :max="180" :step="30" size="small" controls-position="right" :disabled="disabled" />
+      <template v-if="breakdownLevel === 'REPLACEMENT_REQUIRED'">
+        <label for="replacement-wait">换车等待时长（分钟）</label>
+        <ElInputNumber id="replacement-wait" v-model="replacementWaitMinutes" aria-label="换车等待时长（分钟）" :min="30" :max="180" :step="30" size="small" controls-position="right" :disabled="disabled" />
+        <small class="duration-help">只提交换车等待时长；系统将由后端选择兼容的空闲车辆。</small>
       </template>
-      <label for="repair-duration">维修时长（分钟）</label>
-      <ElInputNumber id="repair-duration" v-model="repairMinutes" aria-label="维修时长（分钟）" :min="30" :max="180" :step="30" size="small" controls-position="right" :disabled="disabled" />
-      <small class="duration-help">各阶段须为整数分钟且在 30–180 分钟内；总时长不超过 240 分钟。</small>
+      <template v-else>
+        <template v-if="breakdownLevel === 'ASSISTANCE_REQUIRED'">
+          <label for="rescue-wait">救援等待时长（分钟）</label>
+          <ElInputNumber id="rescue-wait" v-model="rescueWaitMinutes" aria-label="救援等待时长（分钟）" :min="30" :max="180" :step="30" size="small" controls-position="right" :disabled="disabled" />
+        </template>
+        <label for="repair-duration">维修时长（分钟）</label>
+        <ElInputNumber id="repair-duration" v-model="repairMinutes" aria-label="维修时长（分钟）" :min="30" :max="180" :step="30" size="small" controls-position="right" :disabled="disabled" />
+        <small class="duration-help">各阶段须为整数分钟且在 30–180 分钟内；总时长不超过 240 分钟。</small>
+      </template>
       <div class="event-actions">
         <ElButton size="small" type="warning" :loading="submitting" :disabled="!vehicleId || disabled" @click="trigger('TRAFFIC_CONGESTION')">
           触发拥堵
@@ -75,6 +83,7 @@ import { onMounted, ref, watch } from 'vue'
 import { ElButton, ElCard, ElInputNumber, ElMessage, ElOption, ElSelect, ElTag } from 'element-plus'
 import { randomEventApi } from '../api/randomEventApi'
 import { activeEventSignature, createEventHistoryTransitionHandler, describeBreakdown, recentBreakdownRows, validateRandomEventInput } from '../utils/breakdownPresentation'
+import { vehicleStatusPresentation } from '../utils/vehicleStatusPresentation'
 
 const props = defineProps({
   vehicles: { type: Array, default: () => [] },
@@ -88,6 +97,7 @@ const durationMinutes = ref(60)
 const breakdownLevel = ref('MINOR')
 const rescueWaitMinutes = ref(30)
 const repairMinutes = ref(60)
+const replacementWaitMinutes = ref(60)
 const submitting = ref(false)
 const recentEvents = ref([])
 
@@ -99,6 +109,10 @@ const handleActiveEventTransition = createEventHistoryTransitionHandler(() => re
 watch(() => activeEventSignature(props.activeEvents), handleActiveEventTransition)
 
 watch(breakdownLevel, level => {
+  if (level === 'REPLACEMENT_REQUIRED') {
+    replacementWaitMinutes.value = 60
+    return
+  }
   rescueWaitMinutes.value = level === 'MINOR' ? 0 : 30
   repairMinutes.value = level === 'MINOR' ? 60 : 90
 })
@@ -112,7 +126,9 @@ watch(() => props.vehicles, (vehicles) => {
 const trigger = async (eventType) => {
   if (!vehicleId.value || submitting.value) return
   const options = eventType === 'VEHICLE_BREAKDOWN'
-      ? { breakdownLevel: breakdownLevel.value, rescueWaitMinutes: breakdownLevel.value === 'MINOR' ? 0 : rescueWaitMinutes.value, repairMinutes: repairMinutes.value }
+      ? breakdownLevel.value === 'REPLACEMENT_REQUIRED'
+        ? { breakdownLevel: breakdownLevel.value, replacementWaitMinutes: replacementWaitMinutes.value }
+        : { breakdownLevel: breakdownLevel.value, rescueWaitMinutes: breakdownLevel.value === 'MINOR' ? 0 : rescueWaitMinutes.value, repairMinutes: repairMinutes.value }
       : { durationMinutes: durationMinutes.value }
   const validationError = validateRandomEventInput(eventType, options)
   if (validationError) {
@@ -132,11 +148,7 @@ const trigger = async (eventType) => {
   }
 }
 
-const statusText = (status) => ({
-  ORDER_DRIVING: '前往装货点',
-  TRANSPORT_DRIVING: '运输中',
-  BREAKDOWN: '故障'
-}[status] || status || '未知')
+const statusText = status => vehicleStatusPresentation(status).text
 
 const formatTime = (value) => value ? String(value).replace('T', ' ').slice(0, 16) : '-'
 const formatDelay = (seconds) => {

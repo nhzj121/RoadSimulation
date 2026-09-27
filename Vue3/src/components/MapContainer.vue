@@ -982,6 +982,8 @@ import transportIcon from '../../public/icons/distribution-center.png';
 import testIcon from '../../public/icons/test.png';
 import { mergeLiveVehicleDisplay } from '../utils/liveVehicleDisplay';
 import { assignmentPollingMode, createWeatherRouteCache } from '../utils/weatherRouteCache';
+import { assignmentRenderIdentity, reconcileAssignmentRenderOwner, removeVehicleRenderRegistration } from '../utils/assignmentRenderOwnership';
+import { VEHICLE_STATUS_PRESENTATIONS, isStoppedVehicleStatus, vehicleStatusPresentation } from '../utils/vehicleStatusPresentation';
 import timberYardIcon from '../../public/icons/timber-yard.png';
 import sawmillIcon from '../../public/icons/sawmill.png';
 import boardFactoryIcon from '../../public/icons/board-factory.png';
@@ -3497,6 +3499,14 @@ class VehicleStatusManager {
         // 故障：保持当前载重
         vehicle.actionDescription = data.actionDescription || '车辆故障';
         break;
+
+      case 'SCRAPPED':
+        vehicle.actionDescription = data.actionDescription || '车辆已报废';
+        break;
+
+      case 'RESERVED_REPLACEMENT':
+        vehicle.actionDescription = data.actionDescription || '替换车辆准备中';
+        break;
     }
   }
 
@@ -3515,17 +3525,7 @@ class VehicleStatusManager {
     let color = null;
 
     // 使用状态映射中的颜色，如果没有则使用车辆默认颜色
-    const statusColors = {
-      'IDLE': '#95a5a6',
-      'ORDER_DRIVING': '#3498db',
-      'LOADING': '#f39c12',
-      'TRANSPORT_DRIVING': '#2ecc71',
-      'UNLOADING': '#e74c3c',
-      'WAITING': '#e74c3c',
-      'BREAKDOWN': '#e74c3c'
-    };
-
-    color = statusColors[status] || (vehicle?.color || '#ff7f50');
+    color = vehicleStatusPresentation(status).color || (vehicle?.color || '#ff7f50');
 
     const vrpProgress = vehicle?.vrpProgress || this.assignmentData.get(vehicleId)?.vrpProgress;
     const iconMeta = {
@@ -3551,16 +3551,7 @@ class VehicleStatusManager {
    * 获取状态文本描述
    */
   getStatusText(status) {
-    const statusMap = {
-      'IDLE': '空闲',
-      'ORDER_DRIVING': '前往装货点',
-      'LOADING': '装货中',
-      'TRANSPORT_DRIVING': '运输中',
-      'UNLOADING': '卸货中',
-      'WAITING': '等待中',
-      'BREAKDOWN': '故障'
-    };
-    return statusMap[status] || status;
+    return vehicleStatusPresentation(status).text;
   }
 
   /**
@@ -3893,15 +3884,18 @@ class VehicleAnimation {
   }
 
   updateEventImpact(event) {
-    this.activeRandomEvent = event || null;
-    if (!event) {
+    const activeEvent = event?.status && event.status !== 'ACTIVE' ? null : (event || null);
+    this.activeRandomEvent = activeEvent;
+    if (!activeEvent) {
       this.eventSpeedFactor = 1;
       return;
     }
-    this.eventSpeedFactor = event.eventType === 'VEHICLE_BREAKDOWN'
+    this.eventSpeedFactor = activeEvent.eventType === 'VEHICLE_BREAKDOWN'
         ? 0
-        : Math.max(0, Math.min(1, Number(event.speedFactor ?? 1)));
-    if (event.eventType === 'VEHICLE_BREAKDOWN' && this.statusManager) {
+        : Math.max(0, Math.min(1, Number(activeEvent.speedFactor ?? 1)));
+    if (activeEvent.eventType === 'VEHICLE_BREAKDOWN'
+        && activeEvent.breakdownLevel !== 'REPLACEMENT_REQUIRED'
+        && this.statusManager) {
       this.statusManager.updateVehicleStatus(this.vehicleId, 'BREAKDOWN', {
         assignment: this.routeData.assignment,
         position: this.currentPosition
@@ -3938,7 +3932,8 @@ class VehicleAnimation {
 
   _animateAuthoritative(deltaTime) {
     const snapshot = this.drivingSnapshot;
-    const driving = ['ORDER_DRIVING', 'TRANSPORT_DRIVING'].includes(snapshot.status);
+    const stopped = isStoppedVehicleStatus(snapshot.status);
+    const driving = !stopped && ['ORDER_DRIVING', 'TRANSPORT_DRIVING'].includes(snapshot.status);
     const progress = Math.max(0, Math.min(1, Number(snapshot.drivingProgress || 0)));
     const segments = this._getCurrentSegments();
     const path = this._getCurrentPath();
@@ -3946,7 +3941,7 @@ class VehicleAnimation {
     if (driving) this.animationTime += deltaTime * this.speedFactor * this.eventSpeedFactor;
     // A small visual interpolation cannot authorize delivery; the server owns completion.
     const visualLimit = progress >= 1 ? 1 : Math.min(0.999, progress + 0.03);
-    const fraction = snapshot.status === 'BREAKDOWN' ? progress
+    const fraction = stopped ? progress
         : Math.min(visualLimit, Math.max(progress, this.animationTime * this.baseSpeed / segments.totalLength));
     this.currentProgress = fraction;
     this.currentPosition = this._getPositionByDistance(fraction * segments.totalLength, path, segments);
@@ -4933,14 +4928,20 @@ const startSimulationTimer = () => {
         await syncExperimentRunAfterStatusRefresh();
       }
 
-      // Weather refresh recovery polls all active assignments; the drawer skips routes already animated.
+      // Weather recovery and backend ownership handoffs need authoritative active assignments.
       // Other modes retain the lower-cost new-assignment endpoint.
       if (isActiveTransportGeneration(runGeneration)) {
         const weatherRecovery = assignmentPollingMode(monitorWeather.value) === 'active';
+        const ownerChanged = monitorAssignments.some(assignment => {
+          const rendered = animationManager?.animations?.get(assignment.assignmentId)?.routeData?.assignment;
+          const renderedIdentity = assignmentRenderIdentity(rendered);
+          return renderedIdentity && renderedIdentity !== assignmentRenderIdentity(assignment);
+        });
+        const activeAssignmentRecovery = weatherRecovery || ownerChanged;
         scheduleAssignmentDrawing(
-            weatherRecovery ? fetchCurrentAssignments : fetchAndDrawNewAssignments,
+            activeAssignmentRecovery ? fetchCurrentAssignments : fetchAndDrawNewAssignments,
             runGeneration,
-            weatherRecovery ? 'weather active assignment recovery' : 'new assignments'
+            ownerChanged ? 'assignment vehicle handoff' : weatherRecovery ? 'weather active assignment recovery' : 'new assignments'
         );
       }
 
@@ -5181,15 +5182,7 @@ const toggleFilter = (key) => {
 };
 
 // --- 车辆状态 ---
-const statusMap = {
-  IDLE: { text: '空闲', color: '#95a5a6' },
-  ORDER_DRIVING: { text: '前往装货点', color: '#3498db' },
-  LOADING: { text: '装货中', color: '#f39c12' },
-  TRANSPORT_DRIVING: { text: '运输中', color: '#2ecc71' },
-  UNLOADING: { text: '卸货中', color: '#e74c3c' },
-  WAITING: { text: '等待中', color: '#e74c3c' },
-  BREAKDOWN: { text: '故障', color: '#e74c3c' },
-};
+const statusMap = VEHICLE_STATUS_PRESENTATIONS;
 
 const vehicles = reactive([]); // 车辆列表，将从Assignment中获取
 const monitorShipments = reactive([]);
@@ -5450,7 +5443,8 @@ const updateVehicleInfo = async () => {
             }
           }
 
-          if (vehicle.activeEvent?.eventType === 'VEHICLE_BREAKDOWN') {
+          if (vehicle.activeEvent?.eventType === 'VEHICLE_BREAKDOWN'
+              && vehicle.activeEvent.breakdownLevel !== 'REPLACEMENT_REQUIRED') {
             vehicle.status = 'BREAKDOWN';
           }
 
@@ -5500,7 +5494,8 @@ const updateVehicleInfo = async () => {
             vrpProgress: previous.vrpProgress || null,
             activeEvent: monitorVehicle.activeEvent || activeEventByVehicleId.get(monitorVehicle.vehicleId) || null
           };
-        if (vehicle.activeEvent?.eventType === 'VEHICLE_BREAKDOWN') {
+        if (vehicle.activeEvent?.eventType === 'VEHICLE_BREAKDOWN'
+            && vehicle.activeEvent.breakdownLevel !== 'REPLACEMENT_REQUIRED') {
           vehicle.status = 'BREAKDOWN';
         }
         vehicle.loadPercentage = vehicle.maxLoadCapacity > 0 ?
@@ -5617,18 +5612,8 @@ const createVehicleIcon = (size = 32, status = 'IDLE', color = null, meta = {}) 
   el.style.position = 'relative';
 
   // 状态颜色映射
-  const statusColors = {
-    'IDLE': '#95a5a6',
-    'ORDER_DRIVING': '#3498db',
-    'LOADING': '#f39c12',
-    'TRANSPORT_DRIVING': '#2ecc71',
-    'UNLOADING': '#e74c3c',
-    'WAITING': '#e74c3c',
-    'BREAKDOWN': '#e74c3c'
-  };
-
   // 设置背景颜色
-  const bgColor = color || statusColors[status] || '#ff7f50';
+  const bgColor = color || vehicleStatusPresentation(status).color || '#ff7f50';
   el.style.background = bgColor;
   el.style.color = '#fff';
 
@@ -5722,11 +5707,10 @@ const createVehicleIcon = (size = 32, status = 'IDLE', color = null, meta = {}) 
 const clearRouteByAssignmentId = (assignmentId, vehicleId = null) => {
   const routeData = activeRoutes.value.get(assignmentId);
   const targetVehicleId = vehicleId || routeData?.assignment?.vehicleId || null;
-  if (!routeData) {
-    drawnAssignmentIds.value.delete(assignmentId);
-    if (targetVehicleId && vehicleStatusManager.value) {
-      const marker = vehicleStatusManager.value.vehicleMarkers.get(targetVehicleId);
-      if (marker) {
+  const unregisterVehicle = () => removeVehicleRenderRegistration(
+      vehicleStatusManager.value,
+      targetVehicleId,
+      marker => {
         try {
           map?.remove(marker);
         } catch (error) {
@@ -5737,8 +5721,11 @@ const clearRouteByAssignmentId = (assignmentId, vehicleId = null) => {
           }
         }
       }
-      vehicleStatusManager.value.vehicleMarkers.delete(targetVehicleId);
-      vehicleStatusManager.value.assignmentData.delete(targetVehicleId);
+  );
+  if (!routeData) {
+    drawnAssignmentIds.value.delete(assignmentId);
+    if (targetVehicleId) {
+      unregisterVehicle();
       unmarkDrawnVehicleIcon(targetVehicleId);
     }
     return;
@@ -5754,6 +5741,7 @@ const clearRouteByAssignmentId = (assignmentId, vehicleId = null) => {
     // 从映射中移除
     activeRoutes.value.delete(assignmentId);
     drawnAssignmentIds.value.delete(assignmentId);
+    unregisterVehicle();
     unmarkDrawnVehicleIcon(targetVehicleId);
 
     console.log(`已清理Assignment ${assignmentId} 的路线`);
@@ -5773,21 +5761,25 @@ const fetchCurrentAssignments = async (runGeneration = simulationGeneration.valu
       // 为每个Assignment绘制两段路线
       for (const assignment of assignments) {
         if (assignment && assignment.assignmentId) {
-          // 检查是否已有动画
-          if (!animationManager.animations.has(assignment.assignmentId)) {
-            let routeData = null;
-            if (assignment.vrp === true) {
-              routeData = await drawMultiStageRouteForVrpAssignment(assignment, runGeneration);
-            } else {
-              routeData = await drawTwoStageRouteForAssignment(assignment, runGeneration);
+          const activeAnimation = animationManager.animations.get(assignment.assignmentId);
+          const reconciliation = await reconcileAssignmentRenderOwner({
+            assignment,
+            currentAssignment: activeAnimation?.routeData?.assignment || null,
+            removeCurrent(current) {
+              clearRouteByAssignmentId(current.assignmentId, current.vehicleId);
+            },
+            createCurrent(current) {
+              return current.vrp === true
+                  ? drawMultiStageRouteForVrpAssignment(current, runGeneration)
+                  : drawTwoStageRouteForAssignment(current, runGeneration);
             }
-            if (!isActiveTransportGeneration(runGeneration)) return;
-            if (routeData) {
-              drawnAssignmentIds.value.add(assignment.assignmentId);
-              missingRouteAssignmentIds.delete(assignment.assignmentId);
-            } else if (monitorWeather.value?.runId) {
-              missingRouteAssignmentIds.add(assignment.assignmentId);
-            }
+          });
+          if (!isActiveTransportGeneration(runGeneration)) return;
+          if (reconciliation.created) {
+            drawnAssignmentIds.value.add(assignment.assignmentId);
+            missingRouteAssignmentIds.delete(assignment.assignmentId);
+          } else if (!activeAnimation && monitorWeather.value?.runId) {
+            missingRouteAssignmentIds.add(assignment.assignmentId);
           }
         }
       }
