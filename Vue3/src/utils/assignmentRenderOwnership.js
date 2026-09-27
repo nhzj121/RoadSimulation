@@ -6,6 +6,47 @@ export function assignmentRenderIdentity(assignment) {
   return assignmentId && vehicleId ? `${assignmentId}:${vehicleId}` : null
 }
 
+export function createAssignmentRecoveryTracker() {
+  const pendingByAssignment = new Map()
+  const assignmentKey = assignment => identityPart(assignment?.assignmentId)
+
+  return {
+    mark(assignment) {
+      const key = assignmentKey(assignment)
+      const identity = assignmentRenderIdentity(assignment)
+      if (key && identity) pendingByAssignment.set(key, identity)
+      return identity
+    },
+    isPending(assignment) {
+      const key = assignmentKey(assignment)
+      return Boolean(key && pendingByAssignment.get(key) === assignmentRenderIdentity(assignment))
+    },
+    confirmRegistered(assignment, renderedAssignment) {
+      const key = assignmentKey(assignment)
+      const identity = assignmentRenderIdentity(assignment)
+      if (!key || pendingByAssignment.get(key) !== identity || identity !== assignmentRenderIdentity(renderedAssignment)) return false
+      return pendingByAssignment.delete(key)
+    },
+    retainActive(assignments = []) {
+      const activeByAssignment = new Map(
+        assignments.map(assignment => [assignmentKey(assignment), assignmentRenderIdentity(assignment)])
+            .filter(([key, identity]) => key && identity)
+      )
+      for (const key of pendingByAssignment.keys()) {
+        const activeIdentity = activeByAssignment.get(key)
+        if (activeIdentity) pendingByAssignment.set(key, activeIdentity)
+        else pendingByAssignment.delete(key)
+      }
+    },
+    hasPending() {
+      return pendingByAssignment.size > 0
+    },
+    clear() {
+      pendingByAssignment.clear()
+    }
+  }
+}
+
 export async function reconcileAssignmentRenderOwner({
   assignment,
   currentAssignment,

@@ -982,7 +982,7 @@ import transportIcon from '../../public/icons/distribution-center.png';
 import testIcon from '../../public/icons/test.png';
 import { mergeLiveVehicleDisplay } from '../utils/liveVehicleDisplay';
 import { assignmentPollingMode, createWeatherRouteCache } from '../utils/weatherRouteCache';
-import { assignmentRenderIdentity, reconcileAssignmentRenderOwner, removeVehicleRenderRegistration } from '../utils/assignmentRenderOwnership';
+import { assignmentRenderIdentity, createAssignmentRecoveryTracker, reconcileAssignmentRenderOwner, removeVehicleRenderRegistration } from '../utils/assignmentRenderOwnership';
 import { VEHICLE_STATUS_PRESENTATIONS, isStoppedVehicleStatus, vehicleStatusPresentation } from '../utils/vehicleStatusPresentation';
 import timberYardIcon from '../../public/icons/timber-yard.png';
 import sawmillIcon from '../../public/icons/sawmill.png';
@@ -3149,6 +3149,7 @@ const abortRoutePlanningRequests = () => {
 
 const beginSimulationGeneration = () => {
   simulationGeneration.value += 1;
+  assignmentRecoveryTracker.clear();
   abortRoutePlanningRequests();
   routePlanningAbortController = new AbortController();
   return simulationGeneration.value;
@@ -3156,6 +3157,7 @@ const beginSimulationGeneration = () => {
 
 const invalidateSimulationGeneration = () => {
   simulationGeneration.value += 1;
+  assignmentRecoveryTracker.clear();
   abortRoutePlanningRequests();
 };
 
@@ -3637,6 +3639,8 @@ class VehicleAnimation {
     this.eventSpeedFactor = 1;
     this.activeRandomEvent = null;
     this.drivingSnapshot = null;
+    this.replacementRecoveryMode = Boolean(routeData.replacementRecovery);
+    this.backendVehicleStatus = assignment.vehicleStatus || null;
     this.authoritativeEnvironment = Boolean(this.manager?.authoritativeEnvironment);
     this.acknowledgedPhase = null;
     this.phaseAckPending = false;
@@ -3666,11 +3670,11 @@ class VehicleAnimation {
 
     console.log(`[VehicleAnimation] 创建车辆动画: ${this.licensePlate} (${this.assignmentId})`);
 
-    // 初始化车辆状态为 ORDER_DRIVING
+    // Backend-stopped replacement states must survive construction before a monitor snapshot exists.
     if (this.statusManager) {
-      this.statusManager.updateVehicleStatus(this.vehicleId, 'ORDER_DRIVING', {
+      this.statusManager.updateVehicleStatus(this.vehicleId, this._getEffectiveVehicleStatus('ORDER_DRIVING'), {
         assignment: assignment,
-        position: this.stage1Path[0]
+        position: this._backendPosition(assignment) || this.stage1Path[0]
       });
     }
   }
@@ -3745,6 +3749,61 @@ class VehicleAnimation {
     }
   }
 
+  _backendPosition(state) {
+    const longitude = Number(state?.vehicleCurrentLon ?? state?.vehicleCurrentLng ?? state?.currentLongitude);
+    const latitude = Number(state?.vehicleCurrentLat ?? state?.currentLatitude);
+    return Number.isFinite(longitude) && Number.isFinite(latitude) ? [longitude, latitude] : null;
+  }
+
+  _getEffectiveVehicleStatus(fallback) {
+    const snapshotStatus = this.drivingSnapshot?.status;
+    if (isStoppedVehicleStatus(snapshotStatus)) return snapshotStatus;
+    if (this._isBackendReplacementStopped()) return this.backendVehicleStatus;
+    if (snapshotStatus) return snapshotStatus;
+    if (this.activeRandomEvent?.eventType === 'VEHICLE_BREAKDOWN'
+        && this.activeRandomEvent.breakdownLevel !== 'REPLACEMENT_REQUIRED') {
+      return 'BREAKDOWN';
+    }
+    if (this.replacementRecoveryMode && this.backendVehicleStatus) return this.backendVehicleStatus;
+    return fallback;
+  }
+
+  _isBackendReplacementStopped() {
+    return ['SCRAPPED', 'RESERVED_REPLACEMENT'].includes(this.backendVehicleStatus);
+  }
+
+  updateBackendVehicleState(state, monitorState = false) {
+    if (!state) return;
+    const status = state.vehicleStatus || (monitorState ? state.status : null);
+    if (status && status !== 'UNKNOWN') this.backendVehicleStatus = status;
+  }
+
+  updateReplacementRecovery(state) {
+    if (!this.replacementRecoveryMode || !state) return;
+    this.updateBackendVehicleState(state);
+    const status = this.backendVehicleStatus;
+    if (!Array.isArray(this.stages)) {
+      this.currentStage = ['TRANSPORT_DRIVING', 'UNLOADING'].includes(status) ? 2 : 1;
+    } else {
+      const rawIndex = state.currentActionIndex
+          ?? state.currentNodeIndex
+          ?? state.drivingLegIndex
+          ?? state.vrpProgress?.currentStageIndex
+          ?? state.currentNode?.sequenceIndex;
+      const stageIndex = Number(rawIndex);
+      if (Number.isInteger(stageIndex) && stageIndex >= 0 && stageIndex < this.stages.length) {
+        this.currentStageIndex = stageIndex;
+      }
+      this.runtimeLoad = Math.max(0, this._toNumber(state.currentLoad, this.runtimeLoad));
+      this.runtimeVolume = Math.max(0, this._toNumber(state.currentVolume, this.runtimeVolume));
+    }
+    const position = this._backendPosition(state);
+    if (position) {
+      this.currentPosition = position;
+      this._updateMarkerPosition();
+    }
+  }
+
   async _reportLoadingCompleted(localCargo) {
     try {
       const response = await request.post('/api/simulation/assignment-loaded', {
@@ -3813,7 +3872,7 @@ class VehicleAnimation {
 
       // 更新状态管理器中的位置
       if (this.statusManager) {
-        this.statusManager.updateVehicleStatus(this.vehicleId, 'ORDER_DRIVING', {
+        this.statusManager.updateVehicleStatus(this.vehicleId, this._getEffectiveVehicleStatus('ORDER_DRIVING'), {
           assignment: this.routeData.assignment,
           position: this.currentPosition
         });
@@ -3895,6 +3954,7 @@ class VehicleAnimation {
         : Math.max(0, Math.min(1, Number(activeEvent.speedFactor ?? 1)));
     if (activeEvent.eventType === 'VEHICLE_BREAKDOWN'
         && activeEvent.breakdownLevel !== 'REPLACEMENT_REQUIRED'
+        && !this._isBackendReplacementStopped()
         && this.statusManager) {
       this.statusManager.updateVehicleStatus(this.vehicleId, 'BREAKDOWN', {
         assignment: this.routeData.assignment,
@@ -3904,8 +3964,11 @@ class VehicleAnimation {
   }
 
   updateDrivingSnapshot(snapshot) {
-    if (!snapshot?.drivingPhaseKey || Number(snapshot.assignmentId) !== Number(this.assignmentId)) {
+    const matchingAssignment = snapshot && Number(snapshot.assignmentId) === Number(this.assignmentId);
+    if (matchingAssignment) this.updateBackendVehicleState(snapshot, true);
+    if (!snapshot?.drivingPhaseKey || !matchingAssignment) {
       this.drivingSnapshot = null;
+      if (this.replacementRecoveryMode && matchingAssignment) this.updateReplacementRecovery(snapshot);
       return;
     }
     const previous = this.drivingSnapshot;
@@ -4029,9 +4092,9 @@ class VehicleAnimation {
 
       // 更新状态管理器中的位置
       if (this.statusManager) {
-        const eventStatus = this.drivingSnapshot?.status || (this.activeRandomEvent?.eventType === 'VEHICLE_BREAKDOWN'
-            ? 'BREAKDOWN'
-            : (this.currentStage === 1 ? 'ORDER_DRIVING' : 'TRANSPORT_DRIVING'));
+        const eventStatus = this._getEffectiveVehicleStatus(
+            this.currentStage === 1 ? 'ORDER_DRIVING' : 'TRANSPORT_DRIVING'
+        );
         this.statusManager.updateVehicleStatus(this.vehicleId, eventStatus, {
               assignment: this.routeData.assignment,
               position: this.currentPosition
@@ -4056,7 +4119,8 @@ class VehicleAnimation {
     }
 
     const deltaTime = (now - this.lastUpdateTime) / 1000;
-    if (this.authoritativeEnvironment || this.drivingSnapshot) {
+    if (this.authoritativeEnvironment || this.replacementRecoveryMode || this.drivingSnapshot
+        || this._isBackendReplacementStopped()) {
       this.lastUpdateTime = now;
       if (this.drivingSnapshot) this._animateAuthoritative(deltaTime);
       this.animationFrameId = requestAnimationFrame(() => this._animate());
@@ -4253,6 +4317,7 @@ class VrpVehicleAnimation extends VehicleAnimation {
     // 计算每一段的 segments (用于物理插值)
     this.stageSegments = this.stages.map(stage => this._calculateSegments(stage.path));
     this._syncRuntimeState();
+    this.updateReplacementRecovery(assignment);
   }
 
   // 重写：获取当前路径
@@ -4316,7 +4381,7 @@ class VrpVehicleAnimation extends VehicleAnimation {
 
       if (this.statusManager) {
         const progress = this._syncRuntimeState();
-        this.statusManager.updateVehicleStatus(this.vehicleId, this.drivingSnapshot?.status || (this.activeRandomEvent?.eventType === 'VEHICLE_BREAKDOWN' ? 'BREAKDOWN' : this._getTravelStatus()), {
+        this.statusManager.updateVehicleStatus(this.vehicleId, this._getEffectiveVehicleStatus(this._getTravelStatus()), {
           assignment: this.routeData.assignment,
           position: this.currentPosition,
           currentLoad: this.runtimeLoad,
@@ -4493,8 +4558,11 @@ class VehicleAnimationManager {
 
     // 设置初始速度因子
     animation.updateSpeedFactor(this.globalSpeedFactor);
+    animation.updateBackendVehicleState(assignment);
+    animation.updateReplacementRecovery(assignment);
     animation.updateEventImpact(this.eventImpactsByVehicle.get(assignment.vehicleId) || null);
-    animation.updateDrivingSnapshot(this.drivingSnapshotsByVehicle.get(assignment.vehicleId) || null);
+    const drivingSnapshot = this.drivingSnapshotsByVehicle.get(assignment.vehicleId) || null;
+    animation.updateDrivingSnapshot(drivingSnapshot);
 
     // 如果全局未暂停，则启动动画
     if (!this.isPaused) {
@@ -4570,7 +4638,8 @@ class VehicleAnimationManager {
     this.drivingSnapshotsByVehicle = new Map(vehicles.map(vehicle => [vehicle.vehicleId, vehicle]));
     this.animations.forEach(animation => {
       animation.authoritativeEnvironment = authoritative;
-      animation.updateDrivingSnapshot(this.drivingSnapshotsByVehicle.get(animation.vehicleId) || null);
+      const drivingSnapshot = this.drivingSnapshotsByVehicle.get(animation.vehicleId) || null;
+      animation.updateDrivingSnapshot(drivingSnapshot);
     });
   }
 
@@ -4905,6 +4974,9 @@ const resetSimulation = async () => {
   }
 };
 
+// ==================== assignment owner recovery polling ====================
+const assignmentRecoveryTracker = createAssignmentRecoveryTracker();
+
 /**
  * 启动仿真定时器
  */
@@ -4935,13 +5007,19 @@ const startSimulationTimer = () => {
         const ownerChanged = monitorAssignments.some(assignment => {
           const rendered = animationManager?.animations?.get(assignment.assignmentId)?.routeData?.assignment;
           const renderedIdentity = assignmentRenderIdentity(rendered);
-          return renderedIdentity && renderedIdentity !== assignmentRenderIdentity(assignment);
+          const changed = renderedIdentity && renderedIdentity !== assignmentRenderIdentity(assignment);
+          if (changed) assignmentRecoveryTracker.mark(assignment);
+          return changed;
         });
-        const activeAssignmentRecovery = weatherRecovery || ownerChanged;
+        assignmentRecoveryTracker.retainActive(monitorAssignments);
+        const pendingOwnerRecovery = assignmentRecoveryTracker.hasPending();
+        const activeAssignmentRecovery = weatherRecovery || ownerChanged || pendingOwnerRecovery;
         scheduleAssignmentDrawing(
             activeAssignmentRecovery ? fetchCurrentAssignments : fetchAndDrawNewAssignments,
             runGeneration,
-            ownerChanged ? 'assignment vehicle handoff' : weatherRecovery ? 'weather active assignment recovery' : 'new assignments'
+            ownerChanged ? 'assignment vehicle handoff'
+                : pendingOwnerRecovery ? 'pending assignment vehicle handoff'
+                    : weatherRecovery ? 'weather active assignment recovery' : 'new assignments'
         );
       }
 
@@ -5410,7 +5488,7 @@ const updateVehicleInfo = async () => {
             // Merge local animation status without overriding backend load for normal assignments.
             if (vehicleStatusManager.value) {
               const localStatus = vehicleStatusManager.value.getVehicleStatus(assignment.vehicleId);
-              if (isKnownStatus(localStatus)) {
+              if (isKnownStatus(localStatus) && !['SCRAPPED', 'RESERVED_REPLACEMENT'].includes(vehicle.status)) {
                 vehicle.status = localStatus;
               }
             }
@@ -5444,7 +5522,8 @@ const updateVehicleInfo = async () => {
           }
 
           if (vehicle.activeEvent?.eventType === 'VEHICLE_BREAKDOWN'
-              && vehicle.activeEvent.breakdownLevel !== 'REPLACEMENT_REQUIRED') {
+              && vehicle.activeEvent.breakdownLevel !== 'REPLACEMENT_REQUIRED'
+              && !['SCRAPPED', 'RESERVED_REPLACEMENT'].includes(vehicle.status)) {
             vehicle.status = 'BREAKDOWN';
           }
 
@@ -5495,7 +5574,8 @@ const updateVehicleInfo = async () => {
             activeEvent: monitorVehicle.activeEvent || activeEventByVehicleId.get(monitorVehicle.vehicleId) || null
           };
         if (vehicle.activeEvent?.eventType === 'VEHICLE_BREAKDOWN'
-            && vehicle.activeEvent.breakdownLevel !== 'REPLACEMENT_REQUIRED') {
+            && vehicle.activeEvent.breakdownLevel !== 'REPLACEMENT_REQUIRED'
+            && !['SCRAPPED', 'RESERVED_REPLACEMENT'].includes(vehicle.status)) {
           vehicle.status = 'BREAKDOWN';
         }
         vehicle.loadPercentage = vehicle.maxLoadCapacity > 0 ?
@@ -5756,22 +5836,30 @@ const fetchCurrentAssignments = async (runGeneration = simulationGeneration.valu
     const response = await request.get('/api/assignments/active');
     if (!isActiveTransportGeneration(runGeneration)) return;
     const assignments = response.data;
+    assignmentRecoveryTracker.retainActive(assignments || []);
 
     if (assignments && assignments.length > 0) {
       // 为每个Assignment绘制两段路线
       for (const assignment of assignments) {
         if (assignment && assignment.assignmentId) {
           const activeAnimation = animationManager.animations.get(assignment.assignmentId);
+          const activeAssignment = activeAnimation?.routeData?.assignment || null;
+          const ownerChanged = Boolean(
+              assignmentRenderIdentity(activeAssignment)
+              && assignmentRenderIdentity(activeAssignment) !== assignmentRenderIdentity(assignment)
+          );
+          if (ownerChanged) assignmentRecoveryTracker.mark(assignment);
+          const replacementRecovery = ownerChanged || assignmentRecoveryTracker.isPending(assignment);
           const reconciliation = await reconcileAssignmentRenderOwner({
             assignment,
-            currentAssignment: activeAnimation?.routeData?.assignment || null,
+            currentAssignment: activeAssignment,
             removeCurrent(current) {
               clearRouteByAssignmentId(current.assignmentId, current.vehicleId);
             },
             createCurrent(current) {
               return current.vrp === true
-                  ? drawMultiStageRouteForVrpAssignment(current, runGeneration)
-                  : drawTwoStageRouteForAssignment(current, runGeneration);
+                  ? drawMultiStageRouteForVrpAssignment(current, runGeneration, { replacementRecovery })
+                  : drawTwoStageRouteForAssignment(current, runGeneration, { replacementRecovery });
             }
           });
           if (!isActiveTransportGeneration(runGeneration)) return;
@@ -5781,6 +5869,8 @@ const fetchCurrentAssignments = async (runGeneration = simulationGeneration.valu
           } else if (!activeAnimation && monitorWeather.value?.runId) {
             missingRouteAssignmentIds.add(assignment.assignmentId);
           }
+          const registeredAssignment = animationManager.animations.get(assignment.assignmentId)?.routeData?.assignment;
+          assignmentRecoveryTracker.confirmRegistered(assignment, registeredAssignment);
         }
       }
 
@@ -5847,7 +5937,7 @@ const fetchAndDrawNewAssignments = async (runGeneration = simulationGeneration.v
 };
 
 // 为Assignment绘制两段路线（修复版）
-const drawTwoStageRouteForAssignment = async (assignment, runGeneration = simulationGeneration.value) => {
+const drawTwoStageRouteForAssignment = async (assignment, runGeneration = simulationGeneration.value, options = {}) => {
   if (!AMapLib || !map) return null;
   if (!isActiveTransportGeneration(runGeneration)) return null;
 
@@ -5881,6 +5971,7 @@ const drawTwoStageRouteForAssignment = async (assignment, runGeneration = simula
       elements,
       animations: [],
       manager: animationManager,
+      replacementRecovery: Boolean(options.replacementRecovery),
       drawing: true,
       cleaned: false,
       cleanup: () => {
@@ -6075,7 +6166,7 @@ const drawTwoStageRouteForAssignment = async (assignment, runGeneration = simula
 };
 
 // ==================== VRP 专线：绘制多节点复杂路线 ====================
-const drawMultiStageRouteForVrpAssignment = async (assignment, runGeneration = simulationGeneration.value) => {
+const drawMultiStageRouteForVrpAssignment = async (assignment, runGeneration = simulationGeneration.value, options = {}) => {
   if (!AMapLib || !map) return null;
   if (!isActiveTransportGeneration(runGeneration)) return null;
 
@@ -6102,6 +6193,7 @@ const drawMultiStageRouteForVrpAssignment = async (assignment, runGeneration = s
       movingMarker: null,
       stages,
       manager: animationManager,
+      replacementRecovery: Boolean(options.replacementRecovery),
       drawing: true,
       cleaned: false,
       cleanup: () => {
