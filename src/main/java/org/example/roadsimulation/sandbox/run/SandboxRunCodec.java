@@ -35,6 +35,7 @@ public final class SandboxRunCodec {
         payload.set("dispatch", objectMapper.valueToTree(specification.dispatch()));
         payload.set("environment", objectMapper.valueToTree(specification.environment()));
         payload.set("vehicleInitialization", objectMapper.valueToTree(specification.vehicleInitialization()));
+        payload.set("driverBehavior", objectMapper.valueToTree(specification.driverBehavior()));
         payload.set("random", objectMapper.valueToTree(specification.random()));
         payload.set("algorithmProfile", objectMapper.valueToTree(profile));
         return hash.hash(payload);

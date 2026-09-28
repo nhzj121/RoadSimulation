@@ -91,7 +91,8 @@ class SandboxWorkspacePreparerIT {
         assertEquals(Map.of(
                 "poi", 2602L, "goods", 10L, "vehicle", 85L, "processing_chain", 4L,
                 "processing_stage", 15L, "processing_stage_input", 15L,
-                "processing_stage_edge", 11L, "enrollment", 0L), second.rowCounts());
+                "processing_stage_edge", 11L, "enrollment", 0L,
+                "driver", 255L, "driver_vehicle", 255L), second.rowCounts());
         assertEquals(second.effectiveBaseDataSha256(), preparer.verify(BASELINE).effectiveBaseDataSha256());
 
         EffectiveBaseData minimal = minimalData(loaded, full);
@@ -134,12 +135,20 @@ class SandboxWorkspacePreparerIT {
             if (stage.outputGoodsId() != null) goodsIds.add(stage.outputGoodsId());
             stage.inputs().forEach(input -> goodsIds.add(input.goodsId()));
         });
+        var vehicle = full.data().vehicles().get(0);
+        var bindings = full.data().driverVehicleBindings().stream()
+                .filter(binding -> binding.vehicleId() == vehicle.id()).toList();
+        Set<Long> driverIds = bindings.stream()
+                .map(SandboxBaselinePackageV1.DriverVehicleBinding::driverId)
+                .collect(java.util.stream.Collectors.toSet());
         var data = new SandboxBaselinePackageV1.Data(
                 full.data().pois().stream().filter(value -> poiIds.contains(value.id())).toList(),
                 full.data().goods().stream().filter(value -> goodsIds.contains(value.id())).toList(),
-                java.util.List.of(full.data().vehicles().get(0)),
+                java.util.List.of(vehicle),
                 java.util.List.of(chain),
-                java.util.List.of());
+                java.util.List.of(),
+                full.data().drivers().stream().filter(driver -> driverIds.contains(driver.id())).toList(),
+                bindings);
         EffectiveBaseDataCodec codec = new EffectiveBaseDataCodec(objectMapper);
         String selection = "TEST_MINIMAL";
         String policy = loaded.baseline().eligibilityPolicy().policyVersion();

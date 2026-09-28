@@ -61,6 +61,7 @@ public class DataInitializer implements CommandLineRunner {
     private static final int STARTUP_SHIPMENT_MAX_QUANTITY = 35;
     private static final int TAIL_FALLBACK_WAIT_LOOPS = 6;
     private static final int DEFAULT_MINUTES_PER_LOOP = 30;
+
     private final ShipmentProgressService shipmentProgressService;
     private final EnrollmentRepository enrollmentRepository;
     private final GoodsRepository goodsRepository;
@@ -83,6 +84,9 @@ public class DataInitializer implements CommandLineRunner {
     private final OriginalVrpDispatchPolicy originalVrpDispatchPolicy;
     private final TransportLifecycleService transportLifecycleService;
 
+    private final DriverRepository driverRepository;
+    private final DriverPreferenceScorer driverPreferenceScorer;
+    private final DriverBehaviorService driverBehaviorService;
     private final Map<POI, POI> startToEndMapping = new ConcurrentHashMap<>(); // 起点到终点的映射关系
     // 修改成员变量，使用起点-终点对作为键
     private final Map<String, Shipment> poiPairShipmentMapping = new ConcurrentHashMap<>();
@@ -171,7 +175,10 @@ public class DataInitializer implements CommandLineRunner {
                             SimulationContext simulationContext,
                             BatchDirectVehicleAssignmentService batchDirectVehicleAssignmentService,
                             OriginalVrpDispatchPolicy originalVrpDispatchPolicy,
-                            TransportLifecycleService transportLifecycleService) {
+                            TransportLifecycleService transportLifecycleService,
+                            DriverRepository driverRepository,
+                            DriverPreferenceScorer driverPreferenceScorer,
+                            DriverBehaviorService driverBehaviorService) {
         this.enrollmentRepository = enrollmentRepository;
         this.goodsRepository = goodsRepository;
         this.poiRepository = poiRepository;
@@ -193,6 +200,41 @@ public class DataInitializer implements CommandLineRunner {
         this.batchDirectVehicleAssignmentService = batchDirectVehicleAssignmentService;
         this.originalVrpDispatchPolicy = originalVrpDispatchPolicy;
         this.transportLifecycleService = transportLifecycleService;
+        this.driverRepository = driverRepository;
+        this.driverPreferenceScorer = driverPreferenceScorer;
+        this.driverBehaviorService = driverBehaviorService;
+    }
+
+    /**
+     * 保留 master 的构造方式，供不涉及司机模块的既有纯单元测试使用。
+     */
+    public DataInitializer(EnrollmentRepository enrollmentRepository,
+                           GoodsRepository goodsRepository,
+                           POIRepository poiRepository,
+                           RouteRepository routeRepository,
+                           ShipmentRepository shipmentRepository,
+                           ShipmentItemRepository shipmentItemRepository,
+                           ProcessingChainRepository processingChainRepository,
+                           SimulationDataCleanupService cleanupService,
+                           AssignmentRepository assignmentRepository,
+                           VehicleRepository vehicleRepository,
+                           ShipmentItemService shipmentItemService,
+                           ShipmentProgressService shipmentProgressService,
+                           RoutePlanningService routePlanningService,
+                           GetCostService getCostService,
+                           CargoChunkService cargoChunkService,
+                           POIShipmentManager poiShipmentManager,
+                           TransportMetricsService transportMetricsService,
+                           SimulationContext simulationContext,
+                           BatchDirectVehicleAssignmentService batchDirectVehicleAssignmentService,
+                           OriginalVrpDispatchPolicy originalVrpDispatchPolicy,
+                           TransportLifecycleService transportLifecycleService) {
+        this(enrollmentRepository, goodsRepository, poiRepository, routeRepository, shipmentRepository,
+                shipmentItemRepository, processingChainRepository, cleanupService, assignmentRepository,
+                vehicleRepository, shipmentItemService, shipmentProgressService, routePlanningService,
+                getCostService, cargoChunkService, poiShipmentManager, transportMetricsService,
+                simulationContext, batchDirectVehicleAssignmentService, originalVrpDispatchPolicy,
+                transportLifecycleService, null, null, null);
     }
 
     /**
@@ -248,9 +290,16 @@ public class DataInitializer implements CommandLineRunner {
 
         initializeFromRandomProcessingSegment();
         initalizePOIStatus();
-
         System.out.println("DataInitializer 初始化完成");
     }
+
+    private List<Vehicle> filterVehiclesWithIdleDriver(List<Vehicle> vehicles) {
+        if (driverBehaviorService == null) {
+            return vehicles;
+        }
+        return driverBehaviorService.filterVehiclesWithIdleDriver(vehicles);
+    }
+
 
     private void initializeFromRandomProcessingSegment() {
         Optional<ProcessingChainSegmentSelection> selectionOpt = getRandomProcessingChainSegmentSelection();
@@ -561,6 +610,8 @@ public class DataInitializer implements CommandLineRunner {
         String targetGoodsSku = dynamicGoods.getSku();
         String targetVehicleType = dynamicGoods.getVehicleFit() != null ? dynamicGoods.getVehicleFit() : "载货车";
         List<Vehicle> allIdleVehicles = vehicleRepository.findByCurrentStatus(Vehicle.VehicleStatus.IDLE); // ToDo 只考虑车辆状态，暂时不考虑适配性
+        // 剔除保养中司机绑定的车辆（司机带车保养期间不可派单）
+        allIdleVehicles = filterVehiclesWithIdleDriver(allIdleVehicles);
 
         if (allIdleVehicles.isEmpty()) {
             System.out.println("警告：没有适配货物 " + targetGoodsSku + " 的空闲车辆，本轮只生成待分配运单项");
@@ -863,6 +914,7 @@ public class DataInitializer implements CommandLineRunner {
                 }
 
                 List<Vehicle> idleVehicles = vehicleRepository.findByCurrentStatus(Vehicle.VehicleStatus.IDLE);
+                idleVehicles = filterVehiclesWithIdleDriver(idleVehicles);
                 ShipmentItem item = creation.getItems().get(0);
                 Optional<Vehicle> vehicle = selectOriginalDispatchVehicleForItem(item, idleVehicles);
                 if (vehicle.isEmpty()) {
@@ -2112,6 +2164,7 @@ public class DataInitializer implements CommandLineRunner {
         }
 
         List<Vehicle> idleVehicles = vehicleRepository.findByCurrentStatus(Vehicle.VehicleStatus.IDLE);
+        idleVehicles = filterVehiclesWithIdleDriver(idleVehicles);
         if (idleVehicles == null || idleVehicles.isEmpty()) {
             logger.info("[TailFallback] No idle vehicles. overdue={}, loop={}, source={}",
                     overdueItems.size(), loop, actor);
@@ -2483,13 +2536,21 @@ public class DataInitializer implements CommandLineRunner {
             return;
         }
 
-        // 2. 获取专属的 VRP 测试车队 (空闲状态)
-        List<Vehicle> vrpVehicles = new ArrayList<>(
-                vehicleRepository.findByCurrentStatus(Vehicle.VehicleStatus.IDLE));
+        // 2. 获取专属的 VRP 测试车队 (空闲状态)，剔除保养中司机绑定的车辆
+        List<Vehicle> vrpVehicles = new ArrayList<>(filterVehiclesWithIdleDriver(
+                vehicleRepository.findByCurrentStatus(Vehicle.VehicleStatus.IDLE)));
         vrpVehicles.sort(Comparator.comparing(Vehicle::getId, Comparator.nullsLast(Long::compareTo)));
         if (vrpVehicles.isEmpty()) {
             System.out.println("[VRP 大脑] 没有空闲的车辆。");
             return;
+        }
+
+        // 2.5 司机偏好排序：司机偏好匹配度高的车辆先装货
+        if (driverPreferenceScorer != null) {
+            vrpVehicles.sort(Comparator
+                    .comparingDouble((Vehicle vehicle) -> driverPreferenceScorer.vehicleAffinity(vehicle, pendingItems))
+                    .reversed()
+                    .thenComparing(Vehicle::getId, Comparator.nullsLast(Long::compareTo)));
         }
 
         System.out.printf("[VRP 大脑] 发现 %d 个待拼订单，%d 辆空闲车辆。开始拼载计算...%n", pendingItems.size(), vrpVehicles.size());
@@ -3821,6 +3882,14 @@ public class DataInitializer implements CommandLineRunner {
 
         }
 
+        // 司机信息
+        Driver driver = assignment.getAssignedDriver();
+        if (driver != null) {
+            brief.setDriverId(driver.getId());
+            brief.setDriverName(driver.getDriverName());
+            brief.setDriverStatus(driver.getCurrentStatus() != null ? driver.getCurrentStatus().toString() : null);
+        }
+
         // 路线信息
         Route route = assignment.getRoute();
         if (route != null) {
@@ -3961,6 +4030,23 @@ public class DataInitializer implements CommandLineRunner {
         dto.setCurrentLongitude(vehicle.getCurrentLongitude());
         dto.setCurrentLatitude(vehicle.getCurrentLatitude());
         dto.setDriverName(vehicle.getDriverName());
+
+        // 司机接入运输链：从 driver_vehicle 关系读取司机状态透出给前端
+        List<Driver> boundDrivers = driverRepository == null
+                ? List.of()
+                : driverRepository.findDriversByVehicleId(vehicle.getId());
+        if (!boundDrivers.isEmpty()) {
+            Driver firstDriver = boundDrivers.get(0);
+            dto.setDriverId(firstDriver.getId());
+            dto.setDriverStatus(firstDriver.getCurrentStatus() != null
+                    ? firstDriver.getCurrentStatus().name() : null);
+            if (dto.getDriverName() == null || dto.getDriverName().isBlank()) {
+                dto.setDriverName(firstDriver.getDriverName());
+            }
+            if (driverPreferenceScorer != null) {
+                dto.setDriverPreferenceText(driverPreferenceScorer.preferenceText(firstDriver));
+            }
+        }
 
         // 任务信息
         Assignment currentAssignment = vehicle.getCurrentAssignment();
@@ -4305,6 +4391,17 @@ public class DataInitializer implements CommandLineRunner {
                 dto.setVehicleCurrentLat(vehicle.getCurrentLatitude() != null
                         ? vehicle.getCurrentLatitude().doubleValue()
                         : null);
+            }
+
+            Driver driver = assignment.getAssignedDriver();
+            if (driver != null) {
+                dto.setDriverId(driver.getId());
+                dto.setDriverName(driver.getDriverName());
+                dto.setDriverStatus(driver.getCurrentStatus() != null ? driver.getCurrentStatus().toString() : null);
+            } else {
+                dto.setDriverId(null);
+                dto.setDriverName(null);
+                dto.setDriverStatus(null);
             }
         });
 

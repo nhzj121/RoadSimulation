@@ -6,8 +6,8 @@
   "scenario": {
     "scenarioKey": "all-eligible",
     "revision": 1,
-    "scenarioDefinitionSha256": "31913ca4d325ab0bcb706daf4df433eb4e4a07fbadef12b41b8097e4993211c6",
-    "effectiveScenarioDataSha256": "871262c930361c774105c0b52be3398445a4b53625a337094ae913032ddf7389"
+    "scenarioDefinitionSha256": "9087fecc221c40a6a69f8d4e4f749a96a943ab763c5584b85370af0cb293b509",
+    "effectiveScenarioDataSha256": "6e4b4f3234181885fc030b9723e1bfd8a50d9ed46fa2d40b4f94cd341455678d"
   },
   "simulationClock": {
     "startLocalDateTime": "2026-01-01T00:00:00",
@@ -39,6 +39,15 @@
       "DISTRIBUTION_CENTER"
     ],
     "coordinateAuthority": "CURRENT_POI"
+  },
+  "driverBehavior": {
+    "enabled": true,
+    "transitionPolicy": "MARKOV_V1",
+    "idleToRejecting": 0.02,
+    "idleToMaintenance": 0.01,
+    "rejectingToIdle": 0.3,
+    "maintenanceToIdle": 0.25,
+    "seedPolicy": "DERIVED_FROM_ROOT"
   },
   "random": {
     "protocolId": "HMAC_SHA256_SPLITMIX64_V1",

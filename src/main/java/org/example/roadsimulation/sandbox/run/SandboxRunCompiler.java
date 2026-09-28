@@ -75,6 +75,8 @@ public final class SandboxRunCompiler {
         require(source.environment() != null, "MISSING_ENVIRONMENT", "environment is required");
         require(source.vehicleInitialization() != null,
                 "MISSING_VEHICLE_INITIALIZATION", "vehicleInitialization is required");
+        require(source.driverBehavior() != null,
+                "MISSING_DRIVER_BEHAVIOR", "driverBehavior is required");
         require(source.random() != null, "MISSING_RANDOM_PROTOCOL", "random is required");
 
         SandboxRunSpecificationV1.SimulationClock clock = source.simulationClock();
@@ -125,6 +127,22 @@ public final class SandboxRunCompiler {
                         "vehicleInitialization.coordinateAuthority")),
                 "UNSUPPORTED_COORDINATE_AUTHORITY", "Initial coordinate authority must be CURRENT_POI");
 
+        SandboxRunSpecificationV1.DriverBehavior driverBehavior = source.driverBehavior();
+        require("MARKOV_V1".equals(upper(driverBehavior.transitionPolicy(),
+                        "driverBehavior.transitionPolicy")),
+                "UNSUPPORTED_DRIVER_BEHAVIOR_POLICY", "Driver behavior transitionPolicy must be MARKOV_V1");
+        require("DERIVED_FROM_ROOT".equals(upper(driverBehavior.seedPolicy(),
+                        "driverBehavior.seedPolicy")),
+                "UNSUPPORTED_DRIVER_BEHAVIOR_SEED_POLICY", "Driver behavior seed must derive from root seed");
+        require(probability(driverBehavior.idleToRejecting())
+                        && probability(driverBehavior.idleToMaintenance())
+                        && probability(driverBehavior.rejectingToIdle())
+                        && probability(driverBehavior.maintenanceToIdle()),
+                "INVALID_DRIVER_BEHAVIOR_PROBABILITY", "Driver behavior probabilities must be in [0,1]");
+        require(driverBehavior.idleToRejecting() + driverBehavior.idleToMaintenance() <= 1.0,
+                "INVALID_DRIVER_BEHAVIOR_PROBABILITY",
+                "idleToRejecting + idleToMaintenance must not exceed 1");
+
         require(SandboxRandomProtocol.PROTOCOL_ID.equals(source.random().protocolId()),
                 "UNSUPPORTED_RANDOM_PROTOCOL", "Unsupported random protocol");
         try {
@@ -150,8 +168,17 @@ public final class SandboxRunCompiler {
                         "PROGRESS_AFFECTING", "DERIVED_FROM_ROOT"),
                 new SandboxRunSpecificationV1.VehicleInitialization(
                         "RANDOM_ELIGIBLE_POI", poiTypes, "CURRENT_POI"),
+                new SandboxRunSpecificationV1.DriverBehavior(
+                        driverBehavior.enabled(), "MARKOV_V1",
+                        driverBehavior.idleToRejecting(), driverBehavior.idleToMaintenance(),
+                        driverBehavior.rejectingToIdle(), driverBehavior.maintenanceToIdle(),
+                        "DERIVED_FROM_ROOT"),
                 new SandboxRunSpecificationV1.RandomProtocol(
                         SandboxRandomProtocol.PROTOCOL_ID, source.random().rootSeed()));
+    }
+
+    private boolean probability(double value) {
+        return Double.isFinite(value) && value >= 0.0 && value <= 1.0;
     }
 
     private SandboxRunSpecificationV1.ScenarioReference normalizeScenarioReference(

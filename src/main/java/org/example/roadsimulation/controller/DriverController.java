@@ -2,6 +2,7 @@ package org.example.roadsimulation.controller;
 
 import org.example.roadsimulation.entity.Driver;
 import org.example.roadsimulation.service.DriverService;
+import org.example.roadsimulation.service.TransportLifecycleService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -29,16 +30,17 @@ import java.util.Optional;
  */
 @RestController
 @RequestMapping("/api/drivers")
-@CrossOrigin(origins = "*", maxAge = 3600)
 public class DriverController {
 
     private static final Logger logger = LoggerFactory.getLogger(DriverController.class);
 
     private final DriverService driverService;
+    private final TransportLifecycleService transportLifecycleService;
 
     @Autowired
-    public DriverController(DriverService driverService) {
+    public DriverController(DriverService driverService, TransportLifecycleService transportLifecycleService) {
         this.driverService = driverService;
+        this.transportLifecycleService = transportLifecycleService;
     }
 
     /**
@@ -292,17 +294,39 @@ public class DriverController {
                     .body(ApiResponse.error("司机不存在，ID: " + id));
         }
 
-        Driver driver = driverOpt.get();
-        driver.setCurrentStatus(status);
-
         try {
-            Driver updatedDriver = driverService.updateDriver(id, driver);
+            Driver updatedDriver = transportLifecycleService.updateDriverStatusRequired(
+                    id, status, "手动PATCH司机状态");
             logger.info("司机状态更新成功，ID: {}, 状态: {}", id, status);
             return ResponseEntity.ok(ApiResponse.success("状态更新成功", updatedDriver));
+        } catch (IllegalStateException e) {
+            logger.warn("司机状态更新被拒绝，ID: {}, 原因: {}", id, e.getMessage());
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body(ApiResponse.error(e.getMessage()));
         } catch (Exception e) {
             logger.error("司机状态更新失败，ID: {}, 错误: {}", id, e.getMessage());
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(ApiResponse.error("状态更新失败: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * 更新司机接单偏好（货类/距离/重量），仅覆盖非空字段
+     */
+    @PatchMapping("/{id}/preferences")
+    public ResponseEntity<ApiResponse<Driver>> updateDriverPreferences(
+            @PathVariable Long id,
+            @RequestBody org.example.roadsimulation.dto.DriverPreferencesRequest request) {
+        logger.info("更新司机接单偏好，司机ID: {}", id);
+
+        try {
+            Driver updatedDriver = driverService.updateDriverPreferences(id, request);
+            logger.info("司机偏好更新成功，ID: {}", id);
+            return ResponseEntity.ok(ApiResponse.success("偏好更新成功", updatedDriver));
+        } catch (IllegalArgumentException e) {
+            logger.error("司机偏好更新失败: {}", e.getMessage());
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(ApiResponse.error(e.getMessage()));
         }
     }
 

@@ -30,6 +30,13 @@ public class AssignmentBriefDTO {
     private String licensePlate;
     @Setter @Getter
     private String vehicleStatus;
+    // 司机信息
+    @Setter @Getter
+    private Long driverId;
+    @Setter @Getter
+    private String driverName;
+    @Setter @Getter
+    private String driverStatus;
     // 车辆起始位置（用于在地图上绘制车辆图标）
     @Setter @Getter
     private Double vehicleStartLng;

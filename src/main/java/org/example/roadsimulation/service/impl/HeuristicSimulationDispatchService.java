@@ -13,6 +13,8 @@ import org.example.roadsimulation.repository.VehicleRepository;
 import org.example.roadsimulation.sandbox.random.SandboxRandomDomain;
 import org.example.roadsimulation.sandbox.run.SandboxAlgorithmRuntimeConfiguration;
 import org.example.roadsimulation.sandbox.run.SandboxRunRuntimeContext;
+import org.example.roadsimulation.service.DriverBehaviorService;
+import org.example.roadsimulation.service.DriverPreferenceScorer;
 import org.example.roadsimulation.service.SimulationDispatchService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -36,6 +38,8 @@ public class HeuristicSimulationDispatchService implements SimulationDispatchSer
     private final DataInitializer dataInitializer;
     private SandboxRunRuntimeContext sandboxRunRuntimeContext;
     private SimulationContext simulationContext;
+    private final DriverBehaviorService driverBehaviorService;
+    private final DriverPreferenceScorer driverPreferenceScorer;
 
     public HeuristicSimulationDispatchService(
             ShipmentItemRepository shipmentItemRepository,
@@ -44,11 +48,27 @@ public class HeuristicSimulationDispatchService implements SimulationDispatchSer
             MultiOrderAssignmentMaterializer assignmentMaterializer,
             DataInitializer dataInitializer
     ) {
+        this(shipmentItemRepository, vehicleRepository, multiOrderGA, assignmentMaterializer,
+                dataInitializer, null, null);
+    }
+
+    @Autowired
+    public HeuristicSimulationDispatchService(
+            ShipmentItemRepository shipmentItemRepository,
+            VehicleRepository vehicleRepository,
+            MultiOrderGA multiOrderGA,
+            MultiOrderAssignmentMaterializer assignmentMaterializer,
+            DataInitializer dataInitializer,
+            DriverBehaviorService driverBehaviorService,
+            DriverPreferenceScorer driverPreferenceScorer
+    ) {
         this.shipmentItemRepository = shipmentItemRepository;
         this.vehicleRepository = vehicleRepository;
         this.multiOrderGA = multiOrderGA;
         this.assignmentMaterializer = assignmentMaterializer;
         this.dataInitializer = dataInitializer;
+        this.driverBehaviorService = driverBehaviorService;
+        this.driverPreferenceScorer = driverPreferenceScorer;
     }
 
     @Autowired(required = false)
@@ -69,12 +89,22 @@ public class HeuristicSimulationDispatchService implements SimulationDispatchSer
         List<ShipmentItem> pendingItems = new java.util.ArrayList<>(shipmentItemRepository.findByStatus(
                 ShipmentItem.ShipmentItemStatus.NOT_ASSIGNED
         ));
-        List<Vehicle> idleVehicles = new java.util.ArrayList<>(
-                vehicleRepository.findByCurrentStatus(Vehicle.VehicleStatus.IDLE));
+        List<Vehicle> queriedIdleVehicles = vehicleRepository.findByCurrentStatus(Vehicle.VehicleStatus.IDLE);
+        List<Vehicle> idleVehicles = new java.util.ArrayList<>(driverBehaviorService == null
+                ? queriedIdleVehicles
+                : driverBehaviorService.filterVehiclesWithIdleDriver(queriedIdleVehicles));
         pendingItems.sort(Comparator.comparing(ShipmentItem::getId,
                 Comparator.nullsLast(Long::compareTo)));
-        idleVehicles.sort(Comparator.comparing(Vehicle::getId,
-                Comparator.nullsLast(Long::compareTo)));
+        if (driverPreferenceScorer == null) {
+            idleVehicles.sort(Comparator.comparing(Vehicle::getId,
+                    Comparator.nullsLast(Long::compareTo)));
+        } else {
+            idleVehicles.sort(Comparator
+                    .comparingDouble((Vehicle vehicle) ->
+                            driverPreferenceScorer.vehicleAffinity(vehicle, pendingItems))
+                    .reversed()
+                    .thenComparing(Vehicle::getId, Comparator.nullsLast(Long::compareTo)));
+        }
 
         log.info(
                 "[Dispatch][HEURISTIC] Start. pendingItems={}, idleVehicles={}",

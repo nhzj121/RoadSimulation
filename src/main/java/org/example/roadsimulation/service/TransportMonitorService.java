@@ -2,6 +2,7 @@ package org.example.roadsimulation.service;
 
 import org.example.roadsimulation.dto.TransportMonitorDTO;
 import org.example.roadsimulation.entity.Assignment;
+import org.example.roadsimulation.entity.Driver;
 import org.example.roadsimulation.entity.POI;
 import org.example.roadsimulation.entity.Route;
 import org.example.roadsimulation.entity.Shipment;
@@ -92,7 +93,7 @@ public class TransportMonitorService {
                 if (vehicle != null && vehicleId != null) {
                     TransportMonitorDTO.VehicleMonitorDTO vehicleDTO = vehicleMap.computeIfAbsent(
                             vehicleId,
-                            ignored -> buildVehicleDTO(vehicle)
+                            ignored -> buildVehicleDTO(vehicle, assignment)
                     );
                     addUnique(vehicleDTO.getAssignmentIds(), assignment.getId());
                     addUnique(vehicleDTO.getShipmentIds(), shipment.getId());
@@ -121,7 +122,7 @@ public class TransportMonitorService {
             if (vehicle != null && vehicle.getId() != null) {
                 TransportMonitorDTO.VehicleMonitorDTO vehicleDTO = vehicleMap.computeIfAbsent(
                         vehicle.getId(),
-                        ignored -> buildVehicleDTO(vehicle)
+                        ignored -> buildVehicleDTO(vehicle, assignment)
                 );
                 addUnique(vehicleDTO.getAssignmentIds(), assignment.getId());
                 for (Long shipmentId : assignmentDTO.getShipmentIds()) {
@@ -201,6 +202,13 @@ public class TransportMonitorService {
             dto.setMaxVolumeCapacity(valueOrZero(vehicle.getCargoVolume()));
         }
 
+        Driver driver = assignment.getAssignedDriver();
+        if (driver != null) {
+            dto.setDriverId(driver.getId());
+            dto.setDriverName(driver.getDriverName());
+            dto.setDriverStatus(driver.getCurrentStatus() != null ? driver.getCurrentStatus().name() : null);
+        }
+
         Route route = assignment.getRoute();
         if (route != null) {
             dto.setRouteName(route.getName());
@@ -229,7 +237,7 @@ public class TransportMonitorService {
         return dto;
     }
 
-    private TransportMonitorDTO.VehicleMonitorDTO buildVehicleDTO(Vehicle vehicle) {
+    private TransportMonitorDTO.VehicleMonitorDTO buildVehicleDTO(Vehicle vehicle, Assignment assignment) {
         TransportMonitorDTO.VehicleMonitorDTO dto = new TransportMonitorDTO.VehicleMonitorDTO();
         dto.setVehicleId(vehicle.getId());
         dto.setLicensePlate(vehicle.getLicensePlate());
@@ -239,6 +247,14 @@ public class TransportMonitorService {
         dto.setMaxLoadCapacity(valueOrZero(vehicle.getMaxLoadCapacity()));
         dto.setCurrentVolume(valueOrZero(vehicle.getCurrentVolumn()));
         dto.setMaxVolumeCapacity(valueOrZero(vehicle.getCargoVolume()));
+
+        Driver driver = assignment != null ? assignment.getAssignedDriver() : null;
+        if (driver != null) {
+            dto.setDriverName(driver.getDriverName());
+            dto.setDriverStatus(driver.getCurrentStatus() != null ? driver.getCurrentStatus().name() : null);
+        } else {
+            dto.setDriverName(vehicle.getDriverName());
+        }
         return dto;
     }
 

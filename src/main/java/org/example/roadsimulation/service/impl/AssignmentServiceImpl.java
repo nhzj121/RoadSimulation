@@ -1,15 +1,20 @@
 package org.example.roadsimulation.service.impl;
 
 import org.example.roadsimulation.DataInitializer;
+import org.example.roadsimulation.core.SimulationContext;
 import org.example.roadsimulation.dto.*;
 import org.example.roadsimulation.entity.*;
 import org.example.roadsimulation.entity.Assignment.AssignmentStatus;
+import org.example.roadsimulation.repository.AssignmentDriverHistoryRepository;
 import org.example.roadsimulation.repository.AssignmentLegRepository;
 import org.example.roadsimulation.repository.AssignmentRepository;
+import org.example.roadsimulation.repository.DriverRepository;
 import org.example.roadsimulation.service.AssignmentService;
 import org.example.roadsimulation.service.TransportMetricsService;
 import org.example.roadsimulation.service.TransportLifecycleService;
 import org.example.roadsimulation.service.VehicleService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -45,6 +50,17 @@ public class AssignmentServiceImpl implements AssignmentService {
     @Autowired
     private TransportLifecycleService transportLifecycleService;
 
+    @Autowired
+    private DriverRepository driverRepository;
+
+    @Autowired
+    private AssignmentDriverHistoryRepository driverHistoryRepository;
+
+    @Autowired
+    private SimulationContext simulationContext;
+
+    private static final Logger logger = LoggerFactory.getLogger(AssignmentServiceImpl.class);
+
     // ==================== CRUD ====================
 
     @Override
@@ -54,6 +70,15 @@ public class AssignmentServiceImpl implements AssignmentService {
         assignment.setStartTime(requestDTO.getStartTime());
         assignment.setEndTime(requestDTO.getEndTime());
         assignmentRepository.save(assignment);
+
+        bindDriverFromRequest(assignment, requestDTO.getDriverId());
+        if (assignment.getStatus() == AssignmentStatus.IN_PROGRESS) {
+            transportLifecycleService.startAssignmentExecution(
+                    assignment,
+                    assignment.getAssignedVehicle(),
+                    simulationContext.getCurrentSimTime(),
+                    "AssignmentService create");
+        }
 
         calculateVehicleMetrics(assignment);
 
@@ -78,6 +103,15 @@ public class AssignmentServiceImpl implements AssignmentService {
         assignment.setStartTime(requestDTO.getStartTime());
         assignment.setEndTime(requestDTO.getEndTime());
         assignmentRepository.save(assignment);
+
+        bindDriverFromRequest(assignment, requestDTO.getDriverId());
+        if (assignment.getStatus() == AssignmentStatus.IN_PROGRESS) {
+            transportLifecycleService.startAssignmentExecution(
+                    assignment,
+                    assignment.getAssignedVehicle(),
+                    simulationContext.getCurrentSimTime(),
+                    "AssignmentService update");
+        }
 
         calculateVehicleMetrics(assignment);
 
@@ -129,9 +163,11 @@ public class AssignmentServiceImpl implements AssignmentService {
     @Override
     public AssignmentResponseDTO startAssignment(Long id) {
         Assignment assignment = findAssignmentById(id);
-        assignment.setStatus(AssignmentStatus.IN_PROGRESS);
-        assignment.setStartTime(LocalDateTime.now());
-        assignmentRepository.save(assignment);
+        transportLifecycleService.startAssignmentExecution(
+                assignment,
+                assignment.getAssignedVehicle(),
+                simulationContext.getCurrentSimTime(),
+                "AssignmentService start");
 
         calculateVehicleMetrics(assignment);
 
@@ -179,6 +215,15 @@ public class AssignmentServiceImpl implements AssignmentService {
     @Override
     public AssignmentResponseDTO updateAssignmentStatus(Long id, AssignmentStatus status) {
         Assignment assignment = findAssignmentById(id);
+        if (status == AssignmentStatus.IN_PROGRESS) {
+            transportLifecycleService.startAssignmentExecution(
+                    assignment,
+                    assignment.getAssignedVehicle(),
+                    simulationContext.getCurrentSimTime(),
+                    "AssignmentService status update");
+            calculateVehicleMetrics(assignment);
+            return convertToDTO(assignment);
+        }
         if (status == AssignmentStatus.CANCELLED) {
             transportLifecycleService.cancelAssignment(
                     assignment,
@@ -394,7 +439,69 @@ public class AssignmentServiceImpl implements AssignmentService {
         dto.setCurrentLegIndex(assignment.getCurrentLegIndex());
         dto.setStartTime(assignment.getStartTime());
         dto.setEndTime(assignment.getEndTime());
+
+        Driver driver = assignment.getAssignedDriver();
+        if (driver != null) {
+            dto.setDriverId(driver.getId());
+            dto.setDriverInfo(driver.getDriverName() + "/"
+                    + (driver.getCurrentStatus() != null ? driver.getCurrentStatus().name() : "UNKNOWN"));
+        }
+
         return dto;
+    }
+
+    /**
+     * 司机接入运输链：CRUD 路径按 driverId 显式绑定司机（可选，为 null 时跳过）。
+     * 若任务已绑定其他司机则先解绑（换司机），并记录交接历史行。
+     */
+    private void bindDriverFromRequest(Assignment assignment, Long driverId) {
+        if (driverId == null || assignment == null || assignment.getId() == null) {
+            return;
+        }
+        Driver driver = driverRepository.findById(driverId).orElse(null);
+        if (driver == null) {
+            throw new IllegalArgumentException("司机不存在，ID: " + driverId);
+        }
+        Driver current = assignment.getAssignedDriver();
+        if (current != null && current.getId() != null && !current.getId().equals(driver.getId())) {
+            Driver old = driverRepository.findById(current.getId()).orElse(null);
+            if (old != null) {
+                old.removeAssignment(assignment);
+                driverRepository.save(old);
+                recordDriverHistory(assignment, old, AssignmentDriverHistory.Action.RELEASE,
+                        "CRUD换司机", "API");
+            }
+        }
+        driver.addAssignment(assignment);
+        driverRepository.save(driver);
+        recordDriverHistory(assignment, driver, AssignmentDriverHistory.Action.BIND,
+                current != null && current.getId() != null && !current.getId().equals(driver.getId())
+                        ? "CRUD换司机" : "CRUD绑定司机",
+                "API");
+    }
+
+    /**
+     * 记录司机-任务交接历史行（append-only），状态取司机当前状态（CRUD 绑定不改变司机状态）。
+     */
+    private void recordDriverHistory(Assignment assignment, Driver driver,
+                                     AssignmentDriverHistory.Action action,
+                                     String reason, String actor) {
+        if (driverHistoryRepository == null || assignment == null || assignment.getId() == null
+                || driver == null || driver.getId() == null) {
+            return;
+        }
+        AssignmentDriverHistory history = new AssignmentDriverHistory();
+        history.setAssignmentId(assignment.getId());
+        history.setDriverId(driver.getId());
+        history.setDriverName(driver.getDriverName());
+        history.setAction(action);
+        history.setReason(reason);
+        history.setFromStatus(driver.getCurrentStatus() != null ? driver.getCurrentStatus().name() : null);
+        history.setToStatus(driver.getCurrentStatus() != null ? driver.getCurrentStatus().name() : null);
+        history.setSimTime(simulationContext != null ? simulationContext.getCurrentSimTime() : LocalDateTime.now());
+        history.setActor(actor);
+        driverHistoryRepository.save(history);
+        logger.info("任务 {} 司机交接记录：司机 {} {}，原因: {}", assignment.getId(), driver.getId(), action, reason);
     }
 
     // ==================== 核心：车辆指标计算 ====================
@@ -418,6 +525,13 @@ public class AssignmentServiceImpl implements AssignmentService {
             dto.setMaxLoadCapacity(vehicle.getMaxLoadCapacity());
             dto.setCurrentVolume(vehicle.getCurrentVolumn());
             dto.setMaxVolumeCapacity(vehicle.getCargoVolume());
+        }
+
+        Driver driver = assignment.getAssignedDriver();
+        if (driver != null) {
+            dto.setDriverId(driver.getId());
+            dto.setDriverName(driver.getDriverName());
+            dto.setDriverStatus(driver.getCurrentStatus() != null ? driver.getCurrentStatus().toString() : null);
         }
 
         Route route = assignment.getRoute();

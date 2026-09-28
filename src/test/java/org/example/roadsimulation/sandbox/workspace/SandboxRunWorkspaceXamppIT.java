@@ -46,7 +46,10 @@ class SandboxRunWorkspaceXamppIT {
                 .prepare(BASELINE, scenario.scenarioKey(), scenario.revision());
 
         SandboxRunSpecificationStore runs = new SandboxRunSpecificationStore(url, user, password, mapper);
-        runs.saveDraft(BASELINE, RUN_SPEC);
+        SandboxRunSpecificationV1 template = mapper.readValue(
+                RUN_SPEC.getInputStream(), SandboxRunSpecificationV1.class);
+        SandboxRunSpecificationV1 resolvedTemplate = withScenarioRevision(template, scenario);
+        runs.saveDraft(BASELINE, new ByteArrayResource(mapper.writeValueAsBytes(resolvedTemplate)));
         SandboxRunSpecificationRevisionV1 revision = runs.publish(
                 BASELINE, "production-baseline-seed-20260927");
         SandboxRunWorkspacePreparer preparer = new SandboxRunWorkspacePreparer(
@@ -112,9 +115,23 @@ class SandboxRunWorkspaceXamppIT {
         return new SandboxRunSpecificationV1(
                 source.artifactVersion(), source.runSpecKey(), source.displayName(), source.description(),
                 source.scenario(), source.simulationClock(), source.demand(), source.dispatch(),
-                source.environment(), source.vehicleInitialization(),
+                source.environment(), source.vehicleInitialization(), source.driverBehavior(),
                 new SandboxRunSpecificationV1.RandomProtocol(
                         source.random().protocolId(), rootSeed));
+    }
+
+    private SandboxRunSpecificationV1 withScenarioRevision(
+            SandboxRunSpecificationV1 source,
+            SandboxScenarioRevisionV1 scenario
+    ) {
+        return new SandboxRunSpecificationV1(
+                source.artifactVersion(), source.runSpecKey(), source.displayName(), source.description(),
+                new SandboxRunSpecificationV1.ScenarioReference(
+                        scenario.scenarioKey(), scenario.revision(),
+                        scenario.fingerprints().scenarioDefinitionSha256(),
+                        scenario.fingerprints().effectiveScenarioDataSha256()),
+                source.simulationClock(), source.demand(), source.dispatch(), source.environment(),
+                source.vehicleInitialization(), source.driverBehavior(), source.random());
     }
 
     private void assertFailedMarkerAndPreservedRevisions(

@@ -389,6 +389,8 @@ public final class SandboxScenarioWorkspacePreparer {
         values.put("poi", (long) data.pois().size());
         values.put("goods", (long) data.goods().size());
         values.put("vehicle", (long) data.vehicles().size());
+        values.put("driver", (long) data.drivers().size());
+        values.put("driver_vehicle", (long) data.driverVehicleBindings().size());
         values.put("processing_chain", (long) data.processingChains().size());
         values.put("processing_stage", data.processingChains().stream().mapToLong(c -> c.stages().size()).sum());
         values.put("processing_stage_input", data.processingChains().stream()

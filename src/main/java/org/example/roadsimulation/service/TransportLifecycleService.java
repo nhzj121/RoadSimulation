@@ -6,14 +6,18 @@ import org.example.roadsimulation.core.SimulationContext;
 import org.example.roadsimulation.evaluation.NodeServiceEpisode;
 import org.example.roadsimulation.evaluation.NodeServiceObservationPublisher;
 import org.example.roadsimulation.entity.Assignment;
+import org.example.roadsimulation.entity.AssignmentDriverHistory;
 import org.example.roadsimulation.entity.AssignmentLeg;
 import org.example.roadsimulation.entity.AssignmentNode;
+import org.example.roadsimulation.entity.Driver;
 import org.example.roadsimulation.entity.POI;
 import org.example.roadsimulation.entity.Shipment;
 import org.example.roadsimulation.entity.ShipmentItem;
 import org.example.roadsimulation.entity.Vehicle;
 import org.example.roadsimulation.event.ShipmentDeliveredEvent;
+import org.example.roadsimulation.repository.AssignmentDriverHistoryRepository;
 import org.example.roadsimulation.repository.AssignmentRepository;
+import org.example.roadsimulation.repository.DriverRepository;
 import org.example.roadsimulation.repository.ShipmentItemRepository;
 import org.example.roadsimulation.repository.ShipmentRepository;
 import org.example.roadsimulation.repository.VehicleRepository;
@@ -29,6 +33,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
@@ -48,6 +53,9 @@ public class TransportLifecycleService {
     private final ShipmentItemRepository shipmentItemRepository;
     private final AssignmentRepository assignmentRepository;
     private final VehicleRepository vehicleRepository;
+    private final DriverRepository driverRepository;
+    private final DriverPreferenceScorer driverPreferenceScorer;
+    private final AssignmentDriverHistoryRepository driverHistoryRepository;
     // Phase 1：生产环境中缺省业务时间必须回到唯一的 SimulationContext，而不是系统墙上时间。
     private final SimulationContext simulationContext;
     private final ApplicationEventPublisher eventPublisher;
@@ -73,6 +81,9 @@ public class TransportLifecycleService {
                 vehicleRepository,
                 null,
                 null,
+                null,
+                null,
+                null,
                 null
         );
     }
@@ -93,6 +104,9 @@ public class TransportLifecycleService {
                 assignmentRepository,
                 vehicleRepository,
                 simulationContext,
+                null,
+                null,
+                null,
                 null,
                 null
         );
@@ -116,14 +130,64 @@ public class TransportLifecycleService {
                 vehicleRepository,
                 simulationContext,
                 null,
-                nodeServiceObservationPublisher
+                nodeServiceObservationPublisher,
+                null,
+                null,
+                null
         );
     }
 
     /**
-     * 合并修复：Spring 生产环境只使用这一条无歧义构造路径，同时注入生产事件与评价观察器。
+     * 司机接入运输链：测试或兼容调用可只注入 DriverRepository。
      */
-    @Autowired
+    public TransportLifecycleService(
+            ShipmentRepository shipmentRepository,
+            ShipmentItemRepository shipmentItemRepository,
+            AssignmentRepository assignmentRepository,
+            VehicleRepository vehicleRepository,
+            SimulationContext simulationContext,
+            DriverRepository driverRepository
+    ) {
+        this(shipmentRepository, shipmentItemRepository, assignmentRepository, vehicleRepository,
+                simulationContext, null, null, driverRepository, null, null);
+    }
+
+    /**
+     * 司机偏好：生产构造器注入 DriverPreferenceScorer，绑定司机时按偏好选择。
+     */
+    public TransportLifecycleService(
+            ShipmentRepository shipmentRepository,
+            ShipmentItemRepository shipmentItemRepository,
+            AssignmentRepository assignmentRepository,
+            VehicleRepository vehicleRepository,
+            SimulationContext simulationContext,
+            DriverRepository driverRepository,
+            DriverPreferenceScorer driverPreferenceScorer
+    ) {
+        this(shipmentRepository, shipmentItemRepository, assignmentRepository, vehicleRepository,
+                simulationContext, null, null, driverRepository, driverPreferenceScorer, null);
+    }
+
+    /**
+     * 保留 driver 分支的八参数构造方式，供现有纯单元测试使用。
+     */
+    public TransportLifecycleService(
+            ShipmentRepository shipmentRepository,
+            ShipmentItemRepository shipmentItemRepository,
+            AssignmentRepository assignmentRepository,
+            VehicleRepository vehicleRepository,
+            SimulationContext simulationContext,
+            DriverRepository driverRepository,
+            DriverPreferenceScorer driverPreferenceScorer,
+            AssignmentDriverHistoryRepository driverHistoryRepository
+    ) {
+        this(shipmentRepository, shipmentItemRepository, assignmentRepository, vehicleRepository,
+                simulationContext, null, null, driverRepository, driverPreferenceScorer, driverHistoryRepository);
+    }
+
+    /**
+     * 保留 master 的事件与评价观察器构造方式，供现有纯单元测试使用。
+     */
     public TransportLifecycleService(
             ShipmentRepository shipmentRepository,
             ShipmentItemRepository shipmentItemRepository,
@@ -133,6 +197,26 @@ public class TransportLifecycleService {
             ApplicationEventPublisher eventPublisher,
             NodeServiceObservationPublisher nodeServiceObservationPublisher
     ) {
+        this(shipmentRepository, shipmentItemRepository, assignmentRepository, vehicleRepository,
+                simulationContext, eventPublisher, nodeServiceObservationPublisher, null, null, null);
+    }
+
+    /**
+     * Spring 生产环境只使用这一条无歧义构造路径，合并注入 master 生命周期依赖和司机依赖。
+     */
+    @Autowired
+    public TransportLifecycleService(
+            ShipmentRepository shipmentRepository,
+            ShipmentItemRepository shipmentItemRepository,
+            AssignmentRepository assignmentRepository,
+            VehicleRepository vehicleRepository,
+            SimulationContext simulationContext,
+            ApplicationEventPublisher eventPublisher,
+            NodeServiceObservationPublisher nodeServiceObservationPublisher,
+            DriverRepository driverRepository,
+            DriverPreferenceScorer driverPreferenceScorer,
+            AssignmentDriverHistoryRepository driverHistoryRepository
+    ) {
         this.shipmentRepository = shipmentRepository;
         this.shipmentItemRepository = shipmentItemRepository;
         this.assignmentRepository = assignmentRepository;
@@ -140,6 +224,9 @@ public class TransportLifecycleService {
         this.simulationContext = simulationContext;
         this.eventPublisher = eventPublisher;
         this.nodeServiceObservationPublisher = nodeServiceObservationPublisher;
+        this.driverRepository = driverRepository;
+        this.driverPreferenceScorer = driverPreferenceScorer;
+        this.driverHistoryRepository = driverHistoryRepository;
     }
 
     public record LoadingCompletionResult(
@@ -162,6 +249,7 @@ public class TransportLifecycleService {
         }
         LocalDateTime now = resolveTime(simNow);
         Vehicle managedVehicle = resolveVehicle(vehicle, assignment);
+        bindDriverRequired(assignment, managedVehicle, actor);
 
         assignment.setStatus(Assignment.AssignmentStatus.IN_PROGRESS);
         if (assignment.getStartTime() == null) {
@@ -426,6 +514,260 @@ public class TransportLifecycleService {
     }
 
     /**
+     * 司机接入运输链：任务启动前必须绑定司机。
+     * 优先沿用任务预设的司机；否则从车辆 driver_vehicle 关联司机中选空闲（IDLE）者。
+     * 生产环境找不到空闲司机时拒绝任务启动，依赖外层事务回滚任务和车辆状态。
+     */
+    private void bindDriverRequired(Assignment assignment, Vehicle vehicle, String actor) {
+        if (driverRepository == null) {
+            // 仅保留给不加载司机模块的旧纯单元测试构造路径；Spring生产构造器始终注入仓库。
+            return;
+        }
+        if (assignment == null || vehicle == null || vehicle.getId() == null) {
+            throw new IllegalStateException("任务启动必须具有有效车辆和司机池");
+        }
+        Driver driver;
+        if (assignment.getAssignedDriver() != null && assignment.getAssignedDriver().getId() != null) {
+            driver = driverRepository.findById(assignment.getAssignedDriver().getId()).orElse(null);
+            boolean alreadyOwnsAssignment = driver != null && driver.getAssignments() != null
+                    && driver.getAssignments().stream().anyMatch(existing -> existing != null
+                    && Objects.equals(existing.getId(), assignment.getId()));
+            boolean belongsToVehicle = driver != null && vehicle.getDrivers() != null
+                    && vehicle.getDrivers().stream().anyMatch(candidate -> candidate != null
+                    && Objects.equals(candidate.getId(), driver.getId()));
+            boolean available = driver != null && (driver.getCurrentStatus() == Driver.DriverStatus.IDLE
+                    || (driver.getCurrentStatus() == Driver.DriverStatus.ASSIGNED && alreadyOwnsAssignment));
+            if (!belongsToVehicle || !available) {
+                throw new IllegalStateException("任务 " + assignment.getId() + " 的预设司机不可用");
+            }
+        } else {
+            driver = selectIdleDriver(assignment, vehicle, null);
+            if (driver == null) {
+                throw new IllegalStateException("车辆 " + vehicle.getId() + " 没有空闲司机，任务禁止启动");
+            }
+        }
+        Driver.DriverStatus beforeStatus = driver.getCurrentStatus();
+        driver.setCurrentStatus(Driver.DriverStatus.ASSIGNED);
+        driver.setUpdatedBy(actor);
+        driver.setUpdatedTime(LocalDateTime.now());
+        driver.addAssignment(assignment);
+        driverRepository.save(driver);
+        recordDriverHistory(assignment, driver, AssignmentDriverHistory.Action.BIND,
+                "任务启动绑定", actor, beforeStatus, Driver.DriverStatus.ASSIGNED);
+    }
+
+    /**
+     * 从任务车辆的空闲司机中选最优（多名时按对首个运单项的偏好得分），
+     * exclude 用于换司机时排除原司机；无候选返回 null。
+     */
+    private Driver selectIdleDriver(Assignment assignment, Vehicle vehicle, Driver exclude) {
+        return selectIdleDriver(assignment, vehicle, exclude, Set.of());
+    }
+
+    private Driver selectIdleDriver(
+            Assignment assignment,
+            Vehicle vehicle,
+            Driver exclude,
+            Set<Driver> reserved
+    ) {
+        if (vehicle == null || vehicle.getDrivers() == null || vehicle.getDrivers().isEmpty()) {
+            return null;
+        }
+        List<Driver> idleDrivers = vehicle.getDrivers().stream()
+                .filter(d -> d != null && d.getCurrentStatus() == Driver.DriverStatus.IDLE)
+                .filter(d -> exclude == null || d.getId() == null || !d.getId().equals(exclude.getId()))
+                .filter(d -> !reserved.contains(d))
+                .toList();
+        if (idleDrivers.isEmpty()) {
+            return null;
+        }
+        // 司机偏好只决定候选顺序；同分时按稳定业务键 driverId 升序。
+        ShipmentItem scoringItem = getAssignmentItems(assignment).stream().findFirst().orElse(null);
+        return idleDrivers.stream()
+                .sorted(Comparator
+                        .comparingDouble((Driver candidate) -> driverPreferenceScorer == null
+                                ? 0.0 : driverPreferenceScorer.scoreFor(candidate, scoringItem))
+                        .reversed()
+                        .thenComparing(Driver::getId, Comparator.nullsLast(Long::compareTo)))
+                .findFirst()
+                .orElse(idleDrivers.get(0));
+    }
+
+    /**
+     * 原子修改司机状态。任务中司机离开 ASSIGNED 前必须为其全部进行中任务找到替补；
+     * 任一任务没有替补时抛出异常并回滚整次状态修改。
+     */
+    @Transactional
+    public Driver updateDriverStatusRequired(Long driverId, Driver.DriverStatus status, String reason) {
+        if (driverRepository == null || driverId == null || status == null) {
+            throw new IllegalArgumentException("司机和目标状态不能为空");
+        }
+        Driver driver = driverRepository.findById(driverId)
+                .orElseThrow(() -> new IllegalArgumentException("司机不存在，ID: " + driverId));
+        if (driver.getCurrentStatus() != Driver.DriverStatus.ASSIGNED
+                || status == Driver.DriverStatus.ASSIGNED) {
+            driver.setCurrentStatus(status);
+            driver.setUpdatedBy(reason);
+            driver.setUpdatedTime(LocalDateTime.now());
+            return driverRepository.save(driver);
+        }
+
+        List<Assignment> openAssignments = driver.getAssignments().stream()
+                .filter(a -> a != null && !a.isCompleted() && !a.isCancelled()
+                        && a.getStatus() != Assignment.AssignmentStatus.FAILED)
+                .toList();
+        List<DriverReplacement> replacements = requireReplacements(driver, openAssignments);
+        driver.setCurrentStatus(status);
+        driver.setUpdatedBy(reason);
+        driver.setUpdatedTime(LocalDateTime.now());
+        driverRepository.save(driver);
+        for (DriverReplacement replacement : replacements) {
+            replaceDriverForAssignment(
+                    driver, replacement.assignment(), replacement.replacement(), reason);
+        }
+        return driver;
+    }
+
+    /**
+     * 司机接入运输链：任务进入终态（完成/取消/失败）后释放司机。
+     * 保留 assignedDriver 历史归属；仅当司机没有其他进行中任务时恢复空闲。
+     */
+    private void releaseDriverIfIdle(Assignment assignment, String actor) {
+        if (driverRepository == null || assignment == null
+                || assignment.getAssignedDriver() == null
+                || assignment.getAssignedDriver().getId() == null) {
+            return;
+        }
+        Driver driver = driverRepository.findById(assignment.getAssignedDriver().getId()).orElse(null);
+        // 仅任务中司机可释放；防止覆盖行为状态表新状态（REJECTING/MAINTENANCE）
+        if (driver == null
+                || driver.getCurrentStatus() != Driver.DriverStatus.ASSIGNED
+                || driver.getCurrentAssignment() != null) {
+            return;
+        }
+        driver.setCurrentStatus(Driver.DriverStatus.IDLE);
+        driver.setUpdatedBy(actor);
+        driver.setUpdatedTime(LocalDateTime.now());
+        driverRepository.save(driver);
+        recordDriverHistory(assignment, driver, AssignmentDriverHistory.Action.RELEASE,
+                actor, actor, Driver.DriverStatus.ASSIGNED, Driver.DriverStatus.IDLE);
+    }
+
+    /**
+     * 手动 PATCH 触发换司机：司机状态离开 ASSIGNED 且仍持有未完成任务时，
+     * 从任务车辆的空闲司机池选替补接手；无替补时抛出异常，禁止产生无司机任务。
+     * 返回是否有任务完成了换绑。
+     */
+    @Transactional
+    public boolean reassignDriverIfNeeded(Long driverId, String reason) {
+        if (driverRepository == null || driverId == null) {
+            return false;
+        }
+        Driver oldDriver = driverRepository.findById(driverId).orElse(null);
+        if (oldDriver == null || oldDriver.getCurrentStatus() == Driver.DriverStatus.ASSIGNED) {
+            return false;
+        }
+        List<Assignment> openAssignments = oldDriver.getAssignments().stream()
+                .filter(a -> a != null && !a.isCompleted() && !a.isCancelled()
+                        && a.getStatus() != Assignment.AssignmentStatus.FAILED)
+                .toList();
+        if (openAssignments.isEmpty()) {
+            return false;
+        }
+        List<DriverReplacement> replacements = requireReplacements(oldDriver, openAssignments);
+        boolean replaced = false;
+        for (DriverReplacement replacement : replacements) {
+            if (replaceDriverForAssignment(
+                    oldDriver, replacement.assignment(), replacement.replacement(), reason)) {
+                replaced = true;
+            }
+        }
+        return replaced;
+    }
+
+    /**
+     * 单个任务的换司机：解绑老司机（保留其新状态，由状态表或人工恢复），
+     * 记录 RELEASE 历史行；有替补则绑定并置 ASSIGNED，记录 BIND 历史行。
+     */
+    private boolean replaceDriverForAssignment(
+            Driver oldDriver,
+            Assignment assignment,
+            Driver replacement,
+            String reason
+    ) {
+        Driver.DriverStatus oldDriverNewStatus = oldDriver.getCurrentStatus();
+
+        if (replacement == null) {
+            throw new IllegalStateException("任务 " + assignment.getId() + " 没有可用替补司机");
+        }
+
+        oldDriver.removeAssignment(assignment);
+        driverRepository.save(oldDriver);
+        recordDriverHistory(assignment, oldDriver, AssignmentDriverHistory.Action.RELEASE,
+                reason, reason, Driver.DriverStatus.ASSIGNED, oldDriverNewStatus);
+
+        Driver.DriverStatus beforeStatus = replacement.getCurrentStatus();
+        replacement.setCurrentStatus(Driver.DriverStatus.ASSIGNED);
+        replacement.setUpdatedBy(reason);
+        replacement.setUpdatedTime(LocalDateTime.now());
+        replacement.addAssignment(assignment);
+        driverRepository.save(replacement);
+        recordDriverHistory(assignment, replacement, AssignmentDriverHistory.Action.BIND,
+                reason, reason, beforeStatus, Driver.DriverStatus.ASSIGNED);
+        assignmentRepository.save(assignment);
+
+        log.info("任务 {} 换司机：司机 {}（{}）→ 司机 {}（{}），原因: {}",
+                assignment.getId(), oldDriver.getId(), oldDriverNewStatus,
+                replacement.getId(), beforeStatus, reason);
+        return true;
+    }
+
+    /** 在修改任何实体前，为全部任务预留互不冲突的替补司机。 */
+    private List<DriverReplacement> requireReplacements(
+            Driver oldDriver,
+            List<Assignment> assignments
+    ) {
+        Set<Driver> reserved = new HashSet<>();
+        List<DriverReplacement> result = new ArrayList<>();
+        for (Assignment assignment : assignments) {
+            Driver replacement = selectIdleDriver(
+                    assignment, assignment.getAssignedVehicle(), oldDriver, reserved);
+            if (replacement == null) {
+                throw new IllegalStateException("任务 " + assignment.getId() + " 没有可用替补司机");
+            }
+            reserved.add(replacement);
+            result.add(new DriverReplacement(assignment, replacement));
+        }
+        return result;
+    }
+
+    private record DriverReplacement(Assignment assignment, Driver replacement) {}
+
+    /**
+     * 记录司机-任务交接历史行（append-only），历史仓库未注入时静默跳过。
+     */
+    private void recordDriverHistory(Assignment assignment, Driver driver,
+                                     AssignmentDriverHistory.Action action,
+                                     String reason, String actor,
+                                     Driver.DriverStatus fromStatus, Driver.DriverStatus toStatus) {
+        if (driverHistoryRepository == null || assignment == null || assignment.getId() == null
+                || driver == null) {
+            return;
+        }
+        AssignmentDriverHistory history = new AssignmentDriverHistory();
+        history.setAssignmentId(assignment.getId());
+        history.setDriverId(driver.getId());
+        history.setDriverName(driver.getDriverName());
+        history.setAction(action);
+        history.setReason(reason);
+        history.setFromStatus(fromStatus != null ? fromStatus.name() : null);
+        history.setToStatus(toStatus != null ? toStatus.name() : null);
+        history.setSimTime(simulationContext != null ? simulationContext.getCurrentSimTime() : LocalDateTime.now());
+        history.setActor(actor);
+        driverHistoryRepository.save(history);
+    }
+
+    /**
      * Phase 4：消费唯一的 LegCompleted 事件，把车辆从行驶态转入目标节点动作。
      *
      * <p>这里只处理“到达后做什么”，不再计算路段秒数。最后一段到达也仅进入
@@ -540,6 +882,8 @@ public class TransportLifecycleService {
         assignment.setUpdatedTime(LocalDateTime.now());
         assignmentRepository.save(assignment);
 
+        releaseDriverIfIdle(assignment, actor);
+
         Vehicle managedVehicle = resolveVehicle(vehicle, assignment);
         if (managedVehicle != null) {
             managedVehicle.transitionToStatus(Vehicle.VehicleStatus.IDLE, now, Duration.ZERO);
@@ -633,6 +977,8 @@ public class TransportLifecycleService {
             assignment.setUpdatedBy(reason);
             assignment.setUpdatedTime(LocalDateTime.now());
             assignmentRepository.save(assignment);
+
+            releaseDriverIfIdle(assignment, "Route planning rollback");
         }
 
         refreshShipments(touchedShipments);
@@ -664,6 +1010,8 @@ public class TransportLifecycleService {
         assignment.setUpdatedBy(reason != null ? reason : actor);
         assignment.setUpdatedTime(LocalDateTime.now());
         assignmentRepository.save(assignment);
+
+        releaseDriverIfIdle(assignment, actor);
 
         Vehicle vehicle = resolveVehicle(null, assignment);
         if (vehicle != null) {

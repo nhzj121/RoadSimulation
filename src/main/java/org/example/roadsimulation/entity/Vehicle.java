@@ -127,8 +127,9 @@ public class Vehicle {
     @Column(name = "loop-count")
     private Integer loopCount = 0;
 
-    // 与司机多对多
+    // 与司机多对多（司机侧为关系拥有方；忽略序列化以打破 司机-车辆 循环引用）
     @ManyToMany(mappedBy = "vehicles")
+    @JsonIgnore
     private Set<Driver> drivers = new HashSet<>();
 
     // 与任务一对多

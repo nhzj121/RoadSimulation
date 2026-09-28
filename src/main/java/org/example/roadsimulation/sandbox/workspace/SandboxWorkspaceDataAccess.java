@@ -1,6 +1,8 @@
 package org.example.roadsimulation.sandbox.workspace;
 
 import org.example.roadsimulation.sandbox.baseline.SandboxBaselinePackageV1.Data;
+import org.example.roadsimulation.sandbox.baseline.SandboxBaselinePackageV1.Driver;
+import org.example.roadsimulation.sandbox.baseline.SandboxBaselinePackageV1.DriverVehicleBinding;
 import org.example.roadsimulation.sandbox.baseline.SandboxBaselinePackageV1.Goods;
 import org.example.roadsimulation.sandbox.baseline.SandboxBaselinePackageV1.InitialInventory;
 import org.example.roadsimulation.sandbox.baseline.SandboxBaselinePackageV1.Poi;
@@ -44,6 +46,8 @@ final class SandboxWorkspaceDataAccess {
         insertPois(connection, data.pois());
         insertGoods(connection, data.goods());
         insertVehicles(connection, data.vehicles(), fixedTimestamp, fixedVehiclePois);
+        insertDrivers(connection, data.drivers(), fixedTimestamp);
+        insertDriverVehicleBindings(connection, data.driverVehicleBindings());
         insertChains(connection, data.processingChains());
         insertStages(connection, data.processingChains());
         insertInputs(connection, data.processingChains(), fixedTimestamp);
@@ -56,16 +60,19 @@ final class SandboxWorkspaceDataAccess {
         List<Poi> pois = readPois(connection);
         List<Goods> goods = readGoods(connection);
         List<Vehicle> vehicles = readVehicles(connection);
+        List<Driver> drivers = readDrivers(connection);
+        List<DriverVehicleBinding> driverVehicleBindings = readDriverVehicleBindings(connection);
         List<ProcessingChain> chains = readChains(connection);
         List<InitialInventory> inventories = readInventories(connection);
-        return new Data(pois, goods, vehicles, chains, inventories);
+        return new Data(pois, goods, vehicles, chains, inventories, drivers, driverVehicleBindings);
     }
 
     Map<String, Long> counts(Connection connection) throws SQLException {
         Map<String, Long> counts = new LinkedHashMap<>();
         for (String table : List.of(
                 "poi", "goods", "vehicle", "processing_chain", "processing_stage",
-                "processing_stage_input", "processing_stage_edge", "enrollment")) {
+                "processing_stage_input", "processing_stage_edge", "enrollment",
+                "driver", "driver_vehicle")) {
             try (Statement statement = connection.createStatement();
                  ResultSet rows = statement.executeQuery("SELECT COUNT(*) FROM `" + table + "`")) {
                 rows.next();
@@ -207,6 +214,45 @@ final class SandboxWorkspaceDataAccess {
         }
     }
 
+    private void insertDrivers(Connection connection, List<Driver> values, Timestamp fixedTimestamp)
+            throws SQLException {
+        String sql = """
+                INSERT INTO driver(
+                    id,created_time,current_status,driver_name,driver_phone,updated_by,updated_time,
+                    pref_cargo,pref_max_distance_km,pref_max_weight_tons
+                ) VALUES (?,?,?,?,?,?,?,?,?,?)
+                """;
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            for (Driver value : values) {
+                statement.setLong(1, value.id());
+                statement.setTimestamp(2, fixedTimestamp);
+                statement.setString(3, "IDLE");
+                statement.setString(4, value.driverName());
+                statement.setString(5, value.driverPhone());
+                statement.setString(6, "SANDBOX_BASELINE_RESTORE");
+                statement.setTimestamp(7, fixedTimestamp);
+                statement.setString(8, value.preferredCargoType());
+                statement.setBigDecimal(9, value.preferredMaxDistanceKm());
+                statement.setBigDecimal(10, value.preferredMaxWeightTons());
+                statement.addBatch();
+            }
+            statement.executeBatch();
+        }
+    }
+
+    private void insertDriverVehicleBindings(Connection connection, List<DriverVehicleBinding> values)
+            throws SQLException {
+        String sql = "INSERT INTO driver_vehicle(driver_id,vehicle_id) VALUES (?,?)";
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            for (DriverVehicleBinding value : values) {
+                statement.setLong(1, value.driverId());
+                statement.setLong(2, value.vehicleId());
+                statement.addBatch();
+            }
+            statement.executeBatch();
+        }
+    }
+
     private void insertStages(Connection connection, List<ProcessingChain> chains) throws SQLException {
         String sql = """
                 INSERT INTO processing_stage(
@@ -313,7 +359,7 @@ final class SandboxWorkspaceDataAccess {
     private void setDeterministicAutoIncrements(Connection connection) throws SQLException {
         for (String table : List.of(
                 "poi", "goods", "vehicle", "processing_chain", "processing_stage",
-                "processing_stage_input", "processing_stage_edge", "enrollment")) {
+                "processing_stage_input", "processing_stage_edge", "enrollment", "driver")) {
             long next;
             try (Statement statement = connection.createStatement();
                  ResultSet rows = statement.executeQuery("SELECT COALESCE(MAX(id),0)+1 FROM `" + table + "`")) {
@@ -372,6 +418,34 @@ final class SandboxWorkspaceDataAccess {
                         rows.getString(5), rows.getString(6), rows.getString(7), nullableBoolean(rows, 8),
                         rows.getString(9), rows.getString(10), rows.getBigDecimal(11), rows.getBigDecimal(12),
                         rows.getBigDecimal(13), rows.getString(14)));
+            }
+        }
+        return result;
+    }
+
+    private List<Driver> readDrivers(Connection connection) throws SQLException {
+        List<Driver> result = new ArrayList<>();
+        String sql = """
+                SELECT id,driver_name,driver_phone,pref_cargo,pref_max_distance_km,pref_max_weight_tons
+                FROM driver ORDER BY id
+                """;
+        try (Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery(sql)) {
+            while (rows.next()) {
+                result.add(new Driver(
+                        rows.getLong(1), rows.getString(2), rows.getString(3), rows.getString(4),
+                        rows.getBigDecimal(5), rows.getBigDecimal(6)));
+            }
+        }
+        return result;
+    }
+
+    private List<DriverVehicleBinding> readDriverVehicleBindings(Connection connection) throws SQLException {
+        List<DriverVehicleBinding> result = new ArrayList<>();
+        try (Statement statement = connection.createStatement();
+             ResultSet rows = statement.executeQuery(
+                     "SELECT driver_id,vehicle_id FROM driver_vehicle ORDER BY vehicle_id,driver_id")) {
+            while (rows.next()) {
+                result.add(new DriverVehicleBinding(rows.getLong(1), rows.getLong(2)));
             }
         }
         return result;
