@@ -20,6 +20,7 @@ public class OriginalVrpDispatchPolicy {
     private double maxAnchorDistanceKm = DEFAULT_MAX_ANCHOR_DISTANCE_KM;
     private double maxMarginalCost = DEFAULT_MAX_MARGINAL_COST;
     private double minAddedTonsPerExtraKm = DEFAULT_MIN_ADDED_TONS_PER_EXTRA_KM;
+    private boolean sandboxFrozen;
 
     public OriginalVrpDispatchPolicy() {
     }
@@ -38,22 +39,40 @@ public class OriginalVrpDispatchPolicy {
 
     @Value("${app.simulation.original-vrp.min-load-factor:" + DEFAULT_MIN_LOAD_FACTOR + "}")
     public void setMinLoadFactor(double minLoadFactor) {
+        requireMutableOrEqual(this.minLoadFactor, minLoadFactor);
         this.minLoadFactor = minLoadFactor;
     }
 
     @Value("${app.simulation.original-vrp.max-anchor-distance-km:" + DEFAULT_MAX_ANCHOR_DISTANCE_KM + "}")
     public void setMaxAnchorDistanceKm(double maxAnchorDistanceKm) {
+        requireMutableOrEqual(this.maxAnchorDistanceKm, maxAnchorDistanceKm);
         this.maxAnchorDistanceKm = maxAnchorDistanceKm;
     }
 
     @Value("${app.simulation.original-vrp.max-marginal-cost:" + DEFAULT_MAX_MARGINAL_COST + "}")
     public void setMaxMarginalCost(double maxMarginalCost) {
+        requireMutableOrEqual(this.maxMarginalCost, maxMarginalCost);
         this.maxMarginalCost = maxMarginalCost;
     }
 
     @Value("${app.simulation.original-vrp.min-added-tons-per-extra-km:" + DEFAULT_MIN_ADDED_TONS_PER_EXTRA_KM + "}")
     public void setMinAddedTonsPerExtraKm(double minAddedTonsPerExtraKm) {
+        requireMutableOrEqual(this.minAddedTonsPerExtraKm, minAddedTonsPerExtraKm);
         this.minAddedTonsPerExtraKm = minAddedTonsPerExtraKm;
+    }
+
+    public void freezeForSandbox() {
+        sandboxFrozen = true;
+    }
+
+    public boolean isSandboxFrozen() {
+        return sandboxFrozen;
+    }
+
+    private void requireMutableOrEqual(double current, double requested) {
+        if (sandboxFrozen && Double.compare(current, requested) != 0) {
+            throw new IllegalStateException("sandbox ORIGINAL algorithm profile is frozen");
+        }
     }
 
     public double calculateLoadFactor(Vehicle vehicle, Collection<ShipmentItem> items) {

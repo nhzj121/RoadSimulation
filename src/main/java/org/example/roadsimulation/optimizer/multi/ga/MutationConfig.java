@@ -1,5 +1,7 @@
 package org.example.roadsimulation.optimizer.multi.ga;
 
+import java.time.LocalDateTime;
+
 /**
  * 多运单 GA 变异参数。
  */
@@ -53,6 +55,9 @@ public class MutationConfig {
      * 其余概率从 Top-K 中随机选择。
      */
     private double bestInsertionProbability = 0.85;
+
+    /** Runtime decision time; omitted from frozen profile parameters. */
+    private LocalDateTime evaluationTime;
 
     public double getSingleReinsertProbability() {
         return singleReinsertProbability;
@@ -124,5 +129,13 @@ public class MutationConfig {
 
     public void setBestInsertionProbability(double bestInsertionProbability) {
         this.bestInsertionProbability = bestInsertionProbability;
+    }
+
+    public LocalDateTime getEvaluationTime() {
+        return evaluationTime;
+    }
+
+    public void setEvaluationTime(LocalDateTime evaluationTime) {
+        this.evaluationTime = evaluationTime;
     }
 }

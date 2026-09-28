@@ -58,6 +58,9 @@ public class SimulationContext {
     /** 一次普通仿真从首次 start/step 到 reset 的唯一标识。 */
     private volatile String simulationRunId;
 
+    /** Published sandbox runs reuse this deterministic id across reset/reprepare. */
+    private volatile String deterministicSimulationRunId;
+
     /**
      * 获取当前仿真时间
      * 
@@ -111,9 +114,34 @@ public class SimulationContext {
     /** 暂停后恢复沿用原标识；只有 reset 后的下一次启动才生成新标识。 */
     public synchronized String beginRunIfAbsent() {
         if (simulationRunId == null) {
-            simulationRunId = UUID.randomUUID().toString();
+            simulationRunId = deterministicSimulationRunId != null
+                    ? deterministicSimulationRunId
+                    : UUID.randomUUID().toString();
         }
         return simulationRunId;
+    }
+
+    public synchronized void configureDeterministicRun(
+            String runId,
+            LocalDateTime startLocalDateTime,
+            long tickDurationSeconds
+    ) {
+        if (runId == null || !runId.matches("sandbox-[0-9a-f]{16}")) {
+            throw new IllegalArgumentException("invalid deterministic sandbox run id");
+        }
+        if (!SIM_START.equals(startLocalDateTime)
+                || tickDurationSeconds != TICK_DURATION.getSeconds()) {
+            throw new IllegalArgumentException("sandbox clock does not match the simulation clock contract");
+        }
+        if (simulationRunId != null && !simulationRunId.equals(runId)) {
+            throw new IllegalStateException("a different simulation run is already active");
+        }
+        deterministicSimulationRunId = runId;
+        simulationRunId = runId;
+    }
+
+    public boolean isDeterministicSandboxRun() {
+        return deterministicSimulationRunId != null;
     }
 
     public Optional<String> getSimulationRunId() {

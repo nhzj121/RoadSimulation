@@ -1342,7 +1342,9 @@ public class DataInitializer implements CommandLineRunner {
                 .filter(vehicle -> Vehicle.VehicleStatus.IDLE.equals(vehicle.getCurrentStatus()))
                 .filter(vehicle -> safeDouble(vehicle.getMaxLoadCapacity()) >= itemWeight)
                 .filter(vehicle -> safeDouble(vehicle.getCargoVolume()) >= itemVolume)
-                .sorted(Comparator.comparingDouble(vehicle -> estimateVehicleToPoiDistanceKm(vehicle, origin)))
+                .sorted(Comparator
+                        .comparingDouble((Vehicle vehicle) -> estimateVehicleToPoiDistanceKm(vehicle, origin))
+                        .thenComparing(Vehicle::getId, Comparator.nullsLast(Long::compareTo)))
                 .findFirst();
     }
 
@@ -1711,25 +1713,24 @@ public class DataInitializer implements CommandLineRunner {
      */
     private double calculateVehicleDistance(Vehicle vehicle, POI poi) {
         try {
-            // 如果车辆有当前位置坐标
-            if (vehicle.getCurrentLongitude() != null && vehicle.getCurrentLatitude() != null &&
-                    poi.getLongitude() != null && poi.getLatitude() != null) {
-
-                return calculateHaversineDistance(
-                        vehicle.getCurrentLatitude(), vehicle.getCurrentLongitude(),
-                        poi.getLatitude(), poi.getLongitude()
-                );
-            }
-
-            // 如果车辆有关联的POI
+            // currentPOI 是沙箱车辆位置的权威事实；坐标列仅作为普通模式兼容回退。
             if (vehicle.getCurrentPOI() != null) {
                 POI vehiclePOI = vehicle.getCurrentPOI();
-                if (vehiclePOI.getLongitude() != null && vehiclePOI.getLatitude() != null) {
+                if (vehiclePOI.getLongitude() != null && vehiclePOI.getLatitude() != null
+                        && poi.getLongitude() != null && poi.getLatitude() != null) {
                     return calculateHaversineDistance(
                             vehiclePOI.getLatitude(), vehiclePOI.getLongitude(),
                             poi.getLatitude(), poi.getLongitude()
                     );
                 }
+            }
+
+            if (vehicle.getCurrentLongitude() != null && vehicle.getCurrentLatitude() != null
+                    && poi.getLongitude() != null && poi.getLatitude() != null) {
+                return calculateHaversineDistance(
+                        vehicle.getCurrentLatitude(), vehicle.getCurrentLongitude(),
+                        poi.getLatitude(), poi.getLongitude()
+                );
             }
 
             // 无法计算距离，返回默认值
@@ -2471,7 +2472,10 @@ public class DataInitializer implements CommandLineRunner {
         // 1. 捞取所有待拼车的尾货，并按重量降序排序 (FFD 算法的核心第一步)
         List<ShipmentItem> pendingItems = shipmentItemRepository.findAll().stream()
                 .filter(item -> item.getStatus() == ShipmentItem.ShipmentItemStatus.NOT_ASSIGNED)
-                .sorted((a, b) -> Double.compare(b.getWeight(), a.getWeight())) // 挑大的先运
+                .sorted(Comparator
+                        .comparingDouble((ShipmentItem item) -> safeDouble(item.getWeight()))
+                        .reversed()
+                        .thenComparing(ShipmentItem::getId, Comparator.nullsLast(Long::compareTo)))
                 .collect(Collectors.toList());
 
         if (pendingItems.isEmpty()) {
@@ -2480,7 +2484,9 @@ public class DataInitializer implements CommandLineRunner {
         }
 
         // 2. 获取专属的 VRP 测试车队 (空闲状态)
-        List<Vehicle> vrpVehicles = vehicleRepository.findByCurrentStatus(Vehicle.VehicleStatus.IDLE);
+        List<Vehicle> vrpVehicles = new ArrayList<>(
+                vehicleRepository.findByCurrentStatus(Vehicle.VehicleStatus.IDLE));
+        vrpVehicles.sort(Comparator.comparing(Vehicle::getId, Comparator.nullsLast(Long::compareTo)));
         if (vrpVehicles.isEmpty()) {
             System.out.println("[VRP 大脑] 没有空闲的车辆。");
             return;

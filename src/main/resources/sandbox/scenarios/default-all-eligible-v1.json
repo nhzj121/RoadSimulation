@@ -1,0 +1,48 @@
+{
+  "artifactVersion": "sandbox-scenario-definition/v1",
+  "scenarioKey": "all-eligible",
+  "displayName": "全部符合资格的正式基线数据",
+  "description": "第二阶段默认场景：保留全部符合资格的车辆、POI、货物和完整加工链，不添加库存或固定车辆位置。",
+  "baseline": {
+    "baselineId": "roadsimulation-baseline-20260923-01",
+    "restorationPayloadSha256": "c3d21d0a59db8ddaa936d2e9bc0c6a899c73fc689fd86a1b09fdf0b44945f29f",
+    "simulationFactsSha256": "34698d297f735af4bf96742036d0c3e0d18a9e5301d325c2e9dddaf823459693",
+    "effectiveBaseDataSha256": "888f6c815446841e24155bc6eb95ce61bfe1906b571258d2474a5d67ce5e41a1"
+  },
+  "selection": {
+    "vehicles": {
+      "mode": "ALL_ELIGIBLE",
+      "includeIds": [],
+      "excludeIds": [],
+      "minimumLoadCapacityTonnes": null,
+      "maximumLoadCapacityTonnes": null,
+      "minimumCargoVolumeCubicMeters": null,
+      "maximumCargoVolumeCubicMeters": null,
+      "vehicleTypes": [],
+      "modelTypes": []
+    },
+    "pois": {
+      "mode": "ALL_ELIGIBLE",
+      "includeIds": [],
+      "excludeIds": [],
+      "poiTypes": []
+    },
+    "goods": {
+      "mode": "ALL_ELIGIBLE",
+      "includeIds": [],
+      "excludeIds": [],
+      "categories": []
+    },
+    "processingChains": {
+      "mode": "ALL_ELIGIBLE",
+      "includeIds": [],
+      "excludeIds": []
+    }
+  },
+  "overrides": {
+    "stageOutputRatios": [],
+    "processingInputShares": [],
+    "initialInventories": [],
+    "vehicleInitialPois": []
+  }
+}

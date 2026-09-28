@@ -48,9 +48,7 @@ public class MultiOrderMutationOperator {
             config = new MutationConfig();
         }
 
-        if (random == null) {
-            random = new Random();
-        }
+        Objects.requireNonNull(random, "random must not be null");
 
         double r = random.nextDouble();
 
@@ -136,7 +134,8 @@ public class MultiOrderMutationOperator {
             ShipmentItem ib = working.itemMap.get(b);
             double wa = ia != null && ia.getWeight() != null ? ia.getWeight() : 0.0;
             double wb = ib != null && ib.getWeight() != null ? ib.getWeight() : 0.0;
-            return Double.compare(wb, wa);
+            int weightComparison = Double.compare(wb, wa);
+            return weightComparison != 0 ? weightComparison : Long.compare(a, b);
         });
 
         reinsertItems(working, removed, config, random);
@@ -240,7 +239,7 @@ public class MultiOrderMutationOperator {
                 continue;
             }
 
-            allCandidates.sort(Comparator.comparingDouble(InsertionCandidate::getScore));
+            allCandidates.sort(insertionCandidateComparator());
 
             InsertionCandidate selected = chooseCandidate(allCandidates, config, random);
 
@@ -268,6 +267,14 @@ public class MultiOrderMutationOperator {
 
         int bound = Math.max(1, Math.min(config.getTopKInsertionChoice(), candidates.size()));
         return candidates.get(random.nextInt(bound));
+    }
+
+    private Comparator<InsertionCandidate> insertionCandidateComparator() {
+        return Comparator.comparingDouble(InsertionCandidate::getScore)
+                .thenComparing(candidate -> candidate.getVehicle().getId(),
+                        Comparator.nullsLast(Long::compareTo))
+                .thenComparingInt(InsertionCandidate::getLoadInsertIndex)
+                .thenComparingInt(InsertionCandidate::getUnloadInsertIndex);
     }
 
     private static Set<Long> extractServedItemIds(List<AssignmentNode> nodes) {
@@ -306,7 +313,10 @@ public class MultiOrderMutationOperator {
             WorkingSolution working = new WorkingSolution();
 
             if (vehicles != null) {
-                for (Vehicle vehicle : vehicles) {
+                List<Vehicle> orderedVehicles = new ArrayList<>(vehicles);
+                orderedVehicles.sort(Comparator.comparing(Vehicle::getId,
+                        Comparator.nullsLast(Long::compareTo)));
+                for (Vehicle vehicle : orderedVehicles) {
                     if (vehicle != null && vehicle.getId() != null) {
                         working.vehicleMap.put(vehicle.getId(), vehicle);
                         working.vehicleNodes.put(vehicle.getId(), new ArrayList<>());
@@ -315,7 +325,10 @@ public class MultiOrderMutationOperator {
             }
 
             if (allItems != null) {
-                for (ShipmentItem item : allItems) {
+                List<ShipmentItem> orderedItems = new ArrayList<>(allItems);
+                orderedItems.sort(Comparator.comparing(ShipmentItem::getId,
+                        Comparator.nullsLast(Long::compareTo)));
+                for (ShipmentItem item : orderedItems) {
                     if (item != null && item.getId() != null) {
                         working.itemMap.put(item.getId(), item);
                     }
@@ -323,11 +336,15 @@ public class MultiOrderMutationOperator {
             }
 
             if (solution.getUnassignedShipmentItemIds() != null) {
-                working.unassignedItemIds.addAll(solution.getUnassignedShipmentItemIds());
+                solution.getUnassignedShipmentItemIds().stream().sorted()
+                        .forEach(working.unassignedItemIds::add);
             }
 
             if (solution.getVehicleRoutes() != null) {
-                for (VehicleRouteGene route : solution.getVehicleRoutes()) {
+                List<VehicleRouteGene> orderedRoutes = new ArrayList<>(solution.getVehicleRoutes());
+                orderedRoutes.sort(Comparator.comparing(VehicleRouteGene::getVehicleId,
+                        Comparator.nullsLast(Long::compareTo)));
+                for (VehicleRouteGene route : orderedRoutes) {
                     if (route == null || route.getVehicleId() == null) {
                         continue;
                     }

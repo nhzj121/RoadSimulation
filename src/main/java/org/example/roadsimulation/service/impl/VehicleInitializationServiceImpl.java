@@ -3,6 +3,8 @@ package org.example.roadsimulation.service.impl;
 import org.example.roadsimulation.entity.*;
 import org.example.roadsimulation.repository.VehicleRepository;
 import org.example.roadsimulation.repository.POIRepository;
+import org.example.roadsimulation.sandbox.run.SandboxRunRuntimeContext;
+import org.example.roadsimulation.sandbox.run.SandboxVehicleInitialState;
 import org.example.roadsimulation.service.VehicleInitializationService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,6 +27,7 @@ public class VehicleInitializationServiceImpl implements VehicleInitializationSe
 
     private final VehicleRepository vehicleRepository;
     private final POIRepository poiRepository;
+    private SandboxRunRuntimeContext sandboxRunRuntimeContext;
 
     // 默认POI ID（可以配置化）
     private Long defaultPoiId = null;
@@ -37,9 +40,19 @@ public class VehicleInitializationServiceImpl implements VehicleInitializationSe
         this.poiRepository = poiRepository;
     }
 
+    @Autowired(required = false)
+    void setSandboxRunRuntimeContext(SandboxRunRuntimeContext sandboxRunRuntimeContext) {
+        this.sandboxRunRuntimeContext = sandboxRunRuntimeContext;
+    }
+
     @Override
     public void initializeAllVehicleStatus() {
         logger.info("开始初始化所有车辆状态");
+
+        if (sandboxRunRuntimeContext != null) {
+            applyPublishedSandboxInitialState();
+            return;
+        }
 
         // 1. 获取所有车辆
         List<Vehicle> allVehicles = vehicleRepository.findAll();
@@ -463,6 +476,7 @@ public class VehicleInitializationServiceImpl implements VehicleInitializationSe
         return candidates.stream()
                 .filter(Objects::nonNull)
                 .filter(poi -> poi.getLongitude() != null && poi.getLatitude() != null)
+                .sorted(Comparator.comparing(POI::getId))
                 .collect(Collectors.toList());
     }
 
@@ -506,6 +520,65 @@ public class VehicleInitializationServiceImpl implements VehicleInitializationSe
 
         // 6. 记录初始化时间（可以扩展Vehicle实体添加初始化时间字段）
         logger.debug("车辆 {} 初始化完成", vehicle.getId());
+    }
+
+    private void applyPublishedSandboxInitialState() {
+        Map<Long, SandboxVehicleInitialState> states =
+                sandboxRunRuntimeContext.vehicleInitialStatesByVehicleId();
+        List<Vehicle> vehicles = vehicleRepository.findAll().stream()
+                .filter(Objects::nonNull)
+                .sorted(Comparator.comparing(Vehicle::getId))
+                .toList();
+        if (vehicles.size() != states.size()) {
+            throw new IllegalStateException(
+                    "published sandbox vehicle state count does not match the workspace");
+        }
+        LocalDateTime start = sandboxRunRuntimeContext.specification()
+                .simulationClock().startLocalDateTime();
+        for (Vehicle vehicle : vehicles) {
+            SandboxVehicleInitialState state = states.get(vehicle.getId());
+            if (state == null) {
+                throw new IllegalStateException(
+                        "missing published initial state for vehicle " + vehicle.getId());
+            }
+            POI target = poiRepository.findById(state.poiId())
+                    .orElseThrow(() -> new IllegalStateException(
+                            "published initial POI does not exist: " + state.poiId()));
+            applySandboxNeutralState(vehicle, target, start);
+        }
+        vehicleRepository.saveAll(vehicles);
+        logger.info("已重新应用 {} 辆车辆的发布沙箱初态", vehicles.size());
+    }
+
+    private void applySandboxNeutralState(Vehicle vehicle, POI targetPOI, LocalDateTime start) {
+        vehicle.setCurrentStatus(Vehicle.VehicleStatus.IDLE);
+        vehicle.setPreviousStatus(null);
+        vehicle.setStatusStartTime(start);
+        vehicle.setStatusDuration(Duration.ZERO);
+        vehicle.setCurrentPOI(targetPOI);
+        vehicle.setCurrentLongitude(null);
+        vehicle.setCurrentLatitude(null);
+        vehicle.setCurrentLoad(0.0);
+        vehicle.setCurrentVolumn(0.0);
+        vehicle.setLoopCount(0);
+        vehicle.setEmptyDrivingDistance(0.0);
+        vehicle.setTotalDrivingDistance(0.0);
+        vehicle.setEmptyDrivingTime(0L);
+        vehicle.setTotalDrivingTime(0L);
+        vehicle.setLoadingWaitTime(0L);
+        vehicle.setUnloadingWaitTime(0L);
+        vehicle.setWaitingAssignmentTime(0L);
+        vehicle.setEmptyDistanceMeters(0.0);
+        vehicle.setLoadedDistanceMeters(0.0);
+        vehicle.setTotalDistanceMeters(0.0);
+        vehicle.setEmptyDrivingSeconds(0L);
+        vehicle.setLoadedDrivingSeconds(0L);
+        vehicle.setTotalDrivingSeconds(0L);
+        vehicle.setLoadingWaitSeconds(0L);
+        vehicle.setUnloadingWaitSeconds(0L);
+        vehicle.setWaitingAssignmentSeconds(0L);
+        vehicle.setUpdatedBy("SandboxRunSpecification");
+        vehicle.setUpdatedTime(start);
     }
 
     /**

@@ -49,14 +49,18 @@ public final class InsertionThresholdPolicy {
             return true;
         }
 
-        double waitingHours = estimateWaitingHours(item);
+        double waitingHours = estimateWaitingHours(
+                item,
+                config.getEvaluationTime() == null
+                        ? LocalDateTime.now()
+                        : config.getEvaluationTime());
         double relaxFactor = Math.max(0.0, config.getInsertionWaitingRelaxFactor());
         double effectiveThreshold = baseThreshold * (1.0 + waitingHours * relaxFactor);
 
         return candidate.getScore() <= effectiveThreshold;
     }
 
-    private static double estimateWaitingHours(ShipmentItem item) {
+    private static double estimateWaitingHours(ShipmentItem item, LocalDateTime evaluationTime) {
         if (item == null || item.getShipment() == null
                 || item.getShipment().getCreatedAt() == null) {
             return 0.0;
@@ -67,7 +71,7 @@ public final class InsertionThresholdPolicy {
                     0.0,
                     Duration.between(
                             item.getShipment().getCreatedAt(),
-                            LocalDateTime.now()
+                            evaluationTime
                     ).toMinutes() / 60.0
             );
         } catch (Exception ignored) {

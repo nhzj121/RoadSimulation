@@ -1,5 +1,7 @@
 package org.example.roadsimulation.optimizer.multi.persist;
 
+import org.example.roadsimulation.core.SimulationContext;
+
 import org.example.roadsimulation.entity.Assignment;
 import org.example.roadsimulation.entity.AssignmentNode;
 import org.example.roadsimulation.entity.POI;
@@ -8,6 +10,7 @@ import org.example.roadsimulation.entity.Vehicle;
 import org.example.roadsimulation.optimizer.multi.MultiOrderSolution;
 import org.example.roadsimulation.optimizer.multi.NodeGene;
 import org.example.roadsimulation.optimizer.multi.VehicleRouteGene;
+import org.example.roadsimulation.sandbox.run.SandboxRunRuntimeContext;
 import org.example.roadsimulation.repository.AssignmentRepository;
 import org.example.roadsimulation.repository.ShipmentItemRepository;
 import org.example.roadsimulation.repository.VehicleRepository;
@@ -28,6 +31,8 @@ public class MultiOrderAssignmentMaterializer {
     private final VehicleRepository vehicleRepository;
     private final TransportMetricsService transportMetricsService;
     private final TransportLifecycleService transportLifecycleService;
+    private SandboxRunRuntimeContext sandboxRunRuntimeContext;
+    private SimulationContext simulationContext;
 
     @Autowired
     public MultiOrderAssignmentMaterializer(
@@ -42,6 +47,16 @@ public class MultiOrderAssignmentMaterializer {
         this.vehicleRepository = vehicleRepository;
         this.transportMetricsService = transportMetricsService;
         this.transportLifecycleService = transportLifecycleService;
+    }
+
+    @Autowired(required = false)
+    public void setSandboxRunRuntimeContext(SandboxRunRuntimeContext sandboxRunRuntimeContext) {
+        this.sandboxRunRuntimeContext = sandboxRunRuntimeContext;
+    }
+
+    @Autowired(required = false)
+    public void setSimulationContext(SimulationContext simulationContext) {
+        this.simulationContext = simulationContext;
     }
 
     /**
@@ -93,8 +108,8 @@ public class MultiOrderAssignmentMaterializer {
             Assignment assignment = new Assignment();
             assignment.setAssignedVehicle(vehicle);
             assignment.setStatus(Assignment.AssignmentStatus.ASSIGNED);
-            assignment.setCreatedTime(LocalDateTime.now());
-            assignment.setUpdatedTime(LocalDateTime.now());
+            assignment.setCreatedTime(currentBusinessTime());
+            assignment.setUpdatedTime(currentBusinessTime());
             assignment.setUpdatedBy("MultiOrderGA");
             assignment.setCurrentActionIndex(0);
 
@@ -149,7 +164,7 @@ public class MultiOrderAssignmentMaterializer {
             saved = transportLifecycleService.startAssignmentExecution(
                     saved,
                     vehicle,
-                    LocalDateTime.now(),
+                    currentBusinessTime(),
                     "MultiOrderGA"
             );
 
@@ -168,6 +183,15 @@ public class MultiOrderAssignmentMaterializer {
         }
 
         return createdAssignments;
+    }
+
+    private LocalDateTime currentBusinessTime() {
+        if (sandboxRunRuntimeContext != null) {
+            return simulationContext == null
+                    ? sandboxRunRuntimeContext.specification().simulationClock().startLocalDateTime()
+                    : simulationContext.getCurrentSimTime();
+        }
+        return LocalDateTime.now();
     }
 
     private void rollbackAssignmentAllocation(Assignment assignment, String reason) {
