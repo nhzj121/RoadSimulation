@@ -18,7 +18,8 @@ public final class SandboxBaselineLoader {
 
     private static final Set<String> EXPECTED_COUNT_KEYS = Set.of(
             "poi", "goods", "vehicle", "enrollment", "processing_chain",
-            "processing_stage", "processing_stage_input", "processing_stage_edge"
+            "processing_stage", "processing_stage_input", "processing_stage_edge",
+            "driver", "driver_vehicle"
     );
 
     private final ObjectMapper objectMapper;
@@ -57,6 +58,17 @@ public final class SandboxBaselineLoader {
         Set<Long> excludedPoiIds = exclusionIds(baseline.eligibilityPolicy().defaultExcludedPois());
         Set<Long> excludedGoodsIds = exclusionIds(baseline.eligibilityPolicy().defaultExcludedGoods());
         Set<Long> excludedVehicleIds = exclusionIds(baseline.eligibilityPolicy().defaultExcludedVehicles());
+        Set<Long> selectedVehicleIds = baseline.data().vehicles().stream()
+                .filter(value -> !excludedVehicleIds.contains(value.id()))
+                .map(SandboxBaselinePackageV1.Vehicle::id)
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+        List<SandboxBaselinePackageV1.DriverVehicleBinding> selectedBindings =
+                baseline.data().driverVehicleBindings().stream()
+                        .filter(value -> selectedVehicleIds.contains(value.vehicleId()))
+                        .toList();
+        Set<Long> selectedDriverIds = selectedBindings.stream()
+                .map(SandboxBaselinePackageV1.DriverVehicleBinding::driverId)
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
 
         Data selected = effectiveDataCodec.normalize(new Data(
                 baseline.data().pois().stream().filter(value -> !excludedPoiIds.contains(value.id())).toList(),
@@ -66,7 +78,11 @@ public final class SandboxBaselineLoader {
                 baseline.data().initialInventories().stream()
                         .filter(value -> !excludedPoiIds.contains(value.poiId()))
                         .filter(value -> !excludedGoodsIds.contains(value.goodsId()))
-                        .toList()
+                        .toList(),
+                baseline.data().drivers().stream()
+                        .filter(value -> selectedDriverIds.contains(value.id()))
+                        .toList(),
+                selectedBindings
         ));
         validator.validateEffectiveData(selected);
 
@@ -120,6 +136,10 @@ public final class SandboxBaselineLoader {
                 "vehicleType", "hasTemperatureControl", "hazmatQualification",
                 "specialVehicleType", "lengthMeters", "widthMeters", "heightMeters",
                 "suitableGoods")));
+        data.set("drivers", projectArray(root.path("data").path("drivers"), List.of(
+                "id", "preferredCargoType", "preferredMaxDistanceKm", "preferredMaxWeightTons")));
+        data.set("driverVehicleBindings",
+                root.path("data").path("driverVehicleBindings").deepCopy());
 
         ArrayNode chains = objectMapper.createArrayNode();
         for (JsonNode chain : root.path("data").path("processingChains")) {

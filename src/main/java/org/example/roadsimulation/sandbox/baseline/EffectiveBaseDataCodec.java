@@ -56,6 +56,13 @@ public final class EffectiveBaseDataCodec {
                 source.initialInventories().stream()
                         .sorted(Comparator.comparingLong(SandboxBaselinePackageV1.InitialInventory::poiId)
                                 .thenComparingLong(SandboxBaselinePackageV1.InitialInventory::goodsId))
+                        .toList(),
+                source.drivers().stream()
+                        .sorted(Comparator.comparingLong(SandboxBaselinePackageV1.Driver::id))
+                        .toList(),
+                source.driverVehicleBindings().stream()
+                        .sorted(Comparator.comparingLong(SandboxBaselinePackageV1.DriverVehicleBinding::vehicleId)
+                                .thenComparingLong(SandboxBaselinePackageV1.DriverVehicleBinding::driverId))
                         .toList()
         );
     }

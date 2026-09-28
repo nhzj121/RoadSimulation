@@ -35,7 +35,8 @@ public final class SandboxWorkspacePreparer {
 
     private static final Set<String> BASE_DATA_TABLES = Set.of(
             "poi", "goods", "vehicle", "processing_chain", "processing_stage",
-            "processing_stage_input", "processing_stage_edge", "enrollment"
+            "processing_stage_input", "processing_stage_edge", "enrollment",
+            "driver", "driver_vehicle"
     );
     static final Set<String> CONTROL_TABLES = Set.of(
             SandboxWorkspaceSafety.MARKER_TABLE,
@@ -262,6 +263,8 @@ public final class SandboxWorkspacePreparer {
                 "poi", (long) effective.data().pois().size(),
                 "goods", (long) effective.data().goods().size(),
                 "vehicle", (long) effective.data().vehicles().size(),
+                "driver", (long) effective.data().drivers().size(),
+                "driver_vehicle", (long) effective.data().driverVehicleBindings().size(),
                 "processing_chain", (long) effective.data().processingChains().size(),
                 "processing_stage", effective.data().processingChains().stream()
                         .mapToLong(chain -> chain.stages().size()).sum(),

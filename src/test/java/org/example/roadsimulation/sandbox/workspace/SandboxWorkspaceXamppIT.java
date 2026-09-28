@@ -35,7 +35,8 @@ class SandboxWorkspaceXamppIT {
             + "&characterEncoding=utf8&useUnicode=true&zeroDateTimeBehavior=CONVERT_TO_NULL";
     private static final List<String> SOURCE_TABLES = List.of(
             "poi", "goods", "vehicle", "processing_chain", "processing_stage",
-            "processing_stage_input", "processing_stage_edge", "enrollment");
+            "processing_stage_input", "processing_stage_edge", "enrollment",
+            "driver", "driver_vehicle");
 
     @Test
     void preparesActualBaselineRepeatedlyWithoutChangingSource() throws Exception {
@@ -95,10 +96,18 @@ class SandboxWorkspaceXamppIT {
             if (stage.outputGoodsId() != null) goodsIds.add(stage.outputGoodsId());
             stage.inputs().forEach(input -> goodsIds.add(input.goodsId()));
         });
+        var vehicle = full.data().vehicles().get(0);
+        var bindings = full.data().driverVehicleBindings().stream()
+                .filter(binding -> binding.vehicleId() == vehicle.id()).toList();
+        Set<Long> driverIds = bindings.stream()
+                .map(SandboxBaselinePackageV1.DriverVehicleBinding::driverId)
+                .collect(java.util.stream.Collectors.toSet());
         var data = new SandboxBaselinePackageV1.Data(
                 full.data().pois().stream().filter(value -> poiIds.contains(value.id())).toList(),
                 full.data().goods().stream().filter(value -> goodsIds.contains(value.id())).toList(),
-                List.of(full.data().vehicles().get(0)), List.of(chain), List.of());
+                List.of(vehicle), List.of(chain), List.of(),
+                full.data().drivers().stream().filter(driver -> driverIds.contains(driver.id())).toList(),
+                bindings);
         EffectiveBaseDataCodec codec = new EffectiveBaseDataCodec(objectMapper);
         String selection = "TEST_MINIMAL";
         String policy = loaded.baseline().eligibilityPolicy().policyVersion();

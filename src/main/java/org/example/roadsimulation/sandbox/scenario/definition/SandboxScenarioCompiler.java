@@ -81,8 +81,20 @@ public final class SandboxScenarioCompiler {
         require(!pois.isEmpty(), "EMPTY_POI_SELECTION", "Scenario must select at least one POI");
         require(!goods.isEmpty(), "EMPTY_GOODS_SELECTION", "Scenario must select at least one goods record");
 
+        Set<Long> selectedVehicleClosureIds = idSet(vehicles, SandboxBaselinePackageV1.Vehicle::id);
+        List<SandboxBaselinePackageV1.DriverVehicleBinding> driverBindings =
+                universe.driverVehicleBindings().stream()
+                        .filter(binding -> selectedVehicleClosureIds.contains(binding.vehicleId()))
+                        .toList();
+        Set<Long> selectedDriverIds = driverBindings.stream()
+                .map(SandboxBaselinePackageV1.DriverVehicleBinding::driverId)
+                .collect(Collectors.toSet());
+        List<SandboxBaselinePackageV1.Driver> drivers = universe.drivers().stream()
+                .filter(driver -> selectedDriverIds.contains(driver.id()))
+                .toList();
+
         Data selectedBaseProjection = codec.normalizeData(
-                new Data(pois, goods, vehicles, chains, List.of()));
+                new Data(pois, goods, vehicles, chains, List.of(), drivers, driverBindings));
         String baseHash = codec.baseDataProjectionHash(
                 loaded.baseline().eligibilityPolicy().policyVersion(), selectedBaseProjection);
 
@@ -106,7 +118,8 @@ public final class SandboxScenarioCompiler {
         List<EffectiveScenarioData.VehicleInitialization> initializations = normalizeInitializations(
                 definition.overrides().vehicleInitialPois(), selectedVehicleIds, pois);
 
-        Data selected = codec.normalizeData(new Data(pois, goods, vehicles, overriddenChains, inventories));
+        Data selected = codec.normalizeData(new Data(
+                pois, goods, vehicles, overriddenChains, inventories, drivers, driverBindings));
         try {
             baselineValidator.validateEffectiveData(selected);
         } catch (SandboxBaselineException exception) {

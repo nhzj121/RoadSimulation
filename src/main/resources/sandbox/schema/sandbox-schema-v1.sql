@@ -290,12 +290,32 @@ DROP TABLE IF EXISTS `driver`;
 CREATE TABLE `driver` (
   `id` bigint(20) NOT NULL AUTO_INCREMENT,
   `created_time` datetime(6) DEFAULT NULL,
-  `current_status` enum('ASSIGNED','IDLE','OFF') DEFAULT NULL,
+  `current_status` enum('ASSIGNED','IDLE','MAINTENANCE','OFF','REJECTING') DEFAULT NULL,
   `driver_name` varchar(255) DEFAULT NULL,
   `driver_phone` varchar(255) DEFAULT NULL,
+  `pref_cargo` varchar(50) DEFAULT NULL,
+  `pref_max_distance_km` double DEFAULT NULL,
+  `pref_max_weight_tons` double DEFAULT NULL,
   `updated_by` varchar(50) DEFAULT NULL,
   `updated_time` datetime(6) DEFAULT NULL,
   PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+DROP TABLE IF EXISTS `assignment_driver_history`;
+CREATE TABLE `assignment_driver_history` (
+  `id` bigint(20) NOT NULL AUTO_INCREMENT,
+  `action` enum('BIND','RELEASE') NOT NULL,
+  `actor` varchar(50) DEFAULT NULL,
+  `assignment_id` bigint(20) NOT NULL,
+  `created_time` datetime(6) DEFAULT NULL,
+  `driver_id` bigint(20) NOT NULL,
+  `driver_name` varchar(50) DEFAULT NULL,
+  `from_status` varchar(20) DEFAULT NULL,
+  `reason` varchar(100) DEFAULT NULL,
+  `sim_time` datetime(6) DEFAULT NULL,
+  `to_status` varchar(20) DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_assignment_driver_history_assignment` (`assignment_id`),
+  KEY `idx_assignment_driver_history_driver` (`driver_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 DROP TABLE IF EXISTS `driver_vehicle`;
 CREATE TABLE `driver_vehicle` (

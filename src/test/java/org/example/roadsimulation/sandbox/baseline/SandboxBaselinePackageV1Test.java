@@ -25,7 +25,7 @@ class SandboxBaselinePackageV1Test {
         LoadedSandboxBaseline loaded = loader.load(baseline);
         EffectiveBaseData effective = loader.selectAllEligible(loaded);
 
-        assertEquals("roadsimulation-baseline-20260923-01", loaded.baseline().baselineId());
+        assertEquals("roadsimulation-baseline-20260928-01", loaded.baseline().baselineId());
         assertEquals(2603, loaded.baseline().data().pois().size());
         assertEquals(11, loaded.baseline().data().goods().size());
         assertEquals(87, loaded.baseline().data().vehicles().size());
@@ -44,8 +44,10 @@ class SandboxBaselinePackageV1Test {
         assertFalse(effective.data().goods().stream().anyMatch(value -> value.id() == 3));
         assertFalse(effective.data().vehicles().stream().anyMatch(value -> value.id() == 5 || value.id() == 10));
         assertFalse(effective.data().pois().stream().anyMatch(value -> value.id() == 3466));
-        assertEquals("888f6c815446841e24155bc6eb95ce61bfe1906b571258d2474a5d67ce5e41a1",
+        assertEquals("8f208b56e1350f26af46bc666c36c7bc1c65209d6b0c1b155bf9036e1d922922",
                 effective.effectiveBaseDataSha256());
+        assertEquals(255, effective.data().drivers().size());
+        assertEquals(255, effective.data().driverVehicleBindings().size());
     }
 
     @Test

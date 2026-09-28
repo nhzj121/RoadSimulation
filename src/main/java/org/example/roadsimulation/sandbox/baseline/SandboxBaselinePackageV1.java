@@ -95,7 +95,9 @@ public record SandboxBaselinePackageV1(
             List<Goods> goods,
             List<Vehicle> vehicles,
             List<ProcessingChain> processingChains,
-            List<InitialInventory> initialInventories
+            List<InitialInventory> initialInventories,
+            List<Driver> drivers,
+            List<DriverVehicleBinding> driverVehicleBindings
     ) {
         public Data {
             pois = immutable(pois);
@@ -103,6 +105,18 @@ public record SandboxBaselinePackageV1(
             vehicles = immutable(vehicles);
             processingChains = immutable(processingChains);
             initialInventories = immutable(initialInventories);
+            drivers = immutable(drivers);
+            driverVehicleBindings = immutable(driverVehicleBindings);
+        }
+
+        public Data(
+                List<Poi> pois,
+                List<Goods> goods,
+                List<Vehicle> vehicles,
+                List<ProcessingChain> processingChains,
+                List<InitialInventory> initialInventories
+        ) {
+            this(pois, goods, vehicles, processingChains, initialInventories, List.of(), List.of());
         }
     }
 
@@ -144,6 +158,17 @@ public record SandboxBaselinePackageV1(
             BigDecimal heightMeters,
             String suitableGoods
     ) {}
+
+    public record Driver(
+            long id,
+            String driverName,
+            String driverPhone,
+            String preferredCargoType,
+            BigDecimal preferredMaxDistanceKm,
+            BigDecimal preferredMaxWeightTons
+    ) {}
+
+    public record DriverVehicleBinding(long driverId, long vehicleId) {}
 
     public record ProcessingChain(
             long id,

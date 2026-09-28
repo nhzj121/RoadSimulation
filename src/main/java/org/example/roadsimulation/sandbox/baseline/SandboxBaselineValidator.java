@@ -17,6 +17,9 @@ import java.util.function.Function;
 /** Structural and semantic checks shared by formal-baseline and effective-data preparation. */
 public final class SandboxBaselineValidator {
 
+    private static final Set<String> DRIVER_CARGO_PREFERENCES = Set.of(
+            "水泥", "家具", "轮胎", "橡胶", "汽车", "钢铁", "木材", "矿石", "石料");
+
     public void validateBaseline(SandboxBaselinePackageV1 baseline) {
         require(baseline != null, "Baseline must not be null");
         requireText(baseline.baselineId(), "baselineId");
@@ -41,7 +44,10 @@ public final class SandboxBaselineValidator {
                 data.pois(), SandboxBaselinePackageV1.Poi::id, "poi");
         Map<Long, SandboxBaselinePackageV1.Goods> goods = unique(
                 data.goods(), SandboxBaselinePackageV1.Goods::id, "goods");
-        unique(data.vehicles(), SandboxBaselinePackageV1.Vehicle::id, "vehicle");
+        Map<Long, SandboxBaselinePackageV1.Vehicle> vehicles = unique(
+                data.vehicles(), SandboxBaselinePackageV1.Vehicle::id, "vehicle");
+        Map<Long, SandboxBaselinePackageV1.Driver> drivers = unique(
+                data.drivers(), SandboxBaselinePackageV1.Driver::id, "driver");
 
         for (SandboxBaselinePackageV1.Poi poi : data.pois()) {
             requireText(poi.name(), "poi[" + poi.id() + "].name");
@@ -83,6 +89,46 @@ public final class SandboxBaselineValidator {
             requireNonNegativeIfPresent(vehicle.lengthMeters(), "vehicle[" + vehicle.id() + "].lengthMeters");
             requireNonNegativeIfPresent(vehicle.widthMeters(), "vehicle[" + vehicle.id() + "].widthMeters");
             requireNonNegativeIfPresent(vehicle.heightMeters(), "vehicle[" + vehicle.id() + "].heightMeters");
+        }
+
+        Set<String> driverNames = new HashSet<>();
+        Set<String> driverPhones = new HashSet<>();
+        for (SandboxBaselinePackageV1.Driver driver : data.drivers()) {
+            requireText(driver.driverName(), "driver[" + driver.id() + "].driverName");
+            require(driverNames.add(driver.driverName()),
+                    "Duplicate driver name: " + driver.driverName());
+            requireText(driver.driverPhone(), "driver[" + driver.id() + "].driverPhone");
+            require(driverPhones.add(driver.driverPhone()),
+                    "Duplicate driver phone: " + driver.driverPhone());
+            require(DRIVER_CARGO_PREFERENCES.contains(driver.preferredCargoType()),
+                    "Invalid driver cargo preference: " + driver.id());
+            requirePositive(driver.preferredMaxDistanceKm(),
+                    "driver[" + driver.id() + "].preferredMaxDistanceKm");
+            requirePositive(driver.preferredMaxWeightTons(),
+                    "driver[" + driver.id() + "].preferredMaxWeightTons");
+        }
+
+        Set<String> bindingPairs = new HashSet<>();
+        Set<Long> vehiclesWithDriver = new HashSet<>();
+        Set<Long> boundDrivers = new HashSet<>();
+        for (SandboxBaselinePackageV1.DriverVehicleBinding binding : data.driverVehicleBindings()) {
+            require(drivers.containsKey(binding.driverId()),
+                    "Driver binding references missing driver: " + binding.driverId());
+            require(vehicles.containsKey(binding.vehicleId()),
+                    "Driver binding references missing vehicle: " + binding.vehicleId());
+            require(bindingPairs.add(binding.driverId() + ":" + binding.vehicleId()),
+                    "Duplicate driver vehicle binding: " + binding.driverId() + ":" + binding.vehicleId());
+            require(boundDrivers.add(binding.driverId()),
+                    "Driver is bound to more than one vehicle: " + binding.driverId());
+            vehiclesWithDriver.add(binding.vehicleId());
+        }
+        for (Long vehicleId : vehicles.keySet()) {
+            require(vehiclesWithDriver.contains(vehicleId),
+                    "Vehicle has no baseline driver: " + vehicleId);
+        }
+        if (executableEligibilityRequired) {
+            require(boundDrivers.size() == drivers.size(),
+                    "Effective data must not contain unbound drivers");
         }
 
         validateProcessing(data, pois, goods);
@@ -205,6 +251,8 @@ public final class SandboxBaselineValidator {
         requireCount(counts, "poi", baseline.data().pois().size());
         requireCount(counts, "goods", baseline.data().goods().size());
         requireCount(counts, "vehicle", baseline.data().vehicles().size());
+        requireCount(counts, "driver", baseline.data().drivers().size());
+        requireCount(counts, "driver_vehicle", baseline.data().driverVehicleBindings().size());
         requireCount(counts, "enrollment", baseline.data().initialInventories().size());
         requireCount(counts, "processing_chain", baseline.data().processingChains().size());
         requireCount(counts, "processing_stage", baseline.data().processingChains().stream()

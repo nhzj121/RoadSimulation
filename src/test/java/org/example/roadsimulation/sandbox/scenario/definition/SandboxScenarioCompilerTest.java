@@ -42,7 +42,9 @@ class SandboxScenarioCompilerTest {
         assertEquals(10, first.effectiveData().data().goods().size());
         assertEquals(85, first.effectiveData().data().vehicles().size());
         assertEquals(4, first.effectiveData().data().processingChains().size());
-        assertEquals("888f6c815446841e24155bc6eb95ce61bfe1906b571258d2474a5d67ce5e41a1",
+        assertEquals(255, first.effectiveData().data().drivers().size());
+        assertEquals(255, first.effectiveData().data().driverVehicleBindings().size());
+        assertEquals("8f208b56e1350f26af46bc666c36c7bc1c65209d6b0c1b155bf9036e1d922922",
                 first.effectiveData().baseDataProjectionSha256());
         assertEquals(first.scenarioDefinitionSha256(), second.scenarioDefinitionSha256());
         assertEquals(first.effectiveData().effectiveScenarioDataSha256(),

@@ -2,11 +2,11 @@
 
 当前准备链路包含三个阶段：
 
-1. 从正式 `baseline-v1.json` 恢复静态基础数据，状态为 `BASE_DATA_READY`；
+1. 从正式 `baseline-v1.json` 恢复静态基础数据（包括司机偏好与车辆绑定），状态为 `BASE_DATA_READY`；
 2. 编译、发布并恢复一个不可变场景 Revision，状态为 `SCENARIO_DATA_READY`。
 3. 编译、发布并恢复确定性运行规格和车辆初态，状态为 `RUN_SPEC_READY`。
 
-`RUN_SPEC_READY`表示场景数据、统一随机协议、运行规格和车辆初态已准备完成，但路径事实和完整仿真执行仍未实现。激活 `sandbox-runtime` profile 时，应用仍会以 `SANDBOX_NOT_RUN_READY` 主动拒绝正式仿真启动。
+`RUN_SPEC_READY`表示场景数据、统一随机协议、运行规格和车辆初态已准备完成。司机行为启用时使用同一根种子按 `loopIndex + driverId` 派生独立随机流；固定司机偏好只参与稳定排序。没有空闲司机的车辆不可派单，运输任务也不允许无司机启动或继续。路径事实和完整仿真执行仍未实现，因此激活 `sandbox-runtime` profile 时应用仍会以 `SANDBOX_NOT_RUN_READY` 主动拒绝正式仿真启动。
 
 ## 一次性预置或升级
 
@@ -20,6 +20,10 @@
 脚本幂等创建或升级 `vehicle_scheduler_sandbox`、安全标记、场景和运行规格控制表，并创建最小权限账号
 `road_sandbox_runtime@localhost`。该账号只拥有 `vehicle_scheduler_sandbox.*` 权限。准备程序通过
 `information_schema`核对当前账号授权；若发现全局权限或任何`vehicle_scheduler`权限便拒绝执行，且不会向源库业务表发送查询，因此不能用`root`运行准备命令。
+
+沙箱准备会直接使用版本化的 `sandbox-schema-v1.sql` 重建业务表，不执行增量迁移。
+普通 `vehicle_scheduler` 库若需要从旧司机表结构升级，可由管理员人工审查并执行
+`schema/migrations/20260928-driver-baseline-v1.sql`；该脚本不会被应用启动或沙箱准备流程自动执行。
 
 ## 命令环境
 
@@ -71,6 +75,8 @@ $env:SANDBOX_DB_URL = 'jdbc:mysql://localhost:3306/vehicle_scheduler_sandbox?use
 默认模板位于 `classpath:sandbox/runs/default-production-original-v1.json`。运行规格只允许
 `PRODUCTION`需求、关闭启动预生成，并选择已注册的`ORIGINAL`或`HEURISTIC`算法 Profile。
 
+运行规格引用的是不可变场景 Revision。在保留历史控制表的工作库中，重新发布同一场景族可能得到更高 Revision；此时必须把运行规格中的场景 Revision 及两个场景哈希解析为实际发布结果后再保存草稿，不能继续引用旧 Revision。全新控制库中的默认模板以 Revision 1 为初始引用。
+
 ```powershell
 .\mvnw.cmd -Psandbox-workspace-cli exec:java '-Dexec.args=compile-run-spec --run-spec=classpath:sandbox/runs/default-production-original-v1.json'
 .\mvnw.cmd -Psandbox-workspace-cli exec:java '-Dexec.args=save-run-draft --run-spec=classpath:sandbox/runs/default-production-original-v1.json'
@@ -90,7 +96,7 @@ $keyBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($keyJson))
 
 `--key`也可在不会吞掉引号的调用环境中直接接收JSON对象。PowerShell经Maven调用时推荐使用上面的`base64url:`传输形式；解码后的JSON对象才参与规范化和种子派生，编码形式不参与随机协议。
 
-同一运行规格Revision会物化同一组车辆初始POI；固定POI优先，未固定车辆按`vehicleId`派生独立随机流。`RUN_SPEC_READY`仍不是正式仿真可运行状态。
+同一运行规格Revision会物化同一组车辆初始POI；固定POI优先，未固定车辆按`vehicleId`派生独立随机流。`driverBehavior.enabled=false`时不消费司机行为随机流；启用时仅允许`MARKOV_V1 + DERIVED_FROM_ROOT`。`RUN_SPEC_READY`仍不是正式仿真可运行状态。
 
 ## 集成验证
 
