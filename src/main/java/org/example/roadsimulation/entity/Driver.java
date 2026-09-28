@@ -23,6 +23,8 @@ public class Driver {
     public enum DriverStatus {
         IDLE,       // 空闲
         ASSIGNED,   // 任务中
+        REJECTING,  // 拒单中（概率行为状态）
+        MAINTENANCE,// 保养中（概率行为状态，车辆同时不可派单）
         OFF         // 下线
     }
 
@@ -34,6 +36,18 @@ public class Driver {
     @Enumerated(EnumType.STRING)
     @Column(name = "current_status", length = 20)
     private Driver.DriverStatus currentStatus;
+
+    // 接单偏好：货类（归一化类别名，如 "水泥"）
+    @Column(name = "pref_cargo", length = 50)
+    private String preferredCargoType;
+
+    // 接单偏好：能接受的运输距离上限（公里），实际运距不超过该值时满分
+    @Column(name = "pref_max_distance_km")
+    private Double preferredMaxDistanceKm;
+
+    // 接单偏好：能接受的货物重量上限（吨），实际重量不超过该值时满分
+    @Column(name = "pref_max_weight_tons")
+    private Double preferredMaxWeightTons;
     /// 驾驶员与车辆关系的构建
     /// 多对多关系  驾驶员是关系的拥有者
     @ManyToMany // 1. 声明多对多关系，通常不需要设置级联
@@ -65,6 +79,12 @@ public class Driver {
     public void setDriverPhone(String driverPhone) {this.driverPhone = driverPhone;}
     public DriverStatus getCurrentStatus() {return currentStatus;}
     public void setCurrentStatus(DriverStatus currentStatus) {this.currentStatus = currentStatus;}
+    public String getPreferredCargoType() {return preferredCargoType;}
+    public void setPreferredCargoType(String preferredCargoType) {this.preferredCargoType = preferredCargoType;}
+    public Double getPreferredMaxDistanceKm() {return preferredMaxDistanceKm;}
+    public void setPreferredMaxDistanceKm(Double preferredMaxDistanceKm) {this.preferredMaxDistanceKm = preferredMaxDistanceKm;}
+    public Double getPreferredMaxWeightTons() {return preferredMaxWeightTons;}
+    public void setPreferredMaxWeightTons(Double preferredMaxWeightTons) {this.preferredMaxWeightTons = preferredMaxWeightTons;}
     public Set<Vehicle> getVehicles() {return vehicles;}
     public void setVehicles(Set<Vehicle> vehicles) {this.vehicles = vehicles;}
 

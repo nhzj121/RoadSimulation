@@ -59,6 +59,12 @@ export interface VehicleInfo {
     currentLongitude?: number;
     currentLatitude?: number;
 
+    // 司机信息
+    driverId?: number;
+    driverName?: string;
+    driverStatus?: string;
+    driverPreferenceText?: string;
+
     // 当前任务信息
     currentAssignment?: {
         id: number;

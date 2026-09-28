@@ -49,6 +49,9 @@ public class TransportMonitorDTO {
         private Long vehicleId;
         private String licensePlate;
         private String vehicleStatus;
+        private Long driverId;
+        private String driverName;
+        private String driverStatus;
         private String routeName;
         private Long startPOIId;
         private String startPOIName;
@@ -74,6 +77,8 @@ public class TransportMonitorDTO {
         private String licensePlate;
         private String status;
         private String statusText;
+        private String driverName;
+        private String driverStatus;
         private Double currentLoad;
         private Double maxLoadCapacity;
         private Double currentVolume;

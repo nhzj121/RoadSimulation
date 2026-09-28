@@ -55,6 +55,10 @@ public class VehicleDTO {
 
     private Long driverId;
 
+    private String driverStatus;
+
+    private String driverPreferenceText;
+
     // 任务信息
     private Long currentAssignmentId;
 
