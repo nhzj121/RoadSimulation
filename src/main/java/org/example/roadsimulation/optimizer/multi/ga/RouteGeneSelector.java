@@ -66,7 +66,9 @@ public class RouteGeneSelector {
             double routeCost = computeRouteTransportCost(vehicle, nodes, costConfig);
             double score = routeCost / Math.max(servedCount, EPS);
 
-            if (score < bestScore) {
+            if (score < bestScore
+                    || (Double.compare(score, bestScore) == 0
+                    && (bestRoute == null || route.getVehicleId() < bestRoute.getVehicleId()))) {
                 bestScore = score;
                 bestRoute = route;
             }

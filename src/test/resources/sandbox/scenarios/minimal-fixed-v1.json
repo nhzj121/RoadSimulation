@@ -1,0 +1,52 @@
+{
+  "artifactVersion": "sandbox-scenario-definition/v1",
+  "scenarioKey": "phase2-validation-minimal-fixed",
+  "displayName": "最小固定位置验证场景",
+  "description": "仅用于验证第二阶段的显式主键、库存和固定车辆POI恢复机制。",
+  "baseline": {
+    "baselineId": "roadsimulation-baseline-20260923-01",
+    "restorationPayloadSha256": "c3d21d0a59db8ddaa936d2e9bc0c6a899c73fc689fd86a1b09fdf0b44945f29f",
+    "simulationFactsSha256": "34698d297f735af4bf96742036d0c3e0d18a9e5301d325c2e9dddaf823459693",
+    "effectiveBaseDataSha256": "888f6c815446841e24155bc6eb95ce61bfe1906b571258d2474a5d67ce5e41a1"
+  },
+  "selection": {
+    "vehicles": {
+      "mode": "EXPLICIT_IDS",
+      "includeIds": [1],
+      "excludeIds": [],
+      "minimumLoadCapacityTonnes": null,
+      "maximumLoadCapacityTonnes": null,
+      "minimumCargoVolumeCubicMeters": null,
+      "maximumCargoVolumeCubicMeters": null,
+      "vehicleTypes": [],
+      "modelTypes": []
+    },
+    "pois": {
+      "mode": "EXPLICIT_IDS",
+      "includeIds": [467],
+      "excludeIds": [],
+      "poiTypes": []
+    },
+    "goods": {
+      "mode": "EXPLICIT_IDS",
+      "includeIds": [1],
+      "excludeIds": [],
+      "categories": []
+    },
+    "processingChains": {
+      "mode": "EXPLICIT_IDS",
+      "includeIds": [],
+      "excludeIds": []
+    }
+  },
+  "overrides": {
+    "stageOutputRatios": [],
+    "processingInputShares": [],
+    "initialInventories": [
+      { "poiId": 467, "goodsId": 1, "quantity": 5 }
+    ],
+    "vehicleInitialPois": [
+      { "vehicleId": 1, "poiId": 467, "initializationPolicy": "FIXED_POI" }
+    ]
+  }
+}

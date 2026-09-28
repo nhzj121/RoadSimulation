@@ -40,6 +40,17 @@ public class MultiOrderInitialPopulationBuilder {
             MutationConfig mutationConfig,
             long seed
     ) {
+        return buildInitialPopulation(
+                pendingItems, vehicles, config, mutationConfig, new Random(seed));
+    }
+
+    public List<MultiOrderSolution> buildInitialPopulation(
+            List<ShipmentItem> pendingItems,
+            List<Vehicle> vehicles,
+            InitialPopulationConfig config,
+            MutationConfig mutationConfig,
+            Random random
+    ) {
         if (config == null) {
             config = new InitialPopulationConfig();
         }
@@ -48,17 +59,18 @@ public class MultiOrderInitialPopulationBuilder {
         }
 
         validateInput(pendingItems, vehicles);
+        Objects.requireNonNull(random, "random must not be null");
 
-        Random random = new Random(seed);
         List<MultiOrderSolution> population = new ArrayList<>();
 
         List<ShipmentItem> canonicalOrder = sortItemsForGreedy(pendingItems);
+        List<Vehicle> canonicalVehicles = sortVehicles(vehicles);
 
         // 1. 贪心精英个体：同一批运单顺序，但车辆顺序可以轻微变化
         for (int i = 0; i < config.getGreedyEliteCount()
                 && population.size() < config.getPopulationSize(); i++) {
 
-            List<Vehicle> vehicleOrder = new ArrayList<>(vehicles);
+            List<Vehicle> vehicleOrder = new ArrayList<>(canonicalVehicles);
             if (i > 0) {
                 lightlyShuffle(vehicleOrder, random, 0.10);
             }
@@ -82,7 +94,7 @@ public class MultiOrderInitialPopulationBuilder {
             List<ShipmentItem> perturbedItems = new ArrayList<>(canonicalOrder);
             perturbItemOrder(perturbedItems, random, config.getPerturbRatio());
 
-            List<Vehicle> vehicleOrder = new ArrayList<>(vehicles);
+            List<Vehicle> vehicleOrder = new ArrayList<>(canonicalVehicles);
             lightlyShuffle(vehicleOrder, random, 0.20);
 
             MultiOrderSolution solution = buildByGreedyInsertion(
@@ -101,10 +113,10 @@ public class MultiOrderInitialPopulationBuilder {
         for (int i = 0; i < config.getRandomizedGreedyCount()
                 && population.size() < config.getPopulationSize(); i++) {
 
-            List<ShipmentItem> randomizedItems = new ArrayList<>(pendingItems);
+            List<ShipmentItem> randomizedItems = new ArrayList<>(canonicalOrder);
             Collections.shuffle(randomizedItems, random);
 
-            List<Vehicle> vehicleOrder = new ArrayList<>(vehicles);
+            List<Vehicle> vehicleOrder = new ArrayList<>(canonicalVehicles);
             Collections.shuffle(vehicleOrder, random);
 
             MultiOrderSolution solution = buildByGreedyInsertion(
@@ -121,10 +133,10 @@ public class MultiOrderInitialPopulationBuilder {
 
         // 4. 如果数量仍不足，继续用随机贪心补齐
         while (population.size() < config.getPopulationSize()) {
-            List<ShipmentItem> randomizedItems = new ArrayList<>(pendingItems);
+            List<ShipmentItem> randomizedItems = new ArrayList<>(canonicalOrder);
             Collections.shuffle(randomizedItems, random);
 
-            List<Vehicle> vehicleOrder = new ArrayList<>(vehicles);
+            List<Vehicle> vehicleOrder = new ArrayList<>(canonicalVehicles);
             Collections.shuffle(vehicleOrder, random);
 
             MultiOrderSolution solution = buildByGreedyInsertion(
@@ -166,7 +178,7 @@ public class MultiOrderInitialPopulationBuilder {
             vehicleNodes.put(vehicle.getId(), new ArrayList<>());
         }
 
-        Set<Long> unassigned = new HashSet<>();
+        Set<Long> unassigned = new LinkedHashSet<>();
 
         for (ShipmentItem item : orderedItems) {
             if (item == null || item.getId() == null) {
@@ -200,7 +212,7 @@ public class MultiOrderInitialPopulationBuilder {
                 continue;
             }
 
-            allCandidates.sort(Comparator.comparingDouble(InsertionCandidate::getScore));
+            allCandidates.sort(insertionCandidateComparator());
 
             InsertionCandidate selected;
             if (useTopKRandomChoice) {
@@ -288,10 +300,28 @@ public class MultiOrderInitialPopulationBuilder {
 
             double av = safe(a.getVolume());
             double bv = safe(b.getVolume());
-            return Double.compare(bv, av);
+            int volumeCmp = Double.compare(bv, av);
+            if (volumeCmp != 0) {
+                return volumeCmp;
+            }
+            return Comparator.nullsLast(Long::compareTo).compare(a.getId(), b.getId());
         });
 
         return sorted;
+    }
+
+    private List<Vehicle> sortVehicles(List<Vehicle> vehicles) {
+        List<Vehicle> sorted = new ArrayList<>(vehicles);
+        sorted.sort(Comparator.comparing(Vehicle::getId, Comparator.nullsLast(Long::compareTo)));
+        return sorted;
+    }
+
+    private Comparator<InsertionCandidate> insertionCandidateComparator() {
+        return Comparator.comparingDouble(InsertionCandidate::getScore)
+                .thenComparing(candidate -> candidate.getVehicle().getId(),
+                        Comparator.nullsLast(Long::compareTo))
+                .thenComparingInt(InsertionCandidate::getLoadInsertIndex)
+                .thenComparingInt(InsertionCandidate::getUnloadInsertIndex);
     }
 
     /**

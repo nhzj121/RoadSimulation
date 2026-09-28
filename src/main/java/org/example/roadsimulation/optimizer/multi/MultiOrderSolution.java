@@ -1,7 +1,7 @@
 package org.example.roadsimulation.optimizer.multi;
 
 import java.util.ArrayList;
-import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -14,7 +14,7 @@ import java.util.Set;
 public class MultiOrderSolution {
 
     private List<VehicleRouteGene> vehicleRoutes = new ArrayList<>();
-    private Set<Long> unassignedShipmentItemIds = new HashSet<>();
+    private Set<Long> unassignedShipmentItemIds = new LinkedHashSet<>();
 
     private double cost = Double.MAX_VALUE;
     private boolean feasible = false;
@@ -43,8 +43,11 @@ public class MultiOrderSolution {
     }
 
     public void setUnassignedShipmentItemIds(Set<Long> unassignedShipmentItemIds) {
-        this.unassignedShipmentItemIds =
-                unassignedShipmentItemIds != null ? unassignedShipmentItemIds : new HashSet<>();
+        LinkedHashSet<Long> ordered = new LinkedHashSet<>();
+        if (unassignedShipmentItemIds != null) {
+            unassignedShipmentItemIds.stream().sorted().forEach(ordered::add);
+        }
+        this.unassignedShipmentItemIds = ordered;
     }
 
     public double getCost() {

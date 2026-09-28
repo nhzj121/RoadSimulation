@@ -184,7 +184,11 @@ public class ShipmentServiceImpl implements ShipmentService {
         validateCoordinates(vehicle, shipment);
 
         // 1. 空驶：车辆当前位置 -> 运单起点
-        String vehicleLocation = buildLocation(vehicle.getCurrentLongitude(), vehicle.getCurrentLatitude());
+        String vehicleLocation = vehicle.getCurrentPOI() != null
+                ? buildLocation(
+                        vehicle.getCurrentPOI().getLongitude(),
+                        vehicle.getCurrentPOI().getLatitude())
+                : buildLocation(vehicle.getCurrentLongitude(), vehicle.getCurrentLatitude());
         String shipmentOrigin = buildLocation(
                 shipment.getOriginPOI().getLongitude(),
                 shipment.getOriginPOI().getLatitude()
@@ -269,7 +273,12 @@ public class ShipmentServiceImpl implements ShipmentService {
     }
 
     private void validateCoordinates(Vehicle vehicle, Shipment shipment) {
-        if (vehicle.getCurrentLongitude() == null || vehicle.getCurrentLatitude() == null) {
+        boolean hasCurrentPoiCoordinates = vehicle.getCurrentPOI() != null
+                && vehicle.getCurrentPOI().getLongitude() != null
+                && vehicle.getCurrentPOI().getLatitude() != null;
+        boolean hasLegacyCoordinates = vehicle.getCurrentLongitude() != null
+                && vehicle.getCurrentLatitude() != null;
+        if (!hasCurrentPoiCoordinates && !hasLegacyCoordinates) {
             throw new IllegalArgumentException("车辆当前经纬度为空，无法计算空驶路线");
         }
 

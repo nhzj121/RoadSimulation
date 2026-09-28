@@ -310,6 +310,15 @@ public class SimulationController {
     }
 
     private DispatchStrategy resolveDispatchStrategy(StartSimulationRequest request) {
+        if (simulationRuntimeConfig.isSandboxFrozen()) {
+            DispatchStrategy published = simulationRuntimeConfig.getDispatchStrategy();
+            DispatchStrategy requested = explicitlyRequestedStrategy(request);
+            if (requested != null && requested != published) {
+                throw new IllegalStateException(
+                        "dispatch strategy is frozen by the published sandbox run specification");
+            }
+            return published;
+        }
         if (request == null) {
             return DispatchStrategy.ORIGINAL;
         }
@@ -327,6 +336,26 @@ public class SimulationController {
             return DispatchStrategy.valueOf(strategy.trim().toUpperCase());
         } catch (IllegalArgumentException ignored) {
             return DispatchStrategy.ORIGINAL;
+        }
+    }
+
+    private DispatchStrategy explicitlyRequestedStrategy(StartSimulationRequest request) {
+        if (request == null) {
+            return null;
+        }
+        if (request.getUseHeuristic() != null) {
+            return Boolean.TRUE.equals(request.getUseHeuristic())
+                    ? DispatchStrategy.HEURISTIC
+                    : DispatchStrategy.ORIGINAL;
+        }
+        String strategy = request.getStrategy();
+        if (strategy == null || strategy.isBlank()) {
+            return null;
+        }
+        try {
+            return DispatchStrategy.valueOf(strategy.trim().toUpperCase());
+        } catch (IllegalArgumentException exception) {
+            throw new IllegalArgumentException("unsupported sandbox dispatch strategy: " + strategy, exception);
         }
     }
 

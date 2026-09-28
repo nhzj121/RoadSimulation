@@ -1,0 +1,47 @@
+{
+  "artifactVersion": "sandbox-run-specification/v1",
+  "runSpecKey": "production-baseline-seed-20260927",
+  "displayName": "生产需求确定性运行",
+  "description": "第三阶段默认运行规格：PRODUCTION需求、ORIGINAL调度和统一随机协议。",
+  "scenario": {
+    "scenarioKey": "all-eligible",
+    "revision": 1,
+    "scenarioDefinitionSha256": "31913ca4d325ab0bcb706daf4df433eb4e4a07fbadef12b41b8097e4993211c6",
+    "effectiveScenarioDataSha256": "871262c930361c774105c0b52be3398445a4b53625a337094ae913032ddf7389"
+  },
+  "simulationClock": {
+    "startLocalDateTime": "2026-01-01T00:00:00",
+    "tickDurationSeconds": 1800,
+    "totalLoops": 48
+  },
+  "demand": {
+    "mode": "PRODUCTION",
+    "generationIntervalLoops": 6,
+    "startupPreGenerationEnabled": false
+  },
+  "dispatch": {
+    "strategy": "ORIGINAL",
+    "dispatchIntervalLoops": 3,
+    "algorithmProfileId": "original-vrp/v1"
+  },
+  "environment": {
+    "scenarioId": "deterministic-network-cycle",
+    "scenarioVersion": "1",
+    "modeledRoadCount": 100,
+    "normalNetworkSpeedKph": 60.0,
+    "applicationMode": "PROGRESS_AFFECTING",
+    "phaseSeedPolicy": "DERIVED_FROM_ROOT"
+  },
+  "vehicleInitialization": {
+    "defaultPolicy": "RANDOM_ELIGIBLE_POI",
+    "eligiblePoiTypes": [
+      "WAREHOUSE",
+      "DISTRIBUTION_CENTER"
+    ],
+    "coordinateAuthority": "CURRENT_POI"
+  },
+  "random": {
+    "protocolId": "HMAC_SHA256_SPLITMIX64_V1",
+    "rootSeed": "20260927"
+  }
+}

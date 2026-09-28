@@ -622,22 +622,21 @@ public class VehicleMatchingServiceImpl implements VehicleMatchingService {
      * 计算车辆与 POI 之间的距离（公里）
      */
     private double calculateDistance(Vehicle vehicle, POI poi) {
-        // 如果车辆有当前位置坐标，优先使用
-        if (vehicle.getCurrentLongitude() != null && vehicle.getCurrentLatitude() != null) {
-            return calculateHaversineDistance(
-                    vehicle.getCurrentLatitude().doubleValue(),
-                    vehicle.getCurrentLongitude().doubleValue(),
-                    poi.getLatitude().doubleValue(),
-                    poi.getLongitude().doubleValue()
-            );
-        }
-
-        // 如果车辆关联到 POI，计算 POI 之间的距离
+        // currentPOI 是沙箱车辆位置的权威事实；坐标列仅作为普通模式兼容回退。
         if (vehicle.getCurrentPOI() != null) {
             POI vehiclePOI = vehicle.getCurrentPOI();
             return calculateHaversineDistance(
                     vehiclePOI.getLatitude().doubleValue(),
                     vehiclePOI.getLongitude().doubleValue(),
+                    poi.getLatitude().doubleValue(),
+                    poi.getLongitude().doubleValue()
+            );
+        }
+
+        if (vehicle.getCurrentLongitude() != null && vehicle.getCurrentLatitude() != null) {
+            return calculateHaversineDistance(
+                    vehicle.getCurrentLatitude().doubleValue(),
+                    vehicle.getCurrentLongitude().doubleValue(),
                     poi.getLatitude().doubleValue(),
                     poi.getLongitude().doubleValue()
             );

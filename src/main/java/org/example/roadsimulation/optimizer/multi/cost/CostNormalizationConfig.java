@@ -1,5 +1,7 @@
 package org.example.roadsimulation.optimizer.multi.cost;
 
+import java.time.LocalDateTime;
+
 /**
  * 多运单启发式评价函数配置。
  *
@@ -86,6 +88,9 @@ public class CostNormalizationConfig {
      * 理想最低利用率。
      */
     private double idealUtilization = 0.50;
+
+    /** Runtime decision time; omitted from frozen profile parameters. */
+    private LocalDateTime evaluationTime;
 
     public double getHardConstraintPenalty() {
         return hardConstraintPenalty;
@@ -245,5 +250,13 @@ public class CostNormalizationConfig {
 
     public void setIdealUtilization(double idealUtilization) {
         this.idealUtilization = idealUtilization;
+    }
+
+    public LocalDateTime getEvaluationTime() {
+        return evaluationTime;
+    }
+
+    public void setEvaluationTime(LocalDateTime evaluationTime) {
+        this.evaluationTime = evaluationTime;
     }
 }

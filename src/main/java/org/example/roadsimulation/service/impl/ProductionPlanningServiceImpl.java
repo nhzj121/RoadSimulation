@@ -123,6 +123,9 @@ public class ProductionPlanningServiceImpl implements ProductionPlanningService 
         List<ProcessingStage> topologicalOrder =
                 ProcessingChainGraphValidator.topologicalOrder(stages, edges);
         ProcessingStage sink = findSink(stages, edges);
+        if (simulationRunId != null && request.randomSeed() == null) {
+            throw new IllegalArgumentException("automatic production plan requires a controlled random seed");
+        }
         double finalDemand = randomFinalWeight(request);
 
         ProductionPlan plan = new ProductionPlan();
@@ -138,8 +141,11 @@ public class ProductionPlanningServiceImpl implements ProductionPlanningService 
         ProductionPlan savedPlan = planRepository.save(plan);
 
         PlanCalculation calculation = calculatePlan(stages, edges, topologicalOrder, sink, finalDemand);
-        Map<ProcessingStage, POI> selectedPois = poiSelector.select(
-                stages, edges, sink, request.randomSeed());
+        Map<ProcessingStage, POI> selectedPois = generationRound != null
+                && poiSelector.isSandboxControlled()
+                ? poiSelector.selectAutomatic(
+                        stages, edges, sink, request.randomSeed(), generationRound, chain.getId())
+                : poiSelector.select(stages, edges, sink, request.randomSeed());
         List<ProductionPlanNode> nodes = createPlanNodes(
                 savedPlan, stages, edges, sink, calculation, selectedPois);
         List<ProductionPlanFlow> flows = createPlanFlows(
@@ -494,6 +500,10 @@ public class ProductionPlanningServiceImpl implements ProductionPlanningService 
         if (min == null || max == null || min <= 0 || max < min
                 || !Double.isFinite(min) || !Double.isFinite(max)) {
             throw new IllegalArgumentException("最终产品需求量范围无效");
+        }
+
+        if (Double.compare(min, max) == 0) {
+            return min;
         }
 
         Random random = request.randomSeed() == null

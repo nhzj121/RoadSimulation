@@ -456,7 +456,9 @@ public class MultiOrderCostEvaluator {
         }
 
         double penalty = 0.0;
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = config.getEvaluationTime() == null
+                ? LocalDateTime.now()
+                : config.getEvaluationTime();
 
         for (Long itemId : unassignedIds) {
             ShipmentItem item = itemMap.get(itemId);

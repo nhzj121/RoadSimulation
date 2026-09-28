@@ -46,9 +46,7 @@ public class MultiOrderCrossoverOperator {
             MutationConfig mutationConfig,
             Random random
     ) {
-        if (random == null) {
-            random = new Random();
-        }
+        Objects.requireNonNull(random, "random must not be null");
         if (costConfig == null) {
             costConfig = new CostNormalizationConfig();
         }
@@ -86,7 +84,10 @@ public class MultiOrderCrossoverOperator {
         remainingOrder.removeIf(alreadyAssigned::contains);
 
         // 如果 parentB 没有覆盖全部 item，则补上
-        for (ShipmentItem item : allItems) {
+        List<ShipmentItem> orderedItems = new ArrayList<>(allItems);
+        orderedItems.sort(Comparator.comparing(ShipmentItem::getId,
+                Comparator.nullsLast(Long::compareTo)));
+        for (ShipmentItem item : orderedItems) {
             if (item != null && item.getId() != null
                     && !alreadyAssigned.contains(item.getId())
                     && !remainingOrder.contains(item.getId())) {
@@ -131,7 +132,7 @@ public class MultiOrderCrossoverOperator {
                 continue;
             }
 
-            allCandidates.sort(Comparator.comparingDouble(InsertionCandidate::getScore));
+            allCandidates.sort(insertionCandidateComparator());
 
             // 交叉修复阶段建议多数时候选最优，少量随机增强多样性
             InsertionCandidate selected;
@@ -173,9 +174,7 @@ public class MultiOrderCrossoverOperator {
             MutationConfig mutationConfig,
             Random random
     ) {
-        if (random == null) {
-            random = new Random();
-        }
+        Objects.requireNonNull(random, "random must not be null");
 
         if (random.nextBoolean()) {
             return crossover(p1, p2, allItems, vehicles, costConfig, mutationConfig, random);
@@ -348,13 +347,23 @@ public class MultiOrderCrossoverOperator {
             return map;
         }
 
-        for (Vehicle vehicle : vehicles) {
+        List<Vehicle> ordered = vehicles == null ? List.of() : new ArrayList<>(vehicles);
+        ordered.sort(Comparator.comparing(Vehicle::getId, Comparator.nullsLast(Long::compareTo)));
+        for (Vehicle vehicle : ordered) {
             if (vehicle != null && vehicle.getId() != null) {
                 map.put(vehicle.getId(), vehicle);
             }
         }
 
         return map;
+    }
+
+    private Comparator<InsertionCandidate> insertionCandidateComparator() {
+        return Comparator.comparingDouble(InsertionCandidate::getScore)
+                .thenComparing(candidate -> candidate.getVehicle().getId(),
+                        Comparator.nullsLast(Long::compareTo))
+                .thenComparingInt(InsertionCandidate::getLoadInsertIndex)
+                .thenComparingInt(InsertionCandidate::getUnloadInsertIndex);
     }
 
     private Map<Long, ShipmentItem> toItemMap(List<ShipmentItem> items) {

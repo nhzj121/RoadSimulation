@@ -1,25 +1,28 @@
 package org.example.roadsimulation.service.impl;
 
 import org.example.roadsimulation.DataInitializer;
+import org.example.roadsimulation.core.SimulationContext;
 import org.example.roadsimulation.entity.Assignment;
 import org.example.roadsimulation.entity.ShipmentItem;
 import org.example.roadsimulation.entity.Vehicle;
 import org.example.roadsimulation.optimizer.multi.MultiOrderSolution;
-import org.example.roadsimulation.optimizer.multi.cost.CostNormalizationConfig;
 import org.example.roadsimulation.optimizer.multi.ga.MultiOrderGA;
-import org.example.roadsimulation.optimizer.multi.ga.MultiOrderGAConfig;
-import org.example.roadsimulation.optimizer.multi.ga.MutationConfig;
-import org.example.roadsimulation.optimizer.multi.init.InitialPopulationConfig;
 import org.example.roadsimulation.optimizer.multi.persist.MultiOrderAssignmentMaterializer;
 import org.example.roadsimulation.repository.ShipmentItemRepository;
 import org.example.roadsimulation.repository.VehicleRepository;
+import org.example.roadsimulation.sandbox.random.SandboxRandomDomain;
+import org.example.roadsimulation.sandbox.run.SandboxAlgorithmRuntimeConfiguration;
+import org.example.roadsimulation.sandbox.run.SandboxRunRuntimeContext;
 import org.example.roadsimulation.service.SimulationDispatchService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 
 @Service
 public class HeuristicSimulationDispatchService implements SimulationDispatchService {
@@ -31,6 +34,8 @@ public class HeuristicSimulationDispatchService implements SimulationDispatchSer
     private final MultiOrderGA multiOrderGA;
     private final MultiOrderAssignmentMaterializer assignmentMaterializer;
     private final DataInitializer dataInitializer;
+    private SandboxRunRuntimeContext sandboxRunRuntimeContext;
+    private SimulationContext simulationContext;
 
     public HeuristicSimulationDispatchService(
             ShipmentItemRepository shipmentItemRepository,
@@ -46,15 +51,30 @@ public class HeuristicSimulationDispatchService implements SimulationDispatchSer
         this.dataInitializer = dataInitializer;
     }
 
+    @Autowired(required = false)
+    public void setSandboxRunRuntimeContext(SandboxRunRuntimeContext sandboxRunRuntimeContext) {
+        this.sandboxRunRuntimeContext = sandboxRunRuntimeContext;
+    }
+
+    @Autowired
+    public void setSimulationContext(SimulationContext simulationContext) {
+        this.simulationContext = simulationContext;
+    }
+
     @Override
     @Transactional
     public void dispatch() {
         long dispatchStart = System.currentTimeMillis();
 
-        List<ShipmentItem> pendingItems = shipmentItemRepository.findByStatus(
+        List<ShipmentItem> pendingItems = new java.util.ArrayList<>(shipmentItemRepository.findByStatus(
                 ShipmentItem.ShipmentItemStatus.NOT_ASSIGNED
-        );
-        List<Vehicle> idleVehicles = vehicleRepository.findByCurrentStatus(Vehicle.VehicleStatus.IDLE);
+        ));
+        List<Vehicle> idleVehicles = new java.util.ArrayList<>(
+                vehicleRepository.findByCurrentStatus(Vehicle.VehicleStatus.IDLE));
+        pendingItems.sort(Comparator.comparing(ShipmentItem::getId,
+                Comparator.nullsLast(Long::compareTo)));
+        idleVehicles.sort(Comparator.comparing(Vehicle::getId,
+                Comparator.nullsLast(Long::compareTo)));
 
         log.info(
                 "[Dispatch][HEURISTIC] Start. pendingItems={}, idleVehicles={}",
@@ -74,17 +94,42 @@ public class HeuristicSimulationDispatchService implements SimulationDispatchSer
             return;
         }
 
-        long seed = System.currentTimeMillis();
         long optimizeStart = System.currentTimeMillis();
-        MultiOrderSolution solution = multiOrderGA.optimize(
-                pendingItems,
-                idleVehicles,
-                new MultiOrderGAConfig(),
-                new InitialPopulationConfig(),
-                new CostNormalizationConfig(),
-                new MutationConfig(),
-                seed
-        );
+        MultiOrderSolution solution;
+        if (sandboxRunRuntimeContext != null) {
+            int loopIndex = simulationContext == null ? 0 : simulationContext.getLoopCount();
+            Map<String, Object> decisionKey = Map.of(
+                    "loopIndex", loopIndex,
+                    "dispatchOrdinal", 0);
+            SandboxAlgorithmRuntimeConfiguration.HeuristicConfiguration configuration =
+                    SandboxAlgorithmRuntimeConfiguration.heuristic(
+                            sandboxRunRuntimeContext.algorithmProfile());
+            java.time.LocalDateTime decisionTime = simulationContext == null
+                    ? sandboxRunRuntimeContext.specification().simulationClock().startLocalDateTime()
+                    : simulationContext.getCurrentSimTime();
+            configuration.costNormalization().setEvaluationTime(decisionTime);
+            configuration.mutation().setEvaluationTime(decisionTime);
+            solution = multiOrderGA.optimize(
+                    pendingItems,
+                    idleVehicles,
+                    configuration.ga(),
+                    configuration.initialPopulation(),
+                    configuration.costNormalization(),
+                    configuration.mutation(),
+                    sandboxRunRuntimeContext.javaRandom(
+                            SandboxRandomDomain.HEURISTIC_INITIAL_POPULATION, decisionKey),
+                    sandboxRunRuntimeContext.javaRandom(
+                            SandboxRandomDomain.HEURISTIC_EVOLUTION, decisionKey));
+        } else {
+            solution = multiOrderGA.optimize(
+                    pendingItems,
+                    idleVehicles,
+                    new org.example.roadsimulation.optimizer.multi.ga.MultiOrderGAConfig(),
+                    new org.example.roadsimulation.optimizer.multi.init.InitialPopulationConfig(),
+                    new org.example.roadsimulation.optimizer.multi.cost.CostNormalizationConfig(),
+                    new org.example.roadsimulation.optimizer.multi.ga.MutationConfig(),
+                    System.currentTimeMillis());
+        }
         long optimizeElapsed = System.currentTimeMillis() - optimizeStart;
 
         log.info(

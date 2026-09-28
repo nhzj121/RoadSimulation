@@ -1,6 +1,7 @@
 package org.example.roadsimulation.evaluation;
 
 import org.example.roadsimulation.core.SimulationTick;
+import org.example.roadsimulation.sandbox.run.SandboxRunRuntimeContext;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -24,6 +25,7 @@ public final class ReproducibleEnvironmentScenarioService {
     private final int modeledRoadCount;
     private final double normalNetworkSpeedKph;
     private final EnvironmentApplicationMode applicationMode;
+    private SandboxRunRuntimeContext sandboxRunRuntimeContext;
 
     public ReproducibleEnvironmentScenarioService(
             String scenarioId,
@@ -63,32 +65,53 @@ public final class ReproducibleEnvironmentScenarioService {
                 : EnvironmentApplicationMode.SHADOW;
     }
 
+    @Autowired(required = false)
+    public void setSandboxRunRuntimeContext(SandboxRunRuntimeContext sandboxRunRuntimeContext) {
+        this.sandboxRunRuntimeContext = sandboxRunRuntimeContext;
+    }
+
     /** Phase 7C：从完整 tick 直接派生快照，不保存上一轮结果。 */
     public EnvironmentScenarioSnapshot snapshotFor(SimulationTick tick) {
         Objects.requireNonNull(tick, "tick must not be null");
 
         // Phase 7C：seed 只决定循环相位；floorMod 同时保证负 seed 仍稳定落入合法区间。
-        int seedOffset = (int) Math.floorMod(seed, (long) CYCLE_TICKS);
+        long activeSeed = sandboxRunRuntimeContext == null
+                ? seed
+                : sandboxRunRuntimeContext.environmentPhaseSeed();
+        String activeScenarioId = sandboxRunRuntimeContext == null
+                ? scenarioId
+                : sandboxRunRuntimeContext.specification().environment().scenarioId();
+        int activeModeledRoadCount = sandboxRunRuntimeContext == null
+                ? modeledRoadCount
+                : sandboxRunRuntimeContext.specification().environment().modeledRoadCount();
+        double activeNormalNetworkSpeedKph = sandboxRunRuntimeContext == null
+                ? normalNetworkSpeedKph
+                : sandboxRunRuntimeContext.specification().environment().normalNetworkSpeedKph();
+        EnvironmentApplicationMode activeApplicationMode = sandboxRunRuntimeContext == null
+                ? applicationMode
+                : EnvironmentApplicationMode.PROGRESS_AFFECTING;
+
+        int seedOffset = (int) Math.floorMod(activeSeed, (long) CYCLE_TICKS);
         int cycleStep = Math.floorMod(tick.loopIndex() + seedOffset, CYCLE_TICKS);
         ScenarioProfile profile = profileFor(cycleStep);
-        int closedRoads = Math.min(profile.closedRoadCount(), modeledRoadCount);
-        double passabilityRatio = (double) (modeledRoadCount - closedRoads) / modeledRoadCount;
-        double averageSpeedKph = normalNetworkSpeedKph / profile.travelTimeFactor();
+        int closedRoads = Math.min(profile.closedRoadCount(), activeModeledRoadCount);
+        double passabilityRatio = (double) (activeModeledRoadCount - closedRoads) / activeModeledRoadCount;
+        double averageSpeedKph = activeNormalNetworkSpeedKph / profile.travelTimeFactor();
 
         return new EnvironmentScenarioSnapshot(
-                scenarioId,
+                activeScenarioId,
                 SCENARIO_VERSION,
-                seed,
+                activeSeed,
                 tick.loopIndex(),
                 tick.tickStart(),
                 tick.tickEnd(),
                 profile.phase(),
-                applicationMode,
-                modeledRoadCount,
+                activeApplicationMode,
+                activeModeledRoadCount,
                 closedRoads,
                 profile.abnormalEventCount(),
                 profile.weatherRiskLevel(),
-                normalNetworkSpeedKph,
+                activeNormalNetworkSpeedKph,
                 averageSpeedKph,
                 profile.congestionIndex(),
                 passabilityRatio,
