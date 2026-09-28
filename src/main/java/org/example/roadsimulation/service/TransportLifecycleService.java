@@ -33,6 +33,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
@@ -248,6 +249,7 @@ public class TransportLifecycleService {
         }
         LocalDateTime now = resolveTime(simNow);
         Vehicle managedVehicle = resolveVehicle(vehicle, assignment);
+        bindDriverRequired(assignment, managedVehicle, actor);
 
         assignment.setStatus(Assignment.AssignmentStatus.IN_PROGRESS);
         if (assignment.getStartTime() == null) {
@@ -288,8 +290,6 @@ public class TransportLifecycleService {
             managedVehicle.setUpdatedTime(LocalDateTime.now());
             vehicleRepository.save(managedVehicle);
         }
-
-        bindDriverIfPossible(assignment, managedVehicle, actor);
 
         Assignment saved = assignmentRepository.save(assignment);
         refreshShipments(touchedShipments);
@@ -514,28 +514,36 @@ public class TransportLifecycleService {
     }
 
     /**
-     * 司机接入运输链：任务启动时绑定司机。
+     * 司机接入运输链：任务启动前必须绑定司机。
      * 优先沿用任务预设的司机；否则从车辆 driver_vehicle 关联司机中选空闲（IDLE）者。
-     * 找不到空闲司机时不阻断任务执行（任务无司机照常运行），OFF 司机不参与。
+     * 生产环境找不到空闲司机时拒绝任务启动，依赖外层事务回滚任务和车辆状态。
      */
-    private void bindDriverIfPossible(Assignment assignment, Vehicle vehicle, String actor) {
-        if (driverRepository == null || assignment == null || vehicle == null || vehicle.getId() == null) {
+    private void bindDriverRequired(Assignment assignment, Vehicle vehicle, String actor) {
+        if (driverRepository == null) {
+            // 仅保留给不加载司机模块的旧纯单元测试构造路径；Spring生产构造器始终注入仓库。
             return;
+        }
+        if (assignment == null || vehicle == null || vehicle.getId() == null) {
+            throw new IllegalStateException("任务启动必须具有有效车辆和司机池");
         }
         Driver driver;
         if (assignment.getAssignedDriver() != null && assignment.getAssignedDriver().getId() != null) {
             driver = driverRepository.findById(assignment.getAssignedDriver().getId()).orElse(null);
-            // 拒单中/保养中/下线司机不可绑定（ASSIGNED 放行，兼容同司机多任务）
-            if (driver == null
-                    || driver.getCurrentStatus() == Driver.DriverStatus.OFF
-                    || driver.getCurrentStatus() == Driver.DriverStatus.REJECTING
-                    || driver.getCurrentStatus() == Driver.DriverStatus.MAINTENANCE) {
-                return;
+            boolean alreadyOwnsAssignment = driver != null && driver.getAssignments() != null
+                    && driver.getAssignments().stream().anyMatch(existing -> existing != null
+                    && Objects.equals(existing.getId(), assignment.getId()));
+            boolean belongsToVehicle = driver != null && vehicle.getDrivers() != null
+                    && vehicle.getDrivers().stream().anyMatch(candidate -> candidate != null
+                    && Objects.equals(candidate.getId(), driver.getId()));
+            boolean available = driver != null && (driver.getCurrentStatus() == Driver.DriverStatus.IDLE
+                    || (driver.getCurrentStatus() == Driver.DriverStatus.ASSIGNED && alreadyOwnsAssignment));
+            if (!belongsToVehicle || !available) {
+                throw new IllegalStateException("任务 " + assignment.getId() + " 的预设司机不可用");
             }
         } else {
             driver = selectIdleDriver(assignment, vehicle, null);
             if (driver == null) {
-                return;
+                throw new IllegalStateException("车辆 " + vehicle.getId() + " 没有空闲司机，任务禁止启动");
             }
         }
         Driver.DriverStatus beforeStatus = driver.getCurrentStatus();
@@ -553,24 +561,71 @@ public class TransportLifecycleService {
      * exclude 用于换司机时排除原司机；无候选返回 null。
      */
     private Driver selectIdleDriver(Assignment assignment, Vehicle vehicle, Driver exclude) {
+        return selectIdleDriver(assignment, vehicle, exclude, Set.of());
+    }
+
+    private Driver selectIdleDriver(
+            Assignment assignment,
+            Vehicle vehicle,
+            Driver exclude,
+            Set<Driver> reserved
+    ) {
         if (vehicle == null || vehicle.getDrivers() == null || vehicle.getDrivers().isEmpty()) {
             return null;
         }
         List<Driver> idleDrivers = vehicle.getDrivers().stream()
                 .filter(d -> d != null && d.getCurrentStatus() == Driver.DriverStatus.IDLE)
                 .filter(d -> exclude == null || d.getId() == null || !d.getId().equals(exclude.getId()))
+                .filter(d -> !reserved.contains(d))
                 .toList();
         if (idleDrivers.isEmpty()) {
             return null;
         }
-        if (driverPreferenceScorer == null || idleDrivers.size() == 1) {
-            return idleDrivers.get(0);
-        }
-        // 司机偏好：多名空闲司机时按对首个运单项的偏好得分选择
+        // 司机偏好只决定候选顺序；同分时按稳定业务键 driverId 升序。
         ShipmentItem scoringItem = getAssignmentItems(assignment).stream().findFirst().orElse(null);
         return idleDrivers.stream()
-                .max(Comparator.comparingDouble(d -> driverPreferenceScorer.scoreFor(d, scoringItem)))
+                .sorted(Comparator
+                        .comparingDouble((Driver candidate) -> driverPreferenceScorer == null
+                                ? 0.0 : driverPreferenceScorer.scoreFor(candidate, scoringItem))
+                        .reversed()
+                        .thenComparing(Driver::getId, Comparator.nullsLast(Long::compareTo)))
+                .findFirst()
                 .orElse(idleDrivers.get(0));
+    }
+
+    /**
+     * 原子修改司机状态。任务中司机离开 ASSIGNED 前必须为其全部进行中任务找到替补；
+     * 任一任务没有替补时抛出异常并回滚整次状态修改。
+     */
+    @Transactional
+    public Driver updateDriverStatusRequired(Long driverId, Driver.DriverStatus status, String reason) {
+        if (driverRepository == null || driverId == null || status == null) {
+            throw new IllegalArgumentException("司机和目标状态不能为空");
+        }
+        Driver driver = driverRepository.findById(driverId)
+                .orElseThrow(() -> new IllegalArgumentException("司机不存在，ID: " + driverId));
+        if (driver.getCurrentStatus() != Driver.DriverStatus.ASSIGNED
+                || status == Driver.DriverStatus.ASSIGNED) {
+            driver.setCurrentStatus(status);
+            driver.setUpdatedBy(reason);
+            driver.setUpdatedTime(LocalDateTime.now());
+            return driverRepository.save(driver);
+        }
+
+        List<Assignment> openAssignments = driver.getAssignments().stream()
+                .filter(a -> a != null && !a.isCompleted() && !a.isCancelled()
+                        && a.getStatus() != Assignment.AssignmentStatus.FAILED)
+                .toList();
+        List<DriverReplacement> replacements = requireReplacements(driver, openAssignments);
+        driver.setCurrentStatus(status);
+        driver.setUpdatedBy(reason);
+        driver.setUpdatedTime(LocalDateTime.now());
+        driverRepository.save(driver);
+        for (DriverReplacement replacement : replacements) {
+            replaceDriverForAssignment(
+                    driver, replacement.assignment(), replacement.replacement(), reason);
+        }
+        return driver;
     }
 
     /**
@@ -600,8 +655,7 @@ public class TransportLifecycleService {
 
     /**
      * 手动 PATCH 触发换司机：司机状态离开 ASSIGNED 且仍持有未完成任务时，
-     * 从任务车辆的空闲司机池选替补接手；无替补时任务继续无司机运行
-     * （与 bindDriverIfPossible 的容忍策略一致）。
+     * 从任务车辆的空闲司机池选替补接手；无替补时抛出异常，禁止产生无司机任务。
      * 返回是否有任务完成了换绑。
      */
     @Transactional
@@ -620,9 +674,11 @@ public class TransportLifecycleService {
         if (openAssignments.isEmpty()) {
             return false;
         }
+        List<DriverReplacement> replacements = requireReplacements(oldDriver, openAssignments);
         boolean replaced = false;
-        for (Assignment assignment : openAssignments) {
-            if (replaceDriverForAssignment(oldDriver, assignment, reason)) {
+        for (DriverReplacement replacement : replacements) {
+            if (replaceDriverForAssignment(
+                    oldDriver, replacement.assignment(), replacement.replacement(), reason)) {
                 replaced = true;
             }
         }
@@ -633,22 +689,22 @@ public class TransportLifecycleService {
      * 单个任务的换司机：解绑老司机（保留其新状态，由状态表或人工恢复），
      * 记录 RELEASE 历史行；有替补则绑定并置 ASSIGNED，记录 BIND 历史行。
      */
-    private boolean replaceDriverForAssignment(Driver oldDriver, Assignment assignment, String reason) {
+    private boolean replaceDriverForAssignment(
+            Driver oldDriver,
+            Assignment assignment,
+            Driver replacement,
+            String reason
+    ) {
         Driver.DriverStatus oldDriverNewStatus = oldDriver.getCurrentStatus();
-        Vehicle vehicle = assignment.getAssignedVehicle();
-        Driver replacement = selectIdleDriver(assignment, vehicle, oldDriver);
+
+        if (replacement == null) {
+            throw new IllegalStateException("任务 " + assignment.getId() + " 没有可用替补司机");
+        }
 
         oldDriver.removeAssignment(assignment);
         driverRepository.save(oldDriver);
         recordDriverHistory(assignment, oldDriver, AssignmentDriverHistory.Action.RELEASE,
                 reason, reason, Driver.DriverStatus.ASSIGNED, oldDriverNewStatus);
-
-        if (replacement == null) {
-            assignmentRepository.save(assignment);
-            log.warn("司机 {}（{}）离开任务 {}，同车无空闲司机替补，任务继续无司机运行，原因: {}",
-                    oldDriver.getId(), oldDriverNewStatus, assignment.getId(), reason);
-            return false;
-        }
 
         Driver.DriverStatus beforeStatus = replacement.getCurrentStatus();
         replacement.setCurrentStatus(Driver.DriverStatus.ASSIGNED);
@@ -665,6 +721,27 @@ public class TransportLifecycleService {
                 replacement.getId(), beforeStatus, reason);
         return true;
     }
+
+    /** 在修改任何实体前，为全部任务预留互不冲突的替补司机。 */
+    private List<DriverReplacement> requireReplacements(
+            Driver oldDriver,
+            List<Assignment> assignments
+    ) {
+        Set<Driver> reserved = new HashSet<>();
+        List<DriverReplacement> result = new ArrayList<>();
+        for (Assignment assignment : assignments) {
+            Driver replacement = selectIdleDriver(
+                    assignment, assignment.getAssignedVehicle(), oldDriver, reserved);
+            if (replacement == null) {
+                throw new IllegalStateException("任务 " + assignment.getId() + " 没有可用替补司机");
+            }
+            reserved.add(replacement);
+            result.add(new DriverReplacement(assignment, replacement));
+        }
+        return result;
+    }
+
+    private record DriverReplacement(Assignment assignment, Driver replacement) {}
 
     /**
      * 记录司机-任务交接历史行（append-only），历史仓库未注入时静默跳过。

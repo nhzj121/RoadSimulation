@@ -72,6 +72,13 @@ public class AssignmentServiceImpl implements AssignmentService {
         assignmentRepository.save(assignment);
 
         bindDriverFromRequest(assignment, requestDTO.getDriverId());
+        if (assignment.getStatus() == AssignmentStatus.IN_PROGRESS) {
+            transportLifecycleService.startAssignmentExecution(
+                    assignment,
+                    assignment.getAssignedVehicle(),
+                    simulationContext.getCurrentSimTime(),
+                    "AssignmentService create");
+        }
 
         calculateVehicleMetrics(assignment);
 
@@ -98,6 +105,13 @@ public class AssignmentServiceImpl implements AssignmentService {
         assignmentRepository.save(assignment);
 
         bindDriverFromRequest(assignment, requestDTO.getDriverId());
+        if (assignment.getStatus() == AssignmentStatus.IN_PROGRESS) {
+            transportLifecycleService.startAssignmentExecution(
+                    assignment,
+                    assignment.getAssignedVehicle(),
+                    simulationContext.getCurrentSimTime(),
+                    "AssignmentService update");
+        }
 
         calculateVehicleMetrics(assignment);
 
@@ -149,9 +163,11 @@ public class AssignmentServiceImpl implements AssignmentService {
     @Override
     public AssignmentResponseDTO startAssignment(Long id) {
         Assignment assignment = findAssignmentById(id);
-        assignment.setStatus(AssignmentStatus.IN_PROGRESS);
-        assignment.setStartTime(LocalDateTime.now());
-        assignmentRepository.save(assignment);
+        transportLifecycleService.startAssignmentExecution(
+                assignment,
+                assignment.getAssignedVehicle(),
+                simulationContext.getCurrentSimTime(),
+                "AssignmentService start");
 
         calculateVehicleMetrics(assignment);
 
@@ -199,6 +215,15 @@ public class AssignmentServiceImpl implements AssignmentService {
     @Override
     public AssignmentResponseDTO updateAssignmentStatus(Long id, AssignmentStatus status) {
         Assignment assignment = findAssignmentById(id);
+        if (status == AssignmentStatus.IN_PROGRESS) {
+            transportLifecycleService.startAssignmentExecution(
+                    assignment,
+                    assignment.getAssignedVehicle(),
+                    simulationContext.getCurrentSimTime(),
+                    "AssignmentService status update");
+            calculateVehicleMetrics(assignment);
+            return convertToDTO(assignment);
+        }
         if (status == AssignmentStatus.CANCELLED) {
             transportLifecycleService.cancelAssignment(
                     assignment,

@@ -11,6 +11,7 @@ import org.example.roadsimulation.core.SimulationContext;
 import org.example.roadsimulation.dto.CreateProductionPlanRequest;
 import org.example.roadsimulation.entity.Goods;
 import org.example.roadsimulation.entity.Assignment;
+import org.example.roadsimulation.entity.Driver;
 import org.example.roadsimulation.entity.POI;
 import org.example.roadsimulation.entity.ProcessingChain;
 import org.example.roadsimulation.entity.ProcessingExecutionFlow;
@@ -30,6 +31,7 @@ import org.example.roadsimulation.evaluation.EvaluationSnapshotCalculator;
 import org.example.roadsimulation.evaluation.EvaluationSnapshotService;
 import org.example.roadsimulation.repository.GoodsRepository;
 import org.example.roadsimulation.repository.AssignmentRepository;
+import org.example.roadsimulation.repository.DriverRepository;
 import org.example.roadsimulation.repository.POIRepository;
 import org.example.roadsimulation.repository.ProcessingChainRepository;
 import org.example.roadsimulation.repository.ProcessingExecutionFlowRepository;
@@ -77,6 +79,7 @@ class ProductionDemandEndToEndIntegrationTest {
     @Autowired private GoodsRepository goodsRepository;
     @Autowired private ProcessingChainRepository chainRepository;
     @Autowired private VehicleRepository vehicleRepository;
+    @Autowired private DriverRepository driverRepository;
     @Autowired private AssignmentRepository assignmentRepository;
     @Autowired private ProductionPlanRepository planRepository;
     @Autowired private ProductionBatchRepository batchRepository;
@@ -451,7 +454,8 @@ class ProductionDemandEndToEndIntegrationTest {
         vehicle.setCargoVolume(5.0);
         vehicle.setCurrentStatus(Vehicle.VehicleStatus.IDLE);
         vehicle.setCurrentPOI(sourcePoi);
-        vehicleRepository.saveAndFlush(vehicle);
+        vehicle = vehicleRepository.saveAndFlush(vehicle);
+        attachIdleDriver(vehicle);
     }
 
     private void seedYChain() {
@@ -522,7 +526,20 @@ class ProductionDemandEndToEndIntegrationTest {
         vehicle.setCargoVolume(100.0);
         vehicle.setCurrentStatus(Vehicle.VehicleStatus.IDLE);
         vehicle.setCurrentPOI(orePoi);
-        vehicleRepository.saveAndFlush(vehicle);
+        vehicle = vehicleRepository.saveAndFlush(vehicle);
+        attachIdleDriver(vehicle);
+    }
+
+    private void attachIdleDriver(Vehicle vehicle) {
+        Driver driver = new Driver();
+        driver.setDriverName("E2E Driver");
+        driver.setDriverPhone("13900000001");
+        driver.setCurrentStatus(Driver.DriverStatus.IDLE);
+        driver.setPreferredCargoType("钢铁");
+        driver.setPreferredMaxDistanceKm(500.0);
+        driver.setPreferredMaxWeightTons(100.0);
+        driver.addVehicle(vehicle);
+        driverRepository.saveAndFlush(driver);
     }
 
     private ProcessingStage stage(

@@ -13,6 +13,7 @@ import org.example.roadsimulation.repository.VehicleRepository;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
+import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -23,6 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.atLeastOnce;
@@ -110,25 +112,20 @@ class TransportLifecycleServiceTest {
     }
 
     @Test
-    void noIdleCandidateLeavesTaskDriverlessAndRecordsReleaseOnly() {
+    void noIdleCandidateRejectsReassignmentBeforeMutatingTask() {
         Driver d1 = driver(1L, "司机1", Driver.DriverStatus.OFF);
         Vehicle v = vehicle(10L, d1);
         Assignment a = openAssignment(100L, v, d1);
 
         when(driverRepository.findById(1L)).thenReturn(Optional.of(d1));
 
-        boolean replaced = service().reassignDriverIfNeeded(1L, "手动PATCH换司机");
+        assertThrows(IllegalStateException.class,
+                () -> service().reassignDriverIfNeeded(1L, "手动PATCH换司机"));
 
-        assertFalse(replaced);
-        assertNull(a.getAssignedDriver());
+        assertSame(d1, a.getAssignedDriver());
         assertEquals(Driver.DriverStatus.OFF, d1.getCurrentStatus());
-
-        ArgumentCaptor<AssignmentDriverHistory> captor = ArgumentCaptor.forClass(AssignmentDriverHistory.class);
-        verify(historyRepository).save(captor.capture());
-        assertEquals(AssignmentDriverHistory.Action.RELEASE, captor.getValue().getAction());
-        assertEquals(1L, captor.getValue().getDriverId());
-        assertEquals("OFF", captor.getValue().getToStatus());
-        verify(assignmentRepository).save(a);
+        verify(historyRepository, never()).save(any());
+        verify(assignmentRepository, never()).save(a);
     }
 
     @Test
@@ -154,5 +151,64 @@ class TransportLifecycleServiceTest {
 
         assertFalse(service().reassignDriverIfNeeded(1L, "手动PATCH换司机"));
         verify(historyRepository, never()).save(any());
+    }
+
+    @Test
+    void startRejectsVehicleWithoutIdleDriverBeforeChangingAssignmentState() {
+        Driver unavailable = driver(1L, "司机1", Driver.DriverStatus.MAINTENANCE);
+        Vehicle vehicle = vehicle(10L, unavailable);
+        Assignment assignment = waitingAssignment(100L, vehicle);
+
+        assertThrows(IllegalStateException.class, () -> service().startAssignmentExecution(
+                assignment, vehicle, LocalDateTime.of(2026, 9, 28, 8, 0), "test"));
+
+        assertEquals(Assignment.AssignmentStatus.WAITING, assignment.getStatus());
+        assertNull(assignment.getAssignedDriver());
+        verify(assignmentRepository, never()).save(any());
+    }
+
+    @Test
+    void startRejectsPresetDriverThatDoesNotBelongToAssignmentVehicle() {
+        Driver vehicleDriver = driver(1L, "司机1", Driver.DriverStatus.IDLE);
+        Driver unrelated = driver(2L, "司机2", Driver.DriverStatus.IDLE);
+        Vehicle vehicle = vehicle(10L, vehicleDriver);
+        Assignment assignment = waitingAssignment(100L, vehicle);
+        assignment.setAssignedDriver(unrelated);
+        when(driverRepository.findById(2L)).thenReturn(Optional.of(unrelated));
+
+        assertThrows(IllegalStateException.class, () -> service().startAssignmentExecution(
+                assignment, vehicle, LocalDateTime.of(2026, 9, 28, 8, 0), "test"));
+
+        assertEquals(Assignment.AssignmentStatus.WAITING, assignment.getStatus());
+        assertSame(unrelated, assignment.getAssignedDriver());
+        verify(assignmentRepository, never()).save(any());
+    }
+
+    @Test
+    void startBindsPreferredIdleDriverBeforeChangingAssignmentState() {
+        Driver lowerPreference = driver(1L, "司机1", Driver.DriverStatus.IDLE);
+        Driver higherPreference = driver(2L, "司机2", Driver.DriverStatus.IDLE);
+        Vehicle vehicle = vehicle(10L, lowerPreference, higherPreference);
+        Assignment assignment = waitingAssignment(100L, vehicle);
+        when(scorer.scoreFor(lowerPreference, null)).thenReturn(0.2);
+        when(scorer.scoreFor(higherPreference, null)).thenReturn(0.8);
+        when(assignmentRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        service().startAssignmentExecution(
+                assignment, vehicle, LocalDateTime.of(2026, 9, 28, 8, 0), "test");
+
+        assertEquals(Assignment.AssignmentStatus.IN_PROGRESS, assignment.getStatus());
+        assertSame(higherPreference, assignment.getAssignedDriver());
+        assertEquals(Driver.DriverStatus.ASSIGNED, higherPreference.getCurrentStatus());
+        verify(assignmentRepository, atLeastOnce()).save(assignment);
+    }
+
+    private Assignment waitingAssignment(long id, Vehicle vehicle) {
+        Assignment assignment = new Assignment();
+        assignment.setId(id);
+        assignment.setStatus(Assignment.AssignmentStatus.WAITING);
+        assignment.setAssignedVehicle(vehicle);
+        assignment.setShipmentItems(new HashSet<>());
+        return assignment;
     }
 }

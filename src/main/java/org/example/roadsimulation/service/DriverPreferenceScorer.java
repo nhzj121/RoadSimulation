@@ -5,7 +5,6 @@ import org.example.roadsimulation.entity.Goods;
 import org.example.roadsimulation.entity.Shipment;
 import org.example.roadsimulation.entity.ShipmentItem;
 import org.example.roadsimulation.entity.Vehicle;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -18,12 +17,12 @@ import java.util.Map;
  * 司机接单偏好打分器。
  * 三维偏好：货类（白名单命中 1.0/不中 0.0）、距离与重量为上限型数值
  * （实际值 ≤ 偏好上限 1.0，超出按比例衰减，未知 0.5），
- * 加权合成 0.4*cargo + 0.3*distance + 0.3*weight，作为 VRP 分配阶段的软性加分。
+ * 加权合成 0.4*cargo + 0.3*distance + 0.3*weight，只用于候选顺序，
+ * 不得修改成本、约束、适应度或可行性判断。
  */
 @Component
 public class DriverPreferenceScorer {
 
-    public static final double DEFAULT_MAX_BONUS = 800.0;
     public static final double CARGO_WEIGHT = 0.4;
     public static final double DISTANCE_WEIGHT = 0.3;
     public static final double WEIGHT_WEIGHT = 0.3;
@@ -57,19 +56,6 @@ public class DriverPreferenceScorer {
 
     public static final List<String> ALLOWED_CARGO_CATEGORIES = List.of(
             "水泥", "家具", "轮胎", "橡胶", "汽车", "钢铁", "木材", "矿石", "石料");
-
-    /** 种子随机生成偏好时使用的数值区间。 */
-    public static final double SEED_DISTANCE_MIN_KM = 50.0;
-    public static final double SEED_DISTANCE_MAX_KM = 300.0;
-    public static final double SEED_WEIGHT_MIN_TONS = 0.5;
-    public static final double SEED_WEIGHT_MAX_TONS = 5.0;
-
-    private double maxBonus = DEFAULT_MAX_BONUS;
-
-    @Value("${app.simulation.driver-preference.max-bonus:" + DEFAULT_MAX_BONUS + "}")
-    public void setMaxBonus(double maxBonus) {
-        this.maxBonus = maxBonus;
-    }
 
     /** 把货物名/类别/SKU 归一为规范货类，匹配不上返回 null。 */
     public String normalizeCargo(String raw) {
@@ -148,30 +134,25 @@ public class DriverPreferenceScorer {
         return CARGO_WEIGHT * cargoScore + DISTANCE_WEIGHT * distanceScore + WEIGHT_WEIGHT * weightScore;
     }
 
-    /** 司机偏好带来的边际成本放宽额度（元）。 */
-    public double bonusFor(Driver driver, ShipmentItem item) {
-        return scoreFor(driver, item) * maxBonus;
-    }
-
-    /** 车辆对单个运单项的加分：取其绑定空闲司机中的最大值（无司机为 0）。 */
-    public double vehicleItemBonus(Vehicle vehicle, ShipmentItem item) {
+    /** 车辆对单个运单项的亲和度：取其绑定空闲司机中的最大得分（无司机为 0）。 */
+    public double vehicleItemAffinity(Vehicle vehicle, ShipmentItem item) {
         if (vehicle == null || vehicle.getDrivers() == null || vehicle.getDrivers().isEmpty()) {
             return 0.0;
         }
         return vehicle.getDrivers().stream()
                 .filter(d -> d.getCurrentStatus() == Driver.DriverStatus.IDLE)
-                .mapToDouble(driver -> bonusFor(driver, item))
+                .mapToDouble(driver -> scoreFor(driver, item))
                 .max()
                 .orElse(0.0);
     }
 
-    /** 车辆对整批待接单的亲和度（用于车辆排序）：对每单取车组最大加分的平均值。 */
+    /** 车辆对整批待接单的亲和度（仅用于稳定排序）：对每单取车组最大得分的平均值。 */
     public double vehicleAffinity(Vehicle vehicle, List<ShipmentItem> items) {
         if (vehicle == null || items == null || items.isEmpty()) {
             return 0.0;
         }
         return items.stream()
-                .mapToDouble(item -> vehicleItemBonus(vehicle, item))
+                .mapToDouble(item -> vehicleItemAffinity(vehicle, item))
                 .average()
                 .orElse(0.0);
     }

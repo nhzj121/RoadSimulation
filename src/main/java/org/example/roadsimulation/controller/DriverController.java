@@ -294,18 +294,15 @@ public class DriverController {
                     .body(ApiResponse.error("司机不存在，ID: " + id));
         }
 
-        Driver driver = driverOpt.get();
-        Driver.DriverStatus oldStatus = driver.getCurrentStatus();
-        driver.setCurrentStatus(status);
-
         try {
-            Driver updatedDriver = driverService.updateDriver(id, driver);
-            // 手动 PATCH 触发换司机：任务中司机被改为非 ASSIGNED 状态时，从同车空闲司机池选替补
-            if (oldStatus == Driver.DriverStatus.ASSIGNED && status != Driver.DriverStatus.ASSIGNED) {
-                transportLifecycleService.reassignDriverIfNeeded(id, "手动PATCH换司机");
-            }
+            Driver updatedDriver = transportLifecycleService.updateDriverStatusRequired(
+                    id, status, "手动PATCH司机状态");
             logger.info("司机状态更新成功，ID: {}, 状态: {}", id, status);
             return ResponseEntity.ok(ApiResponse.success("状态更新成功", updatedDriver));
+        } catch (IllegalStateException e) {
+            logger.warn("司机状态更新被拒绝，ID: {}, 原因: {}", id, e.getMessage());
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body(ApiResponse.error(e.getMessage()));
         } catch (Exception e) {
             logger.error("司机状态更新失败，ID: {}, 错误: {}", id, e.getMessage());
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)

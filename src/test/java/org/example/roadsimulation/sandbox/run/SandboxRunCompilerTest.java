@@ -90,6 +90,29 @@ class SandboxRunCompilerTest {
     }
 
     @Test
+    void driverBehaviorIsHashedAndInvalidProbabilitiesAreRejected() {
+        SandboxRunSpecificationV1 original = specification(
+                "ORIGINAL", SandboxAlgorithmProfiles.ORIGINAL_V1, "10");
+        String enabledHash = runCompiler.compile(
+                original, scenarioRevision, scenario).runSpecificationSha256();
+
+        SandboxRunSpecificationV1 disabled = withDriverBehavior(original,
+                new SandboxRunSpecificationV1.DriverBehavior(
+                        false, "MARKOV_V1", 0.02, 0.01, 0.30, 0.25,
+                        "DERIVED_FROM_ROOT"));
+        assertNotEquals(enabledHash, runCompiler.compile(
+                disabled, scenarioRevision, scenario).runSpecificationSha256());
+
+        SandboxRunSpecificationV1 invalid = withDriverBehavior(original,
+                new SandboxRunSpecificationV1.DriverBehavior(
+                        true, "MARKOV_V1", 0.75, 0.50, 0.30, 0.25,
+                        "DERIVED_FROM_ROOT"));
+        SandboxRunException failure = assertThrows(SandboxRunException.class,
+                () -> runCompiler.compile(invalid, scenarioRevision, scenario));
+        assertEquals("INVALID_DRIVER_BEHAVIOR_PROBABILITY", failure.errorCode());
+    }
+
+    @Test
     void hashesDoNotDependOnCallerDateSerializationPreference() {
         SandboxRunSpecificationV1 specification = specification(
                 "ORIGINAL", SandboxAlgorithmProfiles.ORIGINAL_V1, "20260927");
@@ -276,6 +299,16 @@ class SandboxRunCompilerTest {
                 source.artifactVersion(), source.runSpecKey(), source.displayName(), source.description(),
                 source.scenario(), source.simulationClock(), demand, source.dispatch(), source.environment(),
                 source.vehicleInitialization(), source.random());
+    }
+
+    private SandboxRunSpecificationV1 withDriverBehavior(
+            SandboxRunSpecificationV1 source,
+            SandboxRunSpecificationV1.DriverBehavior driverBehavior
+    ) {
+        return new SandboxRunSpecificationV1(
+                source.artifactVersion(), source.runSpecKey(), source.displayName(), source.description(),
+                source.scenario(), source.simulationClock(), source.demand(), source.dispatch(),
+                source.environment(), source.vehicleInitialization(), driverBehavior, source.random());
     }
 
     private SandboxScenarioRevisionV1 published(CompiledSandboxScenario compiled, int revision) {

@@ -75,7 +75,7 @@ class DriverPreferenceScorerTest {
     }
 
     @Test
-    void vehicleItemBonusTakesMaxAcrossBoundDrivers() {
+    void vehicleItemAffinityTakesMaxAcrossBoundIdleDrivers() {
         ShipmentItem item = item("水泥", 2.0, 100_000.0);
         Vehicle vehicle = new Vehicle();
 
@@ -86,14 +86,14 @@ class DriverPreferenceScorerTest {
         mismatching.setCurrentStatus(Driver.DriverStatus.IDLE);
         mismatching.addVehicle(vehicle);
 
-        assertEquals(DriverPreferenceScorer.DEFAULT_MAX_BONUS, scorer.vehicleItemBonus(vehicle, item), 1e-9);
+        assertEquals(1.0, scorer.vehicleItemAffinity(vehicle, item), 1e-9);
 
         Vehicle noDriverVehicle = new Vehicle();
-        assertEquals(0.0, scorer.vehicleItemBonus(noDriverVehicle, item), 1e-9);
+        assertEquals(0.0, scorer.vehicleItemAffinity(noDriverVehicle, item), 1e-9);
     }
 
     @Test
-    void vehicleItemBonusIgnoresMaintenanceAndRejectingDrivers() {
+    void vehicleItemAffinityIgnoresMaintenanceAndRejectingDrivers() {
         // 保养/拒单司机即使满分也不计入（行为状态表联动）
         ShipmentItem item = item("水泥", 2.0, 100_000.0);
         Vehicle vehicle = new Vehicle();
@@ -105,12 +105,12 @@ class DriverPreferenceScorerTest {
         rejecting.setCurrentStatus(Driver.DriverStatus.REJECTING);
         rejecting.addVehicle(vehicle);
 
-        assertEquals(0.0, scorer.vehicleItemBonus(vehicle, item), 1e-9);
+        assertEquals(0.0, scorer.vehicleItemAffinity(vehicle, item), 1e-9);
     }
 
     @Test
-    void vehicleItemBonusUsesIdleDriverWhenMixedWithNonIdle() {
-        // 保养司机满分(800) + 空闲司机 0 分 → 结果应取空闲司机而非保养司机
+    void vehicleItemAffinityUsesIdleDriverWhenMixedWithNonIdle() {
+        // 保养司机满分 + 空闲司机低分 → 结果应取空闲司机而非保养司机
         ShipmentItem item = item("水泥", 2.0, 100_000.0);
         Vehicle vehicle = new Vehicle();
 
@@ -121,7 +121,7 @@ class DriverPreferenceScorerTest {
         idle.setCurrentStatus(Driver.DriverStatus.IDLE);
         idle.addVehicle(vehicle);
 
-        assertEquals(0.0, scorer.vehicleItemBonus(vehicle, item), 1e-9);
+        assertEquals(0.0, scorer.vehicleItemAffinity(vehicle, item), 1e-9);
     }
 
     @Test
