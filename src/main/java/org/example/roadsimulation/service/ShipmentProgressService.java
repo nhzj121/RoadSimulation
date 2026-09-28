@@ -4,6 +4,7 @@ import org.example.roadsimulation.dto.ActiveShipmentSummaryDTO;
 import org.example.roadsimulation.dto.AssignmentBriefDTO;
 import org.example.roadsimulation.dto.ShipmentProgressDTO;
 import org.example.roadsimulation.dto.ShipmentItemProgressDTO;
+import org.example.roadsimulation.dto.VehicleDTO;
 import org.example.roadsimulation.entity.*;
 import org.example.roadsimulation.repository.ShipmentRepository;
 import org.example.roadsimulation.repository.ShipmentItemRepository;
@@ -322,6 +323,41 @@ public class ShipmentProgressService {
             }
         }
 
+        // 司机接入运输链：填充关联车辆列表（含司机信息）
+        List<VehicleDTO> vehicleDTOs = new ArrayList<>();
+        Set<Long> seenVehicleIds = new HashSet<>();
+        for (ShipmentItem item : shipmentItems) {
+            Assignment assignment = item.getAssignment();
+            if (assignment == null || assignment.getAssignedVehicle() == null) {
+                continue;
+            }
+            Vehicle vehicle = assignment.getAssignedVehicle();
+            if (!seenVehicleIds.add(vehicle.getId())) {
+                continue;
+            }
+            VehicleDTO vehicleDTO = new VehicleDTO();
+            vehicleDTO.setId(vehicle.getId());
+            vehicleDTO.setLicensePlate(vehicle.getLicensePlate());
+            vehicleDTO.setBrand(vehicle.getBrand());
+            vehicleDTO.setModelType(vehicle.getModelType());
+            vehicleDTO.setVehicleType(vehicle.getVehicleType());
+            vehicleDTO.setCurrentLoad(vehicle.getCurrentLoad());
+            vehicleDTO.setMaxLoadCapacity(vehicle.getMaxLoadCapacity());
+            vehicleDTO.setCurrentStatus(vehicle.getCurrentStatus() != null ?
+                    vehicle.getCurrentStatus().name() : null);
+            Driver driver = assignment.getAssignedDriver();
+            if (driver != null) {
+                vehicleDTO.setDriverId(driver.getId());
+                vehicleDTO.setDriverName(driver.getDriverName());
+                vehicleDTO.setDriverStatus(driver.getCurrentStatus() != null ?
+                        driver.getCurrentStatus().name() : null);
+            } else {
+                vehicleDTO.setDriverName(vehicle.getDriverName());
+            }
+            vehicleDTOs.add(vehicleDTO);
+        }
+        dto.setVehicles(vehicleDTOs);
+
         return dto;
     }
 
@@ -369,6 +405,15 @@ public class ShipmentProgressService {
                 dto.setVehicleLicensePlate(vehicle.getLicensePlate());
                 dto.setVehicleStatus(vehicle.getCurrentStatus() != null ?
                         vehicle.getCurrentStatus().toString() : "IDLE");
+            }
+
+            // 设置司机信息
+            Driver driver = assignment.getAssignedDriver();
+            if (driver != null) {
+                dto.setDriverId(driver.getId());
+                dto.setDriverName(driver.getDriverName());
+                dto.setDriverStatus(driver.getCurrentStatus() != null ?
+                        driver.getCurrentStatus().name() : null);
             }
         }
 

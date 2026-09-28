@@ -13,6 +13,7 @@ import org.example.roadsimulation.optimizer.multi.init.InitialPopulationConfig;
 import org.example.roadsimulation.optimizer.multi.persist.MultiOrderAssignmentMaterializer;
 import org.example.roadsimulation.repository.ShipmentItemRepository;
 import org.example.roadsimulation.repository.VehicleRepository;
+import org.example.roadsimulation.service.DriverBehaviorService;
 import org.example.roadsimulation.service.SimulationDispatchService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,19 +32,22 @@ public class HeuristicSimulationDispatchService implements SimulationDispatchSer
     private final MultiOrderGA multiOrderGA;
     private final MultiOrderAssignmentMaterializer assignmentMaterializer;
     private final DataInitializer dataInitializer;
+    private final DriverBehaviorService driverBehaviorService;
 
     public HeuristicSimulationDispatchService(
             ShipmentItemRepository shipmentItemRepository,
             VehicleRepository vehicleRepository,
             MultiOrderGA multiOrderGA,
             MultiOrderAssignmentMaterializer assignmentMaterializer,
-            DataInitializer dataInitializer
+            DataInitializer dataInitializer,
+            DriverBehaviorService driverBehaviorService
     ) {
         this.shipmentItemRepository = shipmentItemRepository;
         this.vehicleRepository = vehicleRepository;
         this.multiOrderGA = multiOrderGA;
         this.assignmentMaterializer = assignmentMaterializer;
         this.dataInitializer = dataInitializer;
+        this.driverBehaviorService = driverBehaviorService;
     }
 
     @Override
@@ -54,7 +58,8 @@ public class HeuristicSimulationDispatchService implements SimulationDispatchSer
         List<ShipmentItem> pendingItems = shipmentItemRepository.findByStatus(
                 ShipmentItem.ShipmentItemStatus.NOT_ASSIGNED
         );
-        List<Vehicle> idleVehicles = vehicleRepository.findByCurrentStatus(Vehicle.VehicleStatus.IDLE);
+        List<Vehicle> idleVehicles = driverBehaviorService.filterMaintenanceVehicles(
+                vehicleRepository.findByCurrentStatus(Vehicle.VehicleStatus.IDLE));
 
         log.info(
                 "[Dispatch][HEURISTIC] Start. pendingItems={}, idleVehicles={}",

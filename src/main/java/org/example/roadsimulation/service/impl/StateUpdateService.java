@@ -5,6 +5,7 @@ import org.example.roadsimulation.core.TransportUnits;
 import org.example.roadsimulation.entity.Vehicle;
 import org.example.roadsimulation.entity.Vehicle.VehicleStatus;
 import org.example.roadsimulation.repository.VehicleRepository;
+import org.example.roadsimulation.service.DriverBehaviorService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -26,6 +27,7 @@ public class StateUpdateService {
     // ✅ 改成注入具体实现：这样可以稳定调用 resetVehicleStateWindows
     private final StateTransitionServiceImpl stateTransitionService;
     private final VehicleRepository vehicleRepository;
+    private final DriverBehaviorService driverBehaviorService;
 
     /**
      * 统计打印频率：每隔多少个 loop 打印一次
@@ -39,9 +41,11 @@ public class StateUpdateService {
 
     @Autowired
     public StateUpdateService(StateTransitionServiceImpl stateTransitionService,
-                              VehicleRepository vehicleRepository) {
+                              VehicleRepository vehicleRepository,
+                              DriverBehaviorService driverBehaviorService) {
         this.stateTransitionService = stateTransitionService;
         this.vehicleRepository = vehicleRepository;
+        this.driverBehaviorService = driverBehaviorService;
     }
 
     /**
@@ -80,6 +84,9 @@ public class StateUpdateService {
 
             // ✅ 唯一状态更新入口：到点才转移等逻辑都在 StateTransitionServiceImpl 内部
             stateTransitionService.batchUpdateAllVehicleStates(simNow, minutesPerLoop);
+
+            // ✅ 司机概率行为状态表：马尔可夫转移（IDLE/REJECTING/MAINTENANCE）
+            driverBehaviorService.tick(simNow);
 
             // ✅ 统计打印：按 loop 节奏输出
             if (loopsPerStats > 0 && loopCount % loopsPerStats == 0) {

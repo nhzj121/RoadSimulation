@@ -109,6 +109,21 @@ public class SimulationDataCleanupService {
             System.out.println("已删除 " + enrollmentCount + " 条Enrollment记录");
             clearPersistenceContext();
 
+            // 司机接入运输链：清理后重置全部司机为空闲（保留司机与车辆绑定关系）
+            long driverCount = driverRepository.count();
+            int resetDriverCount = 0;
+            for (Driver driver : driverRepository.findAll()) {
+                if (driver.getCurrentStatus() != Driver.DriverStatus.IDLE) {
+                    driver.setCurrentStatus(Driver.DriverStatus.IDLE);
+                    driver.setUpdatedBy("Simulation cleanup");
+                    driver.setUpdatedTime(LocalDateTime.now());
+                    driverRepository.save(driver);
+                    resetDriverCount++;
+                }
+            }
+            clearPersistenceContext();
+            System.out.println("已重置 " + resetDriverCount + "/" + driverCount + " 名司机为空闲状态");
+
             long endTime = System.currentTimeMillis();
             System.out.println("模拟数据清理完成，耗时 " + (endTime - startTime) + "ms");
 

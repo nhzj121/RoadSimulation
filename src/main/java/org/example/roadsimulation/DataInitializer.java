@@ -20,6 +20,7 @@ import org.example.roadsimulation.service.BatchDirectVehicleAssignmentService.Ve
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
@@ -61,6 +62,9 @@ public class DataInitializer implements CommandLineRunner {
     private static final int STARTUP_SHIPMENT_MAX_QUANTITY = 35;
     private static final int TAIL_FALLBACK_WAIT_LOOPS = 6;
     private static final int DEFAULT_MINUTES_PER_LOOP = 30;
+
+    @Value("${app.simulation.driver-seed.per-vehicle:2}")
+    private int driverSeedPerVehicle;
     private final ShipmentProgressService shipmentProgressService;
     private final EnrollmentRepository enrollmentRepository;
     private final GoodsRepository goodsRepository;
@@ -83,6 +87,9 @@ public class DataInitializer implements CommandLineRunner {
     private final OriginalVrpDispatchPolicy originalVrpDispatchPolicy;
     private final TransportLifecycleService transportLifecycleService;
 
+    private final DriverRepository driverRepository;
+    private final DriverPreferenceScorer driverPreferenceScorer;
+    private final DriverBehaviorService driverBehaviorService;
     private final Map<POI, POI> startToEndMapping = new ConcurrentHashMap<>(); // 起点到终点的映射关系
     // 修改成员变量，使用起点-终点对作为键
     private final Map<String, Shipment> poiPairShipmentMapping = new ConcurrentHashMap<>();
@@ -171,7 +178,10 @@ public class DataInitializer implements CommandLineRunner {
                             SimulationContext simulationContext,
                             BatchDirectVehicleAssignmentService batchDirectVehicleAssignmentService,
                             OriginalVrpDispatchPolicy originalVrpDispatchPolicy,
-                            TransportLifecycleService transportLifecycleService) {
+                            TransportLifecycleService transportLifecycleService,
+                            DriverRepository driverRepository,
+                            DriverPreferenceScorer driverPreferenceScorer,
+                            DriverBehaviorService driverBehaviorService) {
         this.enrollmentRepository = enrollmentRepository;
         this.goodsRepository = goodsRepository;
         this.poiRepository = poiRepository;
@@ -193,6 +203,9 @@ public class DataInitializer implements CommandLineRunner {
         this.batchDirectVehicleAssignmentService = batchDirectVehicleAssignmentService;
         this.originalVrpDispatchPolicy = originalVrpDispatchPolicy;
         this.transportLifecycleService = transportLifecycleService;
+        this.driverRepository = driverRepository;
+        this.driverPreferenceScorer = driverPreferenceScorer;
+        this.driverBehaviorService = driverBehaviorService;
     }
 
     /**
@@ -248,8 +261,82 @@ public class DataInitializer implements CommandLineRunner {
 
         initializeFromRandomProcessingSegment();
         initalizePOIStatus();
+        seedDriversIfAbsent();
 
         System.out.println("DataInitializer 初始化完成");
+    }
+
+    /**
+     * 司机接入运输链：幂等补种司机并绑定车辆。
+     * 为每辆车补种司机直至达到 app.simulation.driver-seed.per-vehicle 配置的数量（同车司机池，
+     * 作为任务中途换司机的替补来源），写入 driver_vehicle 关系；车辆冗余司机名列仅在空白时回写。
+     * 新司机随机生成三维接单偏好；存量司机缺失的偏好自动回填。
+     */
+    @Transactional
+    private void seedDriversIfAbsent() {
+        List<Vehicle> vehicles = vehicleRepository.findAll();
+        if (vehicles.isEmpty()) {
+            return;
+        }
+        int perVehicle = Math.max(0, driverSeedPerVehicle);
+        int index = (int) driverRepository.count();
+        int created = 0;
+        for (Vehicle vehicle : vehicles) {
+            int bound = driverRepository.findDriversByVehicleId(vehicle.getId()).size();
+            boolean nameBlank = vehicle.getDriverName() == null || vehicle.getDriverName().isBlank();
+            for (int i = bound; i < perVehicle; i++) {
+                index++;
+                Driver driver = new Driver();
+                driver.setDriverName("司机" + index);
+                driver.setDriverPhone("1380000" + String.format("%04d", index));
+                driver.setCurrentStatus(Driver.DriverStatus.IDLE);
+                driver.setUpdatedBy("DataInitializer seedDriversIfAbsent");
+                fillRandomPreferencesIfAbsent(driver);
+                driverRepository.save(driver);
+
+                driver.addVehicle(vehicle);
+                driverRepository.save(driver);
+                if (nameBlank) {
+                    vehicle.setDriverName(driver.getDriverName());
+                    vehicleRepository.save(vehicle);
+                    nameBlank = false;
+                }
+                created++;
+            }
+        }
+        int backfilled = 0;
+        for (Driver driver : driverRepository.findAll()) {
+            if (hasMissingPreferences(driver)) {
+                fillRandomPreferencesIfAbsent(driver);
+                driverRepository.save(driver);
+                backfilled++;
+            }
+        }
+        System.out.println("司机种子数据初始化完成，本次新增 " + created + " 名司机，司机总数 " + index
+                + "，每车目标 " + perVehicle + " 名，回填偏好 " + backfilled + " 名");
+    }
+
+    private boolean hasMissingPreferences(Driver driver) {
+        return driver.getPreferredCargoType() == null
+                || driver.getPreferredMaxDistanceKm() == null
+                || driver.getPreferredMaxWeightTons() == null;
+    }
+
+    private void fillRandomPreferencesIfAbsent(Driver driver) {
+        if (driver.getPreferredCargoType() == null) {
+            driver.setPreferredCargoType(DriverPreferenceScorer.ALLOWED_CARGO_CATEGORIES.get(
+                    random.nextInt(DriverPreferenceScorer.ALLOWED_CARGO_CATEGORIES.size())));
+        }
+        if (driver.getPreferredMaxDistanceKm() == null) {
+            double km = DriverPreferenceScorer.SEED_DISTANCE_MIN_KM
+                    + random.nextDouble() * (DriverPreferenceScorer.SEED_DISTANCE_MAX_KM - DriverPreferenceScorer.SEED_DISTANCE_MIN_KM);
+            driver.setPreferredMaxDistanceKm((double) Math.round(km));
+        }
+        if (driver.getPreferredMaxWeightTons() == null) {
+            double tons = DriverPreferenceScorer.SEED_WEIGHT_MIN_TONS
+                    + random.nextDouble() * (DriverPreferenceScorer.SEED_WEIGHT_MAX_TONS - DriverPreferenceScorer.SEED_WEIGHT_MIN_TONS);
+            driver.setPreferredMaxWeightTons(Math.round(tons * 10.0) / 10.0);
+        }
     }
 
     private void initializeFromRandomProcessingSegment() {
@@ -561,6 +648,8 @@ public class DataInitializer implements CommandLineRunner {
         String targetGoodsSku = dynamicGoods.getSku();
         String targetVehicleType = dynamicGoods.getVehicleFit() != null ? dynamicGoods.getVehicleFit() : "载货车";
         List<Vehicle> allIdleVehicles = vehicleRepository.findByCurrentStatus(Vehicle.VehicleStatus.IDLE); // ToDo 只考虑车辆状态，暂时不考虑适配性
+        // 剔除保养中司机绑定的车辆（司机带车保养期间不可派单）
+        allIdleVehicles = driverBehaviorService.filterMaintenanceVehicles(allIdleVehicles);
 
         if (allIdleVehicles.isEmpty()) {
             System.out.println("警告：没有适配货物 " + targetGoodsSku + " 的空闲车辆，本轮只生成待分配运单项");
@@ -863,6 +952,7 @@ public class DataInitializer implements CommandLineRunner {
                 }
 
                 List<Vehicle> idleVehicles = vehicleRepository.findByCurrentStatus(Vehicle.VehicleStatus.IDLE);
+                idleVehicles = driverBehaviorService.filterMaintenanceVehicles(idleVehicles);
                 ShipmentItem item = creation.getItems().get(0);
                 Optional<Vehicle> vehicle = selectOriginalDispatchVehicleForItem(item, idleVehicles);
                 if (vehicle.isEmpty()) {
@@ -2124,6 +2214,7 @@ public class DataInitializer implements CommandLineRunner {
         }
 
         List<Vehicle> idleVehicles = vehicleRepository.findByCurrentStatus(Vehicle.VehicleStatus.IDLE);
+        idleVehicles = driverBehaviorService.filterMaintenanceVehicles(idleVehicles);
         if (idleVehicles == null || idleVehicles.isEmpty()) {
             logger.info("[TailFallback] No idle vehicles. overdue={}, loop={}, source={}",
                     overdueItems.size(), loop, actor);
@@ -2492,12 +2583,16 @@ public class DataInitializer implements CommandLineRunner {
             return;
         }
 
-        // 2. 获取专属的 VRP 测试车队 (空闲状态)
-        List<Vehicle> vrpVehicles = vehicleRepository.findByCurrentStatus(Vehicle.VehicleStatus.IDLE);
+        // 2. 获取专属的 VRP 测试车队 (空闲状态)，剔除保养中司机绑定的车辆
+        List<Vehicle> vrpVehicles = driverBehaviorService.filterMaintenanceVehicles(
+                vehicleRepository.findByCurrentStatus(Vehicle.VehicleStatus.IDLE));
         if (vrpVehicles.isEmpty()) {
             System.out.println("[VRP 大脑] 没有空闲的车辆。");
             return;
         }
+
+        // 2.5 司机偏好排序：司机偏好匹配度高的车辆先装货
+        vrpVehicles.sort(Comparator.comparingDouble(v -> -driverPreferenceScorer.vehicleAffinity(v, pendingItems)));
 
         System.out.printf("[VRP 大脑] 发现 %d 个待拼订单，%d 辆空闲车辆。开始拼载计算...%n", pendingItems.size(), vrpVehicles.size());
 
@@ -2601,13 +2696,23 @@ public class DataInitializer implements CommandLineRunner {
                         vehicle.getMaxLoadCapacity() * simulatedDeltaMileage,
                         item.getWeight() * simulatedDeltaMileage, 0.0, 0.0, 0.0);
 
-                if (!originalVrpDispatchPolicy.acceptsMarginalCost(marginalCost)) {
-                    logger.info("[ORIGINAL_VRP] Skip item {} for vehicle {}: marginalCost {} exceeds threshold {}.",
+                // 司机偏好软性加分：偏好匹配可放宽边际成本门槛（不突破硬约束）
+                double preferenceBonus = driverPreferenceScorer.vehicleItemBonus(vehicle, item);
+                double adjustedMarginalCost = marginalCost - preferenceBonus;
+                if (!originalVrpDispatchPolicy.acceptsMarginalCost(adjustedMarginalCost)) {
+                    logger.info("[ORIGINAL_VRP] Skip item {} for vehicle {}: marginalCost {} (adjusted {}) exceeds threshold {}.",
                             item.getId(),
                             vehicle.getLicensePlate(),
                             marginalCost,
+                            adjustedMarginalCost,
                             originalVrpDispatchPolicy.getMaxMarginalCost());
                     continue;
+                }
+                if (preferenceBonus > 0) {
+                    logger.info("[ORIGINAL_VRP] Driver preference bonus applied: item {} for vehicle {}: bonus {} (adjustedCost {}).",
+                            item.getId(), vehicle.getLicensePlate(),
+                            String.format("%.2f", preferenceBonus),
+                            String.format("%.2f", adjustedMarginalCost));
                 }
 
                 if (!packedItems.isEmpty()) {
@@ -3828,6 +3933,14 @@ public class DataInitializer implements CommandLineRunner {
 
         }
 
+        // 司机信息
+        Driver driver = assignment.getAssignedDriver();
+        if (driver != null) {
+            brief.setDriverId(driver.getId());
+            brief.setDriverName(driver.getDriverName());
+            brief.setDriverStatus(driver.getCurrentStatus() != null ? driver.getCurrentStatus().toString() : null);
+        }
+
         // 路线信息
         Route route = assignment.getRoute();
         if (route != null) {
@@ -3968,6 +4081,19 @@ public class DataInitializer implements CommandLineRunner {
         dto.setCurrentLongitude(vehicle.getCurrentLongitude());
         dto.setCurrentLatitude(vehicle.getCurrentLatitude());
         dto.setDriverName(vehicle.getDriverName());
+
+        // 司机接入运输链：从 driver_vehicle 关系读取司机状态透出给前端
+        List<Driver> boundDrivers = driverRepository.findDriversByVehicleId(vehicle.getId());
+        if (!boundDrivers.isEmpty()) {
+            Driver firstDriver = boundDrivers.get(0);
+            dto.setDriverId(firstDriver.getId());
+            dto.setDriverStatus(firstDriver.getCurrentStatus() != null
+                    ? firstDriver.getCurrentStatus().name() : null);
+            if (dto.getDriverName() == null || dto.getDriverName().isBlank()) {
+                dto.setDriverName(firstDriver.getDriverName());
+            }
+            dto.setDriverPreferenceText(driverPreferenceScorer.preferenceText(firstDriver));
+        }
 
         // 任务信息
         Assignment currentAssignment = vehicle.getCurrentAssignment();
@@ -4312,6 +4438,17 @@ public class DataInitializer implements CommandLineRunner {
                 dto.setVehicleCurrentLat(vehicle.getCurrentLatitude() != null
                         ? vehicle.getCurrentLatitude().doubleValue()
                         : null);
+            }
+
+            Driver driver = assignment.getAssignedDriver();
+            if (driver != null) {
+                dto.setDriverId(driver.getId());
+                dto.setDriverName(driver.getDriverName());
+                dto.setDriverStatus(driver.getCurrentStatus() != null ? driver.getCurrentStatus().toString() : null);
+            } else {
+                dto.setDriverId(null);
+                dto.setDriverName(null);
+                dto.setDriverStatus(null);
             }
         });
 

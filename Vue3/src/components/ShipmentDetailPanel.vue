@@ -315,6 +315,20 @@
             <div class="vehicle-card__detail">
               <span class="detail__label">驾驶员:</span>
               <span class="detail__value">{{ vehicle.driverName || '未分配' }}</span>
+              <ElTag
+                  v-if="vehicle.driverStatus"
+                  size="small"
+                  :type="getDriverStatusTagType(vehicle.driverStatus)"
+              >
+                {{ getDriverStatusText(vehicle.driverStatus) }}
+              </ElTag>
+            </div>
+            <div
+                v-if="vehicle.driverPreferenceText"
+                class="vehicle-card__detail"
+            >
+              <span class="detail__label">偏好:</span>
+              <span class="detail__value">{{ vehicle.driverPreferenceText }}</span>
             </div>
           </div>
         </div>
@@ -428,6 +442,42 @@ const getVehicleStatusTagType = (status) => {
     return 'danger';
   } else {
     return '';
+  }
+};
+
+// 获取司机状态标签类型
+const getDriverStatusTagType = (status) => {
+  switch (status) {
+    case 'ASSIGNED':
+      return 'success';
+    case 'OFF':
+      return 'info';
+    case 'IDLE':
+      return 'info';
+    case 'REJECTING':
+      return 'warning';
+    case 'MAINTENANCE':
+      return 'warning';
+    default:
+      return 'info';
+  }
+};
+
+// 获取司机状态文本
+const getDriverStatusText = (status) => {
+  switch (status) {
+    case 'IDLE':
+      return '空闲';
+    case 'ASSIGNED':
+      return '任务中';
+    case 'OFF':
+      return '下线';
+    case 'REJECTING':
+      return '拒单中';
+    case 'MAINTENANCE':
+      return '保养中';
+    default:
+      return status || '未知';
   }
 };
 

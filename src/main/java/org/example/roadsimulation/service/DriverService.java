@@ -1,5 +1,6 @@
 package org.example.roadsimulation.service;
 
+import org.example.roadsimulation.dto.DriverPreferencesRequest;
 import org.example.roadsimulation.entity.Driver;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -21,6 +22,9 @@ public interface DriverService {
 
     // 更新司机信息
     Driver updateDriver(Long id, Driver driverDetails);
+
+    // 更新司机接单偏好（仅覆盖非空字段）
+    Driver updateDriverPreferences(Long id, DriverPreferencesRequest request);
 
     // 查询所有司机
     List<Driver> getAllDrivers();

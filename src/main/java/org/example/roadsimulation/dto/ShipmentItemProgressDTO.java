@@ -63,6 +63,16 @@ public class ShipmentItemProgressDTO {
     @Setter @Getter
     private String vehicleStatus;
 
+    // 关联的司机信息
+    @Setter @Getter
+    private Long driverId;
+
+    @Setter @Getter
+    private String driverName;
+
+    @Setter @Getter
+    private String driverStatus;
+
     // 获取状态显示文本
     public String getStatusDisplayText() {
         if (status == null) return "未分配";

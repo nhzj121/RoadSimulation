@@ -1,7 +1,9 @@
 package org.example.roadsimulation.service.impl;
 
+import org.example.roadsimulation.dto.DriverPreferencesRequest;
 import org.example.roadsimulation.entity.Driver;
 import org.example.roadsimulation.repository.DriverRepository;
+import org.example.roadsimulation.service.DriverPreferenceScorer;
 import org.example.roadsimulation.service.DriverService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
@@ -9,6 +11,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -25,10 +28,12 @@ import java.util.Optional;
 public class DriverServiceImpl implements DriverService {
 
     private final DriverRepository driverRepository;
+    private final DriverPreferenceScorer driverPreferenceScorer;
 
     @Autowired
-    public DriverServiceImpl(DriverRepository driverRepository) {
+    public DriverServiceImpl(DriverRepository driverRepository, DriverPreferenceScorer driverPreferenceScorer) {
         this.driverRepository = driverRepository;
+        this.driverPreferenceScorer = driverPreferenceScorer;
     }
 
     /**
@@ -61,6 +66,42 @@ public class DriverServiceImpl implements DriverService {
                     driver.setDriverName(driverDetails.getDriverName());
                     driver.setDriverPhone(driverDetails.getDriverPhone());
                     driver.setCurrentStatus(driverDetails.getCurrentStatus());
+                    return driverRepository.save(driver);
+                })
+                .orElseThrow(() -> new RuntimeException("司机不存在，ID: " + id));
+    }
+
+    /**
+     * 更新司机接单偏好：仅覆盖请求中的非空字段，非法值抛 IllegalArgumentException。
+     */
+    @Override
+    public Driver updateDriverPreferences(Long id, DriverPreferencesRequest request) {
+        return driverRepository.findById(id)
+                .map(driver -> {
+                    if (request.getPreferredCargoType() != null) {
+                        String cargo = request.getPreferredCargoType().trim();
+                        if (!driverPreferenceScorer.isValidCargoPreference(cargo)) {
+                            throw new IllegalArgumentException("非法货类偏好: " + cargo
+                                    + "，可选值: " + DriverPreferenceScorer.ALLOWED_CARGO_CATEGORIES);
+                        }
+                        driver.setPreferredCargoType(cargo);
+                    }
+                    if (request.getPreferredMaxDistanceKm() != null) {
+                        double km = request.getPreferredMaxDistanceKm();
+                        if (!Double.isFinite(km) || km <= 0.0 || km > 2000.0) {
+                            throw new IllegalArgumentException("非法距离偏好: " + km + "，须在 (0, 2000] 公里内");
+                        }
+                        driver.setPreferredMaxDistanceKm(km);
+                    }
+                    if (request.getPreferredMaxWeightTons() != null) {
+                        double tons = request.getPreferredMaxWeightTons();
+                        if (!Double.isFinite(tons) || tons <= 0.0 || tons > 100.0) {
+                            throw new IllegalArgumentException("非法重量偏好: " + tons + "，须在 (0, 100] 吨内");
+                        }
+                        driver.setPreferredMaxWeightTons(tons);
+                    }
+                    driver.setUpdatedBy("API updateDriverPreferences");
+                    driver.setUpdatedTime(LocalDateTime.now());
                     return driverRepository.save(driver);
                 })
                 .orElseThrow(() -> new RuntimeException("司机不存在，ID: " + id));

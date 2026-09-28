@@ -151,6 +151,8 @@
               <div class="vehicle-floating-grid">
                 <span>Assignment</span>
                 <strong>{{ floatingVehicleDisplayAssignment.assignmentId || '-' }}</strong>
+                <span>Driver</span>
+                <strong>{{ floatingVehicleDriverText }}</strong>
                 <span>Route</span>
                 <strong>{{ floatingVehicleDisplayAssignment.routeName || floatingVehicleDisplayInfo.currentAssignment || '-' }}</strong>
                 <span>From</span>
@@ -250,6 +252,7 @@
                     </div>
                     <div class="vehicle-monitor-desc">
                       {{ v.actionDescription || v.currentAssignment || '暂无任务信息' }}
+                      <span v-if="v.driverName"> · 司机 {{ v.driverName }}（{{ driverStatusMap[v.driverStatus]?.text || '未知' }}）</span>
                     </div>
                     <div class="vehicle-mini-metrics">
                       <span>载重 {{ v.currentLoad?.toFixed(1) || '0.0' }}/{{ v.maxLoadCapacity?.toFixed(1) || '0.0' }}t</span>
@@ -319,6 +322,9 @@
                   </div>
                   <div class="transport-item-desc">
                     {{ assignment.licensePlate || '未分配车辆' }} · {{ assignment.goodsName || '暂无货物信息' }}
+                  </div>
+                  <div v-if="assignment.driverName" class="transport-item-desc">
+                    司机 {{ assignment.driverName }} · {{ driverStatusMap[assignment.driverStatus]?.text || '未知' }}
                   </div>
                   <div class="transport-meta-row">
                     <span>运单 {{ assignment.shipmentRefNos?.join(', ') || '无' }}</span>
@@ -4982,6 +4988,15 @@ const statusMap = {
   BREAKDOWN: { text: '故障', color: '#e74c3c' },
 };
 
+// --- 司机状态 ---
+const driverStatusMap = {
+  IDLE: { text: '空闲', color: '#95a5a6' },
+  ASSIGNED: { text: '任务中', color: '#2ecc71' },
+  REJECTING: { text: '拒单中', color: '#e67e22' },
+  MAINTENANCE: { text: '保养中', color: '#8e44ad' },
+  OFF: { text: '下线', color: '#7f8c8d' },
+};
+
 const vehicles = reactive([]); // 车辆列表，将从Assignment中获取
 const monitorShipments = reactive([]);
 const monitorAssignments = reactive([]);
@@ -4994,6 +5009,22 @@ const monitorSummary = reactive({
 });
 
 const floatingVehicleDisplayAssignment = computed(() => floatingVehicleInfo.assignment || {});
+
+const floatingVehicleDriverText = computed(() => {
+  const assignment = floatingVehicleDisplayAssignment.value || {};
+  const vehicleInfo = floatingVehicleInfo.vehicleInfo || {};
+  const vehicleSnapshot = findVehicleSnapshot(floatingVehicleInfo.vehicleId) || {};
+  const vehicleDetail = floatingVehicleInfo.vehicleDetail || {};
+  const driverName = assignment.driverName || vehicleInfo.driverName ||
+      vehicleSnapshot.driverName || vehicleDetail.driverName;
+  if (!driverName) {
+    return '-';
+  }
+  const driverStatus = assignment.driverStatus || vehicleInfo.driverStatus ||
+      vehicleSnapshot.driverStatus || vehicleDetail.driverStatus;
+  const statusText = driverStatusMap[driverStatus]?.text || '未知';
+  return `司机 ${driverName}（${statusText}）`;
+});
 const floatingVehicleDisplayInfo = computed(() => floatingVehicleInfo.vehicleInfo || {});
 const floatingVehicleTitle = computed(() =>
     floatingVehicleDisplayInfo.value.licensePlate ||
@@ -5144,6 +5175,9 @@ const updateVehicleInfo = async () => {
                 ? assignment.vehicleStatus
                 : (isKnownStatus(previous.status) ? previous.status : 'IDLE'),
             currentAssignment: assignment.routeName,
+            driverId: assignment.driverId ?? previous.driverId ?? null,
+            driverName: assignment.driverName ?? previous.driverName ?? null,
+            driverStatus: assignment.driverStatus ?? previous.driverStatus ?? null,
             goodsInfo: assignment.goodsName,
             quantity: assignment.quantity,
             startPOI: assignment.startPOIName,
@@ -5229,6 +5263,9 @@ const updateVehicleInfo = async () => {
               ? monitorVehicle.status
               : (isKnownStatus(previous.status) ? previous.status : 'IDLE'),
           currentAssignment: `任务 ${monitorVehicle.assignmentIds?.join(', ') || '无'}`,
+          driverId: monitorVehicle.driverId ?? previous.driverId ?? null,
+          driverName: monitorVehicle.driverName ?? previous.driverName ?? null,
+          driverStatus: monitorVehicle.driverStatus ?? previous.driverStatus ?? null,
           goodsInfo: '',
           quantity: 0,
           currentLoad: Math.max(0, toNumber(monitorVehicle.currentLoad, previous.currentLoad || 0)),
@@ -6199,6 +6236,9 @@ const buildAssignmentFromVehicle = (vehicle) => ({
   vehicleId: vehicle.id,
   licensePlate: vehicle.licensePlate,
   vehicleStatus: vehicle.status,
+  driverId: vehicle.driverId ?? null,
+  driverName: vehicle.driverName ?? null,
+  driverStatus: vehicle.driverStatus ?? null,
   routeName: vehicle.currentAssignment,
   goodsName: vehicle.goodsInfo,
   quantity: vehicle.quantity,
@@ -6224,6 +6264,9 @@ const buildAssignmentFromMonitorAssignment = (assignment) => ({
   vehicleId: assignment.vehicleId,
   licensePlate: assignment.licensePlate,
   vehicleStatus: assignment.displayVehicleStatus || assignment.vehicleStatus,
+  driverId: assignment.driverId ?? null,
+  driverName: assignment.driverName ?? null,
+  driverStatus: assignment.driverStatus ?? null,
   routeName: assignment.routeName,
   goodsName: assignment.goodsName,
   quantity: assignment.quantity,
@@ -6288,6 +6331,9 @@ const mergeExperimentVehicleDisplayAssignment = (baseAssignment, displayInfo) =>
     vehicleId: baseAssignment?.vehicleId ?? displayInfo.vehicleId,
     licensePlate: baseAssignment?.licensePlate || displayInfo.licensePlate,
     vehicleStatus: baseAssignment?.vehicleStatus || displayInfo.vehicleStatus,
+    driverId: baseAssignment?.driverId ?? displayInfo.driverId ?? null,
+    driverName: pickDisplayText(baseAssignment?.driverName, displayInfo.driverName),
+    driverStatus: baseAssignment?.driverStatus ?? displayInfo.driverStatus ?? null,
     routeId: baseAssignment?.routeId ?? displayInfo.routeId,
     routeName: pickDisplayText(baseAssignment?.routeName, displayInfo.routeName),
     startPOIId: baseAssignment?.startPOIId ?? displayInfo.startPOIId,
@@ -6352,6 +6398,9 @@ const buildFloatingVehicleInfo = (vehicleId, assignment, vehicleDetail = null) =
       vehicleId,
       licensePlate: managerInfo.licensePlate || vehicleSnapshot.licensePlate || assignment?.licensePlate || `Vehicle ${vehicleId}`,
       status: currentStatus,
+      driverId: managerInfo.driverId ?? vehicleSnapshot.driverId ?? assignment?.driverId ?? null,
+      driverName: managerInfo.driverName || vehicleSnapshot.driverName || assignment?.driverName,
+      driverStatus: managerInfo.driverStatus || vehicleSnapshot.driverStatus || assignment?.driverStatus,
       currentAssignment: managerInfo.currentAssignment || vehicleSnapshot.currentAssignment || assignment?.routeName || assignment?.currentAssignment,
       goodsInfo: managerInfo.goodsInfo || vehicleSnapshot.goodsInfo || assignment?.goodsName,
       quantity: firstDefined(managerInfo.quantity, vehicleSnapshot.quantity, assignment?.quantity, 0),

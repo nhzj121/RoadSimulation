@@ -1,8 +1,10 @@
 package org.example.roadsimulation.service.impl;
 
+import org.example.roadsimulation.entity.Driver;
 import org.example.roadsimulation.entity.Goods;
 import org.example.roadsimulation.entity.Vehicle;
 import org.example.roadsimulation.entity.POI;
+import org.example.roadsimulation.repository.DriverRepository;
 import org.example.roadsimulation.repository.GoodsRepository;
 import org.example.roadsimulation.repository.POIRepository;
 import org.example.roadsimulation.repository.VehicleRepository;
@@ -37,14 +39,17 @@ public class VehicleServiceImpl implements VehicleService {
     private final VehicleRepository vehicleRepository;
     private final POIService poiService;
     private final GoodsRepository goodsRepository;
+    private final DriverRepository driverRepository;
 
     @Autowired
     public VehicleServiceImpl(VehicleRepository vehicleRepository,
                               POIService poiService,
-                              GoodsRepository goodsRepository) {
+                              GoodsRepository goodsRepository,
+                              DriverRepository driverRepository) {
         this.vehicleRepository = vehicleRepository;
         this.poiService = poiService;
         this.goodsRepository = goodsRepository;
+        this.driverRepository = driverRepository;
     }
 
     @Override
@@ -136,12 +141,28 @@ public class VehicleServiceImpl implements VehicleService {
 
     @Override
     public Vehicle assignDriverToVehicle(Long vehicleId, String driverName) {
-        return vehicleRepository.findById(vehicleId)
-                .map(vehicle -> {
-                    vehicle.setDriverName(driverName);
-                    return vehicleRepository.save(vehicle);
-                })
+        if (driverName == null || driverName.isBlank()) {
+            throw new IllegalArgumentException("司机姓名不能为空");
+        }
+        Vehicle vehicle = vehicleRepository.findById(vehicleId)
                 .orElseThrow(() -> new RuntimeException("车辆不存在，ID: " + vehicleId));
+
+        // 司机接入运输链：写入 driver_vehicle 中间表，而不仅是车辆冗余字符串列。
+        Driver driver = driverRepository.findByDriverName(driverName).stream()
+                .findFirst()
+                .orElseGet(() -> {
+                    Driver created = new Driver();
+                    created.setDriverName(driverName);
+                    created.setCurrentStatus(Driver.DriverStatus.IDLE);
+                    return driverRepository.save(created);
+                });
+
+        if (driver.getVehicles() == null || driver.getVehicles().stream().noneMatch(v -> v.getId().equals(vehicleId))) {
+            driver.addVehicle(vehicle);
+            driverRepository.save(driver);
+        }
+        vehicle.setDriverName(driver.getDriverName());
+        return vehicleRepository.save(vehicle);
     }
 
     @Override
