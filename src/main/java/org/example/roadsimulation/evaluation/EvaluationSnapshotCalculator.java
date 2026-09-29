@@ -54,6 +54,18 @@ public class EvaluationSnapshotCalculator {
     private final NodeServiceLedgerHealth nodeServiceLedgerHealth;
     // 环境场景仅作为只读评价事实，不参与运输推进或路线规划。
     private final ReproducibleEnvironmentScenarioService environmentScenarioService;
+    private org.example.roadsimulation.service.WeatherEnvironmentService weatherEnvironmentService;
+    private org.example.roadsimulation.repository.TransportExecutionSegmentRepository executionSegments;
+
+    @Autowired
+    public void setExecutionSegments(org.example.roadsimulation.repository.TransportExecutionSegmentRepository segments) {
+        executionSegments=java.util.Objects.requireNonNull(segments);
+    }
+
+    @Autowired
+    public void setWeatherEnvironmentService(org.example.roadsimulation.service.WeatherEnvironmentService weather) {
+        this.weatherEnvironmentService = java.util.Objects.requireNonNull(weather);
+    }
     // 能耗评价读取已持久化的累计事实，并使用统一模型校验排放换算与环境因子。
     private final VehicleEnergyEmissionModel energyEmissionModel;
     // 等待指标只读取评价账本，不从当前业务状态推断历史等待。
@@ -694,6 +706,20 @@ public class EvaluationSnapshotCalculator {
             dependent.forEach(id -> metrics.missing(id, "缺少当前 simulation tick，无法生成环境快照"));
             return;
         }
+        if(weatherEnvironmentService!=null){
+            List.of(ENV_NETWORK_AVERAGE_SPEED_KPH,ENV_CONGESTION_INDEX,ENV_ROAD_PASSABILITY_RATIO,
+                    ENV_CLOSED_ROAD_COUNT,ENV_ABNORMAL_EVENT_COUNT,ENV_WEATHER_RISK_LEVEL)
+                    .forEach(id->metrics.missing(id,"天气场景未建模该路网指标；不沿用旧周期常量"));
+            try{
+                double factor=1/weatherEnvironmentService.averageSpeedFactor(tick.tickStart(),tick.tickEnd());
+                metrics.available(ENV_TRAVEL_TIME_FACTOR,factor);
+                metrics.available(ENV_ENERGY_FACTOR,energyEmissionModel.environmentEnergyFactor(factor));
+            }catch(RuntimeException e){
+                metrics.invalid(ENV_TRAVEL_TIME_FACTOR,"天气窗口读取失败");
+                metrics.invalid(ENV_ENERGY_FACTOR,"天气窗口读取失败");
+            }
+            return;
+        }
         if (environmentScenarioService == null) {
             // 简化测试构造器可能缺少场景服务，生产构造器不会进入此分支。
             dependent.forEach(id -> metrics.missing(id, "可复现环境场景提供器不可用"));
@@ -1078,6 +1104,7 @@ public class EvaluationSnapshotCalculator {
             totalDistanceKm += distanceKm;
 
             // 有执行距离却缺少对应能耗账本时标为无效，不用当前环境补算历史。
+            var segmentRows=executionRows(leg);
             double energyLiters = leg.getExecutedEnergyLiters();
             double emissionKg = leg.getExecutedEmissionKg();
             AssignmentLeg.EnergyFactStatus energyStatus = leg.getEnergyFactStatus();
@@ -1103,6 +1130,7 @@ public class EvaluationSnapshotCalculator {
                 } catch (RuntimeException ex) {
                     metadataValid = false;
                 }
+                if(!segmentRows.isEmpty()) metadataValid=validSegments(leg,segmentRows,emissionModelSnapshot);
                 if (!metadataValid
                         || (distanceMeters > 0.0 && energyLiters <= 0.0)
                         || !approximatelyEqual(emissionKg,
@@ -1128,11 +1156,12 @@ public class EvaluationSnapshotCalculator {
             if (loadTonnes > 0.0 && distanceKm > 0.0) {
                 Vehicle vehicle = leg.getVehicle();
                 Double capacityValue = vehicle == null ? null : vehicle.getMaxLoadCapacityTonnes();
+                if(!segmentRows.isEmpty()) capacityValue=actualCapacity(leg,segmentRows);
                 if (capacityValue == null || !Double.isFinite(capacityValue)
                         || capacityValue <= 0.0 || loadTonnes > capacityValue + 1.0e-9) {
                     capacityFactsValid = false;
                 } else {
-                    capacityTonneKm += capacityValue * distanceKm;
+                    capacityTonneKm += capacityValue*distanceKm;
                 }
             }
         }
@@ -1148,6 +1177,48 @@ public class EvaluationSnapshotCalculator {
         return new LegFacts(totalDistanceKm, emptyDistanceKm, executedTonneKm,
                 capacityTonneKm, totalEnergyLiters, totalEmissionKg,
                 distanceFactsValid, loadFactsValid, capacityFactsValid, energyFactsValid);
+    }
+
+    private List<org.example.roadsimulation.entity.TransportExecutionSegment> executionRows(AssignmentLeg leg) {
+        if(executionSegments==null || leg.getId()==null) return List.of();
+        return executionSegments.findByLegIdOrderByLoopIndexAscFragmentIndexAsc(leg.getId()).stream()
+                .filter(s->weatherEnvironmentService==null || java.util.Objects.equals(s.getRunId(),weatherEnvironmentService.runId()))
+                .toList();
+    }
+
+    private double actualCapacity(AssignmentLeg leg,List<org.example.roadsimulation.entity.TransportExecutionSegment> rows) {
+        try {
+            double distance=0,weighted=0;
+            for(var row:rows) {
+                if(!isNonNegativeFinite(row.getDistanceMeters()) || row.getCapacityTonnes()==null
+                        || !Double.isFinite(row.getCapacityTonnes()) || row.getCapacityTonnes()<=0
+                        || leg.getCurrentLoadTonnes()>row.getCapacityTonnes()+1e-9) return Double.NaN;
+                distance+=row.getDistanceMeters();weighted+=row.getCapacityTonnes()*row.getDistanceMeters();
+            }
+            return distance>0 && approximatelyEqual(distance,leg.getExecutedDistanceMeters())?weighted/distance:Double.NaN;
+        } catch(RuntimeException ex) { return Double.NaN; }
+    }
+
+    private boolean validSegments(AssignmentLeg leg,List<org.example.roadsimulation.entity.TransportExecutionSegment> rows,
+            EnergyEmissionModelSnapshot model) {
+        try {
+            double distance=0,energy=0,emission=0;long seconds=0;
+            for(var row:rows) {
+                if(!row.isEnergyValid() || row.getVehicleId()==null || row.getDriverId()==null
+                        || row.getVehicleId()<=0 || row.getDriverId()<=0 || row.getLoadState()!=leg.getLoadState()
+                        || !approximatelyEqual(row.getLoadTonnes(),leg.getCurrentLoadTonnes())
+                        || !isNonNegativeFinite(row.getDistanceMeters()) || !isNonNegativeFinite(row.getEnergyLiters())
+                        || !isNonNegativeFinite(row.getEmissionKg()) || row.getDrivingSeconds()==null || row.getDrivingSeconds()<=0
+                        || !java.time.Duration.between(row.getFromSimTime(),row.getToSimTime()).equals(java.time.Duration.ofSeconds(row.getDrivingSeconds()))
+                        || !java.util.Objects.equals(row.getEmissionModelId(),model.modelId())
+                        || !java.util.Objects.equals(row.getVehicleClassCode(),energyEmissionModel.resolveVehicleClass(row.getCapacityTonnes()).code())
+                        || !approximatelyEqual(row.getEmissionKg(),row.getEnergyLiters()*model.directEmissionKgPerLiter())) return false;
+                distance+=row.getDistanceMeters();energy+=row.getEnergyLiters();emission+=row.getEmissionKg();
+                seconds=Math.addExact(seconds,row.getDrivingSeconds());
+            }
+            return approximatelyEqual(distance,leg.getExecutedDistanceMeters()) && seconds==leg.getExecutedDrivingSeconds()
+                    && approximatelyEqual(energy,leg.getExecutedEnergyLiters()) && approximatelyEqual(emission,leg.getExecutedEmissionKg());
+        } catch(RuntimeException ex) { return false; }
     }
 
     private void calculateCargoFacts(
@@ -1318,7 +1389,9 @@ public class EvaluationSnapshotCalculator {
                     tonneKm += load * distanceKm;
                     if (load > 0.0 && distanceKm > 0.0) {
                         Vehicle vehicle = leg.getVehicle();
-                        Double capacity = vehicle == null ? null : vehicle.getMaxLoadCapacityTonnes();
+                        var actualSegments=executionRows(leg);
+                        Double capacity = actualSegments.isEmpty() ? (vehicle == null ? null : vehicle.getMaxLoadCapacityTonnes())
+                                : actualCapacity(leg,actualSegments);
                         if (capacity == null || !Double.isFinite(capacity) || capacity <= 0.0
                                 || load > capacity + 1.0e-9) {
                             loadFactsValid = false;

@@ -87,6 +87,14 @@ public class AssignmentBriefDTO {
     private Double currentVolume;
     private Double maxVolumeCapacity;
 
+    // Durable replacement handoff metadata.  This is sourced from persisted event history,
+    // not from a browser-local animation or owner-change tracker.
+    private Boolean replacementRecovery = false;
+    private Long replacementEventId;
+    private Long replacementOriginalVehicleId;
+    private Long currentOwnerVehicleId;
+    private Boolean replacementArrivalReady = false;
+
     // 货物信息
     @Setter @Getter
     private String goodsName;

@@ -46,6 +46,7 @@ public final class SandboxRunRuntimeContext {
     private final SandboxRunCodec runCodec;
 
     private volatile SandboxRunSpecificationRevisionV1 revision;
+    private volatile SandboxRunSpecificationRevisionV2 revisionV2;
     private volatile String deterministicSimulationRunId;
 
     public SandboxRunRuntimeContext(
@@ -79,21 +80,9 @@ public final class SandboxRunRuntimeContext {
                         "UNSAFE_DATABASE", "Sandbox runtime must use vehicle_scheduler_sandbox");
             }
             Marker marker = readMarker(connection);
-            SandboxRunSpecificationRevisionV1 loaded = readRevision(
-                    connection, marker.runSpecKey(), marker.runSpecRevision());
-            validate(marker, loaded, readInitialStates(connection, marker.runSpecKey(), marker.runSpecRevision()));
-            this.revision = loaded;
-            this.deterministicSimulationRunId = "sandbox-"
-                    + loaded.fingerprints().runSpecificationSha256().substring(0, 16);
-            runtimeConfig.freezeForSandbox(
-                    DispatchStrategy.valueOf(loaded.specification().dispatch().strategy()),
-                    DemandGenerationMode.PRODUCTION,
-                    loaded.specification().random().rootSeed(),
-                    loaded.algorithmProfile());
-            simulationContext.configureDeterministicRun(
-                    deterministicSimulationRunId,
-                    loaded.specification().simulationClock().startLocalDateTime(),
-                    loaded.specification().simulationClock().tickDurationSeconds());
+            if (loadV2IfPresent(connection, marker)) return;
+            throw new SandboxWorkspaceException("SANDBOX_V1_READ_ONLY",
+                    "Published v1 is available for export/verification only; publish v2 before a new formal run");
         } catch (SandboxWorkspaceException exception) {
             throw exception;
         } catch (Exception exception) {
@@ -112,27 +101,27 @@ public final class SandboxRunRuntimeContext {
     }
 
     public SandboxAlgorithmProfile algorithmProfile() {
-        return requireLoaded().algorithmProfile();
+        return revisionV2==null?requireLoaded().algorithmProfile():revisionV2.algorithmProfile();
     }
 
     public String deterministicSimulationRunId() {
-        requireLoaded();
+        requireAnyLoaded();
         return deterministicSimulationRunId;
     }
 
     public long deriveSeed(SandboxRandomDomain domain, Map<String, ?> stableBusinessKey) {
         return randomProtocol.deriveSeed(
-                specification().random().rootSeed(), domain, stableBusinessKey);
+                randomProtocolSpecification().rootSeed(), domain, stableBusinessKey);
     }
 
     public String deriveSeedHex(SandboxRandomDomain domain, Map<String, ?> stableBusinessKey) {
         return randomProtocol.deriveSeedHex(
-                specification().random().rootSeed(), domain, stableBusinessKey);
+                randomProtocolSpecification().rootSeed(), domain, stableBusinessKey);
     }
 
     public SplitMix64V1 random(SandboxRandomDomain domain, Map<String, ?> stableBusinessKey) {
         return randomProtocol.random(
-                specification().random().rootSeed(), domain, stableBusinessKey);
+                randomProtocolSpecification().rootSeed(), domain, stableBusinessKey);
     }
 
     public Random javaRandom(SandboxRandomDomain domain, Map<String, ?> stableBusinessKey) {
@@ -140,6 +129,7 @@ public final class SandboxRunRuntimeContext {
     }
 
     public long environmentPhaseSeed() {
+        if(isV2())throw new SandboxWorkspaceException("PERIODIC_ENVIRONMENT_DISABLED","v2 uses frozen event weather, not the legacy periodic environment");
         return deriveSeed(
                 SandboxRandomDomain.ENVIRONMENT_PHASE,
                 Map.of("environmentScenarioId", specification().environment().scenarioId()));
@@ -147,7 +137,7 @@ public final class SandboxRunRuntimeContext {
 
     public Map<Long, SandboxVehicleInitialState> vehicleInitialStatesByVehicleId() {
         LinkedHashMap<Long, SandboxVehicleInitialState> result = new LinkedHashMap<>();
-        requireLoaded().vehicleInitialStates().stream()
+        (revisionV2==null?requireLoaded().vehicleInitialStates():revisionV2.vehicleInitialStates()).stream()
                 .sorted(Comparator.comparingLong(SandboxVehicleInitialState::vehicleId))
                 .forEach(state -> result.put(state.vehicleId(), state));
         return Map.copyOf(result);
@@ -158,7 +148,8 @@ public final class SandboxRunRuntimeContext {
             SandboxRunSpecificationRevisionV1 loaded,
             List<SandboxVehicleInitialState> storedStates
     ) {
-        if (!SandboxRunSpecificationStore.CONTROL_SCHEMA_VERSION.equals(marker.controlSchemaVersion())
+        if (!java.util.Set.of(SandboxRunSpecificationStore.CONTROL_SCHEMA_VERSION,
+                SandboxRunSpecificationStore.V2_CONTROL_SCHEMA_VERSION).contains(marker.controlSchemaVersion())
                 || !"RUN_SPEC_READY".equals(marker.workspaceState())
                 || !SandboxRandomProtocol.PROTOCOL_ID.equals(marker.randomProtocolId())
                 || !loaded.runSpecKey().equals(marker.runSpecKey())
@@ -262,11 +253,93 @@ public final class SandboxRunRuntimeContext {
     }
 
     private SandboxRunSpecificationRevisionV1 requireLoaded() {
+        if(isV2())throw new SandboxWorkspaceException("V1_RUNTIME_VIEW_FORBIDDEN","Use version-neutral accessors for v2; no synthetic v1 environment is available");
         SandboxRunSpecificationRevisionV1 current = revision;
         if (current == null) {
             throw new IllegalStateException("Sandbox run context has not been loaded");
         }
         return current;
+    }
+
+
+    public boolean isV2() {return revisionV2!=null;}
+    public SandboxRunSpecificationRevisionV2 revisionV2() {
+        if(revisionV2==null)throw new SandboxWorkspaceException("RUN_SPEC_V2_REQUIRED","No prepared v2 revision");
+        return revisionV2;
+    }
+    public SandboxRunSpecificationV1.SimulationClock simulationClock() {
+        return isV2()?revisionV2.specification().simulationClock():specification().simulationClock();
+    }
+    public SandboxRunSpecificationV1.Dispatch dispatch() {
+        return isV2()?revisionV2.specification().dispatch():specification().dispatch();
+    }
+    public SandboxRunSpecificationV1.DriverBehavior driverBehavior() {
+        return isV2()?revisionV2.specification().driverBehavior():specification().driverBehavior();
+    }
+    public SandboxRunSpecificationV1.RandomProtocol randomProtocolSpecification() {
+        return isV2()?revisionV2.specification().random():specification().random();
+    }
+    private void requireAnyLoaded() {if(!isV2())requireLoaded();}
+
+    private boolean loadV2IfPresent(Connection connection,Marker marker) throws Exception {
+        String encoded;
+        try(var statement=connection.prepareStatement(
+                "SELECT revision_json FROM sandbox_run_spec_revision WHERE run_spec_key=? AND revision_no=? AND archived=b'0'")) {
+            statement.setString(1,marker.runSpecKey());statement.setInt(2,marker.runSpecRevision());
+            try(var rows=statement.executeQuery()) {
+                if(!rows.next())throw new SandboxWorkspaceException("RUN_SPEC_REVISION_NOT_FOUND","Active revision missing");
+                encoded=rows.getString(1);
+            }
+        }
+        if(!SandboxRunSpecificationRevisionV2.ARTIFACT_VERSION.equals(objectMapper.readTree(encoded).path("artifactVersion").asText())) return false;
+        if(!SandboxRunSpecificationStore.V2_CONTROL_SCHEMA_VERSION.equals(marker.controlSchemaVersion()))
+            throw new SandboxWorkspaceException("CONTROL_SCHEMA_NOT_READY","v2 requires control schema v4");
+        var loaded=objectMapper.readValue(encoded,SandboxRunSpecificationRevisionV2.class);
+        var reference=loaded.specification().scenario();
+        org.example.roadsimulation.sandbox.scenario.definition.SandboxScenarioRevisionV1 scene;
+        try(var statement=connection.prepareStatement(
+                "SELECT revision_json FROM sandbox_scenario_revision WHERE scenario_key=? AND revision_no=? AND archived=b'0'")) {
+            statement.setString(1,reference.scenarioKey());statement.setInt(2,reference.revision());
+            try(var rows=statement.executeQuery()) {
+                if(!rows.next())throw new SandboxWorkspaceException("SCENARIO_REVISION_NOT_FOUND","Published scenario missing");
+                scene=objectMapper.readValue(rows.getString(1),
+                        org.example.roadsimulation.sandbox.scenario.definition.SandboxScenarioRevisionV1.class);
+            }
+        }
+        var baseline=new org.example.roadsimulation.sandbox.baseline.SandboxBaselineLoader(objectMapper).load(
+                new org.springframework.core.io.ClassPathResource("sandbox/baseline/baseline-v1.json"));
+        var scenario=new org.example.roadsimulation.sandbox.scenario.definition.SandboxScenarioCompiler(objectMapper).compile(baseline,scene.definition());
+        var compiled=new SandboxRunCompilerV2(objectMapper).compile(loaded.specification(),scene,scenario);
+        if(!"RUN_SPEC_READY".equals(marker.workspaceState()) || !loaded.runSpecKey().equals(marker.runSpecKey())
+                || loaded.revision()!=marker.runSpecRevision() || !SandboxRandomProtocol.PROTOCOL_ID.equals(marker.randomProtocolId())
+                || !compiled.algorithmProfile().equals(loaded.algorithmProfile())
+                || !compiled.vehicleInitialStates().equals(loaded.vehicleInitialStates())
+                || !compiled.weatherTimeline().equals(loaded.weatherTimeline())
+                || !compiled.eventConfiguration().equals(loaded.eventConfiguration())
+                || !compiled.runSpecificationSha256().equals(loaded.fingerprints().runSpecificationSha256())
+                || !compiled.resolvedVehicleInitialStateSha256().equals(loaded.fingerprints().resolvedVehicleInitialStateSha256())
+                || !compiled.preparedRunFactsSha256().equals(loaded.fingerprints().preparedRunFactsSha256())
+                || !compiled.weatherTimelineSha256().equals(loaded.fingerprints().weatherTimelineSha256())
+                || !compiled.eventConfigurationSha256().equals(loaded.fingerprints().eventConfigurationSha256())
+                || !compiled.runSpecificationSha256().equals(marker.runSpecificationSha256())
+                || !compiled.resolvedVehicleInitialStateSha256().equals(marker.resolvedVehicleInitialStateSha256())
+                || !compiled.preparedRunFactsSha256().equals(marker.preparedRunFactsSha256())
+                || !randomProtocol.rootSeedFingerprint(loaded.specification().random().rootSeed()).equals(marker.rootSeedFingerprint())
+                || !compiled.vehicleInitialStates().equals(readInitialStates(connection,marker.runSpecKey(),marker.runSpecRevision())))
+            throw new SandboxWorkspaceException("SANDBOX_RUN_REVISION_MISMATCH","v2 prepared facts do not match the published revision");
+        try(var statement=connection.createStatement();var rows=statement.executeQuery(
+                "SELECT run_artifact_version,weather_timeline_sha256,event_configuration_sha256 FROM sandbox_workspace_marker WHERE marker_id=1")) {
+            if(!rows.next() || !SandboxRunSpecificationV2.ARTIFACT_VERSION.equals(rows.getString(1))
+                    || !compiled.weatherTimelineSha256().equals(rows.getString(2))
+                    || !compiled.eventConfigurationSha256().equals(rows.getString(3)))
+                throw new SandboxWorkspaceException("SANDBOX_RUN_MARKER_MISMATCH","v2 weather/event marker mismatch");
+        }
+        runtimeConfig.freezeForSandbox(DispatchStrategy.valueOf(loaded.specification().dispatch().strategy()),
+                DemandGenerationMode.PRODUCTION,loaded.specification().random().rootSeed(),loaded.algorithmProfile());
+        simulationContext.configureDeterministicRun(compiled.deterministicSimulationRunId(),
+                loaded.specification().simulationClock().startLocalDateTime(),loaded.specification().simulationClock().tickDurationSeconds());
+        revisionV2=loaded;deterministicSimulationRunId=compiled.deterministicSimulationRunId();
+        return true;
     }
 
     private record Marker(

@@ -1,0 +1,14 @@
+{
+  "name": "天气演示",
+  "preset": "DEMO",
+  "seed": 20260911,
+  "generatorVersion": "weather-v1",
+  "autoEvents": false,
+  "afterTimeline": "SUNNY",
+  "timeSlices": [
+    {"startMinute": 0, "endMinute": 60, "weatherType": "SUNNY", "speedFactor": 1.0},
+    {"startMinute": 60, "endMinute": 180, "weatherType": "RAIN", "speedFactor": 0.8},
+    {"startMinute": 180, "endMinute": 240, "weatherType": "FOG", "speedFactor": 0.6},
+    {"startMinute": 240, "endMinute": 1440, "weatherType": "SUNNY", "speedFactor": 1.0}
+  ]
+}

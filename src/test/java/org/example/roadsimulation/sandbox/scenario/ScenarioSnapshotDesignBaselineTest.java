@@ -4,8 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
+import org.springframework.core.io.ClassPathResource;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -13,13 +12,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ScenarioSnapshotDesignBaselineTest {
 
-    private static final Path BASELINE = Path.of(
-            "doc", "architecture", "sandbox", "formal-design-baseline-v0.json");
+    private static final ClassPathResource BASELINE = new ClassPathResource(
+            "sandbox/archive/formal-design-baseline-v0.json");
 
     @Test
-    void currentDatabaseDesignBaselineIsCompleteAsAnArtifactAndExplicitlyNotExecutionReady()
+    void archivedDesignBaselineIsCompleteAsAnArtifactAndExplicitlyNotExecutionReady()
             throws Exception {
-        JsonNode artifact = new ObjectMapper().readTree(Files.readString(BASELINE));
+        JsonNode artifact;
+        try(var input=BASELINE.getInputStream()) { artifact=new ObjectMapper().readTree(input); }
         JsonNode counts = artifact.path("source").path("tableRowCounts");
         JsonNode facts = artifact.path("scenarioSnapshot");
 

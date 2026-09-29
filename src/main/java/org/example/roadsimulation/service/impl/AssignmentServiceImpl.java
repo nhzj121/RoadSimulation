@@ -12,6 +12,7 @@ import org.example.roadsimulation.repository.DriverRepository;
 import org.example.roadsimulation.service.AssignmentService;
 import org.example.roadsimulation.service.TransportMetricsService;
 import org.example.roadsimulation.service.TransportLifecycleService;
+import org.example.roadsimulation.service.TransportRandomEventService;
 import org.example.roadsimulation.service.VehicleService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -61,6 +62,14 @@ public class AssignmentServiceImpl implements AssignmentService {
 
     private static final Logger logger = LoggerFactory.getLogger(AssignmentServiceImpl.class);
 
+    @Autowired
+    private org.example.roadsimulation.service.DrivingProgressService drivingProgressService;
+
+    @Autowired
+    private TransportRandomEventService transportRandomEventService;
+    @Autowired
+    private org.example.roadsimulation.service.WeatherEnvironmentService weatherEnvironmentService;
+
     // ==================== CRUD ====================
 
     @Override
@@ -99,6 +108,9 @@ public class AssignmentServiceImpl implements AssignmentService {
     @Override
     public AssignmentResponseDTO updateAssignment(Long id, AssignmentRequestDTO requestDTO) {
         Assignment assignment = findAssignmentById(id);
+        if(assignment.getStatus()==AssignmentStatus.IN_PROGRESS && requestDTO.getDriverId()!=null
+                && (assignment.getAssignedDriver()==null || !requestDTO.getDriverId().equals(assignment.getAssignedDriver().getId())))
+            throw new IllegalStateException("Active task driver changes must use the lifecycle, not CRUD rebinding");
         assignment.setStatus(requestDTO.getStatus());
         assignment.setStartTime(requestDTO.getStartTime());
         assignment.setEndTime(requestDTO.getEndTime());
@@ -268,7 +280,19 @@ public class AssignmentServiceImpl implements AssignmentService {
 
     @Override
     public List<AssignmentBriefDTO> getActiveAssignments() {
-        return dataInitializer.getActiveAssignments();
+        List<AssignmentBriefDTO> result = new ArrayList<>(dataInitializer.getActiveAssignments());
+        if ((weatherEnvironmentService!=null && weatherEnvironmentService.runId()!=null)
+                || (drivingProgressService != null && drivingProgressService.enabled())) {
+            Set<Long> known = result.stream().map(AssignmentBriefDTO::getAssignmentId).collect(java.util.stream.Collectors.toSet());
+            // Restore only executing tasks; pending route planning must still complete normal registration.
+            for (Assignment assignment : assignmentRepository.findActiveAssignments()) {
+                if (assignment.getStatus() == AssignmentStatus.IN_PROGRESS && known.add(assignment.getId())) {
+                    result.add(convertToBriefDTO(assignment));
+                }
+            }
+        }
+        result.forEach(this::decorateReplacementRecovery);
+        return result;
     }
 
     @Override
@@ -419,7 +443,7 @@ public class AssignmentServiceImpl implements AssignmentService {
         List<Assignment> assignments = assignmentRepository.findByIds(assignmentIds);
         List<AssignmentBriefDTO> result = new ArrayList<>();
         for (Assignment assignment : assignments) {
-            result.add(convertToBriefDTO(assignment));
+            result.add(decorateReplacementRecovery(convertToBriefDTO(assignment), assignment));
         }
         return result;
     }
@@ -462,6 +486,8 @@ public class AssignmentServiceImpl implements AssignmentService {
         if (driver == null) {
             throw new IllegalArgumentException("司机不存在，ID: " + driverId);
         }
+        if(driver.getReservedReplacementEventId()!=null)
+            throw new IllegalStateException("Reserved replacement driver cannot be bound by CRUD");
         Driver current = assignment.getAssignedDriver();
         if (current != null && current.getId() != null && !current.getId().equals(driver.getId())) {
             Driver old = driverRepository.findById(current.getId()).orElse(null);
@@ -561,6 +587,40 @@ public class AssignmentServiceImpl implements AssignmentService {
             dto.setPairId(dto.getStartPOIId() + "_" + dto.getEndPOIId());
         }
 
+        if (assignment.getNodes() != null && !assignment.getNodes().isEmpty()) {
+            dto.setVrp(true);
+            dto.setNodes(assignment.getNodes().stream()
+                    .filter(node -> node != null && node.getPoi() != null && node.getActionType() != null)
+                    .sorted(java.util.Comparator.comparing(AssignmentNode::getSequenceIndex, java.util.Comparator.nullsLast(Integer::compareTo)))
+                    .map(node -> {
+                        var target = new AssignmentBriefDTO.NodeDTO();
+                        target.setSequenceIndex(node.getSequenceIndex());
+                        target.setPoiId(node.getPoi().getId()); target.setPoiName(node.getPoi().getName());
+                        target.setLng(node.getPoi().getLongitude()); target.setLat(node.getPoi().getLatitude());
+                        target.setPoiType(node.getPoi().getPoiType() == null ? null : node.getPoi().getPoiType().name());
+                        target.setActionType(node.getActionType().name());
+                        target.setWeightDelta(node.getWeightDelta()); target.setVolumeDelta(node.getVolumeDelta());
+                        return target;
+                    }).toList());
+        }
+
+        return dto;
+    }
+
+    private void decorateReplacementRecovery(AssignmentBriefDTO dto) {
+        if(dto==null||dto.getAssignmentId()==null||transportRandomEventService==null)return;
+        assignmentRepository.findById(dto.getAssignmentId())
+                .ifPresent(assignment->decorateReplacementRecovery(dto,assignment));
+    }
+
+    private AssignmentBriefDTO decorateReplacementRecovery(AssignmentBriefDTO dto,Assignment assignment) {
+        if(dto==null||assignment==null||transportRandomEventService==null)return dto;
+        var state=transportRandomEventService.replacementRecoveryState(assignment);
+        dto.setReplacementRecovery(state.replacementRecovery());
+        dto.setReplacementEventId(state.replacementEventId());
+        dto.setReplacementOriginalVehicleId(state.originalVehicleId());
+        dto.setCurrentOwnerVehicleId(state.currentOwnerVehicleId());
+        dto.setReplacementArrivalReady(state.arrivalReady());
         return dto;
     }
 

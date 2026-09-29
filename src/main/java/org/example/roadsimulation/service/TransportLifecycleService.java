@@ -41,6 +41,14 @@ import java.util.Set;
 
 @Service
 public class TransportLifecycleService {
+    private DriverResourceService driverResources;
+
+    @Autowired
+    public void setDriverResources(DriverResourceService driverResources) {
+        this.driverResources = Objects.requireNonNull(driverResources);
+    }
+    @org.springframework.beans.factory.annotation.Autowired
+    private DrivingProgressService drivingProgressService;
 
     private static final Logger log = LoggerFactory.getLogger(TransportLifecycleService.class);
 
@@ -61,6 +69,8 @@ public class TransportLifecycleService {
     private final ApplicationEventPublisher eventPublisher;
     // Phase 7B：观察器只复制已完成的生命周期事实，绝不参与状态选择或路段推进。
     private final NodeServiceObservationPublisher nodeServiceObservationPublisher;
+    @Autowired
+    private TransportRandomEventService transportRandomEventService;
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -72,7 +82,8 @@ public class TransportLifecycleService {
             ShipmentRepository shipmentRepository,
             ShipmentItemRepository shipmentItemRepository,
             AssignmentRepository assignmentRepository,
-            VehicleRepository vehicleRepository
+            VehicleRepository vehicleRepository,
+            TransportRandomEventService transportRandomEventService
     ) {
         this(
                 shipmentRepository,
@@ -86,6 +97,13 @@ public class TransportLifecycleService {
                 null,
                 null
         );
+        this.transportRandomEventService=transportRandomEventService;
+    }
+
+    public TransportLifecycleService(ShipmentRepository shipmentRepository,ShipmentItemRepository shipmentItemRepository,
+            AssignmentRepository assignmentRepository,VehicleRepository vehicleRepository){
+        this(shipmentRepository,shipmentItemRepository,assignmentRepository,vehicleRepository,
+                (TransportRandomEventService)null);
     }
 
     /**
@@ -353,15 +371,26 @@ public class TransportLifecycleService {
             throw new IllegalArgumentException("VRP assignments are not supported by assignment-loaded");
         }
 
-        Vehicle managedVehicle = resolveVehicle(null, assignment);
-        if (managedVehicle == null || managedVehicle.getId() == null) {
+        Vehicle assignedVehicle = assignment.getAssignedVehicle();
+        if (assignedVehicle == null || assignedVehicle.getId() == null) {
             throw new IllegalStateException("No vehicle assigned to assignment: " + assignmentId);
         }
-        if (!vehicleId.equals(managedVehicle.getId())) {
+        if (!vehicleId.equals(assignedVehicle.getId())) {
             throw new IllegalArgumentException("Vehicle does not match assignment: " + vehicleId);
         }
+        Vehicle managedVehicle = vehicleRepository.findByIdForUpdate(vehicleId)
+                .orElseThrow(() -> new IllegalArgumentException("Vehicle not found: " + vehicleId));
 
         LocalDateTime now = resolveTime(simNow);
+        if (transportRandomEventService != null && transportRandomEventService.isTransitionBlocked(vehicleId, now)) {
+            throw new TransportRandomEventService.TransitionBlockedException(vehicleId);
+        }
+        if (drivingProgressService != null && drivingProgressService.enabled()
+                && (managedVehicle.getCurrentStatus() != Vehicle.VehicleStatus.TRANSPORT_DRIVING)
+                && (managedVehicle.getCurrentStatus() != Vehicle.VehicleStatus.LOADING
+                    || managedVehicle.getStatusEndTime() == null || now.isBefore(managedVehicle.getStatusEndTime()))) {
+            throw new TransportRandomEventService.TransitionBlockedException(vehicleId);
+        }
         String effectiveActor = actor != null ? actor : "Frontend loading completion";
 
         if (assignment.getStatus() == Assignment.AssignmentStatus.ASSIGNED) {
@@ -519,6 +548,10 @@ public class TransportLifecycleService {
      * 生产环境找不到空闲司机时拒绝任务启动，依赖外层事务回滚任务和车辆状态。
      */
     private void bindDriverRequired(Assignment assignment, Vehicle vehicle, String actor) {
+        if (driverResources != null) {
+            driverResources.claimForAssignment(assignment, vehicle, resolveTime(null), actor);
+            return;
+        }
         if (driverRepository == null) {
             // 仅保留给不加载司机模块的旧纯单元测试构造路径；Spring生产构造器始终注入仓库。
             return;
@@ -602,8 +635,10 @@ public class TransportLifecycleService {
         if (driverRepository == null || driverId == null || status == null) {
             throw new IllegalArgumentException("司机和目标状态不能为空");
         }
-        Driver driver = driverRepository.findById(driverId)
+        Driver driver = (driverResources == null ? driverRepository.findById(driverId) : driverRepository.findByIdForUpdate(driverId))
                 .orElseThrow(() -> new IllegalArgumentException("司机不存在，ID: " + driverId));
+        if (driver.getReservedReplacementEventId() != null)
+            throw new IllegalStateException("司机已被换车事件预留，不能单独改变状态");
         if (driver.getCurrentStatus() != Driver.DriverStatus.ASSIGNED
                 || status == Driver.DriverStatus.ASSIGNED) {
             driver.setCurrentStatus(status);
@@ -638,10 +673,12 @@ public class TransportLifecycleService {
                 || assignment.getAssignedDriver().getId() == null) {
             return;
         }
-        Driver driver = driverRepository.findById(assignment.getAssignedDriver().getId()).orElse(null);
+        Driver driver = (driverResources == null ? driverRepository.findById(assignment.getAssignedDriver().getId())
+                : driverRepository.findByIdForUpdate(assignment.getAssignedDriver().getId())).orElse(null);
         // 仅任务中司机可释放；防止覆盖行为状态表新状态（REJECTING/MAINTENANCE）
         if (driver == null
                 || driver.getCurrentStatus() != Driver.DriverStatus.ASSIGNED
+                || driver.getReservedReplacementEventId() != null
                 || driver.getCurrentAssignment() != null) {
             return;
         }
@@ -699,6 +736,19 @@ public class TransportLifecycleService {
 
         if (replacement == null) {
             throw new IllegalStateException("任务 " + assignment.getId() + " 没有可用替补司机");
+        }
+
+        if (driverResources != null) {
+            // Claim against the new owner before publishing the release of the old one.
+            assignment.setAssignedDriver(replacement);
+            driverResources.claimForAssignment(assignment, assignment.getAssignedVehicle(), resolveTime(null), reason);
+            oldDriver.removeAssignment(assignment);
+            assignment.setAssignedDriver(replacement);
+            driverRepository.save(oldDriver);
+            recordDriverHistory(assignment, oldDriver, AssignmentDriverHistory.Action.RELEASE,
+                    reason, reason, Driver.DriverStatus.ASSIGNED, oldDriverNewStatus);
+            assignmentRepository.save(assignment);
+            return true;
         }
 
         oldDriver.removeAssignment(assignment);
@@ -886,7 +936,7 @@ public class TransportLifecycleService {
 
         Vehicle managedVehicle = resolveVehicle(vehicle, assignment);
         if (managedVehicle != null) {
-            managedVehicle.transitionToStatus(Vehicle.VehicleStatus.IDLE, now, Duration.ZERO);
+            releaseVehicleStatus(managedVehicle,now);
             if (endPOI != null) {
                 POI destination = resolvePoi(endPOI);
                 managedVehicle.setCurrentPOI(destination);
@@ -962,7 +1012,7 @@ public class TransportLifecycleService {
             if (assignment != null) {
                 managedVehicle.removeAssignment(assignment);
             }
-            managedVehicle.transitionToStatus(Vehicle.VehicleStatus.IDLE, resolveTime(null), Duration.ZERO);
+            releaseVehicleStatus(managedVehicle,resolveTime(null));
             // Phase 1：回滚释放车辆时，吨制运行载重归零。
             managedVehicle.setCurrentLoadTonnes(0.0);
             managedVehicle.setCurrentVolumn(0.0);
@@ -1016,7 +1066,7 @@ public class TransportLifecycleService {
         Vehicle vehicle = resolveVehicle(null, assignment);
         if (vehicle != null) {
             vehicle.removeAssignment(assignment);
-            vehicle.transitionToStatus(Vehicle.VehicleStatus.IDLE, now, Duration.ZERO);
+            releaseVehicleStatus(vehicle,now);
             // Phase 1：取消任务释放车辆时，吨制运行载重归零。
             vehicle.setCurrentLoadTonnes(0.0);
             vehicle.setCurrentVolumn(0.0);
@@ -1027,6 +1077,13 @@ public class TransportLifecycleService {
         }
 
         refreshShipments(touchedShipments);
+    }
+
+    private void releaseVehicleStatus(Vehicle vehicle,LocalDateTime now) {
+        // A cancelled/rolled-back task does not repair a scrapped vehicle or steal a reservation.
+        if(vehicle.getCurrentStatus()!=Vehicle.VehicleStatus.SCRAPPED
+                && vehicle.getCurrentStatus()!=Vehicle.VehicleStatus.RESERVED_REPLACEMENT)
+            vehicle.transitionToStatus(Vehicle.VehicleStatus.IDLE,now,Duration.ZERO);
     }
 
     @Transactional

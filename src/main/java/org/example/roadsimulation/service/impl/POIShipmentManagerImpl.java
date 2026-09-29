@@ -21,6 +21,8 @@ import java.util.stream.Collectors;
  */
 @Component
 public class POIShipmentManagerImpl implements POIShipmentManager {
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.example.roadsimulation.repository.ShipmentItemRepository shipmentItemRepository;
 
     private static final Logger logger = LoggerFactory.getLogger(POIShipmentManagerImpl.class);
 
@@ -161,6 +163,7 @@ public class POIShipmentManagerImpl implements POIShipmentManager {
 
         List<POIShipmentRecord> expired = activeRecords.values().stream()
                 .filter(record -> record.isActive() && record.getCreatedAt().isBefore(cutoff))
+                .filter(record -> !hasActiveTransport(record.getShipmentId()))
                 .collect(Collectors.toList());
 
         for (POIShipmentRecord record : expired) {
@@ -186,6 +189,15 @@ public class POIShipmentManagerImpl implements POIShipmentManager {
         }
 
         return expired;
+    }
+
+    private boolean hasActiveTransport(Long shipmentId) {
+        if (shipmentId == null || shipmentItemRepository == null) return false;
+        return shipmentItemRepository.findByShipmentId(shipmentId).stream().anyMatch(item -> {
+            var assignment = item.getAssignment();
+            return assignment != null && (assignment.getStatus() == org.example.roadsimulation.entity.Assignment.AssignmentStatus.ASSIGNED
+                    || assignment.getStatus() == org.example.roadsimulation.entity.Assignment.AssignmentStatus.IN_PROGRESS);
+        });
     }
 
     // ========== 概率管理 ==========

@@ -1,0 +1,83 @@
+package org.example.roadsimulation.controller;
+
+import org.example.roadsimulation.core.SimulationContext;
+import org.example.roadsimulation.dto.ApiResponse;
+import org.example.roadsimulation.dto.RandomEventDTO;
+import org.example.roadsimulation.dto.RandomEventTriggerRequest;
+import org.example.roadsimulation.entity.TransportRandomEvent;
+import org.example.roadsimulation.service.TransportRandomEventService;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+
+@RestController
+@RequestMapping("/api/simulation/random-events")
+public class TransportRandomEventController {
+    private final TransportRandomEventService eventService;
+    private final SimulationContext simulationContext;
+    private org.example.roadsimulation.SimulationMainLoop mainLoop;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public void setMainLoop(org.example.roadsimulation.SimulationMainLoop mainLoop) {this.mainLoop=mainLoop;}
+
+    public TransportRandomEventController(
+            TransportRandomEventService eventService,
+            SimulationContext simulationContext
+    ) {
+        this.eventService = eventService;
+        this.simulationContext = simulationContext;
+    }
+
+    @PostMapping("/trigger")
+    public ResponseEntity<ApiResponse<RandomEventDTO>> trigger(@RequestBody RandomEventTriggerRequest request) {
+        try {
+            return mainLoop==null?triggerAtCurrentTick(request):mainLoop.withSimulationMutationLock(()->triggerAtCurrentTick(request));
+        } catch(IllegalStateException ex) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(ApiResponse.error(ex.getMessage()));
+        }
+    }
+
+    private ResponseEntity<ApiResponse<RandomEventDTO>> triggerAtCurrentTick(RandomEventTriggerRequest request) {
+        try {
+            if (request == null) {
+                throw new IllegalArgumentException("request body is required");
+            }
+            boolean v2 = request.getBreakdownLevel() != null || request.getRescueWaitMinutes() != null
+                    || request.getRepairMinutes() != null || request.getReplacementWaitMinutes()!=null;
+            boolean replacement=request.getBreakdownLevel()==TransportRandomEvent.BreakdownLevel.REPLACEMENT_REQUIRED
+                    ||request.getReplacementWaitMinutes()!=null;
+            TransportRandomEvent event = v2
+                    ? (replacement?eventService.triggerManually(request.getEventType(), request.getVehicleId(), request.getDurationMinutes(),
+                            request.getBreakdownLevel(), request.getRescueWaitMinutes(), request.getRepairMinutes(),request.getReplacementWaitMinutes(),
+                            simulationContext.getCurrentSimTime())
+                    : eventService.triggerManually(request.getEventType(), request.getVehicleId(), request.getDurationMinutes(),
+                            request.getBreakdownLevel(), request.getRescueWaitMinutes(), request.getRepairMinutes(),
+                            simulationContext.getCurrentSimTime()))
+                    : eventService.triggerManually(request.getEventType(), request.getVehicleId(),
+                            request.getDurationMinutes(), simulationContext.getCurrentSimTime());
+            return ResponseEntity.ok(ApiResponse.success("random event triggered", RandomEventDTO.from(event)));
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.badRequest().body(ApiResponse.error(ex.getMessage()));
+        } catch (IllegalStateException ex) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(ApiResponse.error(ex.getMessage()));
+        }
+    }
+
+    @GetMapping("/active")
+    public ApiResponse<List<RandomEventDTO>> active() {
+        return ApiResponse.success(eventService.getActiveEvents().stream().map(RandomEventDTO::from).toList());
+    }
+
+    // Body binding happens before trigger(), so its try/catch cannot handle invalid JSON.
+    @ExceptionHandler(org.springframework.http.converter.HttpMessageNotReadableException.class)
+    public ResponseEntity<ApiResponse<Void>> invalidJson() {
+        return ResponseEntity.badRequest().body(ApiResponse.error("请求 JSON 格式或字段类型不正确；分钟数必须为整数"));
+    }
+
+    @GetMapping("/history")
+    public ApiResponse<List<RandomEventDTO>> history(@RequestParam(defaultValue = "50") int limit) {
+        return ApiResponse.success(eventService.getHistory(limit).stream().map(RandomEventDTO::from).toList());
+    }
+}

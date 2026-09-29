@@ -1,0 +1,97 @@
+{
+  "artifactVersion": "sandbox-run-specification/v2",
+  "runSpecKey": "production-weather-v2",
+  "displayName": "生产需求与事件天气 v2",
+  "description": "第三阶段默认运行规格：PRODUCTION需求、ORIGINAL调度和统一随机协议。",
+  "scenario": {
+    "scenarioKey": "all-eligible",
+    "revision": 1,
+    "scenarioDefinitionSha256": "9087fecc221c40a6a69f8d4e4f749a96a943ab763c5584b85370af0cb293b509",
+    "effectiveScenarioDataSha256": "6e4b4f3234181885fc030b9723e1bfd8a50d9ed46fa2d40b4f94cd341455678d"
+  },
+  "simulationClock": {
+    "startLocalDateTime": "2026-01-01T00:00:00",
+    "tickDurationSeconds": 1800,
+    "totalLoops": 48
+  },
+  "demand": {
+    "mode": "PRODUCTION",
+    "generationIntervalLoops": 6,
+    "startupPreGenerationEnabled": false
+  },
+  "dispatch": {
+    "strategy": "ORIGINAL",
+    "dispatchIntervalLoops": 3,
+    "algorithmProfileId": "original-vrp/v1"
+  },
+  "vehicleInitialization": {
+    "defaultPolicy": "RANDOM_ELIGIBLE_POI",
+    "eligiblePoiTypes": [
+      "WAREHOUSE",
+      "DISTRIBUTION_CENTER"
+    ],
+    "coordinateAuthority": "CURRENT_POI"
+  },
+  "driverBehavior": {
+    "enabled": true,
+    "transitionPolicy": "MARKOV_V1",
+    "idleToRejecting": 0.02,
+    "idleToMaintenance": 0.01,
+    "rejectingToIdle": 0.3,
+    "maintenanceToIdle": 0.25,
+    "seedPolicy": "DERIVED_FROM_ROOT"
+  },
+  "random": {
+    "protocolId": "HMAC_SHA256_SPLITMIX64_V1",
+    "rootSeed": "20260927"
+  },
+  "weather": {
+    "sourceMode": "SEEDED_GENERATION",
+    "generatorVersion": "weather-v2",
+    "intervalMinutes": 60,
+    "weights": [
+      60,
+      25,
+      5,
+      10
+    ],
+    "speedFactors": {
+      "SUNNY": 1,
+      "RAIN": 0.8,
+      "SNOW": 0.6,
+      "FOG": 0.7
+    },
+    "timeSlices": []
+  },
+  "events": {
+    "ruleVersion": "transport-events-v2",
+    "enabled": true,
+    "autoEnabled": false,
+    "seedPolicy": "DERIVED_FROM_ROOT",
+    "congestion": {
+      "hourlyProbability": 0.05,
+      "minDurationMinutes": 10,
+      "maxDurationMinutes": 30,
+      "speedFactor": 0.5
+    },
+    "breakdown": {
+      "hourlyProbability": 0.02,
+      "minDurationMinutes": 30,
+      "maxDurationMinutes": 60,
+      "speedFactor": 0
+    },
+    "breakdownPolicy": {
+      "version": "breakdown-v3",
+      "minorProbability": 0.6,
+      "minorRepairMin": 30,
+      "minorRepairMax": 60,
+      "rescueWaitMin": 30,
+      "rescueWaitMax": 60,
+      "assistanceRepairMin": 60,
+      "assistanceRepairMax": 120,
+      "replacementProbability": 0.1,
+      "replacementWaitMin": 60,
+      "replacementWaitMax": 90
+    }
+  }
+}

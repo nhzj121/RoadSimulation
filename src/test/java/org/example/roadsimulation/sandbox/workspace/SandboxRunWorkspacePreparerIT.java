@@ -5,6 +5,8 @@ import org.example.roadsimulation.sandbox.random.SandboxRandomProtocol;
 import org.example.roadsimulation.sandbox.run.SandboxRunSpecificationRevisionV1;
 import org.example.roadsimulation.sandbox.run.SandboxRunSpecificationStore;
 import org.example.roadsimulation.sandbox.run.SandboxRunSpecificationV1;
+import org.example.roadsimulation.sandbox.run.SandboxRunSpecificationV2;
+import org.example.roadsimulation.sandbox.run.SandboxRunCompilerV2;
 import org.example.roadsimulation.sandbox.scenario.definition.SandboxScenarioRevisionV1;
 import org.example.roadsimulation.sandbox.scenario.definition.SandboxScenarioStore;
 import org.junit.jupiter.api.BeforeEach;
@@ -77,6 +79,7 @@ class SandboxRunWorkspacePreparerIT {
                     """);
             ScriptUtils.executeSqlScript(connection, encoded("sandbox/schema/sandbox-control-schema-v2.sql"));
             ScriptUtils.executeSqlScript(connection, encoded("sandbox/schema/sandbox-control-schema-v3.sql"));
+            ScriptUtils.executeSqlScript(connection, encoded("sandbox/schema/sandbox-control-schema-v4.sql"));
         }
         new SandboxWorkspacePreparer(
                 MARIADB.getJdbcUrl(), MARIADB.getUsername(), MARIADB.getPassword(), objectMapper).prepare(BASELINE);
@@ -155,6 +158,68 @@ class SandboxRunWorkspacePreparerIT {
 
         assertEquals(SandboxWorkspaceState.RUN_SPEC_READY,
                 runPreparer().prepare(BASELINE, revision.runSpecKey(), revision.revision()).state());
+    }
+
+    @Test void v2PreservesV1JsonAndSupportsPublishPrepareVerifyAtoBtoA() throws Exception {
+        var scenario=publishScenario();var store=runStore();var preparer=runPreparer();
+        var old=specification(scenario,"20260927","historical v1");
+        store.saveDraft(BASELINE,bytes(old));var historical=store.publish(BASELINE,old.runSpecKey());
+        String originalJson;
+        try(var c=connection();var rows=c.createStatement().executeQuery("SELECT revision_json FROM sandbox_run_spec_revision WHERE revision_no=1")) {
+            rows.next();originalJson=rows.getString(1);
+            ScriptUtils.executeSqlScript(c,encoded("sandbox/schema/sandbox-control-schema-v4.sql"));
+        }
+        var template=new SandboxRunCompilerV2(objectMapper).read(new ClassPathResource("sandbox/runs/default-production-original-v2.json"));
+        var aDef=new SandboxRunSpecificationV2(template.artifactVersion(),old.runSpecKey(),"v2",null,old.scenario(),old.simulationClock(),
+                old.demand(),old.dispatch(),template.weather(),template.events(),old.vehicleInitialization(),old.driverBehavior(),old.random());
+        store.saveDraftV2(BASELINE,bytes(aDef));var a=store.publishV2(BASELINE,aDef.runSpecKey());
+        assertEquals(2,a.revision());assertEquals(a.revision(),store.publishV2(BASELINE,aDef.runSpecKey()).revision());
+        assertEquals(a,store.loadRevisionV2(a.runSpecKey(),a.revision()));
+        var firstA=preparer.prepare(BASELINE,a.runSpecKey(),a.revision());
+        assertEquals(SandboxRunSpecificationV2.ARTIFACT_VERSION,firstA.artifactVersion());
+        assertEquals(a.fingerprints().weatherTimelineSha256(),firstA.weatherTimelineSha256());
+        assertEquals(firstA.preparedRunFactsSha256(),preparer.verify(BASELINE).preparedRunFactsSha256());
+        var runtimeConfig=new org.example.roadsimulation.config.SimulationRuntimeConfig();
+        var clock=new org.example.roadsimulation.core.SimulationContext();
+        var runtime=new org.example.roadsimulation.sandbox.run.SandboxRunRuntimeContext(
+                new org.springframework.jdbc.datasource.DriverManagerDataSource(MARIADB.getJdbcUrl(),MARIADB.getUsername(),MARIADB.getPassword()),
+                objectMapper,runtimeConfig,clock,false);
+        runtime.loadAndFreeze();
+        assertEquals(a,runtime.revisionV2());assertEquals(a.specification().simulationClock(),runtime.simulationClock());
+        assertEquals(firstA.deterministicSimulationRunId(),runtime.deterministicSimulationRunId());
+        var domain=org.example.roadsimulation.sandbox.random.SandboxRandomDomain.DRIVER_BEHAVIOR_TRANSITION;
+        var key=java.util.Map.of("driverId",1L,"loopIndex",2);
+        var protocol=new SandboxRandomProtocol(objectMapper);String root=a.specification().random().rootSeed();
+        assertEquals(protocol.deriveSeed(root,domain,key),runtime.deriveSeed(domain,key));
+        assertEquals(protocol.deriveSeedHex(root,domain,key),runtime.deriveSeedHex(domain,key));
+        assertEquals(protocol.random(root,domain,key).nextLong(),runtime.random(domain,key).nextLong());
+        assertEquals(protocol.random(root,domain,key).nextInt(1000),runtime.javaRandom(domain,key).nextInt(1000));
+        assertEquals("PERIODIC_ENVIRONMENT_DISABLED",assertThrows(SandboxWorkspaceException.class,runtime::environmentPhaseSeed).errorCode());
+        assertEquals(0,clock.getLoopCount());assertEquals(false,clock.isRunning());
+        var off=new SandboxRunSpecificationV2.Events(template.events().ruleVersion(),false,false,"DERIVED_FROM_ROOT",
+                template.events().congestion(),template.events().breakdown(),template.events().breakdownPolicy());
+        var bDef=new SandboxRunSpecificationV2(aDef.artifactVersion(),aDef.runSpecKey(),aDef.displayName(),null,aDef.scenario(),
+                aDef.simulationClock(),aDef.demand(),aDef.dispatch(),aDef.weather(),off,aDef.vehicleInitialization(),aDef.driverBehavior(),aDef.random());
+        store.saveDraftV2(BASELINE,bytes(bDef));var b=store.publishV2(BASELINE,bDef.runSpecKey());
+        assertEquals(3,b.revision());preparer.prepare(BASELINE,b.runSpecKey(),b.revision());
+        var secondA=preparer.prepare(BASELINE,a.runSpecKey(),a.revision());
+        assertEquals(firstA.preparedRunFactsSha256(),secondA.preparedRunFactsSha256());
+        assertEquals(firstA.weatherTimelineSha256(),secondA.weatherTimelineSha256());
+        assertEquals(historical,store.loadRevision(old.runSpecKey(),1));
+        try(var c=connection();var rows=c.createStatement().executeQuery("SELECT revision_json FROM sandbox_run_spec_revision WHERE revision_no=1")) {
+            rows.next();assertEquals(originalJson,rows.getString(1));
+        }
+        try(var c=connection();var s=c.createStatement()) {
+            s.execute("UPDATE sandbox_workspace_marker SET weather_timeline_sha256=REPEAT('0',64)");
+            assertEquals("RUN_MARKER_MISMATCH",assertThrows(SandboxWorkspaceException.class,()->preparer.verify(BASELINE)).errorCode());
+        }
+        assertEquals(SandboxWorkspaceState.RUN_SPEC_READY,preparer.prepare(BASELINE,a.runSpecKey(),a.revision()).state());
+        new SandboxWorkspacePreparer(MARIADB.getJdbcUrl(),MARIADB.getUsername(),MARIADB.getPassword(),objectMapper).prepare(BASELINE);
+        try(var c=connection();var rows=c.createStatement().executeQuery(
+                "SELECT run_spec_key,run_artifact_version,weather_timeline_sha256 FROM sandbox_workspace_marker WHERE marker_id=1")) {
+            rows.next();assertEquals(null,rows.getString(1));assertEquals(null,rows.getString(2));assertEquals(null,rows.getString(3));
+        }
+        assertEquals(a,store.loadRevisionV2(a.runSpecKey(),a.revision()));
     }
 
     private SandboxScenarioRevisionV1 publishScenario() {

@@ -6,6 +6,8 @@ import org.example.roadsimulation.sandbox.baseline.EffectiveBaseData;
 import org.example.roadsimulation.sandbox.random.SandboxRandomDomain;
 import org.example.roadsimulation.sandbox.random.SandboxRandomProtocol;
 import org.example.roadsimulation.sandbox.run.SandboxRunException;
+import org.example.roadsimulation.sandbox.run.SandboxRunCompilerV2;
+import org.example.roadsimulation.sandbox.run.SandboxRunSpecificationV2;
 import org.example.roadsimulation.sandbox.run.SandboxRunSpecificationStore;
 import org.example.roadsimulation.sandbox.scenario.definition.SandboxScenarioException;
 import org.example.roadsimulation.sandbox.scenario.definition.SandboxScenarioStore;
@@ -80,14 +82,26 @@ public final class SandboxWorkspaceCli {
                     case "prepare-scenario" -> scenarioPreparer.prepare(
                             baseline, required(options, "scenario-key"), positiveInt(options, "revision"));
                     case "verify-scenario" -> scenarioPreparer.verify(baseline);
-                    case "compile-run-spec" -> runs.compile(
-                            baseline, baselineResource(required(options, "run-spec")));
-                    case "save-run-draft" -> runs.saveDraft(
-                            baseline, baselineResource(required(options, "run-spec")));
-                    case "publish-run-spec" -> runs.publish(
-                            baseline, required(options, "run-spec-key"));
-                    case "export-run-spec" -> runs.loadRevision(
-                            required(options, "run-spec-key"), positiveInt(options, "revision"));
+                    case "compile-run-spec" -> {
+                        Resource source=baselineResource(required(options,"run-spec"));
+                        if (isV2(source,objectMapper)) yield runs.compileV2(baseline,source);
+                        yield runs.compile(baseline,source);
+                    }
+                    case "save-run-draft" -> {
+                        Resource source=baselineResource(required(options,"run-spec"));
+                        if (isV2(source,objectMapper)) yield runs.saveDraftV2(baseline,source);
+                        throw new SandboxWorkspaceException("RUN_SPEC_V2_REQUIRED","New run drafts require explicit v2; v1 is retained for historical verification");
+                    }
+                    case "publish-run-spec" -> {
+                        String key=required(options,"run-spec-key");
+                        if(runs.isDraftV2(key)) yield runs.publishV2(baseline,key);
+                        throw new SandboxWorkspaceException("RUN_SPEC_V2_REQUIRED","New formal publication requires v2");
+                    }
+                    case "export-run-spec" -> {
+                        String key=required(options,"run-spec-key");int rev=positiveInt(options,"revision");
+                        if(runs.isRevisionV2(key,rev)) yield runs.loadRevisionV2(key,rev);
+                        yield runs.loadRevision(key,rev);
+                    }
                     case "prepare-run" -> runPreparer.prepare(
                             baseline, required(options, "run-spec-key"), positiveInt(options, "revision"));
                     case "verify-run" -> runPreparer.verify(baseline);
@@ -203,9 +217,10 @@ public final class SandboxWorkspaceCli {
                 .orElseThrow(() -> new SandboxWorkspaceException(
                         "UNKNOWN_RANDOM_DOMAIN", "Unknown random domain: " + requestedDomain));
         Map<String, Object> key = parseRandomKeyOption(required(options, "key"), objectMapper);
-        var revisionData = runs.loadRevision(runSpecKey, revision);
         SandboxRandomProtocol protocol = new SandboxRandomProtocol(objectMapper);
-        String rootSeed = revisionData.specification().random().rootSeed();
+        String rootSeed = runs.isRevisionV2(runSpecKey,revision)
+                ? runs.loadRevisionV2(runSpecKey,revision).specification().random().rootSeed()
+                : runs.loadRevision(runSpecKey,revision).specification().random().rootSeed();
         return Map.of(
                 "runSpecKey", runSpecKey,
                 "revision", revision,
@@ -236,6 +251,14 @@ public final class SandboxWorkspaceCli {
         } catch (com.fasterxml.jackson.core.JsonProcessingException exception) {
             throw new SandboxWorkspaceException(
                     "INVALID_RANDOM_KEY", "--key must encode a valid JSON object", exception);
+        }
+    }
+
+    private static boolean isV2(Resource resource,ObjectMapper mapper) {
+        try(var stream=resource.getInputStream()) {
+            return SandboxRunSpecificationV2.ARTIFACT_VERSION.equals(mapper.readTree(stream).path("artifactVersion").asText());
+        } catch(java.io.IOException ex) {
+            throw new SandboxWorkspaceException("RUN_SPEC_READ_FAILED","Cannot read run specification",ex);
         }
     }
 

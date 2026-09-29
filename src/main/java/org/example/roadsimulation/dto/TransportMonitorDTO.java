@@ -10,17 +10,20 @@ import java.util.List;
 public class TransportMonitorDTO {
 
     private LocalDateTime generatedAt;
+    private WeatherCurrentDTO weather;
     private Summary summary = new Summary();
     private List<ShipmentMonitorDTO> shipments = new ArrayList<>();
     private List<AssignmentMonitorDTO> assignments = new ArrayList<>();
     private List<VehicleMonitorDTO> vehicles = new ArrayList<>();
     private List<LinkDTO> links = new ArrayList<>();
+    private List<RandomEventDTO> activeEvents = new ArrayList<>();
 
     @Data
     public static class Summary {
         private int activeShipmentCount;
         private int activeAssignmentCount;
         private int activeVehicleCount;
+        private int activeEventCount;
     }
 
     @Data
@@ -67,12 +70,28 @@ public class TransportMonitorDTO {
         private Double maxLoadCapacity;
         private Double currentVolume;
         private Double maxVolumeCapacity;
+        private Boolean replacementRecovery = false;
+        private Long replacementEventId;
+        private Long replacementOriginalVehicleId;
+        private Long currentOwnerVehicleId;
+        private Boolean replacementArrivalReady = false;
         private List<Long> shipmentIds = new ArrayList<>();
         private List<String> shipmentRefNos = new ArrayList<>();
     }
 
     @Data
     public static class VehicleMonitorDTO {
+        private Long assignmentId;
+        private Double effectiveSpeedFactor;
+        private Double drivingProgress;
+        private Double remainingDrivingSeconds;
+        private Double affectedSeconds;
+        private Double lostWorkSeconds;
+        private String drivingPhaseKey;
+        private String drivingStatus;
+        private Integer drivingLegIndex;
+        private LocalDateTime modelCompletedTime;
+        private LocalDateTime observedCompletedTime;
         private Long vehicleId;
         private String licensePlate;
         private String status;
@@ -83,8 +102,14 @@ public class TransportMonitorDTO {
         private Double maxLoadCapacity;
         private Double currentVolume;
         private Double maxVolumeCapacity;
+        private Boolean replacementRecovery = false;
+        private Long replacementEventId;
+        private Long replacementOriginalVehicleId;
+        private Long currentOwnerVehicleId;
+        private Boolean replacementArrivalReady = false;
         private List<Long> assignmentIds = new ArrayList<>();
         private List<Long> shipmentIds = new ArrayList<>();
+        private RandomEventDTO activeEvent;
     }
 
     @Data

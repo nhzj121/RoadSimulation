@@ -48,6 +48,26 @@ public class TransportProgressService {
     private final TransactionTemplate assignmentProgressTransaction;
     // Phase 7D：生产推进必须读取与评价侧同源的确定性环境快照，不读取前端或路线动画状态。
     private final ReproducibleEnvironmentScenarioService environmentScenarioService;
+    private WeatherEnvironmentService weatherEnvironmentService;
+    private org.example.roadsimulation.repository.TransportRandomEventRepository transportRandomEventRepository;
+    private DriverResourceService driverResources;
+    private org.example.roadsimulation.repository.TransportExecutionSegmentRepository executionSegments;
+
+    @Autowired
+    public void setExecutionResources(DriverResourceService resources,
+            org.example.roadsimulation.repository.TransportExecutionSegmentRepository segments) {
+        driverResources=Objects.requireNonNull(resources);executionSegments=Objects.requireNonNull(segments);
+    }
+
+    @Autowired
+    public void setTransportRandomEventRepository(org.example.roadsimulation.repository.TransportRandomEventRepository repository){
+        this.transportRandomEventRepository=Objects.requireNonNull(repository);
+    }
+
+    @Autowired
+    public void setWeatherEnvironmentService(WeatherEnvironmentService weatherEnvironmentService) {
+        this.weatherEnvironmentService = Objects.requireNonNull(weatherEnvironmentService);
+    }
     // Phase 8：只消费本服务已经确定的距离增量，不参与路线、状态机或任务分配决策。
     private final VehicleEnergyEmissionModel energyEmissionModel;
 
@@ -273,6 +293,7 @@ public class TransportProgressService {
             throw new IllegalStateException("IN_PROGRESS assignment has no vehicle: " + assignmentId);
         }
         Vehicle.VehicleStatus expectedDrivingStatus = expectedDrivingStatus(leg);
+        if(driverResources!=null) driverResources.requireExecutionDriver(assignment);
         Vehicle.VehicleStatus currentVehicleStatus = vehicle.getCurrentStatus();
         if (currentVehicleStatus != Vehicle.VehicleStatus.ORDER_DRIVING
                 && currentVehicleStatus != Vehicle.VehicleStatus.TRANSPORT_DRIVING) {
@@ -354,6 +375,8 @@ public class TransportProgressService {
 
         ProgressSlice slice = plannedDistance == 0.0
                 ? advanceZeroDistanceCompatibilityLeg(plannedSeconds, executedSeconds, tick.availableSeconds())
+                : weatherEnvironmentService != null
+                ? advanceWeatherDistanceLeg(leg, tick, plannedDistance, plannedSeconds, executedDistance)
                 : advancePositiveDistanceLeg(
                         plannedDistance,
                         plannedSeconds,
@@ -362,7 +385,7 @@ public class TransportProgressService {
                         travelTimeFactor
                 );
         long consumedSeconds = slice.consumedSeconds();
-        long newExecutedSeconds = Math.addExact(executedSeconds, consumedSeconds);
+        long newExecutedSeconds = Math.addExact(executedSeconds, slice.drivingSeconds());
         boolean completed = slice.completed();
         double newExecutedDistance = slice.newExecutedDistanceMeters();
         // Phase 3 修复：累计距离的单调性不使用“允许回退”的浮点容差；哪怕极小回退也必须拒绝写库。
@@ -379,7 +402,8 @@ public class TransportProgressService {
         leg.setExecutedDrivingSeconds(newExecutedSeconds);
         leg.setExecutedDistanceMeters(newExecutedDistance);
         // Phase 8：必须使用本轮新增距离；累计距离若直接送入模型会在每轮重复计算历史排放。
-        updateEnergyEmissionFacts(leg, executedDistance, newExecutedDistance, travelTimeFactor);
+        if(weatherEnvironmentService == null || plannedDistance == 0.0)
+            updateEnergyEmissionFacts(leg, executedDistance, newExecutedDistance, travelTimeFactor);
         leg.setLastProcessedLoopIndex(tick.loopIndex());
 
         if (completed) {
@@ -418,6 +442,38 @@ public class TransportProgressService {
                 completed,
                 allLegsCompleted
         );
+    }
+
+    private ProgressSlice advanceWeatherDistanceLeg(AssignmentLeg leg,SimulationTick tick,
+            double plannedDistance,long plannedSeconds,double executedDistance) {
+        var windows=weatherEnvironmentService.windows(tick.tickStart(),tick.tickEnd());
+        if(transportRandomEventRepository!=null)windows=TransportImpactWindows.combine(windows,
+                transportRandomEventRepository.findByRunId(weatherEnvironmentService.runId()),
+                weatherEnvironmentService.runId(),leg.getAssignment().getId(),leg.getAssignment().getAssignedVehicle().getId());
+        var integrated=WeatherDrivingIntegrator.integrate(plannedDistance,plannedSeconds,executedDistance,windows);
+        int fragment=0;
+        for(var increment:integrated.increments()) {
+            double energyBefore=leg.getExecutedEnergyLiters(),emissionBefore=leg.getExecutedEmissionKg();
+            updateEnergyEmissionFacts(leg,increment.previousDistance(),increment.distance(),increment.travelTimeFactor());
+            if(executionSegments!=null) {
+                var owner=leg.getAssignment().getAssignedVehicle();
+                var row=new org.example.roadsimulation.entity.TransportExecutionSegment();
+                row.setRunId(weatherEnvironmentService.runId());row.setAssignmentId(leg.getAssignment().getId());
+                row.setLegId(leg.getId());row.setLoopIndex(tick.loopIndex());row.setFragmentIndex(fragment++);
+                row.setVehicleId(owner.getId());row.setDriverId(leg.getAssignment().getAssignedDriver().getId());
+                row.setFromSimTime(increment.from());row.setToSimTime(increment.to());
+                row.setDistanceMeters(increment.distance()-increment.previousDistance());row.setDrivingSeconds(increment.seconds());
+                row.setCapacityTonnes(owner.getMaxLoadCapacityTonnes());row.setLoadTonnes(leg.getCurrentLoadTonnes());
+                row.setLoadState(leg.getLoadState());row.setTravelTimeFactor(increment.travelTimeFactor());
+                row.setEnergyLiters(leg.getExecutedEnergyLiters()-energyBefore);row.setEmissionKg(leg.getExecutedEmissionKg()-emissionBefore);
+                row.setEnergyValid(leg.getEnergyFactStatus()==AssignmentLeg.EnergyFactStatus.VALID);
+                row.setEmissionModelId(leg.getEmissionModelId());
+                row.setVehicleClassCode(row.isEnergyValid()?energyEmissionModel.resolveVehicleClass(owner.getMaxLoadCapacityTonnes()).code():null);
+                executionSegments.save(row);
+            }
+        }
+        return new ProgressSlice(integrated.consumedSeconds(),integrated.executedDistance(),integrated.completed(),
+                integrated.increments().stream().mapToLong(WeatherDrivingIntegrator.Increment::seconds).sum());
     }
 
     private ProgressSlice advancePositiveDistanceLeg(
@@ -479,7 +535,7 @@ public class TransportProgressService {
         }
 
         try {
-            Vehicle vehicle = leg.getVehicle();
+            Vehicle vehicle = executionSegments!=null ? leg.getAssignment().getAssignedVehicle() : leg.getVehicle();
             Double capacity = vehicle == null ? null : vehicle.getMaxLoadCapacityTonnes();
             if (capacity == null) {
                 throw new IllegalArgumentException("vehicle capacity is missing");
@@ -492,14 +548,16 @@ public class TransportProgressService {
             );
             if (leg.getEnergyFactStatus() == AssignmentLeg.EnergyFactStatus.VALID
                     && (!Objects.equals(leg.getEmissionModelId(), delta.modelId())
-                    || !Objects.equals(leg.getVehicleEmissionClassCode(), delta.vehicleClassCode()))) {
+                    || (executionSegments==null && !Objects.equals(leg.getVehicleEmissionClassCode(), delta.vehicleClassCode())))) {
                 // Phase 8：模型或档位发生变化时不能把不同口径继续累加到同一个路段。
                 leg.setEnergyFactStatus(AssignmentLeg.EnergyFactStatus.INVALID);
                 log.warn("[Phase8 Energy] model or vehicle class changed during one leg. legId={}", leg.getId());
                 return;
             }
             leg.setEmissionModelId(delta.modelId());
-            leg.setVehicleEmissionClassCode(delta.vehicleClassCode());
+            String previousClass=leg.getVehicleEmissionClassCode();
+            leg.setVehicleEmissionClassCode(executionSegments!=null && previousClass!=null && !previousClass.equals(delta.vehicleClassCode())
+                    ? "MULTIPLE" : delta.vehicleClassCode());
             leg.setExecutedEnergyLiters(leg.getExecutedEnergyLiters() + delta.energyLiters());
             leg.setExecutedEmissionKg(leg.getExecutedEmissionKg() + delta.emissionKg());
             leg.setEnergyFactStatus(AssignmentLeg.EnergyFactStatus.VALID);
@@ -654,6 +712,10 @@ public class TransportProgressService {
 
     private double resolveTravelTimeFactor(SimulationTick tick) {
         requireTick(tick);
+        if (weatherEnvironmentService != null) {
+            return requireTravelTimeFactor(1 / weatherEnvironmentService.averageSpeedFactor(
+                    tick.tickStart(), tick.tickEnd()));
+        }
         if (environmentScenarioService == null) {
             // Phase 7D：旧四参数测试构造器保持 factor=1 基线；生产构造器必须注入环境服务。
             return 1.0;
@@ -690,7 +752,11 @@ public class TransportProgressService {
     private record ProgressSlice(
             long consumedSeconds,
             double newExecutedDistanceMeters,
-            boolean completed
+            boolean completed,
+            long drivingSeconds
     ) {
+        ProgressSlice(long consumedSeconds,double newExecutedDistanceMeters,boolean completed){
+            this(consumedSeconds,newExecutedDistanceMeters,completed,consumedSeconds);
+        }
     }
 }

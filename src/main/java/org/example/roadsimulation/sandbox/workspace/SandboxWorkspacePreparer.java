@@ -183,6 +183,7 @@ public final class SandboxWorkspacePreparer {
                 throw new SandboxWorkspaceException("MISSING_MARKER", "Cannot update sandbox safety marker");
             }
         }
+        SandboxRunMarkerMaintenance.clear(connection);
     }
 
     private void rebuildSchema(Connection connection) throws SQLException {

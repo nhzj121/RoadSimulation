@@ -19,6 +19,7 @@ import org.example.roadsimulation.service.POIShipmentManager;
 import org.example.roadsimulation.service.ProductionExecutionService;
 import org.example.roadsimulation.service.TransportProgressResult;
 import org.example.roadsimulation.service.TransportProgressService;
+import org.example.roadsimulation.service.TransportRandomEventService;
 import org.example.roadsimulation.service.VehicleInitializationService;
 import org.example.roadsimulation.service.impl.SimulationDispatchRouter;
 import org.example.roadsimulation.service.impl.StateUpdateService;
@@ -77,6 +78,12 @@ public class SimulationMainLoop {
 
     @Autowired
     private ShipmentItemRepository shipmentItemRepository;
+
+    @Autowired
+    private TransportRandomEventService transportRandomEventService;
+
+    @Autowired private org.example.roadsimulation.service.DrivingProgressService drivingProgressService;
+    @Autowired private org.example.roadsimulation.service.WeatherEnvironmentService weatherEnvironmentService;
 
     @Autowired
     SimulationMainLoop(DataInitializer dataInitializer,
@@ -182,12 +189,15 @@ public class SimulationMainLoop {
             }
 
             // Phase 1：状态更新接收本轮唯一 SimulationTick；秒预算将在后续进度阶段真正消费。
+            if(transportRandomEventService!=null) transportRandomEventService.tick(simNow,
+                    simulationContext.getMinutesPerLoop(),currentTick.loopIndex());
             stateUpdateService.tick(currentTick);
             if (shouldAbortLoop()) {
                 return;
             }
 
             // Phase 4：先结算到期的装卸动作，再让新激活的行驶路段消费本轮秒预算。
+            if(transportRandomEventService!=null) transportRandomEventService.settleDueEvents(currentTick.tickEnd());
             EvaluationLoopExecutionReport executionReport = advanceTransportProgressSafely(currentTick);
             if (shouldAbortLoop()) {
                 return;
@@ -232,12 +242,47 @@ public class SimulationMainLoop {
     }
 
     public void start() {
+        if(weatherEnvironmentService!=null&&weatherEnvironmentService.runId()==null)
+            weatherEnvironmentService.start(null,null);
         // R1：仿真上下文生成唯一 runId，评价模块不得再建立平行标识。
         String runId = simulationContext.beginRunIfAbsent();
         evaluationSnapshotService.beginRegularRunIfAbsent(runId);
         simulationContext.finishReset();
         simulationContext.setRunning(true);
         System.out.println("仿真主循环已启动");
+    }
+
+    public void startWithWeather(Long scenarioId, String externalExperimentId) {
+        startWithWeather(scenarioId, externalExperimentId, () -> {});
+    }
+
+    public void startWithWeather(Long scenarioId, String externalExperimentId, Runnable configureBeforeStart) {
+        startWithWeather(scenarioId,externalExperimentId,null,configureBeforeStart);
+    }
+
+    /** Manual events cannot interleave with a tick or the reset transaction. */
+    public <T> T withSimulationMutationLock(java.util.function.Supplier<T> action) {
+        lifecycleLock.lock();
+        try {
+            if(simulationContext.isResetting())throw new IllegalStateException("Simulation reset in progress");
+            return action.get();
+        } finally {lifecycleLock.unlock();}
+    }
+
+    public void startWithWeather(Long scenarioId,String externalExperimentId,
+            org.example.roadsimulation.dto.TransportEventOptions eventOptions,Runnable configureBeforeStart) {
+        lifecycleLock.lock();
+        try {
+            if (simulationContext.isResetting()) throw new IllegalStateException("Simulation reset in progress");
+            if(eventOptions==null)weatherEnvironmentService.start(scenarioId, externalExperimentId);
+            else weatherEnvironmentService.start(scenarioId,externalExperimentId,
+                    weatherEnvironmentService.resolveEventOptions(eventOptions));
+            // Publish dispatch configuration before the scheduler can observe running=true.
+            configureBeforeStart.run();
+            start();
+        } finally {
+            lifecycleLock.unlock();
+        }
     }
 
     public void stop() {
@@ -259,6 +304,8 @@ public class SimulationMainLoop {
             System.out.println("请先停止仿真再进行单步执行");
             return;
         }
+        if(weatherEnvironmentService!=null&&weatherEnvironmentService.runId()==null)
+            weatherEnvironmentService.start(null,null);
         // Phase 6B：未调用 start 的单步执行也必须建立普通评价运行。
         String runId = simulationContext.beginRunIfAbsent();
         evaluationSnapshotService.beginRegularRunIfAbsent(runId);
@@ -275,6 +322,7 @@ public class SimulationMainLoop {
     public void awaitLoopIdleAndResetContext() {
         lifecycleLock.lock();
         try {
+            weatherEnvironmentService.archiveAndReset(simulationContext.getCurrentSimTime());
             simulationContext.reset();
             // Phase 6B：显式 reset 清空最新快照和运行上下文；下一次启动从 revision=1 开始。
             evaluationSnapshotService.reset();

@@ -4,14 +4,54 @@ import org.example.roadsimulation.entity.Vehicle;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Optional;
+import java.time.LocalDateTime;
+
+import jakarta.persistence.LockModeType;
 
 @Repository
 public interface VehicleRepository extends JpaRepository<Vehicle, Long> {
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT v FROM Vehicle v WHERE v.id = :id")
+    Optional<Vehicle> findByIdForUpdate(@Param("id") Long id);
+
+    @Modifying(flushAutomatically = true)
+    @Query(value = """
+            UPDATE vehicle
+               SET previous_status = current_status,
+                   current_status = 'RESERVED_REPLACEMENT',
+                   status_start_time = :reservedAt,
+                   status_duration_seconds = 0,
+                   replacement_reservation_event_id = :eventId
+             WHERE id = :vehicleId
+               AND current_status = 'IDLE'
+               AND replacement_reservation_event_id IS NULL
+            """, nativeQuery = true)
+    int reserveReplacementIfIdle(@Param("vehicleId") Long vehicleId,@Param("eventId") Long eventId,
+            @Param("reservedAt") LocalDateTime reservedAt);
+
+    @Modifying(flushAutomatically = true)
+    @Query(value = """
+            UPDATE vehicle
+               SET previous_status = current_status,
+                   current_status = 'IDLE',
+                   status_start_time = :releasedAt,
+                   status_duration_seconds = 0,
+                   replacement_reservation_event_id = NULL
+             WHERE id = :vehicleId
+               AND current_status = 'RESERVED_REPLACEMENT'
+               AND replacement_reservation_event_id = :eventId
+            """, nativeQuery = true)
+    int releaseReplacementIfOwned(@Param("vehicleId") Long vehicleId,@Param("eventId") Long eventId,
+            @Param("releasedAt") LocalDateTime releasedAt);
 
     // 根据车牌号查找
     Vehicle findByLicensePlate(String licensePlate);
