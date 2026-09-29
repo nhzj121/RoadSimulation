@@ -82,123 +82,33 @@ function createClassHarness({ vrp = false, vehicleStatus = 'TRANSPORT_DRIVING', 
   return { animation, manager, statuses, posts, marker }
 }
 
-test('durable ordinary replacement recovery acknowledges exactly once only after backend readiness', async () => {
-  const { animation, manager, posts } = createClassHarness({
-    replacementRecovery: true,
-    vehicleStatus: 'UNLOADING',
-    assignmentState: {
+for (const vrp of [false, true]) {
+  test(`${vrp ? 'VRP' : 'ordinary'} replacement backend readiness never completes the frontend route early`, async () => {
+    const { animation, manager, posts } = createClassHarness({
+      vrp,
       replacementRecovery: true,
-      replacementEventId: 101,
-      currentOwnerVehicleId: 18,
-      replacementArrivalReady: false
-    }
-  })
-
-  manager.setDrivingSnapshots([{
-    vehicleId: 18,
-    assignmentId: 88,
-    assignmentIds: [88],
-    status: 'UNLOADING',
-    replacementRecovery: true,
-    replacementEventId: 101,
-    currentOwnerVehicleId: 18,
-    replacementArrivalReady: false
-  }], false)
-  await Promise.resolve()
-  assert.deepEqual(posts, [])
-
-  const ready = {
-    vehicleId: 18,
-    assignmentId: 88,
-    assignmentIds: [88],
-    status: 'UNLOADING',
-    replacementRecovery: true,
-    replacementEventId: 101,
-    currentOwnerVehicleId: 18,
-    replacementArrivalReady: true
-  }
-  manager.setDrivingSnapshots([ready], false)
-  manager.setDrivingSnapshots([ready], false)
-  await Promise.resolve()
-  await Promise.resolve()
-
-  const arrivals = posts.filter(call => call[0] === 'arrival')
-  assert.equal(arrivals.length, 1)
-  assert.deepEqual(arrivals[0], ['arrival', 88, 18, 20, '川A018', 101])
-  assert.equal(animation.isCompleted, false, 'ack does not replay or infer local animation completion')
-})
-
-test('blocked, failed and pending replacement arrivals release the latch until acknowledgement succeeds', async () => {
-  const outcomes = ['blocked', 'failed', 'pending', new Error('network unavailable'), 'acknowledged']
-  const { manager, posts } = createClassHarness({
-    replacementRecovery: true,
-    vehicleStatus: 'UNLOADING',
-    assignmentState: {
-      replacementRecovery: true,
-      replacementEventId: 101,
-      currentOwnerVehicleId: 18,
-      replacementArrivalReady: false
-    },
-    arrivalHandler: async () => {
-      const outcome = outcomes.shift()
-      if (outcome instanceof Error) throw outcome
-      return outcome
-    }
-  })
-  const ready = {
-    vehicleId: 18, assignmentId: 88, assignmentIds: [88], status: 'UNLOADING',
-    replacementRecovery: true, replacementEventId: 101,
-    currentOwnerVehicleId: 18, replacementArrivalReady: true
-  }
-
-  for (let attempt = 1; attempt <= 5; attempt += 1) {
-    manager.setDrivingSnapshots([ready], false)
+      vehicleStatus: 'UNLOADING',
+      assignmentState: {
+        replacementRecovery: true,
+        replacementEventId: 101,
+        currentOwnerVehicleId: 18,
+        replacementArrivalReady: true
+      }
+    })
+    manager.setDrivingSnapshots([{
+      vehicleId: 18, assignmentId: 88, assignmentIds: [88], status: 'UNLOADING',
+      replacementRecovery: true, replacementEventId: 101,
+      currentOwnerVehicleId: 18, replacementArrivalReady: true
+    }], false)
     await flushAsync()
-    assert.equal(posts.filter(call => call[0] === 'arrival').length, attempt)
-  }
-  manager.setDrivingSnapshots([ready], false)
-  await flushAsync()
-  assert.equal(posts.filter(call => call[0] === 'arrival').length, 5, 'success permanently deduplicates later polls')
-})
 
-test('replacement arrival keeps one request in flight and retries after a non-success result', async () => {
-  let resolveFirst
-  let calls = 0
-  const { manager, posts } = createClassHarness({
-    replacementRecovery: true,
-    vehicleStatus: 'UNLOADING',
-    assignmentState: {
-      replacementRecovery: true,
-      replacementEventId: 101,
-      currentOwnerVehicleId: 18,
-      replacementArrivalReady: false
-    },
-    arrivalHandler: async () => {
-      calls += 1
-      if (calls === 1) return new Promise(resolve => { resolveFirst = resolve })
-      return 'acknowledged'
-    }
+    assert.deepEqual(posts, [])
+    assert.equal(animation.isCompleted, false)
   })
-  const ready = {
-    vehicleId: 18, assignmentId: 88, assignmentIds: [88], status: 'UNLOADING',
-    replacementRecovery: true, replacementEventId: 101,
-    currentOwnerVehicleId: 18, replacementArrivalReady: true
-  }
+}
 
-  manager.setDrivingSnapshots([ready], false)
-  manager.setDrivingSnapshots([ready], false)
-  await Promise.resolve()
-  assert.equal(posts.filter(call => call[0] === 'arrival').length, 1)
-  resolveFirst('blocked')
-  await flushAsync()
-  manager.setDrivingSnapshots([ready], false)
-  await flushAsync()
-  assert.equal(posts.filter(call => call[0] === 'arrival').length, 2)
-})
-
-test('VRP replacement recovery never emits the ordinary arrival acknowledgement', async () => {
+test('replacement readiness changes do not create arrival side effects during polling', async () => {
   const { manager, posts } = createClassHarness({
-    vrp: true,
     replacementRecovery: true,
     vehicleStatus: 'UNLOADING',
     assignmentState: {
@@ -208,13 +118,76 @@ test('VRP replacement recovery never emits the ordinary arrival acknowledgement'
       replacementArrivalReady: true
     }
   })
-  manager.setDrivingSnapshots([{
-    vehicleId: 18, assignmentId: 88, assignmentIds: [88], status: 'UNLOADING',
-    replacementRecovery: true, replacementEventId: 101,
-    currentOwnerVehicleId: 18, replacementArrivalReady: true
-  }], false)
-  await Promise.resolve()
+  for (const replacementArrivalReady of [false, true, true]) {
+    manager.setDrivingSnapshots([{
+      vehicleId: 18, assignmentId: 88, assignmentIds: [88], status: 'UNLOADING',
+      replacementRecovery: true, replacementEventId: 101,
+      currentOwnerVehicleId: 18, replacementArrivalReady
+    }], false)
+  }
+  await flushAsync()
   assert.deepEqual(posts, [])
+})
+
+test('a vehicle cannot render a second assignment until its current frontend animation is removed', () => {
+  const { animation, manager } = createClassHarness()
+  assert.equal(manager.findVehicleAnimationConflict(18, 89), animation)
+  assert.equal(manager.findVehicleAnimationConflict(18, 88), null)
+  assert.equal(manager.findVehicleAnimationConflict(19, 89), null)
+})
+
+test('new assignment polling defers task B without marking it drawn, then retries after task A is removed', async () => {
+  const assignmentB = { assignmentId: 89, vehicleId: 18, vrp: false }
+  const animations = new Map([[88, { assignmentId: 88, vehicleId: 18 }]])
+  const drawCalls = []
+  const postCalls = []
+  const context = {
+    console: { log() {}, info() {}, warn() {}, error() {} },
+    Set,
+    simulationGeneration: { value: 7 },
+    isActiveTransportGeneration: () => true,
+    request: {
+      async get(url) {
+        assert.equal(url, '/api/assignments/new')
+        return { data: [assignmentB] }
+      },
+      async post(url) { postCalls.push(url) }
+    },
+    animationManager: {
+      animations,
+      findVehicleAnimationConflict(vehicleId, assignmentId) {
+        return [...animations.values()].find(animation =>
+          String(animation.vehicleId) === String(vehicleId)
+          && String(animation.assignmentId) !== String(assignmentId)
+        ) || null
+      }
+    },
+    drawnAssignmentIds: { value: new Set() },
+    missingRouteAssignmentIds: new Set(),
+    monitorWeather: { value: null },
+    async drawTwoStageRouteForAssignment(assignment) {
+      drawCalls.push(assignment.assignmentId)
+      animations.set(assignment.assignmentId, assignment)
+      return { assignment }
+    },
+    async drawMultiStageRouteForVrpAssignment() { throw new Error('unexpected VRP draw') },
+    stats: {},
+    ElMessage: { error() {} }
+  }
+  vm.createContext(context)
+  vm.runInContext(`${sliceBetween('const fetchAndDrawNewAssignments =', '// 为Assignment绘制两段路线')}
+this.fetchNew = fetchAndDrawNewAssignments;`, context)
+
+  await context.fetchNew(7)
+  assert.deepEqual(drawCalls, [])
+  assert.deepEqual(postCalls, [])
+  assert.equal(context.drawnAssignmentIds.value.has(89), false)
+
+  animations.delete(88)
+  await context.fetchNew(7)
+  assert.deepEqual(drawCalls, [89])
+  assert.deepEqual(postCalls, ['/api/assignments/mark-drawn/89'])
+  assert.equal(context.drawnAssignmentIds.value.has(89), true)
 })
 
 for (const vrp of [false, true]) {
@@ -251,20 +224,21 @@ for (const vrp of [false, true]) {
 }
 
 for (const vrp of [false, true]) {
-  test(`owner replacement without phase snapshot stays backend-authoritative for ${vrp ? 'VRP' : 'normal'} animation`, () => {
+  test(`owner replacement without phase snapshot initializes the correct ${vrp ? 'VRP' : 'normal'} frontend stage`, () => {
     const { animation, statuses, posts, marker } = createClassHarness({ vrp })
     const actionStatuses = () => statuses.filter(status => ['LOADING', 'UNLOADING', 'WAITING'].includes(status))
 
     assert.equal(animation.replacementRecoveryMode, true)
     assert.equal(vrp ? animation.currentStageIndex : animation.currentStage, vrp ? 1 : 2)
-    assert.deepEqual(marker.position, [104.015, 30.6])
+    assert.deepEqual(marker.position, [104.01, 30.6])
     assert.deepEqual(actionStatuses(), [])
 
-    animation.animationTime = 1_000_000
+    animation.lastUpdateTime = 999_000
     animation._animate()
     assert.deepEqual(actionStatuses(), [])
     assert.deepEqual(posts, [])
     assert.equal(animation.isCompleted, false)
+    assert(animation.currentProgress > 0)
   })
 }
 
@@ -333,7 +307,7 @@ test('failed owner redraw remains on active polling until matching animation reg
     monitorAssignments: [assignment],
     monitorWeather: { value: null },
     assignmentPollingMode: () => 'new',
-    animationManager: { animations },
+    animationManager: { animations, findVehicleAnimationConflict() { return null } },
     scheduleAssignmentDrawing(drawer, generation, label) { scheduled.push({ drawer, generation, label }) },
     fetchAndDrawNewAssignments: async () => { endpointCalls.push('/api/assignments/new') },
     request: {
@@ -411,7 +385,7 @@ test('refresh without an owner tracker reconstructs static recovery from durable
     isActiveTransportGeneration: () => true, fetchSimulationCosts: async () => {}, updateVehicleInfo: async () => {},
     checkAndCleanupCompletedAssignments: async () => {}, isExperimentRunActive: { value: false },
     syncExperimentRunAfterStatusRefresh: async () => {}, monitorAssignments: [assignment], monitorWeather: { value: null },
-    assignmentPollingMode: () => 'new', animationManager: { animations },
+    assignmentPollingMode: () => 'new', animationManager: { animations, findVehicleAnimationConflict() { return null } },
     scheduleAssignmentDrawing(drawer, generation, label) { scheduled.push({ drawer, generation, label }) },
     fetchAndDrawNewAssignments: async () => { throw new Error('durable recovery must use active polling') },
     request: { async get(url) { assert.equal(url, '/api/assignments/active'); return { data: [assignment] } } },

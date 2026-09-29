@@ -1003,7 +1003,7 @@ import testIcon from '../../public/icons/test.png';
 import { mergeLiveVehicleDisplay } from '../utils/liveVehicleDisplay';
 import { assignmentPollingMode, createWeatherRouteCache } from '../utils/weatherRouteCache';
 import { assignmentRenderIdentity, createAssignmentRecoveryTracker, reconcileAssignmentRenderOwner, removeVehicleRenderRegistration } from '../utils/assignmentRenderOwnership';
-import { VEHICLE_STATUS_PRESENTATIONS, isStoppedVehicleStatus, vehicleStatusPresentation } from '../utils/vehicleStatusPresentation';
+import { VEHICLE_STATUS_PRESENTATIONS, vehicleStatusPresentation } from '../utils/vehicleStatusPresentation';
 import timberYardIcon from '../../public/icons/timber-yard.png';
 import sawmillIcon from '../../public/icons/sawmill.png';
 import boardFactoryIcon from '../../public/icons/board-factory.png';
@@ -3665,16 +3665,13 @@ class VehicleAnimation {
     this.realPausedTime = 0;
     this.animationTime = 0;
     this.speedFactor = 1;
+    this.environmentSpeedFactor = 1;
     this.eventSpeedFactor = 1;
     this.activeRandomEvent = null;
     this.drivingSnapshot = null;
     this.replacementRecoveryMode = Boolean(routeData.replacementRecovery || assignment.replacementRecovery);
-    this.replacementArrivalAckCompleted = false;
-    this.replacementArrivalAckInFlight = false;
+    this.replacementRecoveryInitialized = false;
     this.backendVehicleStatus = assignment.vehicleStatus || null;
-    this.authoritativeEnvironment = Boolean(this.manager?.authoritativeEnvironment);
-    this.acknowledgedPhase = null;
-    this.phaseAckPending = false;
     this.lastUpdateTime = null;
 
     // 路线数据
@@ -3788,15 +3785,11 @@ class VehicleAnimation {
   }
 
   _getEffectiveVehicleStatus(fallback) {
-    const snapshotStatus = this.drivingSnapshot?.status;
-    if (isStoppedVehicleStatus(snapshotStatus)) return snapshotStatus;
     if (this._isBackendReplacementStopped()) return this.backendVehicleStatus;
-    if (snapshotStatus) return snapshotStatus;
     if (this.activeRandomEvent?.eventType === 'VEHICLE_BREAKDOWN'
         && this.activeRandomEvent.breakdownLevel !== 'REPLACEMENT_REQUIRED') {
       return 'BREAKDOWN';
     }
-    if (this.replacementRecoveryMode && this.backendVehicleStatus) return this.backendVehicleStatus;
     return fallback;
   }
 
@@ -3813,57 +3806,25 @@ class VehicleAnimation {
   updateReplacementRecovery(state) {
     if (!this.replacementRecoveryMode || !state) return;
     this.updateBackendVehicleState(state);
-    const status = this.backendVehicleStatus;
-    if (!Array.isArray(this.stages)) {
-      this.currentStage = ['TRANSPORT_DRIVING', 'UNLOADING'].includes(status) ? 2 : 1;
-    } else {
-      const rawIndex = state.currentActionIndex
-          ?? state.currentNodeIndex
-          ?? state.drivingLegIndex
-          ?? state.vrpProgress?.currentStageIndex
-          ?? state.currentNode?.sequenceIndex;
-      const stageIndex = Number(rawIndex);
-      if (Number.isInteger(stageIndex) && stageIndex >= 0 && stageIndex < this.stages.length) {
-        this.currentStageIndex = stageIndex;
+    const vrpAssignmentWaitingForStages = this.routeData.assignment.vrp === true && !Array.isArray(this.stages);
+    if (!this.replacementRecoveryInitialized && !vrpAssignmentWaitingForStages) {
+      const status = this.backendVehicleStatus;
+      if (!Array.isArray(this.stages)) {
+        this.currentStage = ['TRANSPORT_DRIVING', 'UNLOADING'].includes(status) ? 2 : 1;
+      } else {
+        const rawIndex = state.currentActionIndex
+            ?? state.currentNodeIndex
+            ?? state.drivingLegIndex
+            ?? state.vrpProgress?.currentStageIndex
+            ?? state.currentNode?.sequenceIndex;
+        const stageIndex = Number(rawIndex);
+        if (Number.isInteger(stageIndex) && stageIndex >= 0 && stageIndex < this.stages.length) {
+          this.currentStageIndex = stageIndex;
+        }
+        this.runtimeLoad = Math.max(0, this._toNumber(state.currentLoad, this.runtimeLoad));
+        this.runtimeVolume = Math.max(0, this._toNumber(state.currentVolume, this.runtimeVolume));
       }
-      this.runtimeLoad = Math.max(0, this._toNumber(state.currentLoad, this.runtimeLoad));
-      this.runtimeVolume = Math.max(0, this._toNumber(state.currentVolume, this.runtimeVolume));
-    }
-    const position = this._backendPosition(state);
-    if (position) {
-      this.currentPosition = position;
-      this._updateMarkerPosition();
-    }
-    if (!Array.isArray(this.stages)
-        && this.routeData.assignment.vrp !== true
-        && state.replacementRecovery === true
-        && state.replacementArrivalReady === true
-        && Number(state.currentOwnerVehicleId) === Number(this.vehicleId)
-        && state.replacementEventId != null
-        && !this.replacementArrivalAckCompleted
-        && !this.replacementArrivalAckInFlight) {
-      void this._acknowledgeReplacementArrival(state.replacementEventId);
-    }
-  }
-
-  async _acknowledgeReplacementArrival(replacementEventId) {
-    if (this.replacementArrivalAckCompleted || this.replacementArrivalAckInFlight) return;
-    this.replacementArrivalAckInFlight = true;
-    try {
-      const result = await handleVehicleArrived(
-          this.assignmentId,
-          this.vehicleId,
-          this.routeData.assignment.endPOIId,
-          this.licensePlate,
-          replacementEventId
-      );
-      // HTTP success includes the backend's idempotent "already closed" response.
-      // All other results must remain retryable on a later authoritative monitor poll.
-      if (result === 'acknowledged') this.replacementArrivalAckCompleted = true;
-    } catch (error) {
-      console.warn(`[VehicleAnimation] ${this.licensePlate} replacement arrival acknowledgement failed`, error);
-    } finally {
-      this.replacementArrivalAckInFlight = false;
+      this.replacementRecoveryInitialized = true;
     }
   }
 
@@ -3918,7 +3879,7 @@ class VehicleAnimation {
 
     if (this.realStartTime === null) {
       this.realStartTime = now;
-      if (!this.drivingSnapshot) this.animationTime = 0;
+      this.animationTime = 0;
     } else if (this.isPaused) {
       const pauseDuration = now - this.realPausedTime;
       this.realStartTime += pauseDuration;
@@ -3929,8 +3890,9 @@ class VehicleAnimation {
     this.lastUpdateTime = now;
 
     // 设置初始位置
-    if (this.stage1Path && this.stage1Path.length > 0 && !this.currentPosition) {
-      this.currentPosition = [...this.stage1Path[0]];
+    const initialPath = this._getCurrentPath();
+    if (initialPath && initialPath.length > 0 && !this.currentPosition) {
+      this.currentPosition = [...initialPath[0]];
       this._updateMarkerPosition();
 
       // 更新状态管理器中的位置
@@ -3996,13 +3958,20 @@ class VehicleAnimation {
 
     if (this.lastUpdateTime && !this.isPaused && !this.isCompleted) {
       const delta = (now - this.lastUpdateTime) / 1000;
-      this.animationTime += delta * this.speedFactor * this.eventSpeedFactor;
+      this.animationTime += delta * this.speedFactor * this.environmentSpeedFactor * this.eventSpeedFactor;
     }
 
     this.speedFactor = speedFactor;
     this.lastUpdateTime = now;
 
     console.log(`[VehicleAnimation] 更新车辆速度因子: ${this.licensePlate} -> ${speedFactor.toFixed(1)}x`);
+  }
+
+  updateEnvironmentImpact(weather) {
+    const factor = Number(weather?.speedFactor ?? 1);
+    this.environmentSpeedFactor = Number.isFinite(factor)
+        ? Math.max(0, Math.min(1, factor))
+        : 1;
   }
 
   updateEventImpact(event) {
@@ -4033,8 +4002,8 @@ class VehicleAnimation {
       || (Array.isArray(snapshot.assignmentIds)
           && snapshot.assignmentIds.some(id => Number(id) === Number(this.assignmentId)))
     );
-    // Vehicle status is authoritative even when non-weather monitoring has no singular assignmentId.
-    // Driving progress remains assignment-scoped below.
+    // Backend snapshots keep business identity and exceptional stop states authoritative.
+    // Normal phase/progress remains frontend-owned so polling cannot move the marker.
     if (matchingVehicle) {
       this.updateBackendVehicleState(snapshot, true);
       if (this._isBackendReplacementStopped() && this.statusManager) {
@@ -4049,73 +4018,8 @@ class VehicleAnimation {
       if (this.replacementRecoveryMode && matchingAssignment) this.updateReplacementRecovery(snapshot);
       return;
     }
-    const previous = this.drivingSnapshot;
     this.drivingSnapshot = snapshot;
-    if (Array.isArray(this.stages)) {
-      this.runtimeLoad = Number(snapshot.currentLoad || 0);
-      this.runtimeVolume = Number(snapshot.currentVolume || 0);
-    }
-    this.eventSpeedFactor = Math.max(0, Math.min(1, Number(snapshot.effectiveSpeedFactor ?? 1)));
-    if (Array.isArray(this.stages)) {
-      const leg = Number(snapshot.drivingLegIndex);
-      if (Number.isInteger(leg) && leg >= 0 && leg < this.stages.length) this.currentStageIndex = leg;
-    } else {
-      this.currentStage = snapshot.drivingStatus === 'ORDER_DRIVING' ? 1 : 2;
-    }
-    const progress = Math.max(0, Math.min(1, Number(snapshot.drivingProgress || 0)));
-    if (!previous || previous.drivingPhaseKey !== snapshot.drivingPhaseKey || previous.drivingProgress !== snapshot.drivingProgress) {
-      this.animationTime = progress * this._getCurrentSegments().totalLength / this.baseSpeed;
-      this.currentProgress = progress;
-      this.currentPosition = this._getPositionByDistance(progress * this._getCurrentSegments().totalLength, this._getCurrentPath(), this._getCurrentSegments());
-      this._updateMarkerPosition();
-    }
-  }
-
-  _animateAuthoritative(deltaTime) {
-    const snapshot = this.drivingSnapshot;
-    const stopped = isStoppedVehicleStatus(snapshot.status);
-    const driving = !stopped && ['ORDER_DRIVING', 'TRANSPORT_DRIVING'].includes(snapshot.status);
-    const progress = Math.max(0, Math.min(1, Number(snapshot.drivingProgress || 0)));
-    const segments = this._getCurrentSegments();
-    const path = this._getCurrentPath();
-    if (!path?.length || !segments.totalLength) return;
-    if (driving) this.animationTime += deltaTime * this.speedFactor * this.eventSpeedFactor;
-    // A small visual interpolation cannot authorize delivery; the server owns completion.
-    const visualLimit = progress >= 1 ? 1 : Math.min(0.999, progress + 0.03);
-    const fraction = stopped ? progress
-        : Math.min(visualLimit, Math.max(progress, this.animationTime * this.baseSpeed / segments.totalLength));
-    this.currentProgress = fraction;
-    this.currentPosition = this._getPositionByDistance(fraction * segments.totalLength, path, segments);
-    this._updateMarkerPosition();
-    if ((driving || (!Array.isArray(this.stages) && snapshot.status === 'UNLOADING')) && progress >= 1 && this.acknowledgedPhase !== snapshot.drivingPhaseKey && !this.phaseAckPending) {
-      void this._acknowledgeDrivingPhase(snapshot);
-    }
-  }
-
-  async _acknowledgeDrivingPhase(snapshot) {
-    this.phaseAckPending = true;
-    try {
-      if (Array.isArray(this.stages) || snapshot.drivingStatus === 'TRANSPORT_DRIVING') {
-        const endPOIId = Array.isArray(this.stages)
-            ? this.stages[snapshot.drivingLegIndex]?.nodeInfo?.poiId
-            : this.routeData.assignment.endPOIId;
-        if (endPOIId == null) return;
-        const arrivalPayload = {
-          assignmentId: this.assignmentId, endPOIId,
-          phaseKey: snapshot.drivingPhaseKey, legIndex: snapshot.drivingLegIndex
-        };
-        if (snapshot.replacementRecovery === true && snapshot.replacementEventId != null) {
-          arrivalPayload.replacementEventId = snapshot.replacementEventId;
-        }
-        await request.post('/api/simulation/vehicle-arrived', arrivalPayload);
-      }
-      this.acknowledgedPhase = snapshot.drivingPhaseKey;
-    } catch (error) {
-      if (error?.response?.status !== 409) console.warn('驾驶阶段确认失败', error);
-    } finally {
-      // Bound retry frequency independently of animation frame rate.
-      setTimeout(() => { this.phaseAckPending = false; }, 1500);
-    }
+    if (this.replacementRecoveryMode) this.updateReplacementRecovery(snapshot);
   }
 
   // 获取当前路径
@@ -4201,14 +4105,12 @@ class VehicleAnimation {
     }
 
     const deltaTime = (now - this.lastUpdateTime) / 1000;
-    if (this.authoritativeEnvironment || this.replacementRecoveryMode || this.drivingSnapshot
-        || this._isBackendReplacementStopped()) {
+    if (this._isBackendReplacementStopped()) {
       this.lastUpdateTime = now;
-      if (this.drivingSnapshot) this._animateAuthoritative(deltaTime);
       this.animationFrameId = requestAnimationFrame(() => this._animate());
       return;
     }
-    this.animationTime += deltaTime * this.speedFactor * this.eventSpeedFactor;
+    this.animationTime += deltaTime * this.speedFactor * this.environmentSpeedFactor * this.eventSpeedFactor;
     this.lastUpdateTime = now;
 
     const currentSegments = this._getCurrentSegments();
@@ -4614,7 +4516,7 @@ class VehicleAnimationManager {
     this.statusManager = statusManager; // 添加状态管理器引用
     this.eventImpactsByVehicle = new Map();
     this.drivingSnapshotsByVehicle = new Map();
-    this.authoritativeEnvironment = false;
+    this.environmentImpact = null;
   }
 
   // 添加动画
@@ -4636,10 +4538,10 @@ class VehicleAnimationManager {
       animation = new VehicleAnimation(assignment, routeData, this.statusManager);
     }
     this.animations.set(assignment.assignmentId, animation);
-    animation.authoritativeEnvironment = this.authoritativeEnvironment;
 
     // 设置初始速度因子
     animation.updateSpeedFactor(this.globalSpeedFactor);
+    animation.updateEnvironmentImpact(this.environmentImpact);
     animation.updateBackendVehicleState(assignment);
     animation.updateReplacementRecovery(assignment);
     animation.updateEventImpact(this.eventImpactsByVehicle.get(assignment.vehicleId) || null);
@@ -4715,14 +4617,26 @@ class VehicleAnimationManager {
     });
   }
 
-  setDrivingSnapshots(vehicles = [], authoritative = false) {
-    this.authoritativeEnvironment = authoritative;
+  setEnvironmentImpact(weather = null) {
+    this.environmentImpact = weather;
+    this.animations.forEach(animation => animation.updateEnvironmentImpact(weather));
+  }
+
+  setDrivingSnapshots(vehicles = []) {
     this.drivingSnapshotsByVehicle = new Map(vehicles.map(vehicle => [vehicle.vehicleId, vehicle]));
     this.animations.forEach(animation => {
-      animation.authoritativeEnvironment = authoritative;
       const drivingSnapshot = this.drivingSnapshotsByVehicle.get(animation.vehicleId) || null;
       animation.updateDrivingSnapshot(drivingSnapshot);
     });
+  }
+
+  findVehicleAnimationConflict(vehicleId, assignmentId) {
+    const targetVehicleId = String(vehicleId);
+    const targetAssignmentId = String(assignmentId);
+    return Array.from(this.animations.values()).find(animation =>
+        String(animation.vehicleId) === targetVehicleId
+        && String(animation.assignmentId) !== targetAssignmentId
+    ) || null;
   }
 
   // 移除动画
@@ -4814,7 +4728,7 @@ const isIgnorableExperimentArrivalError = (error) => {
       || message.includes('duplicate');
 };
 
-const handleVehicleArrived = async (assignmentId, vehicleId, endPOIId, licensePlate, replacementEventId = null) => {
+const handleVehicleArrived = async (assignmentId, vehicleId, endPOIId, licensePlate) => {
   const arrivalKey = String(assignmentId || '');
   if (!arrivalKey) {
     return 'failed';
@@ -4837,7 +4751,6 @@ const handleVehicleArrived = async (assignmentId, vehicleId, endPOIId, licensePl
       vehicleId: vehicleId,
       endPOIId: endPOIId
     };
-    if (replacementEventId != null) arrivalPayload.replacementEventId = replacementEventId;
     await request.post('/api/simulation/vehicle-arrived', arrivalPayload);
 
     console.log(`车辆 ${licensePlate} 到达处理完成`);
@@ -5486,8 +5399,9 @@ const syncTransportMonitorData = (monitorData = {}) => {
   monitorSummary.activeVehicleCount = summary.activeVehicleCount || 0;
   monitorSummary.activeEventCount = summary.activeEventCount || 0;
   if (animationManager) {
+    animationManager.setEnvironmentImpact(monitorData.weather || null);
     animationManager.setEventImpacts(monitorActiveEvents);
-    animationManager.setDrivingSnapshots(monitorData.vehicles || [], Boolean(monitorData.weather?.runId));
+    animationManager.setDrivingSnapshots(monitorData.vehicles || []);
   }
 
   if (monitorData.summary || monitorData.shipments || monitorData.assignments || monitorData.vehicles) {
@@ -5958,6 +5872,17 @@ const fetchCurrentAssignments = async (runGeneration = simulationGeneration.valu
       // 为每个Assignment绘制两段路线
       for (const assignment of assignments) {
         if (assignment && assignment.assignmentId) {
+          const vehicleConflict = animationManager.findVehicleAnimationConflict(
+              assignment.vehicleId,
+              assignment.assignmentId
+          );
+          if (vehicleConflict) {
+            console.info(
+                `[AssignmentDraw] defer assignment ${assignment.assignmentId}: vehicle ${assignment.vehicleId} `
+                + `is still rendering assignment ${vehicleConflict.assignmentId}`
+            );
+            continue;
+          }
           const activeAnimation = animationManager.animations.get(assignment.assignmentId);
           const activeAssignment = activeAnimation?.routeData?.assignment || null;
           const ownerChanged = Boolean(
@@ -6020,6 +5945,17 @@ const fetchAndDrawNewAssignments = async (runGeneration = simulationGeneration.v
       if (!isActiveTransportGeneration(runGeneration)) return;
       if (assignment && assignment.assignmentId) {
         if (!drawnAssignmentIds.value.has(assignment.assignmentId)) {
+          const vehicleConflict = animationManager.findVehicleAnimationConflict(
+              assignment.vehicleId,
+              assignment.assignmentId
+          );
+          if (vehicleConflict) {
+            console.info(
+                `[AssignmentDraw] defer assignment ${assignment.assignmentId}: vehicle ${assignment.vehicleId} `
+                + `is still rendering assignment ${vehicleConflict.assignmentId}`
+            );
+            continue;
+          }
           let routeData = null;
           if (assignment.vrp === true) {
             routeData = await drawMultiStageRouteForVrpAssignment(assignment, runGeneration);
@@ -6116,6 +6052,15 @@ const drawTwoStageRouteForAssignment = async (assignment, runGeneration = simula
     };
     activeRoutes.value.set(assignment.assignmentId, routeData);
 
+    const recoveringTransport = Boolean(options.replacementRecovery)
+        && ['TRANSPORT_DRIVING', 'UNLOADING'].includes(assignment.vehicleStatus);
+    const stage2Start = recoveringTransport
+        ? [assignment.vehicleStartLng, assignment.vehicleStartLat]
+        : [assignment.startLng, assignment.startLat];
+    const stage2CacheKey = recoveringTransport
+        ? `${assignment.assignmentId}_replacement_${assignment.vehicleId}_stage2_${assignment.vehicleStartLng}_${assignment.vehicleStartLat}`
+        : assignment.assignmentId + '_stage2';
+
     // 规划两段路线
     const stage1Route = await computeSingleRouteWithCache(
         [assignment.vehicleStartLng, assignment.vehicleStartLat],
@@ -6125,9 +6070,9 @@ const drawTwoStageRouteForAssignment = async (assignment, runGeneration = simula
     );
 
     const stage2Route = await computeSingleRouteWithCache(
-        [assignment.startLng, assignment.startLat],
+        stage2Start,
         [assignment.endLng, assignment.endLat],
-        assignment.assignmentId + '_stage2',
+        stage2CacheKey,
         runGeneration
     );
 
@@ -6225,9 +6170,10 @@ const drawTwoStageRouteForAssignment = async (assignment, runGeneration = simula
     });
 
     // 创建车辆移动标记
-    const movingEl = createVehicleIcon(32, 'ORDER_DRIVING', '#ff7f50', { vehicleId: assignment.vehicleId });
+    const initialVehicleStatus = recoveringTransport ? 'TRANSPORT_DRIVING' : 'ORDER_DRIVING';
+    const movingEl = createVehicleIcon(32, initialVehicleStatus, '#ff7f50', { vehicleId: assignment.vehicleId });
     const movingMarker = new AMapLib.Marker({
-      position: stage1Route.path[0],
+      position: recoveringTransport ? stage2Route.path[0] : stage1Route.path[0],
       content: movingEl,
       offset: new AMapLib.Pixel(-16, -16),
       title: `${assignment.goodsName || '货物'}运输 - ${assignment.licensePlate}`,
@@ -6236,7 +6182,7 @@ const drawTwoStageRouteForAssignment = async (assignment, runGeneration = simula
         vehicleId: assignment.vehicleId,
         assignmentId: assignment.assignmentId,
         licensePlate: assignment.licensePlate,
-        status: 'ORDER_DRIVING'
+        status: initialVehicleStatus
       }
     });
     elements.push(movingMarker);
@@ -6302,6 +6248,14 @@ const drawMultiStageRouteForVrpAssignment = async (assignment, runGeneration = s
 
     let currentLng = assignment.vehicleStartLng ?? assignment.startLng;
     let currentLat = assignment.vehicleStartLat ?? assignment.startLat;
+    const recoveryStageValue = assignment.currentActionIndex
+        ?? assignment.currentNodeIndex
+        ?? assignment.drivingLegIndex
+        ?? assignment.vrpProgress?.currentStageIndex
+        ?? assignment.currentNode?.sequenceIndex;
+    const recoveryStageIndex = options.replacementRecovery && Number.isInteger(Number(recoveryStageValue))
+        ? Math.max(0, Math.min(nodes.length - 1, Number(recoveryStageValue)))
+        : 0;
     const stages = [];
     const elements = [];
     routeData = {
@@ -6335,6 +6289,11 @@ const drawMultiStageRouteForVrpAssignment = async (assignment, runGeneration = s
       }
       const targetNode = nodes[i];
 
+      if (options.replacementRecovery && i === recoveryStageIndex) {
+        currentLng = assignment.vehicleStartLng ?? currentLng;
+        currentLat = assignment.vehicleStartLat ?? currentLat;
+      }
+
       // 防并发限流缓冲
       await new Promise(resolve => setTimeout(resolve, 500));
       if (!isActiveTransportGeneration(runGeneration)) {
@@ -6349,7 +6308,9 @@ const drawMultiStageRouteForVrpAssignment = async (assignment, runGeneration = s
         const routeResult = await computeSingleRouteWithCache(
             [currentLng, currentLat],
             [targetNode.lng, targetNode.lat],
-            `${assignment.assignmentId}_vrp_stage_${i}`,
+            options.replacementRecovery && i === recoveryStageIndex
+                ? `${assignment.assignmentId}_replacement_${assignment.vehicleId}_vrp_stage_${i}_${currentLng}_${currentLat}`
+                : `${assignment.assignmentId}_vrp_stage_${i}`,
             runGeneration
         );
         if (isLifecycleCancelledRoute(routeResult)) {
@@ -6437,9 +6398,12 @@ const drawMultiStageRouteForVrpAssignment = async (assignment, runGeneration = s
     }
 
     // 2. 车辆移动标记
-    const movingEl = createVehicleIcon(32, 'ORDER_DRIVING', '#9b59b6', { vehicleId: assignment.vehicleId });
+    const initialVrpStatus = assignment.vehicleStatus === 'TRANSPORT_DRIVING'
+        ? 'TRANSPORT_DRIVING'
+        : 'ORDER_DRIVING';
+    const movingEl = createVehicleIcon(32, initialVrpStatus, '#9b59b6', { vehicleId: assignment.vehicleId });
     const movingMarker = new AMapLib.Marker({
-      position: stages[0].path[0],
+      position: stages[recoveryStageIndex]?.path?.[0] || stages[0].path[0],
       content: movingEl,
       offset: new AMapLib.Pixel(-16, -16),
       title: `VRP拼单 - ${assignment.licensePlate}`,
@@ -6448,7 +6412,7 @@ const drawMultiStageRouteForVrpAssignment = async (assignment, runGeneration = s
         vehicleId: assignment.vehicleId,
         assignmentId: assignment.assignmentId,
         licensePlate: assignment.licensePlate,
-        status: 'ORDER_DRIVING'
+        status: initialVrpStatus
       }
     });
     elements.push(movingMarker);
