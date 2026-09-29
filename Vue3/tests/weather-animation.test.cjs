@@ -1,95 +1,201 @@
-const { test } = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const vm = require('node:vm');
-const source = fs.readFileSync(require('node:path').join(__dirname, '../src/components/MapContainer.vue'), 'utf8');
-const classes = source.slice(source.indexOf('class VehicleAnimation {'), source.indexOf('// ==================== 车辆动画管理器类'));
+const { test } = require('node:test')
+const assert = require('node:assert/strict')
+const fs = require('node:fs')
+const path = require('node:path')
+const vm = require('node:vm')
+
+const source = fs.readFileSync(path.join(__dirname, '../src/components/MapContainer.vue'), 'utf8')
+const classes = source.slice(source.indexOf('class VehicleAnimation {'), source.indexOf('// ==================== 车辆动画管理器类'))
+
 function createAnimation(vrp = false) {
-  const context = { console: {log(){},warn(){}}, Math, Number, Map, performance: {now:()=>100}, requestAnimationFrame:()=>1, cancelAnimationFrame(){}, setTimeout(){}, request:{post:async()=>({})}, isStoppedVehicleStatus:status=>['BREAKDOWN','SCRAPPED','RESERVED_REPLACEMENT'].includes(status) };
-  vm.createContext(context);
-  vm.runInContext(classes + '\nthis.Animation = VehicleAnimation; this.Vrp = VrpVehicleAnimation;', context);
-  const assignment = {assignmentId:5,vehicleId:8,licensePlate:'TEST',endPOIId:20};
-  const statuses=[];
-  const route={assignment, stage1Path:[[0,0],[0.01,0]],stage2Path:[[0.01,0],[0.02,0]],movingMarker:{setPosition(){}}};
-  route.stages=[{path:route.stage1Path,nodeInfo:{poiId:10,actionType:'LOAD'}},{path:route.stage2Path,nodeInfo:{poiId:20,actionType:'UNLOAD'}}];
-  const animation=new (vrp?context.Vrp:context.Animation)(assignment,route,{updateVehicleStatus:(id,status)=>statuses.push(status)});
-  return {animation,statuses};
+  let now = 100
+  const context = {
+    console: { log() {}, info() {}, warn() {}, error() {} },
+    Math,
+    Number,
+    Map,
+    performance: { now: () => now },
+    requestAnimationFrame: () => 1,
+    cancelAnimationFrame() {},
+    setTimeout() {},
+    clearTimeout() {},
+    request: { post: async () => ({ data: {} }) }
+  }
+  vm.createContext(context)
+  vm.runInContext(`${classes}\nthis.Animation = VehicleAnimation; this.Vrp = VrpVehicleAnimation;`, context)
+
+  const assignment = { assignmentId: 5, vehicleId: 8, licensePlate: 'TEST', endPOIId: 20 }
+  const statuses = []
+  const marker = { position: null, setPosition(position) { this.position = [...position] } }
+  const route = {
+    assignment,
+    stage1Path: [[0, 0], [0.01, 0]],
+    stage2Path: [[0.01, 0], [0.02, 0]],
+    movingMarker: marker
+  }
+  route.stages = [
+    { path: route.stage1Path, nodeInfo: { poiId: 10, actionType: 'LOAD' } },
+    { path: route.stage2Path, nodeInfo: { poiId: 20, actionType: 'UNLOAD' } }
+  ]
+  const animation = new (vrp ? context.Vrp : context.Animation)(assignment, route, {
+    updateVehicleStatus: (id, status) => statuses.push(status)
+  })
+  return { animation, statuses, marker, setNow(value) { now = value } }
 }
-function snapshot(overrides={}) { return {assignmentId:5,status:'TRANSPORT_DRIVING',drivingStatus:'TRANSPORT_DRIVING',drivingPhaseKey:'phase-1',drivingLegIndex:1,drivingProgress:0.5,effectiveSpeedFactor:0.32,...overrides}; }
 
-test('monitor restores correct stage and progress; user speed remains independent',()=>{
-  const {animation:a}=createAnimation(); a.speedFactor=20; a.updateDrivingSnapshot(snapshot());
-  assert.equal(a.currentStage,2); assert.equal(a.currentProgress,0.5); assert.equal(a.eventSpeedFactor,0.32); assert.equal(a.speedFactor,20);
-  a.start(); assert(a.animationTime>0); // starting after refresh must not reset restored position
-});
-test('breakdown freezes visual progress and backend status wins',()=>{
-  const {animation:a,statuses}=createAnimation();
-  a.updateDrivingSnapshot(snapshot({status:'BREAKDOWN',effectiveSpeedFactor:0}));
-  a._animateAuthoritative(100); assert.equal(a.currentProgress,0.5); assert.equal(statuses.at(-1),'BREAKDOWN');
-});
-test('resolved replacement history has no movement impact and active replacement does not invent BREAKDOWN status',()=>{
-  const {animation:a,statuses}=createAnimation();
-  const initialStatuses=[...statuses];
-  a.updateEventImpact({eventType:'VEHICLE_BREAKDOWN',status:'RESOLVED',breakdownLevel:'REPLACEMENT_REQUIRED',speedFactor:0});
-  assert.equal(a.eventSpeedFactor,1); assert.deepEqual(statuses,initialStatuses);
-  a.updateEventImpact({eventType:'VEHICLE_BREAKDOWN',status:'ACTIVE',breakdownLevel:'REPLACEMENT_REQUIRED',speedFactor:0});
-  assert.equal(a.eventSpeedFactor,0); assert.deepEqual(statuses,initialStatuses);
-});
-for (const status of ['SCRAPPED','RESERVED_REPLACEMENT']) test(`${status} backend snapshot remains stopped`,()=>{
-  const {animation:a}=createAnimation();
-  a.updateDrivingSnapshot(snapshot({status,effectiveSpeedFactor:1,drivingProgress:0.5}));
-  a._animateAuthoritative(100); assert.equal(a.currentProgress,0.5);
-});
-test('visual interpolation cannot complete an unfinished server phase',()=>{
-  const {animation:a}=createAnimation(); let calls=0; a._acknowledgeDrivingPhase=()=>calls++;
-  a.updateDrivingSnapshot(snapshot({drivingProgress:0.98})); a._animateAuthoritative(10000);
-  assert(a.currentProgress<1); assert.equal(calls,0);
-});
-test('VRP restores server leg and load without replaying local loading mutations',()=>{
-  const {animation:a,statuses}=createAnimation(true);
-  a.updateDrivingSnapshot(snapshot({status:'BREAKDOWN',effectiveSpeedFactor:0,currentLoad:17,currentVolume:3}));
-  a._animateAuthoritative(100);
-  assert.equal(a.currentStageIndex,1); assert.equal(a.runtimeLoad,17); assert.equal(a.runtimeVolume,3); assert.equal(statuses.at(-1),'BREAKDOWN');
-});
-test('completed phase uses matching leg and phase id in acknowledgement',async()=>{
-  const {animation:a}=createAnimation(true);
-  a.updateDrivingSnapshot(snapshot({drivingProgress:1}));
-  await a._acknowledgeDrivingPhase(a.drivingSnapshot); assert.equal(a.acknowledgedPhase,'phase-1');
-});
+function snapshot(overrides = {}) {
+  return {
+    vehicleId: 8,
+    assignmentId: 5,
+    status: 'TRANSPORT_DRIVING',
+    drivingStatus: 'TRANSPORT_DRIVING',
+    drivingPhaseKey: 'phase-1',
+    drivingLegIndex: 1,
+    drivingProgress: 0.5,
+    effectiveSpeedFactor: 0.32,
+    ...overrides
+  }
+}
 
-test('weather mode waits for missing snapshot instead of advancing local business state',()=>{
-  const {animation:a}=createAnimation(); let completed=0;
-  a.authoritativeEnvironment=true; a._completeCurrentStage=()=>completed++;
-  a.updateDrivingSnapshot(null); a.animationTime=1e9; a._animate();
-  assert.equal(completed,0); assert.equal(a.currentStage,1);
-});
+test('backend snapshots retain identity without overwriting frontend stage, progress, position or clock', () => {
+  const { animation } = createAnimation()
+  animation.currentStage = 1
+  animation.currentProgress = 0.2
+  animation.currentPosition = [0.002, 0]
+  animation.animationTime = 11
 
-test('a stale other-assignment snapshot cannot move this vehicle animation',()=>{
-  const {animation:a}=createAnimation(); a.authoritativeEnvironment=true;
-  a.updateDrivingSnapshot(snapshot({assignmentId:99}));
-  assert.equal(a.drivingSnapshot,null); assert.equal(a.currentStage,1);
-});
+  animation.updateDrivingSnapshot(snapshot({ drivingLegIndex: 1, drivingProgress: 0.8 }))
 
-test('unloading snapshot uses completed transport phase acknowledgement without local load mutation',()=>{
-  const {animation:a}=createAnimation(); let calls=0;
-  a._acknowledgeDrivingPhase=()=>calls++;
-  a.updateDrivingSnapshot(snapshot({status:'UNLOADING',drivingProgress:1}));
-  a._animateAuthoritative(100); assert.equal(calls,1); assert.equal(a.currentProgress,1);
-});
+  assert.equal(animation.drivingSnapshot.drivingPhaseKey, 'phase-1')
+  assert.equal(animation.currentStage, 1)
+  assert.equal(animation.currentProgress, 0.2)
+  assert.deepEqual(animation.currentPosition, [0.002, 0])
+  assert.equal(animation.animationTime, 11)
+  assert.equal(animation.eventSpeedFactor, 1)
+})
 
-for (const running of [true, false]) test(`refresh restores ${running ? 'running' : 'paused'} weather run without starting backend`, async()=>{
-  const calls=[];
-  const ctx={updateVehicleInfo:async()=>{},monitorWeather:{value:{runId:'saved-run'}},isExperimentRunActive:{value:false},
-    simulationController:{getConfig:async()=>({success:true,data:{running}})},beginSimulationGeneration:()=>7,
-    isSimulationRunning:{value:false},restoringWeatherView:false,
-    animationManager:{isPaused:false,startAll:()=>calls.push('start'),pauseAll:()=>calls.push('pause')},
-    fetchCurrentAssignments:async generation=>{assert.equal(generation,7);assert.equal(ctx.restoringWeatherView,true);assert.equal(ctx.animationManager.isPaused,!running);calls.push('draw');},
-    isActiveTransportGeneration:()=>running,startSimulationTimer:()=>calls.push('timer'),
-    arrivalMonitor:{startMonitoring:()=>calls.push('monitor')},getVehiclePositions(){},getPOIList(){}};
-  vm.createContext(ctx);
-  const method=source.slice(source.indexOf('const restoreWeatherRunView ='),source.indexOf('onMounted(() => {',source.indexOf('const restoreWeatherRunView =')));
-  vm.runInContext(method+'\nthis.restore = restoreWeatherRunView;',ctx);
-  await ctx.restore();
-  assert.equal(ctx.restoringWeatherView,false);assert.equal(ctx.isSimulationRunning.value,running);
-  assert.deepEqual(calls,running?['draw','start','timer','monitor']:['draw','pause']);
-});
+test('user speed, weather and congestion factors compose on the frontend clock', () => {
+  const { animation, setNow } = createAnimation()
+  animation.speedFactor = 20
+  animation.updateEnvironmentImpact({ speedFactor: 0.5 })
+  animation.updateEventImpact({ eventType: 'TRAFFIC_CONGESTION', status: 'ACTIVE', speedFactor: 0.25 })
+  animation.lastUpdateTime = 100
+  setNow(1100)
+
+  animation._animate()
+
+  assert.equal(animation.animationTime, 2.5)
+  assert(animation.currentProgress > 0)
+  assert(animation.currentProgress < 1)
+})
+
+test('breakdown freezes the current frontend position and resolved event resumes movement', () => {
+  const { animation, statuses, marker, setNow } = createAnimation()
+  animation.start()
+  const before = [...marker.position]
+  animation.updateEventImpact({ eventType: 'VEHICLE_BREAKDOWN', status: 'ACTIVE', breakdownLevel: 'MINOR', speedFactor: 0 })
+  setNow(1100)
+  animation._animate()
+  assert.deepEqual(marker.position, before)
+  assert.equal(statuses.at(-1), 'BREAKDOWN')
+
+  animation.updateEventImpact({ eventType: 'VEHICLE_BREAKDOWN', status: 'RESOLVED', breakdownLevel: 'MINOR', speedFactor: 0 })
+  setNow(2100)
+  animation._animate()
+  assert.notDeepEqual(marker.position, before)
+})
+
+test('resolved replacement history has no movement impact and active replacement does not invent BREAKDOWN status', () => {
+  const { animation, statuses } = createAnimation()
+  const initialStatuses = [...statuses]
+  animation.updateEventImpact({ eventType: 'VEHICLE_BREAKDOWN', status: 'RESOLVED', breakdownLevel: 'REPLACEMENT_REQUIRED', speedFactor: 0 })
+  assert.equal(animation.eventSpeedFactor, 1)
+  assert.deepEqual(statuses, initialStatuses)
+  animation.updateEventImpact({ eventType: 'VEHICLE_BREAKDOWN', status: 'ACTIVE', breakdownLevel: 'REPLACEMENT_REQUIRED', speedFactor: 0 })
+  assert.equal(animation.eventSpeedFactor, 0)
+  assert.deepEqual(statuses, initialStatuses)
+})
+
+for (const status of ['SCRAPPED', 'RESERVED_REPLACEMENT']) {
+  test(`${status} remains a backend-authoritative exceptional stop`, () => {
+    const { animation, marker, setNow } = createAnimation()
+    animation.start()
+    const before = [...marker.position]
+    animation.updateDrivingSnapshot(snapshot({ status }))
+    setNow(1100)
+    animation._animate()
+    assert.equal(animation.backendVehicleStatus, status)
+    assert.deepEqual(marker.position, before)
+    assert.equal(animation.animationTime, 0)
+  })
+}
+
+test('VRP snapshots do not force the frontend leg or runtime load', () => {
+  const { animation } = createAnimation(true)
+  animation.currentStageIndex = 0
+  animation.runtimeLoad = 4
+  animation.runtimeVolume = 1
+
+  animation.updateDrivingSnapshot(snapshot({ drivingLegIndex: 1, currentLoad: 17, currentVolume: 3 }))
+
+  assert.equal(animation.currentStageIndex, 0)
+  assert.equal(animation.runtimeLoad, 4)
+  assert.equal(animation.runtimeVolume, 1)
+})
+
+test('missing snapshot does not freeze frontend-owned animation', () => {
+  const { animation, marker, setNow } = createAnimation()
+  animation.start()
+  const before = [...marker.position]
+  animation.updateDrivingSnapshot(null)
+  setNow(1100)
+  animation._animate()
+  assert.notDeepEqual(marker.position, before)
+})
+
+test('a stale other-assignment snapshot cannot replace this animation snapshot', () => {
+  const { animation } = createAnimation()
+  animation.updateDrivingSnapshot(snapshot({ assignmentId: 99 }))
+  assert.equal(animation.drivingSnapshot, null)
+  assert.equal(animation.currentStage, 1)
+})
+
+test('frontend display no longer contains backend-progress caps or authoritative animation loop', () => {
+  assert.equal(source.includes('_animateAuthoritative('), false)
+  assert.equal(source.includes('visualLimit'), false)
+  assert.equal(source.includes('animationTime = progress *'), false)
+})
+
+for (const running of [true, false]) {
+  test(`refresh restores ${running ? 'running' : 'paused'} weather run without starting backend`, async () => {
+    const calls = []
+    const ctx = {
+      updateVehicleInfo: async () => {},
+      monitorWeather: { value: { runId: 'saved-run' } },
+      isExperimentRunActive: { value: false },
+      simulationController: { getConfig: async () => ({ success: true, data: { running } }) },
+      beginSimulationGeneration: () => 7,
+      isSimulationRunning: { value: false },
+      restoringWeatherView: false,
+      animationManager: { isPaused: false, startAll: () => calls.push('start'), pauseAll: () => calls.push('pause') },
+      fetchCurrentAssignments: async generation => {
+        assert.equal(generation, 7)
+        assert.equal(ctx.restoringWeatherView, true)
+        assert.equal(ctx.animationManager.isPaused, !running)
+        calls.push('draw')
+      },
+      isActiveTransportGeneration: () => running,
+      startSimulationTimer: () => calls.push('timer'),
+      arrivalMonitor: { startMonitoring: () => calls.push('monitor') },
+      getVehiclePositions() {},
+      getPOIList() {}
+    }
+    vm.createContext(ctx)
+    const method = source.slice(source.indexOf('const restoreWeatherRunView ='), source.indexOf('onMounted(() => {', source.indexOf('const restoreWeatherRunView =')))
+    vm.runInContext(`${method}\nthis.restore = restoreWeatherRunView;`, ctx)
+    await ctx.restore()
+    assert.equal(ctx.restoringWeatherView, false)
+    assert.equal(ctx.isSimulationRunning.value, running)
+    assert.deepEqual(calls, running ? ['draw', 'start', 'timer', 'monitor'] : ['draw', 'pause'])
+  })
+}
