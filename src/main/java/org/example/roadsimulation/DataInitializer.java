@@ -55,6 +55,8 @@ import java.util.stream.Collectors;
 
 @Component
 public class DataInitializer implements CommandLineRunner {
+    @Autowired
+    private org.example.roadsimulation.service.WeatherEnvironmentService weatherEnvironmentService;
 
     private static final Logger logger = LoggerFactory.getLogger(DataInitializer.class);
     private static final int STARTUP_SHIPMENT_MIN_QUANTITY = 25;
@@ -3491,7 +3493,11 @@ public class DataInitializer implements CommandLineRunner {
             // 1. 遍历车上的每一票货物 (ShipmentItem)
             Set<ShipmentItem> items = assignment.getShipmentItems();
             for (ShipmentItem item : items) {
-
+                // Cancelled cargo is excluded from delivery by the lifecycle service;
+                // inventory settlement must use the same rule.
+                if (item == null || item.getStatus() == ShipmentItem.ShipmentItemStatus.CANCELLED) {
+                    continue;
+                }
                 // 追溯这票货物的源头，精准扣减库存
                 Shipment shipment = item.getShipment();
                 if (shipment != null) {
@@ -3544,6 +3550,16 @@ public class DataInitializer implements CommandLineRunner {
         }
     }
 
+    /** Weather runs settle after the backend completes unloading, including inventory and UI caches. */
+    @Transactional
+    public void settleWeatherDelivery(Assignment assignment, Vehicle vehicle, POI endPOI) {
+        if (assignment == null || assignment.getStatus() == Assignment.AssignmentStatus.COMPLETED
+                || assignment.getStatus() == Assignment.AssignmentStatus.CANCELLED
+                || assignment.getStatus() == Assignment.AssignmentStatus.FAILED) return;
+        processVrpVehicleDelivery(assignment, vehicle, endPOI);
+        markAssignmentAsCompleted(assignment.getId());
+    }
+
     // 新增：检查和更新Shipment状态
     private void checkAndUpdateShipmentStatus(Shipment shipment) {
         transportLifecycleService.refreshShipmentStatus(shipment);
@@ -3591,6 +3607,7 @@ public class DataInitializer implements CommandLineRunner {
     public void cleanupOnShutdown() {
         System.out.println("项目关闭，清理模拟数据...");
         try {
+            weatherEnvironmentService.archiveAndReset(currentSimTimeOrNow());
             // 先清理运行期仿真数据，避免车辆重置时触发Assignment级联删除
             cleanupService.cleanupAllSimulationData();
             // 再随机重置所有车辆到仓库或配送中心

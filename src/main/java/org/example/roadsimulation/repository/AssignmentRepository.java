@@ -7,6 +7,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
@@ -14,6 +15,7 @@ import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import jakarta.persistence.LockModeType;
 
 @Repository
 public interface AssignmentRepository extends JpaRepository<Assignment, Long> {
@@ -71,6 +73,10 @@ public interface AssignmentRepository extends JpaRepository<Assignment, Long> {
     // 查找指定车辆的Assignment
     @Query("SELECT a FROM Assignment a WHERE a.assignedVehicle.id = :vehicleId AND a.status IN ('ASSIGNED', 'IN_PROGRESS')")
     Optional<Assignment> findActiveAssignmentByVehicle(@Param("vehicleId") Long vehicleId);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT a FROM Assignment a WHERE a.assignedVehicle.id = :vehicleId AND a.status IN ('ASSIGNED', 'IN_PROGRESS')")
+    Optional<Assignment> findActiveAssignmentByVehicleForUpdate(@Param("vehicleId") Long vehicleId);
 
     // 批量查找
     @Query("SELECT a FROM Assignment a WHERE a.id IN :ids")

@@ -296,6 +296,7 @@ CREATE TABLE `driver` (
   `pref_cargo` varchar(50) DEFAULT NULL,
   `pref_max_distance_km` double DEFAULT NULL,
   `pref_max_weight_tons` double DEFAULT NULL,
+  `reserved_replacement_event_id` bigint DEFAULT NULL,
   `updated_by` varchar(50) DEFAULT NULL,
   `updated_time` datetime(6) DEFAULT NULL,
   PRIMARY KEY (`id`)
@@ -827,7 +828,9 @@ CREATE TABLE `vehicle` (
   `current_latitude` decimal(10,0) DEFAULT NULL,
   `current_load` double DEFAULT NULL,
   `current_longitude` decimal(10,0) DEFAULT NULL,
-  `current_status` enum('BREAKDOWN','IDLE','LOADING','ORDER_DRIVING','TRANSPORT_DRIVING','UNLOADING','WAITING') DEFAULT NULL,
+  `current_status` enum('BREAKDOWN','IDLE','LOADING','ORDER_DRIVING','TRANSPORT_DRIVING','UNLOADING','WAITING','SCRAPPED','RESERVED_REPLACEMENT') DEFAULT NULL,
+  `replacement_reservation_event_id` bigint DEFAULT NULL,
+  UNIQUE KEY `uk_vehicle_replacement_reservation` (`replacement_reservation_event_id`),
   `current-volumn` double DEFAULT NULL,
   `driver_name` varchar(50) DEFAULT NULL,
   `height` double DEFAULT NULL,
@@ -835,7 +838,7 @@ CREATE TABLE `vehicle` (
   `license_plate` varchar(25) NOT NULL,
   `max_load_capacity` double DEFAULT NULL,
   `model_type` varchar(100) DEFAULT NULL,
-  `previous_status` enum('BREAKDOWN','IDLE','LOADING','ORDER_DRIVING','TRANSPORT_DRIVING','UNLOADING','WAITING') DEFAULT NULL,
+  `previous_status` enum('BREAKDOWN','IDLE','LOADING','ORDER_DRIVING','TRANSPORT_DRIVING','UNLOADING','WAITING','SCRAPPED','RESERVED_REPLACEMENT') DEFAULT NULL,
   `status_duration_seconds` bigint(20) DEFAULT NULL,
   `status_start_time` datetime(6) DEFAULT NULL,
   `suitable-goods` varchar(255) DEFAULT NULL,
@@ -926,3 +929,65 @@ CREATE TABLE `vehicle_wait_episode` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 SET FOREIGN_KEY_CHECKS = 1;
+
+-- Event/weather compatibility tables are empty after all sandbox preparation stages.
+CREATE TABLE `weather_scenario` (
+  `id` bigint NOT NULL AUTO_INCREMENT PRIMARY KEY, `name` varchar(255),
+  `definition_json` longtext NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+CREATE TABLE `weather_run` (
+  `id` varchar(255) NOT NULL PRIMARY KEY, `scenario_id` bigint,
+  `external_experiment_id` varchar(255), `started_at` datetime(6), `ended_at` datetime(6),
+  `manually_intervened` bit NOT NULL, `frozen_scenario_json` longtext,
+  `frozen_event_configuration_json` longtext, `weather_timeline_sha256` varchar(64),
+  `event_history_json` longtext, `driving_history_json` longtext,
+  `execution_segment_history_json` longtext, `replacement_attempt_history_json` longtext
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+CREATE TABLE `driving_progress` (
+  `phase_key` varchar(240) NOT NULL PRIMARY KEY, `run_id` varchar(255), `vehicle_id` bigint,
+  `assignment_id` bigint, `leg_index` int, `driving_status` varchar(255),
+  `phase_start` datetime(6), `last_settled_time` datetime(6), `initial_work_seconds` double NOT NULL,
+  `remaining_work_seconds` double NOT NULL, `affected_seconds` double NOT NULL,
+  `lost_work_seconds` double NOT NULL, `model_completed_time` datetime(6), `observed_completed_time` datetime(6)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+CREATE TABLE `transport_random_event` (
+  `id` bigint NOT NULL AUTO_INCREMENT PRIMARY KEY, `run_id` varchar(36),
+  `trigger_loop_index` int, `random_protocol_id` varchar(80),
+  `event_type` varchar(40) NOT NULL, `status` varchar(20) NOT NULL, `trigger_source` varchar(20) NOT NULL,
+  `vehicle_id` bigint NOT NULL, `license_plate` varchar(50), `assignment_id` bigint NOT NULL,
+  `start_time` datetime(6) NOT NULL, `planned_end_time` datetime(6), `resolved_time` datetime(6),
+  `speed_factor` double, `previous_vehicle_status` varchar(30), `remaining_status_seconds` bigint,
+  `delay_seconds` bigint, `random_seed` bigint, `description` varchar(255),
+  `breakdown_level` varchar(30), `breakdown_phase` varchar(30), `rescue_wait_minutes` int,
+  `repair_minutes` int, `repair_start_time` datetime(6), `recovery_processed_time` datetime(6),
+  `recovery_outcome` varchar(80), `breakdown_rule_version` varchar(40), `original_assignment_status` varchar(20),
+  `original_leg_index` int, `original_driving_phase_key` varchar(240), `replacement_wait_minutes` int,
+  `replacement_vehicle_id` bigint, `original_driver_id` bigint, `replacement_driver_id` bigint,
+  `replacement_license_plate` varchar(50), `replacement_selected_time` datetime(6),
+  `replacement_ready_time` datetime(6), `replacement_processed_time` datetime(6), `replacement_outcome` varchar(80),
+  `required_load` double, `required_volume` double,
+  UNIQUE KEY `uk_transport_event_auto_tick` (`run_id`,`vehicle_id`,`trigger_loop_index`),
+  KEY `idx_transport_event_status` (`status`), KEY `idx_transport_event_vehicle_status` (`vehicle_id`,`status`),
+  KEY `idx_transport_event_assignment` (`assignment_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+CREATE TABLE `vehicle_replacement_attempt` (
+  `id` bigint NOT NULL AUTO_INCREMENT PRIMARY KEY, `run_id` varchar(36), `event_id` bigint NOT NULL,
+  `assignment_id` bigint NOT NULL, `original_vehicle_id` bigint NOT NULL, `original_license_plate` varchar(50),
+  `replacement_vehicle_id` bigint NOT NULL, `replacement_license_plate` varchar(50),
+  `original_driver_id` bigint, `replacement_driver_id` bigint, `selected_time` datetime(6) NOT NULL,
+  `ready_time` datetime(6) NOT NULL, `handoff_time` datetime(6), `wait_minutes` int NOT NULL,
+  `required_load` double NOT NULL, `required_volume` double NOT NULL, `status` varchar(20) NOT NULL,
+  `outcome` varchar(80), `rule_version` varchar(40), KEY `idx_replacement_attempt_event` (`event_id`),
+  KEY `idx_replacement_attempt_run` (`run_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+CREATE TABLE `transport_execution_segment` (
+  `id` bigint NOT NULL AUTO_INCREMENT PRIMARY KEY, `run_id` varchar(36) NOT NULL,
+  `assignment_id` bigint NOT NULL, `leg_id` bigint NOT NULL, `loop_index` int NOT NULL, `fragment_index` int NOT NULL,
+  `vehicle_id` bigint NOT NULL, `driver_id` bigint NOT NULL, `from_sim_time` datetime(6) NOT NULL,
+  `to_sim_time` datetime(6) NOT NULL, `distance_meters` double NOT NULL, `driving_seconds` bigint NOT NULL,
+  `capacity_tonnes` double DEFAULT NULL, `load_tonnes` double NOT NULL, `load_state` varchar(20) NOT NULL,
+  `travel_time_factor` double NOT NULL, `energy_liters` double NOT NULL, `emission_kg` double NOT NULL,
+  `energy_valid` bit NOT NULL, `emission_model_id` varchar(80), `vehicle_class_code` varchar(40),
+  UNIQUE KEY `uk_execution_segment_tick` (`leg_id`,`loop_index`,`fragment_index`),
+  KEY `idx_execution_segment_run` (`run_id`), KEY `idx_execution_segment_vehicle` (`vehicle_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;

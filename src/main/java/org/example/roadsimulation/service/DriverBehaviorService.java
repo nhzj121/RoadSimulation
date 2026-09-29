@@ -174,7 +174,7 @@ public class DriverBehaviorService {
                     rejectingToIdle, maintenanceToIdle);
         }
         SandboxRunSpecificationV1.DriverBehavior specification =
-                sandboxRunRuntimeContext.specification().driverBehavior();
+                sandboxRunRuntimeContext.driverBehavior();
         return new BehaviorParameters(
                 specification.enabled(), specification.idleToRejecting(),
                 specification.idleToMaintenance(), specification.rejectingToIdle(),

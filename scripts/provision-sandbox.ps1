@@ -73,6 +73,9 @@ ALTER TABLE sandbox_workspace_marker
   ADD COLUMN IF NOT EXISTS root_seed_fingerprint CHAR(64) DEFAULT NULL AFTER random_protocol_id,
   ADD COLUMN IF NOT EXISTS resolved_vehicle_initial_state_sha256 CHAR(64) DEFAULT NULL AFTER root_seed_fingerprint,
   ADD COLUMN IF NOT EXISTS prepared_run_facts_sha256 CHAR(64) DEFAULT NULL AFTER resolved_vehicle_initial_state_sha256,
+  ADD COLUMN IF NOT EXISTS run_artifact_version VARCHAR(64) DEFAULT NULL,
+  ADD COLUMN IF NOT EXISTS weather_timeline_sha256 CHAR(64) DEFAULT NULL,
+  ADD COLUMN IF NOT EXISTS event_configuration_sha256 CHAR(64) DEFAULT NULL,
   ADD COLUMN IF NOT EXISTS failure_phase VARCHAR(64) DEFAULT NULL AFTER failure_message;
 
 CREATE TABLE IF NOT EXISTS sandbox_scenario (
@@ -159,7 +162,7 @@ CREATE TABLE IF NOT EXISTS sandbox_run_vehicle_initial_state (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 UPDATE sandbox_workspace_marker
-SET control_schema_version='sandbox-control-schema/v3'
+SET control_schema_version='sandbox-control-schema/v4'
 WHERE marker_id=1 AND workspace_kind='ROAD_SIMULATION_SANDBOX';
 "@
 

@@ -1,6 +1,7 @@
 package org.example.roadsimulation.service;
 
 import org.example.roadsimulation.dto.TransportMonitorDTO;
+import org.example.roadsimulation.dto.RandomEventDTO;
 import org.example.roadsimulation.entity.Assignment;
 import org.example.roadsimulation.entity.Driver;
 import org.example.roadsimulation.entity.POI;
@@ -11,6 +12,7 @@ import org.example.roadsimulation.entity.Vehicle;
 import org.example.roadsimulation.repository.AssignmentRepository;
 import org.example.roadsimulation.repository.ShipmentItemRepository;
 import org.example.roadsimulation.repository.ShipmentRepository;
+import org.example.roadsimulation.repository.VehicleRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -44,10 +46,29 @@ public class TransportMonitorService {
     @Autowired
     private AssignmentRepository assignmentRepository;
 
+    @Autowired
+    private VehicleRepository vehicleRepository;
+
+    @Autowired
+    private TransportRandomEventService transportRandomEventService;
+    @Autowired private WeatherEnvironmentService weatherEnvironmentService;
+    @Autowired private DrivingProgressService drivingProgressService;
+    @Autowired private org.example.roadsimulation.repository.AssignmentLegRepository assignmentLegRepository;
+    @Autowired private org.example.roadsimulation.core.SimulationContext clock;
+
     @Transactional(readOnly = true)
     public TransportMonitorDTO getActiveMonitor() {
         TransportMonitorDTO dto = new TransportMonitorDTO();
         dto.setGeneratedAt(LocalDateTime.now());
+        if (weatherEnvironmentService != null) dto.setWeather(weatherEnvironmentService.current());
+        List<RandomEventDTO> activeEvents = transportRandomEventService.getActiveEvents().stream()
+                .map(RandomEventDTO::from)
+                .toList();
+        Map<Long, RandomEventDTO> eventByVehicleId = activeEvents.stream()
+                .filter(event -> event.getVehicleId() != null)
+                .collect(Collectors.toMap(RandomEventDTO::getVehicleId, event -> event, (left, right) -> left));
+        activeEvents.stream().filter(e->e.getReplacementVehicleId()!=null)
+                .forEach(e->eventByVehicleId.putIfAbsent(e.getReplacementVehicleId(),e));
 
         List<Shipment> activeShipments = shipmentRepository.findByStatusIn(ACTIVE_SHIPMENT_STATUSES);
         activeShipments.sort((left, right) -> {
@@ -131,20 +152,82 @@ public class TransportMonitorService {
             }
         }
 
+        Set<Long> replacementVehicleIds=activeEvents.stream()
+                .map(RandomEventDTO::getReplacementVehicleId)
+                .filter(java.util.Objects::nonNull)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        if(!replacementVehicleIds.isEmpty()){
+            for(Vehicle replacement:vehicleRepository.findAllById(replacementVehicleIds)){
+                if(replacement!=null&&replacement.getId()!=null)
+                    vehicleMap.putIfAbsent(replacement.getId(), buildVehicleDTO(replacement, null));
+            }
+        }
+
         dto.setShipments(new ArrayList<>(shipmentMap.values()));
         dto.setAssignments(new ArrayList<>(assignmentMap.values()));
         dto.setVehicles(new ArrayList<>(vehicleMap.values()));
         dto.setLinks(linkMap.values().stream()
                 .flatMap(perShipment -> perShipment.values().stream())
                 .collect(Collectors.toList()));
+        dto.setActiveEvents(new ArrayList<>(activeEvents));
+        dto.getVehicles().forEach(vehicle -> vehicle.setActiveEvent(eventByVehicleId.get(vehicle.getVehicleId())));
+        if (weatherEnvironmentService!=null && weatherEnvironmentService.runId()!=null) {
+            dto.getVehicles().forEach(this::projectAuthoritativeProgress);
+        } else if (drivingProgressService != null && drivingProgressService.enabled()) dto.getVehicles().forEach(vehicle -> {
+            var p = drivingProgressService.latest(vehicle.getVehicleId());
+            vehicle.setAssignmentId(vehicle.getAssignmentIds().isEmpty() ? null : vehicle.getAssignmentIds().get(0));
+            // A repair may reach its planned end before the next state-machine tick observes it.
+            // Until BREAKDOWN is actually cleared, the displayed vehicle must remain stopped.
+            vehicle.setEffectiveSpeedFactor(Set.of("BREAKDOWN","SCRAPPED","RESERVED_REPLACEMENT").contains(vehicle.getStatus()) ? 0.0
+                    : drivingProgressService.effectiveFactor(vehicle.getVehicleId(), drivingProgressService.now()));
+            if (p != null && java.util.Objects.equals(p.getAssignmentId(), vehicle.getAssignmentId())) {
+                vehicle.setDrivingPhaseKey(p.getPhaseKey()); vehicle.setDrivingStatus(p.getDrivingStatus().name());
+                vehicle.setDrivingLegIndex(p.getLegIndex());
+                vehicle.setDrivingProgress(p.getInitialWorkSeconds() == 0 ? 1 : 1 - p.getRemainingWorkSeconds()/p.getInitialWorkSeconds());
+                vehicle.setRemainingDrivingSeconds(p.getRemainingWorkSeconds());vehicle.setAffectedSeconds(p.getAffectedSeconds());
+                vehicle.setLostWorkSeconds(p.getLostWorkSeconds());vehicle.setModelCompletedTime(p.getModelCompletedTime());
+                vehicle.setObservedCompletedTime(p.getObservedCompletedTime());
+            }
+        });
 
         TransportMonitorDTO.Summary summary = new TransportMonitorDTO.Summary();
         summary.setActiveShipmentCount(dto.getShipments().size());
         summary.setActiveAssignmentCount(dto.getAssignments().size());
         summary.setActiveVehicleCount(dto.getVehicles().size());
+        summary.setActiveEventCount(activeEvents.size());
         dto.setSummary(summary);
 
         return dto;
+    }
+
+    private void projectAuthoritativeProgress(TransportMonitorDTO.VehicleMonitorDTO dto) {
+        if(dto.getAssignmentId()==null) return;
+        Assignment assignment=assignmentRepository.findById(dto.getAssignmentId()).orElse(null);
+        if(assignment==null || assignment.getAssignedVehicle()==null
+                || !java.util.Objects.equals(assignment.getAssignedVehicle().getId(),dto.getVehicleId())) return;
+        List<org.example.roadsimulation.entity.AssignmentLeg> legs=assignmentLegRepository
+                .findByAssignmentIdOrderBySequenceIndexAsc(assignment.getId());
+        if(legs.isEmpty()) return;
+        int index=Math.min(assignment.getCurrentLegIndex(),legs.size()-1);
+        boolean driving=Set.of("ORDER_DRIVING","TRANSPORT_DRIVING").contains(dto.getStatus());
+        if(!driving && assignment.getCurrentLegIndex()<legs.size() && index>0 && Set.of("LOADING","UNLOADING").contains(dto.getStatus())
+                && legs.get(index-1).getProgressStatus()==org.example.roadsimulation.entity.AssignmentLeg.ProgressStatus.COMPLETED)
+            index--;
+        var leg=legs.get(index);
+        double distance=leg.getPlannedDistanceMeters()==null?0:leg.getPlannedDistanceMeters();
+        long seconds=leg.getPlannedDrivingSeconds()==null?0:leg.getPlannedDrivingSeconds();
+        boolean complete=leg.getProgressStatus()==org.example.roadsimulation.entity.AssignmentLeg.ProgressStatus.COMPLETED;
+        double progress=distance>0?leg.getExecutedDistanceMeters()/distance:seconds>0?leg.getExecutedDrivingSeconds()/(double)seconds:complete?1:0;
+        progress=Math.max(0,Math.min(1,progress));
+        double factor=driving?weatherEnvironmentService.at(clock.getCurrentSimTime()).speedFactor():0;
+        var event=dto.getActiveEvent();
+        if(driving && event!=null && event.getSpeedFactor()!=null) factor*=event.getSpeedFactor();
+        dto.setDrivingPhaseKey("master:"+assignment.getId()+":"+leg.getSequenceIndex());
+        dto.setDrivingLegIndex(leg.getSequenceIndex());
+        dto.setDrivingStatus(leg.getLoadState()==org.example.roadsimulation.entity.AssignmentLeg.LoadState.EMPTY?"ORDER_DRIVING":"TRANSPORT_DRIVING");
+        dto.setDrivingProgress(progress);dto.setEffectiveSpeedFactor(factor);
+        dto.setRemainingDrivingSeconds(factor>0?seconds*(1-progress)/factor:null);
+        dto.setModelCompletedTime(leg.getCompletedSimTime());dto.setObservedCompletedTime(leg.getCompletedSimTime());
     }
 
     private TransportMonitorDTO.ShipmentMonitorDTO buildShipmentDTO(Shipment shipment, List<ShipmentItem> items) {
@@ -234,6 +317,8 @@ public class TransportMonitorService {
         dto.setGoodsName(String.join(", ", goodsNames));
         dto.setQuantity(quantity);
 
+        applyReplacementRecovery(dto, transportRandomEventService.replacementRecoveryState(assignment));
+
         return dto;
     }
 
@@ -255,7 +340,27 @@ public class TransportMonitorService {
         } else {
             dto.setDriverName(vehicle.getDriverName());
         }
+        if (assignment != null && assignment.getId() != null) {
+            dto.setAssignmentId(assignment.getId());
+            applyReplacementRecovery(dto, transportRandomEventService.replacementRecoveryState(assignment));
+        }
         return dto;
+    }
+
+    private void applyReplacementRecovery(TransportMonitorDTO.AssignmentMonitorDTO dto,
+            TransportRandomEventService.ReplacementRecoveryState state){
+        if(state==null)return;
+        dto.setReplacementRecovery(state.replacementRecovery());dto.setReplacementEventId(state.replacementEventId());
+        dto.setReplacementOriginalVehicleId(state.originalVehicleId());dto.setCurrentOwnerVehicleId(state.currentOwnerVehicleId());
+        dto.setReplacementArrivalReady(state.arrivalReady());
+    }
+
+    private void applyReplacementRecovery(TransportMonitorDTO.VehicleMonitorDTO dto,
+            TransportRandomEventService.ReplacementRecoveryState state){
+        if(state==null)return;
+        dto.setReplacementRecovery(state.replacementRecovery());dto.setReplacementEventId(state.replacementEventId());
+        dto.setReplacementOriginalVehicleId(state.originalVehicleId());dto.setCurrentOwnerVehicleId(state.currentOwnerVehicleId());
+        dto.setReplacementArrivalReady(state.arrivalReady());
     }
 
     private TransportMonitorDTO.LinkDTO buildLinkDTO(Long shipmentId, Long assignmentId, Long vehicleId) {
@@ -336,6 +441,8 @@ public class TransportMonitorService {
             case TRANSPORT_DRIVING: return "\u8fd0\u8f93\u4e2d";
             case UNLOADING: return "\u5378\u8d27\u4e2d";
             case WAITING: return "\u7b49\u5f85\u4e2d";
+            case SCRAPPED: return "\u5df2\u62a5\u5e9f";
+            case RESERVED_REPLACEMENT: return "\u66ff\u6362\u8f66\u8f86\u51c6\u5907\u4e2d";
             case BREAKDOWN:
             default: return "\u6545\u969c";
         }

@@ -25,7 +25,10 @@ public record SandboxRunPreparationReport(
         long randomVehicleCount,
         int eligibleVehicleInitialPoiCount,
         String errorCode,
-        String errorMessage
+        String errorMessage,
+        String artifactVersion,
+        String weatherTimelineSha256,
+        String eventConfigurationSha256
 ) {
     public SandboxRunPreparationReport {
         rowCounts = Map.copyOf(rowCounts);

@@ -71,6 +71,9 @@ public class Vehicle {
     @Column(name = "status_duration_seconds")
     private Long statusDurationSeconds;
 
+    @Column(name = "replacement_reservation_event_id", unique = true)
+    private Long replacementReservationEventId;
+
     // Phase 1（方案 A 兼容列）：数值语义明确为吨；规范代码使用 currentLoadTonnes 访问器。
     @Column(name = "current_load", precision = 10)
     private Double currentLoad;
@@ -206,7 +209,8 @@ public class Vehicle {
 
     // ==================== 枚举 ====================
     public enum VehicleStatus {
-        IDLE, ORDER_DRIVING, LOADING, TRANSPORT_DRIVING, UNLOADING, WAITING, BREAKDOWN
+        IDLE, ORDER_DRIVING, LOADING, TRANSPORT_DRIVING, UNLOADING, WAITING, BREAKDOWN,
+        SCRAPPED, RESERVED_REPLACEMENT
     }
 
     // ==================== 任务相关便捷方法 ====================
@@ -334,6 +338,9 @@ public class Vehicle {
         if (nextStatus == null) {
             return;
         }
+        if (this.currentStatus == VehicleStatus.SCRAPPED || this.currentStatus == VehicleStatus.RESERVED_REPLACEMENT) {
+            return;
+        }
         if (this.currentStatus != nextStatus) {
             this.previousStatus = this.currentStatus;
         }
@@ -341,6 +348,24 @@ public class Vehicle {
         this.statusStartTime = startTime != null ? startTime : LocalDateTime.now();
         setStatusDuration(duration != null && !duration.isNegative() ? duration : Duration.ZERO);
         this.updatedTime = LocalDateTime.now();
+    }
+
+    public void markScrapped(LocalDateTime time) { forceStatus(VehicleStatus.SCRAPPED,time,Duration.ZERO); }
+    public void reserveAsReplacement(LocalDateTime time) { reserveAsReplacement(null,time); }
+    public void reserveAsReplacement(Long eventId,LocalDateTime time) {
+        this.replacementReservationEventId=eventId;forceStatus(VehicleStatus.RESERVED_REPLACEMENT,time,Duration.ZERO);
+    }
+    public void activateReplacement(VehicleStatus status,LocalDateTime time,Duration duration) {
+        this.replacementReservationEventId=null;forceStatus(status,time,duration);
+    }
+    public void releaseReplacementReservation(LocalDateTime time) {
+        if(currentStatus==VehicleStatus.RESERVED_REPLACEMENT) {this.replacementReservationEventId=null;forceStatus(VehicleStatus.IDLE,time,Duration.ZERO);}
+    }
+    public void resetToIdle(LocalDateTime time) { this.replacementReservationEventId=null;forceStatus(VehicleStatus.IDLE,time,Duration.ZERO); }
+    private void forceStatus(VehicleStatus status,LocalDateTime time,Duration duration) {
+        if(this.currentStatus!=status)this.previousStatus=this.currentStatus;
+        this.currentStatus=status;this.statusStartTime=time!=null?time:LocalDateTime.now();setStatusDuration(duration);
+        this.updatedTime=LocalDateTime.now();
     }
 
     public void transitionToStatus(VehicleStatus nextStatus, LocalDateTime startTime) {
@@ -367,6 +392,8 @@ public class Vehicle {
         this.statusDurationSeconds = statusDurationSeconds;
     }
     public Long getStatusDurationSeconds() { return statusDurationSeconds; }
+    public Long getReplacementReservationEventId() { return replacementReservationEventId; }
+    public void setReplacementReservationEventId(Long replacementReservationEventId) { this.replacementReservationEventId = replacementReservationEventId; }
 
     public Double getCurrentLoad() { return currentLoad; }
     public void setCurrentLoad(Double currentLoad) { this.currentLoad = currentLoad; }

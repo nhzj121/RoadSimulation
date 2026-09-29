@@ -22,10 +22,10 @@ public final class SandboxAlgorithmRuntimeApplier {
 
     @PostConstruct
     public void apply() {
-        if ("ORIGINAL".equals(runtimeContext.specification().dispatch().strategy())) {
+        if ("ORIGINAL".equals(runtimeContext.dispatch().strategy())) {
             SandboxAlgorithmRuntimeConfiguration.applyOriginal(
                     runtimeContext.algorithmProfile(), originalPolicy);
-        } else if (!"HEURISTIC".equals(runtimeContext.specification().dispatch().strategy())) {
+        } else if (!"HEURISTIC".equals(runtimeContext.dispatch().strategy())) {
             throw new SandboxRunException(
                     "UNSUPPORTED_DISPATCH_STRATEGY",
                     "Sandbox runtime supports only ORIGINAL or HEURISTIC dispatch");

@@ -20,6 +20,10 @@ import java.util.List;
 @Repository
 public interface DriverRepository extends JpaRepository<Driver, Long> {
 
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("select d from Driver d where d.id = :id")
+    java.util.Optional<Driver> findByIdForUpdate(@Param("id") Long id);
+
     // 根据全名查找
     List<Driver> findByDriverName(String driverName);
 

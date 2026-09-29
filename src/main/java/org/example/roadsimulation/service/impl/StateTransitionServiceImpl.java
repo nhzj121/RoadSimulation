@@ -16,6 +16,7 @@ import org.example.roadsimulation.repository.VehicleRepository;
 import org.example.roadsimulation.service.StateTransitionService;
 import org.example.roadsimulation.service.TransportDeliverySettlementService;
 import org.example.roadsimulation.service.TransportLifecycleService;
+import org.example.roadsimulation.service.TransportRandomEventService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -44,6 +45,9 @@ public class StateTransitionServiceImpl implements StateTransitionService {
     // Phase 4：普通/VRP 卸货统一收口，本状态机不再直接散写库存和终态。
     @Autowired
     private TransportDeliverySettlementService transportDeliverySettlementService;
+    @Autowired
+    private TransportRandomEventService transportRandomEventService;
+    @Autowired private org.example.roadsimulation.service.DrivingProgressService drivingProgressService;
 
     /**
      * 核心方法：结合任务上下文选择下一状态
@@ -418,7 +422,8 @@ public class StateTransitionServiceImpl implements StateTransitionService {
             if (stay == null || stay.isZero() || stay.isNegative()) {
                 stay = Duration.ofSeconds(TransportUnits.minutesToSeconds(minutesPerLoop)); // 最少 1 个循环
             }
-            if (stay.compareTo(maxStay) > 0) {
+            if (stay.compareTo(maxStay) > 0 && (drivingProgressService == null || !drivingProgressService.enabled()
+                    || !org.example.roadsimulation.service.DrivingProgressService.driving(v.getCurrentStatus()))) {
                 stay = maxStay;
             }
 
@@ -470,7 +475,13 @@ public class StateTransitionServiceImpl implements StateTransitionService {
     @Override
     @Transactional
     public void updateVehicleStateWithContext(Vehicle vehicle, LocalDateTime simNow, int minutesPerLoop) {
+        if (vehicle == null || vehicle.getId() == null) return;
+        vehicle = vehicleRepository.findByIdForUpdate(vehicle.getId()).orElse(null);
         if (vehicle == null) return;
+        if(vehicle.getCurrentStatus()==VehicleStatus.SCRAPPED || vehicle.getCurrentStatus()==VehicleStatus.RESERVED_REPLACEMENT)
+            return;
+        if(transportRandomEventService!=null && transportRandomEventService.isTransitionBlocked(vehicle.getId(),simNow))
+            return;
 
         // 0) 初始化状态
         if (vehicle.getCurrentStatus() == null) {
@@ -509,6 +520,9 @@ public class StateTransitionServiceImpl implements StateTransitionService {
             return;
         }
 
+        boolean progressManaged = drivingProgressService != null && drivingProgressService.enabled()
+                && org.example.roadsimulation.service.DrivingProgressService.driving(vehicle.getCurrentStatus());
+
         if (vehicle.getStatusStartTime() == null) {
             // Phase 4：只有装卸、等待、故障等非行驶状态继续使用后端驻留窗口。
             vehicle.setStatusStartTime(simNow);
@@ -523,7 +537,7 @@ public class StateTransitionServiceImpl implements StateTransitionService {
         Duration maxDur = Duration.ofSeconds(TransportUnits.minutesToSeconds(60L));
 
         Duration curDur = vehicle.getStatusDuration();
-        if (curDur != null && curDur.compareTo(maxDur) > 0) {
+        if (!progressManaged && curDur != null && curDur.compareTo(maxDur) > 0) {
             vehicle.setStatusDuration(maxDur);
             vehicleRepository.save(vehicle);
 
@@ -537,7 +551,7 @@ public class StateTransitionServiceImpl implements StateTransitionService {
 
         // 2) 时间门槛：没到 endTime 不允许转移
         LocalDateTime endTime = vehicle.getStatusEndTime();
-        if (endTime != null && simNow.isBefore(endTime)) {
+        if (!progressManaged && endTime != null && simNow.isBefore(endTime)) {
             logger.info("车辆[{}] 未到转移时间：current={} simNow={} endTime={}",
                     vehicle.getLicensePlate(),
                     vehicle.getCurrentStatus(),

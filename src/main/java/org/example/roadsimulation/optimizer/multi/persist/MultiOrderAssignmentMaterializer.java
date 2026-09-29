@@ -188,7 +188,7 @@ public class MultiOrderAssignmentMaterializer {
     private LocalDateTime currentBusinessTime() {
         if (sandboxRunRuntimeContext != null) {
             return simulationContext == null
-                    ? sandboxRunRuntimeContext.specification().simulationClock().startLocalDateTime()
+                    ? sandboxRunRuntimeContext.simulationClock().startLocalDateTime()
                     : simulationContext.getCurrentSimTime();
         }
         return LocalDateTime.now();

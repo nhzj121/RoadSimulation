@@ -71,7 +71,6 @@ class VehicleInitializationServiceImplTest {
         Vehicle vehicle = vehicle(1L, "V-1");
         POI warehouse = poi(10L, "Warehouse", POI.POIType.WAREHOUSE, "104.100000", "30.100000");
         SandboxRunRuntimeContext runtime = mock(SandboxRunRuntimeContext.class);
-        SandboxRunSpecificationV1 specification = mock(SandboxRunSpecificationV1.class);
         SandboxRunSpecificationV1.SimulationClock clock =
                 new SandboxRunSpecificationV1.SimulationClock(
                         java.time.LocalDateTime.of(2026, 1, 1, 0, 0), 1800, 48);
@@ -79,8 +78,7 @@ class VehicleInitializationServiceImplTest {
                 1L, new SandboxVehicleInitialState(
                         1L, SandboxVehicleInitialState.RANDOM_DERIVED_POI, 10L,
                         "VEHICLE_INITIAL_POI/v1", "{\"vehicleId\":1}", "0123456789abcdef")));
-        when(runtime.specification()).thenReturn(specification);
-        when(specification.simulationClock()).thenReturn(clock);
+        when(runtime.simulationClock()).thenReturn(clock);
         when(vehicleRepository.findAll()).thenReturn(List.of(vehicle));
         when(poiRepository.findById(10L)).thenReturn(Optional.of(warehouse));
 

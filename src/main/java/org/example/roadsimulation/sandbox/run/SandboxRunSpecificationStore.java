@@ -28,6 +28,7 @@ import java.time.Instant;
 /** JDBC control-plane storage for deterministic run drafts and immutable revisions. */
 public final class SandboxRunSpecificationStore {
     public static final String CONTROL_SCHEMA_VERSION = "sandbox-control-schema/v3";
+    public static final String V2_CONTROL_SCHEMA_VERSION = "sandbox-control-schema/v4";
 
     private final String jdbcUrl;
     private final String username;
@@ -243,15 +244,20 @@ public final class SandboxRunSpecificationStore {
             Connection connection,
             SandboxRunSpecificationRevisionV1 revision
     ) throws SQLException {
+        insertVehicleInitialStates(connection,revision.runSpecKey(),revision.revision(),revision.vehicleInitialStates());
+    }
+
+    private void insertVehicleInitialStates(Connection connection,String key,int revision,
+            java.util.List<SandboxVehicleInitialState> states) throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement("""
                 INSERT INTO sandbox_run_vehicle_initial_state(
                     run_spec_key,revision_no,vehicle_id,initialization_policy,poi_id,
                     decision_domain,decision_key,derived_seed_hex
                 ) VALUES (?,?,?,?,?,?,?,?)
                 """)) {
-            for (SandboxVehicleInitialState state : revision.vehicleInitialStates()) {
-                statement.setString(1, revision.runSpecKey());
-                statement.setInt(2, revision.revision());
+            for (SandboxVehicleInitialState state : states) {
+                statement.setString(1, key);
+                statement.setInt(2, revision);
                 statement.setLong(3, state.vehicleId());
                 statement.setString(4, state.initializationPolicy());
                 statement.setLong(5, state.poiId());
@@ -317,6 +323,129 @@ public final class SandboxRunSpecificationStore {
                 compiled.eligibleVehicleInitialPoiCount());
     }
 
+    public CompiledSandboxRunSpecificationV2 compileV2(Resource baseline,Resource specification) {
+        return compileV2(baselineLoader.load(baseline),new SandboxRunCompilerV2(objectMapper).read(specification));
+    }
+
+    private CompiledSandboxRunSpecificationV2 compileV2(LoadedSandboxBaseline baseline,SandboxRunSpecificationV2 specification) {
+        if(specification==null || specification.scenario()==null)throw new SandboxRunException("MISSING_SCENARIO_REFERENCE","scenario is required");
+        var scenarioRevision=scenarioStore.loadRevision(specification.scenario().scenarioKey(),specification.scenario().revision());
+        var scenario=scenarioCompiler.compile(baseline,scenarioRevision.definition());
+        return new SandboxRunCompilerV2(objectMapper).compile(specification,scenarioRevision,scenario);
+    }
+
+    public CompiledSandboxRunSpecificationV2 saveDraftV2(Resource baseline,Resource specification) {
+        var compiled=compileV2(baseline,specification);var spec=compiled.normalizedSpecification();
+        try(Connection connection=openConnection()) {
+            configure(connection);safety.requireSafeTarget(jdbcUrl,connection);requireV2ControlSchema(connection);
+            try(var statement=connection.prepareStatement("""
+                    INSERT INTO sandbox_run_spec(run_spec_key,display_name,description,draft_json,draft_updated_at,row_version,archived)
+                    VALUES(?,?,?,?,CURRENT_TIMESTAMP(6),0,b'0')
+                    ON DUPLICATE KEY UPDATE display_name=VALUES(display_name),description=VALUES(description),
+                      draft_json=VALUES(draft_json),draft_updated_at=CURRENT_TIMESTAMP(6),row_version=row_version+1,archived=b'0'
+                    """)) {
+                statement.setString(1,spec.runSpecKey());statement.setString(2,spec.displayName());statement.setString(3,spec.description());
+                statement.setString(4,json(spec));statement.executeUpdate();
+            }
+            return compiled;
+        } catch(SQLException ex) { throw new SandboxWorkspaceException("RUN_SPEC_DRAFT_SAVE_FAILED","Cannot save v2 draft",ex); }
+    }
+
+    public SandboxRunSpecificationRevisionV2 publishV2(Resource baselineResource,String key) {
+        var baseline=baselineLoader.load(baselineResource);
+        try(Connection connection=openConnection()) {
+            configure(connection);safety.requireSafeTarget(jdbcUrl,connection);requireV2ControlSchema(connection);
+            connection.setAutoCommit(false);
+            try {
+                SandboxRunSpecificationV2 draft;
+                try(var statement=connection.prepareStatement("SELECT draft_json FROM sandbox_run_spec WHERE run_spec_key=? AND archived=b'0' FOR UPDATE")) {
+                    statement.setString(1,key);
+                    try(var rows=statement.executeQuery()) {
+                        if(!rows.next())throw new SandboxWorkspaceException("RUN_SPEC_DRAFT_NOT_FOUND","No v2 draft");
+                        draft=new SandboxRunCompilerV2(objectMapper).read(new ByteArrayResource(rows.getString(1).getBytes(StandardCharsets.UTF_8)));
+                    }
+                }
+                var compiled=compileV2(baseline,draft);
+                if(!key.equals(compiled.normalizedSpecification().runSpecKey()))
+                    throw new SandboxWorkspaceException("RUN_SPEC_DRAFT_KEY_MISMATCH","Draft key differs from control-table key");
+                try(var statement=connection.prepareStatement("SELECT revision_json FROM sandbox_run_spec_revision WHERE run_spec_key=? AND run_specification_sha256=?")) {
+                    statement.setString(1,key);statement.setString(2,compiled.runSpecificationSha256());
+                    try(var rows=statement.executeQuery()) {
+                        if(rows.next()) { var found=parseV2(rows.getString(1));connection.commit();return found; }
+                    }
+                }
+                var revision=new SandboxRunSpecificationRevisionV2(SandboxRunSpecificationRevisionV2.ARTIFACT_VERSION,key,
+                        nextRevision(connection,key),compiled.normalizedSpecification(),compiled.algorithmProfile(),compiled.vehicleInitialStates(),
+                        compiled.weatherTimeline(),compiled.eventConfiguration(),new SandboxRunSpecificationRevisionV2.Fingerprints(
+                                SandboxRunCodec.CANONICALIZATION,compiled.runSpecificationSha256(),compiled.resolvedVehicleInitialStateSha256(),
+                                compiled.preparedRunFactsSha256(),compiled.weatherTimelineSha256(),compiled.eventConfigurationSha256()),Instant.now());
+                insertRevisionV2(connection,revision);
+                insertVehicleInitialStates(connection,key,revision.revision(),revision.vehicleInitialStates());
+                connection.commit();return revision;
+            } catch(Exception ex) { connection.rollback();throw ex; }
+        } catch(SQLException ex) { throw new SandboxWorkspaceException("RUN_SPEC_PUBLISH_FAILED","Cannot publish v2 run",ex); }
+    }
+
+    private void insertRevisionV2(Connection connection,SandboxRunSpecificationRevisionV2 revision) throws SQLException {
+        var spec=revision.specification();var facts=revision.fingerprints();
+        try(var statement=connection.prepareStatement("""
+                INSERT INTO sandbox_run_spec_revision(run_spec_key,revision_no,scenario_key,scenario_revision,artifact_version,
+                  random_protocol_id,root_seed,algorithm_profile_id,run_specification_sha256,resolved_vehicle_initial_state_sha256,
+                  prepared_run_facts_sha256,revision_json,published_at,archived) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,b'0')
+                """)) {
+            statement.setString(1,revision.runSpecKey());statement.setInt(2,revision.revision());
+            statement.setString(3,spec.scenario().scenarioKey());statement.setInt(4,spec.scenario().revision());
+            statement.setString(5,revision.artifactVersion());statement.setString(6,spec.random().protocolId());statement.setString(7,spec.random().rootSeed());
+            statement.setString(8,revision.algorithmProfile().profileId());statement.setString(9,facts.runSpecificationSha256());
+            statement.setString(10,facts.resolvedVehicleInitialStateSha256());statement.setString(11,facts.preparedRunFactsSha256());
+            statement.setString(12,json(revision));statement.setTimestamp(13,Timestamp.from(revision.publishedAtUtc()));statement.executeUpdate();
+        }
+    }
+
+    public boolean isRevisionV2(String key,int revision) { return storedVersion(key,revision,false).equals(SandboxRunSpecificationRevisionV2.ARTIFACT_VERSION); }
+    public boolean isDraftV2(String key) { return storedVersion(key,0,true).equals(SandboxRunSpecificationV2.ARTIFACT_VERSION); }
+    private String storedVersion(String key,int revision,boolean draft) {
+        try(Connection connection=openConnection()) {
+            configure(connection);safety.requireSafeTarget(jdbcUrl,connection);requireControlSchema(connection);
+            String sql=draft?"SELECT draft_json FROM sandbox_run_spec WHERE run_spec_key=? AND archived=b'0'"
+                    :"SELECT revision_json FROM sandbox_run_spec_revision WHERE run_spec_key=? AND revision_no=? AND archived=b'0'";
+            try(var statement=connection.prepareStatement(sql)) {
+                statement.setString(1,key);if(!draft)statement.setInt(2,revision);
+                try(var rows=statement.executeQuery()) {
+                    if(!rows.next())throw new SandboxWorkspaceException("RUN_SPEC_NOT_FOUND","Run draft or revision not found");
+                    return objectMapper.readTree(rows.getString(1)).path("artifactVersion").asText();
+                }
+            }
+        } catch(java.io.IOException|SQLException ex) { throw new SandboxWorkspaceException("RUN_SPEC_REVISION_READ_FAILED","Cannot determine stored run version",ex); }
+    }
+
+    public SandboxRunSpecificationRevisionV2 loadRevisionV2(String key,int revision) {
+        try(Connection connection=openConnection()) {
+            configure(connection);safety.requireSafeTarget(jdbcUrl,connection);requireV2ControlSchema(connection);
+            try(var statement=connection.prepareStatement("SELECT revision_json FROM sandbox_run_spec_revision WHERE run_spec_key=? AND revision_no=? AND archived=b'0'")) {
+                statement.setString(1,key);statement.setInt(2,revision);
+                try(var rows=statement.executeQuery()) {
+                    if(!rows.next())throw new SandboxWorkspaceException("RUN_SPEC_REVISION_NOT_FOUND","Published v2 run not found");
+                    return parseV2(rows.getString(1));
+                }
+            }
+        } catch(SQLException ex) { throw new SandboxWorkspaceException("RUN_SPEC_REVISION_READ_FAILED","Cannot read v2 revision",ex); }
+    }
+    private SandboxRunSpecificationRevisionV2 parseV2(String encoded) {
+        try {
+            var revision=objectMapper.readValue(encoded,SandboxRunSpecificationRevisionV2.class);
+            if(!SandboxRunSpecificationRevisionV2.ARTIFACT_VERSION.equals(revision.artifactVersion()))
+                throw new SandboxWorkspaceException("UNSUPPORTED_RUN_SPEC_VERSION","Not a published v2 artifact");
+            return revision;
+        } catch(JsonProcessingException ex) { throw new SandboxWorkspaceException("INVALID_STORED_RUN_SPEC","Invalid v2 revision JSON",ex); }
+    }
+    private void requireV2ControlSchema(Connection connection) throws SQLException {
+        try(var statement=connection.createStatement();var rows=statement.executeQuery("SELECT control_schema_version FROM sandbox_workspace_marker WHERE marker_id=1")) {
+            if(!rows.next() || !V2_CONTROL_SCHEMA_VERSION.equals(rows.getString(1)))
+                throw new SandboxWorkspaceException("CONTROL_SCHEMA_NOT_READY","Run the additive sandbox-control-schema/v4 upgrade first");
+        }
+    }
+
     private String json(Object value) {
         try {
             return objectMapper.writeValueAsString(value);
@@ -330,7 +459,7 @@ public final class SandboxRunSpecificationStore {
                 SELECT control_schema_version FROM sandbox_workspace_marker
                 WHERE marker_id=1 AND workspace_kind='ROAD_SIMULATION_SANDBOX'
                 """)) {
-            if (!rows.next() || !CONTROL_SCHEMA_VERSION.equals(rows.getString(1))) {
+            if (!rows.next() || !java.util.Set.of(CONTROL_SCHEMA_VERSION,V2_CONTROL_SCHEMA_VERSION).contains(rows.getString(1))) {
                 throw new SandboxWorkspaceException(
                         "CONTROL_SCHEMA_NOT_READY", "Run the phase-three sandbox provisioning upgrade first");
             }

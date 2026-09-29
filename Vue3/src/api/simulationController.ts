@@ -8,6 +8,8 @@ interface BackendResponse<T = any> {
 }
 
 interface StartSimulationOptions {
+    scenarioId?: string | number;
+    externalExperimentId?: string;
     useHeuristic?: boolean;
     strategy?: 'ORIGINAL' | 'HEURISTIC';
 }

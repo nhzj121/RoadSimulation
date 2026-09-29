@@ -100,6 +100,13 @@ public class SimulationDataCleanupService {
     private ProductionPlanRepository productionPlanRepository;
 
     @Autowired
+    private TransportRandomEventRepository transportRandomEventRepository;
+    @Autowired
+    private VehicleReplacementAttemptRepository vehicleReplacementAttemptRepository;
+    @Autowired
+    private TransportExecutionSegmentRepository transportExecutionSegmentRepository;
+
+    @Autowired
     private VehicleRepository vehicleRepository;
 
     @Autowired
@@ -198,6 +205,18 @@ public class SimulationDataCleanupService {
                     + automaticNodeCount + " nodes and " + automaticFlowCount + " flows");
 
             // assignment_leg -> assignment_nodes -> shipment_item -> assignment -> shipment -> enrollment
+            // transport_random_event -> assignment_leg -> assignment_nodes -> shipment_item -> assignment -> shipment -> enrollment
+            long replacementAttemptCount=vehicleReplacementAttemptRepository.count();
+            transportExecutionSegmentRepository.deleteAllInBatch();transportExecutionSegmentRepository.flush();
+            vehicleReplacementAttemptRepository.deleteAllInBatch();vehicleReplacementAttemptRepository.flush();
+            System.out.println("Deleted " + replacementAttemptCount + " vehicle_replacement_attempt records");
+            clearPersistenceContext();
+            long randomEventCount = transportRandomEventRepository.count();
+            transportRandomEventRepository.deleteAllInBatch();
+            transportRandomEventRepository.flush();
+            System.out.println("Deleted " + randomEventCount + " transport_random_event records");
+            clearPersistenceContext();
+
             long assignmentLegCount = assignmentLegRepository.count();
             assignmentLegRepository.deleteAllInBatch();
             assignmentLegRepository.flush();
@@ -247,8 +266,9 @@ public class SimulationDataCleanupService {
             long driverCount = driverRepository.count();
             int resetDriverCount = 0;
             for (Driver driver : driverRepository.findAll()) {
-                if (driver.getCurrentStatus() != Driver.DriverStatus.IDLE) {
+                if (driver.getCurrentStatus() != Driver.DriverStatus.IDLE || driver.getReservedReplacementEventId()!=null) {
                     driver.setCurrentStatus(Driver.DriverStatus.IDLE);
+                    driver.setReservedReplacementEventId(null);
                     driver.setUpdatedBy("Simulation cleanup");
                     driver.setUpdatedTime(LocalDateTime.now());
                     driverRepository.save(driver);
@@ -440,7 +460,7 @@ public class SimulationDataCleanupService {
             );
         }
 
-        vehicle.transitionToStatus(Vehicle.VehicleStatus.IDLE, LocalDateTime.now(), Duration.ZERO);
+        vehicle.resetToIdle(LocalDateTime.now());
         vehicle.setPreviousStatus(null);
         vehicle.setLoopCount(0);
 
@@ -485,8 +505,7 @@ public class SimulationDataCleanupService {
             throw new IllegalStateException(
                     "published sandbox vehicle state count does not match the workspace");
         }
-        LocalDateTime start = sandboxRunRuntimeContext.specification()
-                .simulationClock().startLocalDateTime();
+        LocalDateTime start = sandboxRunRuntimeContext.simulationClock().startLocalDateTime();
         for (Vehicle vehicle : vehicles) {
             SandboxVehicleInitialState state = states.get(vehicle.getId());
             if (state == null) {

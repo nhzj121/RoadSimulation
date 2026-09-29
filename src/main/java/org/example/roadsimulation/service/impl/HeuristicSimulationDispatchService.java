@@ -135,7 +135,7 @@ public class HeuristicSimulationDispatchService implements SimulationDispatchSer
                     SandboxAlgorithmRuntimeConfiguration.heuristic(
                             sandboxRunRuntimeContext.algorithmProfile());
             java.time.LocalDateTime decisionTime = simulationContext == null
-                    ? sandboxRunRuntimeContext.specification().simulationClock().startLocalDateTime()
+                    ? sandboxRunRuntimeContext.simulationClock().startLocalDateTime()
                     : simulationContext.getCurrentSimTime();
             configuration.costNormalization().setEvaluationTime(decisionTime);
             configuration.mutation().setEvaluationTime(decisionTime);

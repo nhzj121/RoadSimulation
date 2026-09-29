@@ -28,6 +28,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -64,6 +65,7 @@ public class SimulationController {
     private TransportMonitorService transportMonitorService;
 
     @Autowired
+
     private GaodeRoutePlanningQueueService gaodeRoutePlanningQueueService;
 
     @Autowired
@@ -94,11 +96,18 @@ public class SimulationController {
             return ApiResponse.error(ex.getMessage());
         }
         DispatchStrategy dispatchStrategy = resolveDispatchStrategy(request);
-        simulationRuntimeConfig.setDispatchStrategy(dispatchStrategy);
-        gaodeRoutePlanningQueueService.resume();
-
-        simulationMainLoop.start();
-
+        try {
+            simulationMainLoop.startWithWeather(request == null ? null : request.getScenarioId(),
+                    request == null ? null : request.getExternalExperimentId(),
+                    request == null ? null : request.getEventOptions(), () -> {
+                        simulationRuntimeConfig.setDispatchStrategy(dispatchStrategy);
+                        gaodeRoutePlanningQueueService.resume();
+                    });
+        } catch (IllegalArgumentException e) {
+            throw new org.springframework.web.server.ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage());
+        } catch (IllegalStateException e) {
+            throw new org.springframework.web.server.ResponseStatusException(HttpStatus.CONFLICT, e.getMessage());
+        }
         DataInitializer.StartupShipmentGenerationResult startupShipmentResult =
                 new DataInitializer.StartupShipmentGenerationResult(15);
         if (startupPreGenerationEnabled) {
@@ -200,6 +209,7 @@ public class SimulationController {
     }
 
     @PostMapping("/vehicle-arrived")
+    @Transactional
     public ResponseEntity<Void> handleVehicleArrived(@RequestBody VehicleArrivedRequest request) {
         try {
             if (request == null || request.getAssignmentId() == null
@@ -376,6 +386,15 @@ public class SimulationController {
     }
 
     public static class StartSimulationRequest {
+        private org.example.roadsimulation.dto.TransportEventOptions eventOptions;
+        public org.example.roadsimulation.dto.TransportEventOptions getEventOptions(){return eventOptions;}
+        public void setEventOptions(org.example.roadsimulation.dto.TransportEventOptions value){eventOptions=value;}
+        private Long scenarioId;
+        private String externalExperimentId;
+        public Long getScenarioId() { return scenarioId; }
+        public void setScenarioId(Long value) { scenarioId = value; }
+        public String getExternalExperimentId() { return externalExperimentId; }
+        public void setExternalExperimentId(String value) { externalExperimentId = value; }
         private Boolean useHeuristic;
         private String strategy;
 
@@ -397,9 +416,16 @@ public class SimulationController {
     }
 
     public static class VehicleArrivedRequest {
+        private Integer legIndex;
+        private String phaseKey;
+        public Integer getLegIndex() { return legIndex; }
+        public void setLegIndex(Integer value) { legIndex = value; }
+        public String getPhaseKey() { return phaseKey; }
+        public void setPhaseKey(String value) { phaseKey = value; }
         private Long assignmentId;
         private Long vehicleId;
         private Long endPOIId;
+        private Long replacementEventId;
 
         public Long getAssignmentId() {
             return assignmentId;
@@ -424,6 +450,8 @@ public class SimulationController {
         public void setEndPOIId(Long endPOIId) {
             this.endPOIId = endPOIId;
         }
+        public Long getReplacementEventId() { return replacementEventId; }
+        public void setReplacementEventId(Long replacementEventId) { this.replacementEventId = replacementEventId; }
     }
 
     public static class AssignmentLoadedRequest {

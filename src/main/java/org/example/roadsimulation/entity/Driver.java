@@ -37,6 +37,14 @@ public class Driver {
     @Column(name = "current_status", length = 20)
     private Driver.DriverStatus currentStatus;
 
+    // Runtime reservation only; never changes the stable driver_vehicle relation.
+    @JsonIgnore
+    @Column(name = "reserved_replacement_event_id")
+    private Long reservedReplacementEventId;
+
+    public Long getReservedReplacementEventId() { return reservedReplacementEventId; }
+    public void setReservedReplacementEventId(Long value) { reservedReplacementEventId = value; }
+
     // 接单偏好：货类（归一化类别名，如 "水泥"）
     @Column(name = "pref_cargo", length = 50)
     private String preferredCargoType;

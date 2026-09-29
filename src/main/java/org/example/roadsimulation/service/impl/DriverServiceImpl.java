@@ -29,6 +29,8 @@ public class DriverServiceImpl implements DriverService {
 
     private final DriverRepository driverRepository;
     private final DriverPreferenceScorer driverPreferenceScorer;
+    @Autowired
+    private org.example.roadsimulation.service.TransportLifecycleService lifecycle;
 
     @Autowired
     public DriverServiceImpl(DriverRepository driverRepository, DriverPreferenceScorer driverPreferenceScorer) {
@@ -43,6 +45,8 @@ public class DriverServiceImpl implements DriverService {
      */
     @Override
     public Driver createDriver(Driver driver) {
+        if(driver.getReservedReplacementEventId()!=null || driver.getCurrentStatus()==Driver.DriverStatus.ASSIGNED)
+            throw new IllegalArgumentException("Cannot create an occupied or reserved driver");
         // 检查手机号唯一性
         if (driverRepository.existsByDriverPhone(driver.getDriverPhone())) {
             throw new IllegalArgumentException("手机号已存在: " + driver.getDriverPhone());
@@ -55,7 +59,7 @@ public class DriverServiceImpl implements DriverService {
      */
     @Override
     public Driver updateDriver(Long id, Driver driverDetails) {
-        return driverRepository.findById(id)
+        return driverRepository.findByIdForUpdate(id)
                 .map(driver -> {
                     // 检查手机号是否冲突
                     if (!driver.getDriverPhone().equals(driverDetails.getDriverPhone()) &&
@@ -65,7 +69,8 @@ public class DriverServiceImpl implements DriverService {
 
                     driver.setDriverName(driverDetails.getDriverName());
                     driver.setDriverPhone(driverDetails.getDriverPhone());
-                    driver.setCurrentStatus(driverDetails.getCurrentStatus());
+                    if(driverDetails.getCurrentStatus()!=null && driverDetails.getCurrentStatus()!=driver.getCurrentStatus())
+                        lifecycle.updateDriverStatusRequired(id,driverDetails.getCurrentStatus(),"API updateDriver");
                     return driverRepository.save(driver);
                 })
                 .orElseThrow(() -> new RuntimeException("司机不存在，ID: " + id));
@@ -76,7 +81,7 @@ public class DriverServiceImpl implements DriverService {
      */
     @Override
     public Driver updateDriverPreferences(Long id, DriverPreferencesRequest request) {
-        return driverRepository.findById(id)
+        return driverRepository.findByIdForUpdate(id)
                 .map(driver -> {
                     if (request.getPreferredCargoType() != null) {
                         String cargo = request.getPreferredCargoType().trim();
@@ -167,10 +172,10 @@ public class DriverServiceImpl implements DriverService {
      */
     @Override
     public void deleteDriver(Long id) {
-        Driver driver = driverRepository.findById(id)
+        Driver driver = driverRepository.findByIdForUpdate(id)
                 .orElseThrow(() -> new RuntimeException("司机不存在，ID: " + id));
 
-        if (!driver.getAssignments().isEmpty()) {
+        if (driver.getReservedReplacementEventId()!=null || !driver.getAssignments().isEmpty()) {
             throw new IllegalStateException("无法删除司机，存在关联任务");
         }
 

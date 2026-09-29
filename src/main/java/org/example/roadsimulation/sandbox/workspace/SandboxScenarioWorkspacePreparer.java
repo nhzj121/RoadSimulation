@@ -151,6 +151,7 @@ public final class SandboxScenarioWorkspacePreparer {
     }
 
     private void markPreparing(Connection connection, SandboxScenarioRevisionV1 revision) throws SQLException {
+        SandboxRunMarkerMaintenance.clear(connection);
         try (PreparedStatement statement = connection.prepareStatement("""
                 UPDATE sandbox_workspace_marker
                 SET scenario_key=?,scenario_revision=?,scenario_definition_sha256=?,
@@ -353,7 +354,7 @@ public final class SandboxScenarioWorkspacePreparer {
                 "SELECT control_schema_version FROM sandbox_workspace_marker WHERE marker_id=1")) {
             if (!rows.next() || !java.util.Set.of(
                     SandboxScenarioStore.CONTROL_SCHEMA_VERSION,
-                    SandboxScenarioStore.RUN_CONTROL_SCHEMA_VERSION).contains(rows.getString(1))) {
+                    SandboxScenarioStore.RUN_CONTROL_SCHEMA_VERSION, "sandbox-control-schema/v4").contains(rows.getString(1))) {
                 throw new SandboxWorkspaceException(
                         "CONTROL_SCHEMA_NOT_READY", "Run the phase-two sandbox provisioning upgrade first");
             }
