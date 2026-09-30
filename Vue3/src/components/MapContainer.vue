@@ -1000,7 +1000,6 @@ import maintenanceIcon from '../../public/icons/maintenance-center.png';
 import restAreaIcon from '../../public/icons/rest-area.png';
 import transportIcon from '../../public/icons/distribution-center.png';
 import testIcon from '../../public/icons/test.png';
-import { mergeLiveVehicleDisplay } from '../utils/liveVehicleDisplay';
 import { assignmentPollingMode, createWeatherRouteCache } from '../utils/weatherRouteCache';
 import { assignmentRenderIdentity, createAssignmentRecoveryTracker, reconcileAssignmentRenderOwner, removeVehicleRenderRegistration } from '../utils/assignmentRenderOwnership';
 import { VEHICLE_STATUS_PRESENTATIONS, vehicleStatusPresentation } from '../utils/vehicleStatusPresentation';
@@ -3233,6 +3232,10 @@ function unmarkDrawnVehicleIcon(vehicleId) {
     nextIds.delete(iconId);
     drawnVehicleIconIds.value = nextIds;
     syncRegisteredVehicleStats();
+    if (String(floatingVehicleInfo.vehicleId) === iconId) {
+      floatingVehicleInfo.visible = false;
+      floatingVehicleInfo.loading = false;
+    }
   }
 }
 
@@ -3425,6 +3428,17 @@ class VehicleStatusManager {
 
       // 2. 更新载重信息
       this.updateVehicleLoadInfo(vehicle, status, additionalData);
+
+      // Keep a frontend-owned display snapshot on the assignment registered to the marker.
+      // Backend polling may already be reporting the next assignment for this vehicle.
+      const displayAssignment = this.assignmentData.get(vehicleId) || additionalData.assignment;
+      if (displayAssignment) {
+        displayAssignment.frontendStatus = status;
+        displayAssignment.frontendActionDescription = vehicle.actionDescription;
+        displayAssignment.currentLoad = vehicle.currentLoad;
+        displayAssignment.currentVolume = vehicle.currentVolume;
+        if (vehicle.vrpProgress) displayAssignment.vrpProgress = vehicle.vrpProgress;
+      }
 
       // 3. 更新位置信息（如果有提供）
       if (additionalData.position) {
@@ -5296,11 +5310,26 @@ const floatingVehicleMonitor = computed(() => monitorVehicles.find(vehicle => St
 const floatingVehicleLiveDisplay = computed(() => {
   const cachedAssignment = floatingVehicleInfo.assignment || {};
   const cachedInfo = floatingVehicleInfo.vehicleInfo || {};
-  if (!monitorWeather.value?.runId) return { assignment: cachedAssignment, vehicleInfo: cachedInfo, currentStatus: floatingVehicleInfo.currentStatus };
-  const liveVehicle = floatingVehicleMonitor.value;
-  const assignmentId = liveVehicle?.assignmentId ?? cachedAssignment.assignmentId;
-  const liveAssignment = monitorAssignments.find(item => String(item.assignmentId) === String(assignmentId) && String(item.vehicleId) === String(floatingVehicleInfo.vehicleId));
-  return mergeLiveVehicleDisplay({ ...cachedAssignment, ...cachedInfo }, liveVehicle, liveAssignment);
+  const projectedVehicle = projectVisibleVehicleForSidebar(floatingVehicleInfo.vehicleId);
+  const routeAssignment = findVisibleVehicleRouteData(floatingVehicleInfo.vehicleId)?.assignment || null;
+  if (!projectedVehicle || !routeAssignment) {
+    return {
+      assignment: cachedAssignment,
+      vehicleInfo: cachedInfo,
+      currentStatus: floatingVehicleInfo.currentStatus
+    };
+  }
+  return {
+    assignment: {
+      ...cachedAssignment,
+      ...routeAssignment,
+      driverId: projectedVehicle.driverId ?? routeAssignment.driverId ?? null,
+      driverName: projectedVehicle.driverName || routeAssignment.driverName,
+      driverStatus: projectedVehicle.driverStatus || routeAssignment.driverStatus
+    },
+    vehicleInfo: { ...cachedInfo, ...projectedVehicle },
+    currentStatus: projectedVehicle.status
+  };
 });
 const floatingVehicleDisplayAssignment = computed(() => floatingVehicleLiveDisplay.value.assignment || {});
 const floatingVehicleDisplayInfo = computed(() => floatingVehicleLiveDisplay.value.vehicleInfo || {});
@@ -5568,14 +5597,6 @@ const updateVehicleInfo = async () => {
 
     if (activeMonitorVehicles && Array.isArray(activeMonitorVehicles)) {
       activeMonitorVehicles.forEach(monitorVehicle => {
-        if (monitorVehicle.drivingPhaseKey && vehicleMap.has(monitorVehicle.vehicleId)) {
-          const vehicle = vehicleMap.get(monitorVehicle.vehicleId);
-          vehicle.status = monitorVehicle.status;
-          vehicle.currentLoad = Math.max(0, toNumber(monitorVehicle.currentLoad));
-          vehicle.currentVolume = Math.max(0, toNumber(monitorVehicle.currentVolume));
-          vehicle.loadPercentage = vehicle.maxLoadCapacity > 0 ? Math.min(100, vehicle.currentLoad / vehicle.maxLoadCapacity * 100) : 0;
-          vehicle.volumePercentage = vehicle.maxVolumeCapacity > 0 ? Math.min(100, vehicle.currentVolume / vehicle.maxVolumeCapacity * 100) : 0;
-        }
         if (!monitorVehicle.vehicleId || vehicleMap.has(monitorVehicle.vehicleId)) {
           return;
         }
@@ -6499,16 +6520,121 @@ const normalizeMapPosition = (position) => {
   return Number.isFinite(lng) && Number.isFinite(lat) ? [lng, lat] : null;
 };
 
-const vehicleMonitorDisplayVehicles = computed(() => vehicles.filter(vehicle => {
-  if (monitorWeather.value?.runId && monitorVehicles.some(v => String(v.vehicleId) === String(vehicle.id))) return true;
-  const iconId = getVehicleIconId(vehicle?.id);
-  if (!iconId || !drawnVehicleIconIds.value.has(iconId)) {
-    return false;
-  }
+function findVisibleVehicleRouteData(vehicleId) {
+  const iconId = getVehicleIconId(vehicleId);
+  if (!iconId || !drawnVehicleIconIds.value.has(iconId)) return null;
 
-  const marker = vehicleStatusManager.value?.vehicleMarkers?.get(vehicle.id);
-  return markerHasValidPosition(marker);
-}));
+  const marker = lookupMapByLooseId(vehicleStatusManager.value?.vehicleMarkers, vehicleId);
+  if (!markerHasValidPosition(marker)) return null;
+
+  for (const [assignmentId, routeData] of activeRoutes.value.entries()) {
+    const drawn = Array.from(drawnAssignmentIds.value)
+        .some(id => String(id) === String(assignmentId));
+    if (drawn
+        && !routeData?.drawing
+        && !routeData?.cleaned
+        && String(routeData?.assignment?.vehicleId) === iconId) {
+      return routeData;
+    }
+  }
+  return null;
+}
+
+function projectVisibleVehicleForSidebar(vehicleId, backendVehicle = null) {
+  const routeData = findVisibleVehicleRouteData(vehicleId);
+  const assignment = routeData?.assignment;
+  if (!assignment) return null;
+
+  const sourceVehicle = backendVehicle
+      || vehicles.find(vehicle => String(vehicle.id) === String(vehicleId))
+      || { id: vehicleId };
+  const managerInfo = vehicleStatusManager.value?.getVehicleInfo?.(vehicleId) || {};
+  const monitorVehicle = monitorVehicles.find(vehicle => String(vehicle.vehicleId) === String(vehicleId)) || null;
+  const activeEvent = monitorVehicle?.activeEvent
+      || monitorActiveEvents.find(event => String(event.vehicleId) === String(vehicleId))
+      || null;
+  const backendStatus = monitorVehicle?.status || sourceVehicle.status;
+  const forcedBackendStatus = ['BREAKDOWN', 'SCRAPPED', 'RESERVED_REPLACEMENT'].includes(backendStatus)
+      ? backendStatus
+      : null;
+  const activeBreakdown = activeEvent?.eventType === 'VEHICLE_BREAKDOWN'
+      && (!activeEvent.status || activeEvent.status === 'ACTIVE')
+      && activeEvent.breakdownLevel !== 'REPLACEMENT_REQUIRED';
+  const status = forcedBackendStatus
+      || (activeBreakdown ? 'BREAKDOWN' : null)
+      || assignment.frontendStatus
+      || managerInfo.status
+      || assignment.vehicleStatus
+      || sourceVehicle.status
+      || 'IDLE';
+  const currentLoad = Math.max(0, toFiniteNumber(
+      assignment.currentLoad ?? managerInfo.currentLoad ?? sourceVehicle.currentLoad,
+      0
+  ));
+  const currentVolume = Math.max(0, toFiniteNumber(
+      assignment.currentVolume ?? managerInfo.currentVolume ?? sourceVehicle.currentVolume,
+      0
+  ));
+  const maxLoadCapacity = Math.max(0, toFiniteNumber(
+      sourceVehicle.maxLoadCapacity ?? assignment.maxLoadCapacity ?? managerInfo.maxLoadCapacity,
+      0
+  ));
+  const maxVolumeCapacity = Math.max(0, toFiniteNumber(
+      sourceVehicle.maxVolumeCapacity ?? assignment.maxVolumeCapacity ?? managerInfo.maxVolumeCapacity,
+      0
+  ));
+  const markerPosition = normalizeMapPosition(
+      lookupMapByLooseId(vehicleStatusManager.value?.vehicleMarkers, vehicleId)?.getPosition?.()
+  );
+  const actionDescription = forcedBackendStatus || activeBreakdown
+      ? displayStatusTextForVehicleStatus(status)
+      : assignment.frontendActionDescription
+          || managerInfo.actionDescription
+          || assignment.actionDescription
+          || sourceVehicle.actionDescription;
+
+  return {
+    ...sourceVehicle,
+    id: vehicleId,
+    vehicleId,
+    assignmentId: assignment.assignmentId,
+    licensePlate: assignment.licensePlate || sourceVehicle.licensePlate || managerInfo.licensePlate || `车辆${vehicleId}`,
+    status,
+    currentAssignment: assignment.routeName || assignment.currentAssignment || `任务 ${assignment.assignmentId}`,
+    goodsInfo: assignment.goodsName || '',
+    quantity: assignment.quantity || 0,
+    startPOI: assignment.startPOIName || null,
+    endPOI: assignment.endPOIName || null,
+    currentLoad,
+    maxLoadCapacity,
+    currentVolume,
+    maxVolumeCapacity,
+    loadPercentage: calculateUsagePercent(currentLoad, maxLoadCapacity),
+    volumePercentage: calculateUsagePercent(currentVolume, maxVolumeCapacity),
+    actionDescription,
+    vrpProgress: assignment.vrpProgress || managerInfo.vrpProgress || null,
+    currentLongitude: markerPosition?.[0] ?? managerInfo.currentLongitude,
+    currentLatitude: markerPosition?.[1] ?? managerInfo.currentLatitude,
+    activeEvent
+  };
+}
+
+const vehicleMonitorDisplayVehicles = computed(() => {
+  const displayedVehicleIds = new Set();
+  const projectedVehicles = [];
+  activeRoutes.value.forEach(routeData => {
+    const vehicleId = routeData?.assignment?.vehicleId;
+    const iconId = getVehicleIconId(vehicleId);
+    if (!iconId || displayedVehicleIds.has(iconId)) return;
+    const backendVehicle = vehicles.find(vehicle => String(vehicle.id) === iconId) || null;
+    const projectedVehicle = projectVisibleVehicleForSidebar(vehicleId, backendVehicle);
+    if (projectedVehicle) {
+      displayedVehicleIds.add(iconId);
+      projectedVehicles.push(projectedVehicle);
+    }
+  });
+  return projectedVehicles;
+});
 
 const normalizeDisplayId = (value) => {
   if (value === null || value === undefined) return null;

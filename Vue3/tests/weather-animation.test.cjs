@@ -166,6 +166,111 @@ test('frontend display no longer contains backend-progress caps or authoritative
   assert.equal(source.includes('animationTime = progress *'), false)
 })
 
+function createSidebarProjectionHarness({ markerVisible = true, backendStatus = 'TRANSPORT_DRIVING' } = {}) {
+  const assignmentA = {
+    assignmentId: 5,
+    vehicleId: 8,
+    licensePlate: 'TEST',
+    routeName: 'frontend-task-A',
+    goodsName: 'frontend-goods-A',
+    quantity: 3,
+    startPOIName: 'A-start',
+    endPOIName: 'A-end',
+    frontendStatus: 'TRANSPORT_DRIVING',
+    frontendActionDescription: 'frontend-moving-A',
+    currentLoad: 12,
+    currentVolume: 4
+  }
+  const marker = { getPosition: () => [104.1, 30.6] }
+  const context = {
+    Map,
+    Set,
+    String,
+    Array,
+    activeRoutes: { value: new Map([[5, { assignment: assignmentA, drawing: false, cleaned: false }]]) },
+    drawnAssignmentIds: { value: new Set([5]) },
+    drawnVehicleIconIds: { value: new Set(['8']) },
+    vehicleStatusManager: {
+      value: {
+        vehicleMarkers: new Map(markerVisible ? [[8, marker]] : []),
+        getVehicleInfo: () => ({ status: 'UNLOADING', actionDescription: 'backend-manager-state' })
+      }
+    },
+    vehicles: [{
+      id: 8,
+      assignmentId: 6,
+      status: backendStatus,
+      currentAssignment: 'backend-task-B',
+      goodsInfo: 'backend-goods-B',
+      currentLoad: 99,
+      currentVolume: 99,
+      maxLoadCapacity: 30,
+      maxVolumeCapacity: 10,
+      driverId: 77,
+      driverName: 'backend-driver-B',
+      driverStatus: 'ASSIGNED'
+    }],
+    monitorVehicles: [{ vehicleId: 8, assignmentId: 6, status: backendStatus }],
+    monitorActiveEvents: [],
+    getVehicleIconId: value => value == null ? null : String(value),
+    markerHasValidPosition: value => Boolean(value?.getPosition?.()),
+    lookupMapByLooseId(map, id) {
+      return map?.get(id) || map?.get(String(id)) || map?.get(Number(id)) || null
+    },
+    normalizeMapPosition: value => Array.isArray(value) ? value : null,
+    toFiniteNumber(value, fallback = 0) {
+      const number = Number(value)
+      return Number.isFinite(number) ? number : fallback
+    },
+    calculateUsagePercent: (current, max) => max > 0 ? current / max * 100 : 0,
+    displayStatusTextForVehicleStatus: status => status,
+    computed: getter => ({ get value() { return getter() } })
+  }
+  vm.createContext(context)
+  const projectionSource = source.slice(
+    source.indexOf('function findVisibleVehicleRouteData'),
+    source.indexOf('const normalizeDisplayId', source.indexOf('function findVisibleVehicleRouteData'))
+  )
+  vm.runInContext(`${projectionSource}\nthis.displayVehicles = vehicleMonitorDisplayVehicles;`, context)
+  return context
+}
+
+test('sidebar projection keeps frontend task A while backend already reports task B', () => {
+  const context = createSidebarProjectionHarness()
+  const [vehicle] = context.displayVehicles.value
+  assert.equal(vehicle.assignmentId, 5)
+  assert.equal(vehicle.currentAssignment, 'frontend-task-A')
+  assert.equal(vehicle.goodsInfo, 'frontend-goods-A')
+  assert.equal(vehicle.status, 'TRANSPORT_DRIVING')
+  assert.equal(vehicle.currentLoad, 12)
+  assert.equal(vehicle.currentVolume, 4)
+  assert.equal(vehicle.driverName, 'backend-driver-B')
+  assert.equal(vehicle.currentLongitude, 104.1)
+})
+
+test('weather backend membership cannot keep a sidebar vehicle after its marker is removed', () => {
+  const context = createSidebarProjectionHarness({ markerVisible: false })
+  assert.deepEqual(Array.from(context.displayVehicles.value), [])
+})
+
+for (const status of ['BREAKDOWN', 'SCRAPPED', 'RESERVED_REPLACEMENT']) {
+  test(`backend ${status} remains authoritative in the sidebar projection`, () => {
+    const context = createSidebarProjectionHarness({ backendStatus: status })
+    assert.equal(context.displayVehicles.value[0].status, status)
+  })
+}
+
+test('floating vehicle detail uses the same frontend projection as the sidebar', () => {
+  const floatingSection = source.slice(
+    source.indexOf('const floatingVehicleMonitor ='),
+    source.indexOf('const floatingVehicleDisplayAssignment =')
+  )
+  assert.match(floatingSection, /projectVisibleVehicleForSidebar/)
+  assert.match(floatingSection, /findVisibleVehicleRouteData/)
+  assert.equal(source.includes('mergeLiveVehicleDisplay'), false)
+  assert.match(source, /displayAssignment\.frontendStatus = status/)
+})
+
 for (const running of [true, false]) {
   test(`refresh restores ${running ? 'running' : 'paused'} weather run without starting backend`, async () => {
     const calls = []
