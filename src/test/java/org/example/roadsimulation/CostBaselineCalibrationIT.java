@@ -56,7 +56,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 )
 @SpringBootTest(
         classes = CostBaselineCalibrationIT.BaselineCalibrationApplication.class,
-        webEnvironment = SpringBootTest.WebEnvironment.NONE
+        webEnvironment = SpringBootTest.WebEnvironment.NONE,
+        properties = "sandbox.management.enabled=false"
 )
 class CostBaselineCalibrationIT {
 

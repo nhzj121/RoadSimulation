@@ -3,10 +3,10 @@ package org.example.roadsimulation.sandbox.baseline;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ObjectWriter;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
-import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
@@ -16,6 +16,10 @@ import java.util.List;
 /** Implements the baseline contract's {@code lexicographic-json-v1} canonicalization. */
 public final class LexicographicJsonSha256 {
 
+    // Tree serialization is protocol data, not a caller's display preference.
+    // This writer uses compact UTF-8 JSON with no root wrapping or custom escaping.
+    private static final ObjectWriter CANONICAL_WRITER = new ObjectMapper().writer();
+
     private final ObjectMapper objectMapper;
 
     public LexicographicJsonSha256(ObjectMapper objectMapper) {
@@ -24,9 +28,9 @@ public final class LexicographicJsonSha256 {
 
     public String hash(JsonNode value) {
         try {
-            byte[] canonical = objectMapper.writeValueAsBytes(sortObjects(value));
+            byte[] canonical = canonicalBytes(value);
             return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(canonical));
-        } catch (JsonProcessingException | NoSuchAlgorithmException exception) {
+        } catch (NoSuchAlgorithmException exception) {
             throw new IllegalStateException("Cannot calculate canonical JSON SHA-256", exception);
         }
     }
@@ -37,7 +41,7 @@ public final class LexicographicJsonSha256 {
 
     public byte[] canonicalBytes(JsonNode value) {
         try {
-            return objectMapper.writeValueAsString(sortObjects(value)).getBytes(StandardCharsets.UTF_8);
+            return CANONICAL_WRITER.writeValueAsBytes(sortObjects(value));
         } catch (JsonProcessingException exception) {
             throw new IllegalStateException("Cannot canonicalize JSON", exception);
         }

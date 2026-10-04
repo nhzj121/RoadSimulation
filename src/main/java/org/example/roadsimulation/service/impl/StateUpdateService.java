@@ -53,6 +53,15 @@ public class StateUpdateService {
      * SimulationTick 同时携带时间来源、窗口边界和可消费秒数，避免调用方自行拼接参数。
      */
     public void tick(SimulationTick tick) {
+        tick(tick, false);
+    }
+
+    /** Sandbox propagates failure rather than advancing a partially updated tick. */
+    public void tickStrict(SimulationTick tick) {
+        tick(tick, true);
+    }
+
+    private void tick(SimulationTick tick, boolean strict) {
         if (tick == null) {
             throw new IllegalArgumentException("simulation tick must not be null");
         }
@@ -62,7 +71,7 @@ public class StateUpdateService {
         int minutesPerLoop = Math.toIntExact(
                 tick.availableSeconds() / TransportUnits.SECONDS_PER_MINUTE
         );
-        tick(tick.tickStart(), minutesPerLoop, tick.loopIndex());
+        tick(tick.tickStart(), minutesPerLoop, tick.loopIndex(), strict);
     }
 
     /**
@@ -73,6 +82,10 @@ public class StateUpdateService {
      * @param loopCount      当前第几个 loop（用于控制统计打印频率）
      */
     public void tick(LocalDateTime simNow, int minutesPerLoop, int loopCount) {
+        tick(simNow, minutesPerLoop, loopCount, false);
+    }
+
+    private void tick(LocalDateTime simNow, int minutesPerLoop, int loopCount, boolean strict) {
         try {
             // ✅ 第一次 tick：先 reset 一次，把所有车的窗口挪到 simNow
             // 这样最晚 1~2 个循环就能看到“状态更新”
@@ -94,6 +107,7 @@ public class StateUpdateService {
             }
 
         } catch (Exception e) {
+            if (strict) throw new IllegalStateException("Sandbox state update failed", e);
             System.err.println("[StateUpdateService] tick 执行失败: " + e.getMessage());
             e.printStackTrace();
         }

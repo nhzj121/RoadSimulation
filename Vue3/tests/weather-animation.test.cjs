@@ -262,21 +262,81 @@ for (const status of ['BREAKDOWN', 'SCRAPPED', 'RESERVED_REPLACEMENT']) {
 
 test('floating vehicle detail uses the same frontend projection as the sidebar', () => {
   const floatingSection = source.slice(
-    source.indexOf('const floatingVehicleMonitor ='),
+    source.indexOf('function pickFloatingText'),
     source.indexOf('const floatingVehicleDisplayAssignment =')
   )
   assert.match(floatingSection, /projectVisibleVehicleForSidebar/)
   assert.match(floatingSection, /findVisibleVehicleRouteData/)
+  assert.match(floatingSection, /resolveCurrentFrontendLeg/)
+  assert.match(floatingSection, /findFloatingAssignmentSupplement/)
   assert.equal(source.includes('mergeLiveVehicleDisplay'), false)
   assert.match(source, /displayAssignment\.frontendStatus = status/)
 })
 
-for (const running of [true, false]) {
-  test(`refresh restores ${running ? 'running' : 'paused'} weather run without starting backend`, async () => {
+function createFloatingDetailHelperHarness() {
+  const context = {
+    Number,
+    String,
+    monitorAssignments: [],
+    animationManager: { animations: new Map() }
+  }
+  vm.createContext(context)
+  const helperSource = source.slice(
+    source.indexOf('function pickFloatingText'),
+    source.indexOf('const floatingVehicleLiveDisplay =')
+  )
+  vm.runInContext(
+    `${helperSource}\nthis.resolveLeg = resolveCurrentFrontendLeg; this.findSupplement = findFloatingAssignmentSupplement;`,
+    context
+  )
+  return context
+}
+
+test('floating VRP From and To follow the current frontend animation leg', () => {
+  const context = createFloatingDetailHelperHarness()
+  context.animationManager.animations.set(5, { currentStageIndex: 1 })
+  const routeData = {
+    assignment: { assignmentId: 5, vehicleId: 8, vrp: true },
+    stages: [
+      { nodeInfo: { poiName: '装货点 A' } },
+      { nodeInfo: { poiName: '装货点 B' } },
+      { nodeInfo: { poiName: '卸货点 C' } }
+    ]
+  }
+
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(context.resolveLeg(routeData))),
+    { from: '装货点 A', to: '装货点 B' }
+  )
+})
+
+test('floating task supplement requires both the displayed assignment and vehicle', () => {
+  const context = createFloatingDetailHelperHarness()
+  const matching = { assignmentId: 5, vehicleId: 8, goodsName: '钢材', quantity: 3 }
+  context.monitorAssignments.push(
+    { assignmentId: 6, vehicleId: 8, goodsName: '下一任务货物', quantity: 99 },
+    { assignmentId: 5, vehicleId: 9, goodsName: '其他车辆货物', quantity: 88 },
+    matching
+  )
+
+  assert.equal(context.findSupplement({ assignmentId: 5 }, 8), matching)
+})
+
+test('floating impact details follow the display projection and omit backend driving progress', () => {
+  assert.match(source, /<VehicleImpactDetails :vehicle="floatingVehicleImpactDisplay"/)
+  const impactSource = fs.readFileSync(path.join(__dirname, '../src/components/VehicleImpactDetails.vue'), 'utf8')
+  assert.equal(impactSource.includes('本段驾驶进度'), false)
+  assert.equal(impactSource.includes('剩余正常驾驶工作量'), false)
+  assert.equal(impactSource.includes('驾驶进度等待后端更新'), false)
+})
+
+for (const runId of ['saved-run', null]) for (const running of [true, false]) {
+  test(`refresh restores ${running ? 'running' : 'paused'} run (${runId || 'no weather run'}) without starting backend`, async () => {
     const calls = []
     const ctx = {
       updateVehicleInfo: async () => {},
-      monitorWeather: { value: { runId: 'saved-run' } },
+      monitorWeather: { value: { runId } },
+      mapViewDisposed: false,
       isExperimentRunActive: { value: false },
       simulationController: { getConfig: async () => ({ success: true, data: { running } }) },
       beginSimulationGeneration: () => 7,

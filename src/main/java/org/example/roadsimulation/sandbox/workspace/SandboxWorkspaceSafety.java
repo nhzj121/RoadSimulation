@@ -59,6 +59,60 @@ public final class SandboxWorkspaceSafety {
         }
     }
 
+    public void requireNoUnfinishedExecution(Connection connection) throws SQLException {
+        requireNoUnfinishedExecution(connection, null);
+    }
+
+    public void requireNoUnfinishedExecution(Connection connection, String jobId) throws SQLException {
+        requireManagementJobOwner(connection, jobId);
+        try (Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery(
+                "SELECT workspace_state FROM sandbox_workspace_marker WHERE marker_id=1")) {
+            if (rows.next() && "EXECUTION_RUNNING".equals(rows.getString(1))) {
+                throw new SandboxWorkspaceException("EXECUTION_STILL_RUNNING",
+                        "Workspace has an unfinished execution; inspect it before preparing again");
+            }
+        }
+    }
+
+    /** Called under the preparation lock. Legacy commands cannot bypass a durable job reservation. */
+    public void requireManagementJobOwner(Connection connection, String jobId) throws SQLException {
+        try (Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery(
+                "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='sandbox_workspace_marker' AND COLUMN_NAME='active_job_id'")) {
+            if (!rows.next() || rows.getInt(1) == 0) {
+                if (jobId != null) throw new SandboxWorkspaceException("CONTROL_SCHEMA_NOT_READY", "Management requires control schema v7");
+                return;
+            }
+        }
+        try (Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery(
+                "SELECT active_job_id FROM sandbox_workspace_marker WHERE marker_id=1")) {
+            if (!rows.next()) throw new SandboxWorkspaceException("MISSING_MARKER", "Missing sandbox marker");
+            String active = rows.getString(1);
+            if (!java.util.Objects.equals(active, jobId)) throw new SandboxWorkspaceException("WORKSPACE_BUSY", "Workspace reserved by a management job");
+        }
+    }
+
+    public void requirePreparationLockHeld(Connection connection) throws SQLException {
+        try (var statement = connection.prepareStatement("SELECT IS_USED_LOCK(?)=CONNECTION_ID()")) {
+            statement.setString(1, LOCK_NAME);
+            try (var rows = statement.executeQuery()) {
+                if (!rows.next() || rows.getInt(1) != 1) throw new SandboxWorkspaceException("WORKSPACE_LOCK_REQUIRED", "Caller must own the preparation lock");
+            }
+        }
+    }
+
+    public void clearExecutionReference(Connection connection) throws SQLException {
+        try (Statement statement = connection.createStatement(); ResultSet columns = statement.executeQuery("""
+                SELECT COUNT(*) FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='sandbox_workspace_marker' AND COLUMN_NAME='active_execution_id'
+                """)) {
+            if (columns.next() && columns.getInt(1) == 1) {
+                try (Statement update = connection.createStatement()) {
+                    update.executeUpdate("UPDATE sandbox_workspace_marker SET active_execution_id=NULL WHERE marker_id=1");
+                }
+            }
+        }
+    }
+
     public String databaseName(String jdbcUrl) {
         if (jdbcUrl == null || jdbcUrl.isBlank()) {
             throw new SandboxWorkspaceException("UNSAFE_DATABASE", "Sandbox JDBC URL must not be blank");

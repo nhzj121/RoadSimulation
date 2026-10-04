@@ -11,6 +11,7 @@ import org.example.roadsimulation.sandbox.scenario.definition.SandboxScenarioRev
 import org.example.roadsimulation.sandbox.scenario.definition.SandboxScenarioStore;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.core.io.support.EncodedResource;
@@ -21,12 +22,15 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -231,6 +235,90 @@ class SandboxRunWorkspacePreparerIT {
                 MARIADB.getJdbcUrl(), MARIADB.getUsername(), MARIADB.getPassword(), objectMapper)
                 .prepare(BASELINE, revision.scenarioKey(), revision.revision());
         return revision;
+    }
+
+    @Test
+    void resolvesOnlyTheExplicitPublishedScenarioWithoutSavingOrChangingWorkspace(@TempDir Path directory) throws Exception {
+        var first = publishScenario();
+        var scenarios = new SandboxScenarioStore(
+                MARIADB.getJdbcUrl(), MARIADB.getUsername(), MARIADB.getPassword(), objectMapper);
+        var changed = objectMapper.readTree(DEFAULT_SCENARIO.getInputStream());
+        ((com.fasterxml.jackson.databind.node.ArrayNode) changed.path("overrides").path("stageOutputRatios"))
+                .addObject().put("stageId", 5102).put("outputWeightRatio", 0.9);
+        scenarios.saveDraft(BASELINE, bytes(changed));
+        var second = scenarios.publish(BASELINE, first.scenarioKey());
+        assertEquals(2, second.revision());
+
+        var store = runStore();
+        var templateResource = new ClassPathResource("sandbox/runs/default-production-original-v2.json");
+        var template = new SandboxRunCompilerV2(objectMapper).read(templateResource);
+        var resolvedSecond = store.resolveScenarioV2(BASELINE, templateResource,
+                second.scenarioKey(), second.revision());
+        assertEquals(second.revision(), resolvedSecond.scenario().revision());
+        assertEquals(second.fingerprints().scenarioDefinitionSha256(),
+                resolvedSecond.scenario().scenarioDefinitionSha256());
+        assertEquals(second.fingerprints().effectiveScenarioDataSha256(),
+                resolvedSecond.scenario().effectiveScenarioDataSha256());
+        assertEquals(template.weather(), resolvedSecond.weather());
+        assertEquals(template.events(), resolvedSecond.events());
+        assertEquals(template.random(), resolvedSecond.random());
+        assertEquals(template.dispatch(), resolvedSecond.dispatch());
+        assertEquals(resolvedSecond, store.compileV2(BASELINE, bytes(resolvedSecond)).normalizedSpecification());
+
+        // A newer revision exists, but an explicit request for the older revision stays pinned.
+        var resolvedFirst = store.resolveScenarioV2(BASELINE, templateResource,
+                first.scenarioKey(), first.revision());
+        assertEquals(first.revision(), resolvedFirst.scenario().revision());
+        assertEquals(first.fingerprints().scenarioDefinitionSha256(),
+                resolvedFirst.scenario().scenarioDefinitionSha256());
+        assertNotEquals(resolvedFirst.scenario(), resolvedSecond.scenario());
+
+        Path output = directory.resolve("resolved-v2.json");
+        ProcessBuilder command = new ProcessBuilder(
+                Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+                "-cp", System.getProperty("java.class.path"),
+                "org.example.roadsimulation.sandbox.cli.SandboxWorkspaceCli",
+                "resolve-run-spec", "--jdbc-url=" + MARIADB.getJdbcUrl(),
+                "--username=" + MARIADB.getUsername(), "--scenario-key=" + second.scenarioKey(),
+                "--scenario-revision=" + second.revision(), "--output=" + output);
+        command.environment().put("SANDBOX_DB_PASSWORD", MARIADB.getPassword());
+        command.redirectErrorStream(true);
+        Process process = command.start();
+        try {
+            org.junit.jupiter.api.Assertions.assertTrue(process.waitFor(30, TimeUnit.SECONDS),
+                    "Read-only CLI resolution should finish within 30 seconds");
+            String log = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            assertEquals(0, process.exitValue(), log);
+            assertEquals(resolvedSecond, objectMapper.readValue(Files.readString(output), SandboxRunSpecificationV2.class));
+        } finally {
+            if (process.isAlive()) process.destroyForcibly();
+        }
+        assertThrows(SandboxWorkspaceException.class, () -> store.resolveScenarioV2(
+                BASELINE, templateResource, first.scenarioKey(), 999));
+        assertThrows(org.example.roadsimulation.sandbox.run.SandboxRunException.class,
+                () -> store.resolveScenarioV2(BASELINE, templateResource, first.scenarioKey(), 0));
+        assertThrows(org.example.roadsimulation.sandbox.run.SandboxRunException.class,
+                () -> store.resolveScenarioV2(BASELINE,
+                        new ClassPathResource("sandbox/runs/default-production-original-v1.json"),
+                        first.scenarioKey(), first.revision()));
+
+        try (var connection = connection(); var statement = connection.createStatement()) {
+            for (String table : List.of("sandbox_run_spec", "sandbox_run_spec_revision", "sandbox_run_vehicle_initial_state")) {
+                try (var rows = statement.executeQuery("SELECT COUNT(*) FROM " + table)) {
+                    rows.next();
+                    assertEquals(0, rows.getInt(1));
+                }
+            }
+            try (var rows = statement.executeQuery(
+                    "SELECT workspace_state,scenario_revision FROM sandbox_workspace_marker WHERE marker_id=1")) {
+                rows.next();
+                assertEquals("SCENARIO_DATA_READY", rows.getString(1));
+                assertEquals(first.revision(), rows.getInt(2));
+            }
+            statement.executeUpdate("UPDATE sandbox_scenario_revision SET archived=b'1' WHERE revision_no=2");
+        }
+        assertThrows(SandboxWorkspaceException.class, () -> store.resolveScenarioV2(
+                BASELINE, templateResource, second.scenarioKey(), second.revision()));
     }
 
     private SandboxRunSpecificationV1 specification(

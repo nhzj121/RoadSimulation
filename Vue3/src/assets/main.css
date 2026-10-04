@@ -3,3 +3,54 @@
 #app {
   margin: 0 auto;
 }
+
+/* Sandbox pages use the ordinary simulation's light palette, independent of
+   the system theme. Keep this route-scoped so other pages retain their theme. */
+.sandbox-shell {
+  color-scheme: light;
+  --color-background: #ffffff;
+  --color-background-soft: #f5f7fa;
+  --color-background-mute: #f2f6fc;
+  --color-border: #dcdfe6;
+  --color-border-hover: #c0c4cc;
+  --color-heading: #303133;
+  --color-text: #303133;
+  min-height: 100vh;
+  background: #f5f7fa;
+  color: #303133;
+}
+
+.sandbox-shell > main {
+  min-height: calc(100vh - 60px);
+  background: #ffffff;
+  box-shadow: 0 0 0 1px #ebeef5;
+}
+
+.sandbox-shell h1,
+.sandbox-shell h2,
+.sandbox-shell h3 {
+  color: #303133;
+}
+
+.sandbox-shell p {
+  color: #606266;
+}
+
+.sandbox-shell a,
+.sandbox-shell a:visited {
+  color: #409eff;
+}
+
+.sandbox-shell a:hover {
+  color: #337ecc;
+}
+
+.sandbox-shell a:focus-visible {
+  outline: 2px solid #409eff;
+  outline-offset: 3px;
+}
+
+.sandbox-shell th {
+  background: #f5f7fa;
+  color: #606266;
+}

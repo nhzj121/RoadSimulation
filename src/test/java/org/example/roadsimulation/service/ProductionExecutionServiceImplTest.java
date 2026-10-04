@@ -33,6 +33,62 @@ import static org.mockito.Mockito.when;
 class ProductionExecutionServiceImplTest {
 
     @Test
+    void unorderedExecutionsAndOutgoingFlowsProduceTransportInIdOrder() {
+        var executions = mock(ProcessingStageExecutionRepository.class);
+        var flows = mock(ProcessingExecutionFlowRepository.class);
+        var batches = mock(ProductionBatchRepository.class);
+        var transport = mock(TransportDemandService.class);
+        var service = new ProductionExecutionServiceImpl(executions, flows, batches, transport,
+                mock(ProductionDeliveryProcessor.class));
+        var batch = new ProductionBatch(); batch.setId(1L);
+        var first = execution(30L, batch, 1);
+        var second = execution(40L, batch, 2);
+        var start = LocalDateTime.of(2026, 1, 1, 8, 0);
+        for (var e : List.of(first, second)) {
+            e.setStatus(ProcessingStageExecution.ExecutionStatus.PROCESSING);
+            e.setStartedAt(start);
+            e.setActualInputWeight(100.0);
+        }
+        var a = inboundFlow(51L, batch, second, "a", 100.0, 91L);
+        var b = inboundFlow(52L, batch, second, "b", 100.0, 92L);
+        var c = inboundFlow(61L, batch, second, "c", 100.0, 93L);
+        when(executions.findByStatus(ProcessingStageExecution.ExecutionStatus.PROCESSING))
+                .thenReturn(List.of(second, first));
+        when(flows.findByFromExecutionId(30L)).thenReturn(List.of(b, a));
+        when(flows.findByFromExecutionId(40L)).thenReturn(List.of(c));
+
+        service.updateProgress(start.plusHours(1), 30);
+
+        var order = org.mockito.Mockito.inOrder(transport);
+        order.verify(transport).createTransport(a, null, "production-system");
+        order.verify(transport).createTransport(b, null, "production-system");
+        order.verify(transport).createTransport(c, null, "production-system");
+    }
+
+    @Test
+    void recoveryFlowsAndDeliveredShipmentEventsAreProcessedInIdOrder() {
+        var executions = mock(ProcessingStageExecutionRepository.class);
+        var flows = mock(ProcessingExecutionFlowRepository.class);
+        var delivery = mock(ProductionDeliveryProcessor.class);
+        var service = new ProductionExecutionServiceImpl(executions, flows,
+                mock(ProductionBatchRepository.class), mock(TransportDemandService.class), delivery);
+        var batch = new ProductionBatch();
+        var target = execution(30L, batch, 1);
+        var a = inboundFlow(41L, batch, target, "a", 1.0, 91L);
+        var b = inboundFlow(42L, batch, target, "b", 1.0, 92L);
+        when(flows.findByStatus(ProcessingExecutionFlow.FlowStatus.WAITING_TRANSPORT))
+                .thenReturn(List.of(b, a));
+        var now = LocalDateTime.of(2026, 1, 1, 9, 0);
+        service.updateProgress(now, 30);
+        service.onShipmentDelivered(new ShipmentDeliveredEvent(List.of(92L, 91L), now));
+        var order = org.mockito.Mockito.inOrder(delivery);
+        order.verify(delivery).processFlow(41L, now);
+        order.verify(delivery).processFlow(42L, now);
+        order.verify(delivery).processShipment(91L, now);
+        order.verify(delivery).processShipment(92L, now);
+    }
+
+    @Test
     void listenerFailureDoesNotEscapeIntoTransportCompletion() {
         ProcessingStageExecutionRepository executionRepository =
                 mock(ProcessingStageExecutionRepository.class);

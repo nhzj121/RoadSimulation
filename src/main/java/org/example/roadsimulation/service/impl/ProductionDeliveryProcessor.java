@@ -16,6 +16,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Comparator;
 
 /**
  * 将一个已经完成的运输交付事实投影到生产执行域。
@@ -107,7 +108,8 @@ public class ProductionDeliveryProcessor {
             }
 
             List<ProcessingExecutionFlow> inboundFlows =
-                    executionFlowRepository.findByToExecutionId(executionId);
+                    executionFlowRepository.findByToExecutionId(executionId).stream()
+                            .sorted(Comparator.comparing(ProcessingExecutionFlow::getId)).toList();
             if (inboundFlows.isEmpty()
                     || inboundFlows.stream().anyMatch(flow ->
                     flow.getStatus() != ProcessingExecutionFlow.FlowStatus.DELIVERED)) {

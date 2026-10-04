@@ -26,14 +26,31 @@ $sql = @"
 CREATE DATABASE IF NOT EXISTS vehicle_scheduler_sandbox
   CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
 
+USE vehicle_scheduler_sandbox;
+-- Keep the preparation lock through all DDL; never upgrade an active workspace.
+SET @sandbox_upgrade_lock = GET_LOCK('roadsimulation:sandbox:prepare', 0);
+SET @sandbox_upgrade_guard = IF(@sandbox_upgrade_lock=1, 'DO 0', 'SELECT * FROM SANDBOX_UPGRADE_REFUSED_WORKSPACE_BUSY');
+PREPARE sandbox_upgrade_check FROM @sandbox_upgrade_guard;
+EXECUTE sandbox_upgrade_check;
+DEALLOCATE PREPARE sandbox_upgrade_check;
+SET @sandbox_has_active_job = (SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='sandbox_workspace_marker' AND COLUMN_NAME='active_job_id');
+SET @sandbox_upgrade_guard = IF(@sandbox_has_active_job=1,
+  'SELECT COUNT(*) INTO @sandbox_upgrade_busy FROM sandbox_workspace_marker WHERE active_job_id IS NOT NULL OR workspace_state=''EXECUTION_RUNNING''',
+  'SET @sandbox_upgrade_busy=0');
+PREPARE sandbox_upgrade_check FROM @sandbox_upgrade_guard;
+EXECUTE sandbox_upgrade_check;
+DEALLOCATE PREPARE sandbox_upgrade_check;
+SET @sandbox_upgrade_guard = IF(@sandbox_upgrade_busy=0, 'DO 0', 'SELECT * FROM SANDBOX_UPGRADE_REFUSED_ACTIVE_JOB');
+PREPARE sandbox_upgrade_check FROM @sandbox_upgrade_guard;
+EXECUTE sandbox_upgrade_check;
+DEALLOCATE PREPARE sandbox_upgrade_check;
 CREATE USER IF NOT EXISTS 'road_sandbox_runtime'@'localhost' IDENTIFIED BY '$runtimePassword';
 ALTER USER 'road_sandbox_runtime'@'localhost' IDENTIFIED BY '$runtimePassword';
 REVOKE ALL PRIVILEGES, GRANT OPTION FROM 'road_sandbox_runtime'@'localhost';
 GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, ALTER, INDEX, REFERENCES,
       CREATE TEMPORARY TABLES, LOCK TABLES
 ON vehicle_scheduler_sandbox.* TO 'road_sandbox_runtime'@'localhost';
-
-USE vehicle_scheduler_sandbox;
 CREATE TABLE IF NOT EXISTS sandbox_workspace_marker (
   marker_id TINYINT NOT NULL,
   workspace_kind VARCHAR(64) NOT NULL,
@@ -44,7 +61,7 @@ CREATE TABLE IF NOT EXISTS sandbox_workspace_marker (
   effective_base_data_sha256 CHAR(64) DEFAULT NULL,
   eligibility_policy_version VARCHAR(64) DEFAULT NULL,
   workspace_state ENUM('EMPTY','PREPARING','BASE_DATA_READY','SCENARIO_PREPARING','SCENARIO_DATA_READY',
-    'RUN_SPEC_PREPARING','RUN_SPEC_READY','FAILED') NOT NULL,
+    'RUN_SPEC_PREPARING','RUN_SPEC_READY','EXECUTION_RUNNING','EXECUTION_COMPLETED','EXECUTION_CANCELLED','FAILED') NOT NULL,
   prepared_at DATETIME(6) DEFAULT NULL,
   failure_code VARCHAR(80) DEFAULT NULL,
   failure_message VARCHAR(1000) DEFAULT NULL,
@@ -59,7 +76,7 @@ ON DUPLICATE KEY UPDATE workspace_kind=VALUES(workspace_kind);
 ALTER TABLE sandbox_workspace_marker
   MODIFY COLUMN workspace_state ENUM(
     'EMPTY','PREPARING','BASE_DATA_READY','SCENARIO_PREPARING','SCENARIO_DATA_READY',
-    'RUN_SPEC_PREPARING','RUN_SPEC_READY','FAILED'
+    'RUN_SPEC_PREPARING','RUN_SPEC_READY','EXECUTION_RUNNING','EXECUTION_COMPLETED','EXECUTION_CANCELLED','FAILED'
   ) NOT NULL,
   ADD COLUMN IF NOT EXISTS control_schema_version VARCHAR(64) DEFAULT NULL AFTER schema_version,
   ADD COLUMN IF NOT EXISTS scenario_key VARCHAR(128) DEFAULT NULL AFTER eligibility_policy_version,
@@ -165,6 +182,19 @@ UPDATE sandbox_workspace_marker
 SET control_schema_version='sandbox-control-schema/v4'
 WHERE marker_id=1 AND workspace_kind='ROAD_SIMULATION_SANDBOX';
 "@
+
+$executionSchemaPath = Join-Path $PSScriptRoot '..\src\main\resources\sandbox\schema\sandbox-control-schema-v5.sql'
+# Replaying historical v5 must not narrow the enum of an already upgraded workspace.
+$sql += "`n" + (Get-Content -LiteralPath $executionSchemaPath -Raw).Replace("'EXECUTION_COMPLETED','FAILED'", "'EXECUTION_COMPLETED','EXECUTION_CANCELLED','FAILED'")
+$journalSchemaPath = Join-Path $PSScriptRoot '..\src\main\resources\sandbox\schema\sandbox-control-schema-v6.sql'
+$sql += "`n" + (Get-Content -LiteralPath $journalSchemaPath -Raw)
+$managementSchemaPath = Join-Path $PSScriptRoot '..\src\main\resources\sandbox\schema\sandbox-control-schema-v7.sql'
+$sql += "`n" + (Get-Content -LiteralPath $managementSchemaPath -Raw)
+$lifecycleSchemaPath = Join-Path $PSScriptRoot '..\src\main\resources\sandbox\schema\sandbox-control-schema-v8.sql'
+$sql += "`n" + (Get-Content -LiteralPath $lifecycleSchemaPath -Raw)
+$startRequestSchemaPath = Join-Path $PSScriptRoot '..\src\main\resources\sandbox\schema\sandbox-control-schema-v9.sql'
+$sql += "`n" + (Get-Content -LiteralPath $startRequestSchemaPath -Raw)
+$sql += "`nSELECT RELEASE_LOCK('roadsimulation:sandbox:prepare');"
 
 $oldAdminPassword = $env:MYSQL_PWD
 try {

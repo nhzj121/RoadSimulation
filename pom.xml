@@ -165,6 +165,21 @@
 
     <profiles>
         <profile>
+            <id>sandbox-run-cli</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>exec-maven-plugin</artifactId>
+                        <version>3.5.0</version>
+                        <configuration>
+                            <mainClass>org.example.roadsimulation.sandbox.cli.SandboxExecutionCli</mainClass>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <profile>
             <id>sandbox-workspace-cli</id>
             <build>
                 <plugins>

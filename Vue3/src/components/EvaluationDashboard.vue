@@ -86,73 +86,133 @@
           </div>
         </section>
 
-        <section class="evaluation-section">
+        <section class="evaluation-section evaluation-objectives-section">
           <div class="evaluation-section-heading">
             <div>
-              <h3>全局目标与服务约束</h3>
-              <p>仅展示后端已判定可用的值；缺失事实不会被显示为 0。</p>
+              <span class="evaluation-section-kicker">GLOBAL OBJECTIVES</span>
+              <h3>四个全局优化目标</h3>
+              <p>全部数值直接来自后端同轮快照，四项均为越低越优。</p>
             </div>
           </div>
           <div class="evaluation-objective-grid">
             <article
-              v-for="metricId in globalMetricIds"
+              v-for="(metricId, index) in objectiveMetricIds"
               :key="metricId"
               class="evaluation-objective-card"
-              :class="{ 'evaluation-objective-card--violated': isViolatedServiceConstraint(metricId) }"
+              :class="metricObjectiveClass(metricById(metricId))"
             >
-              <span>{{ metricById(metricId)?.displayName || metricId }}</span>
+              <div class="evaluation-objective-head">
+                <span>优化目标 {{ index + 1 }}</span>
+                <small :class="metricStatusClass(metricById(metricId))">
+                  {{ metricStatusText(metricById(metricId)) }}
+                </small>
+              </div>
               <strong>{{ formatMetric(metricById(metricId)) }}</strong>
-              <small
-                class="evaluation-card-state"
-                :class="metricStatusClass(metricById(metricId))"
-                :title="metricById(metricId)?.reason || ''"
-              >
-                {{ metricById(metricId)?.reason || metricStatusText(metricById(metricId)) }}
-              </small>
+              <p>{{ metricById(metricId)?.displayName || metricId }}</p>
+              <div class="evaluation-objective-foot">
+                <span>评价方向</span>
+                <strong>越低越优</strong>
+              </div>
             </article>
           </div>
+
+          <article class="evaluation-service-constraint" :class="serviceConstraintClass">
+            <div class="evaluation-service-main">
+              <span class="evaluation-service-icon">P95</span>
+              <div>
+                <span>等待服务约束</span>
+                <strong>{{ serviceConstraintText }}</strong>
+                <small :title="metricById('waitingServiceCompliant')?.reason || ''">
+                  {{ metricById('waitingServiceCompliant')?.reason || '货物和任务 P95 等待均不得超过冻结阈值' }}
+                </small>
+              </div>
+            </div>
+            <div class="evaluation-service-values">
+              <div>
+                <span>货物 P95</span>
+                <strong>{{ formatMetric(metricById('cargoP95WaitSeconds')) }}</strong>
+              </div>
+              <div>
+                <span>任务 P95</span>
+                <strong>{{ formatMetric(metricById('taskP95ServiceWaitSeconds')) }}</strong>
+              </div>
+              <div>
+                <span>约束阈值</span>
+                <strong>{{ formatPlainNumber(snapshot.thresholds.maxServiceWaitSeconds, 0) }} s</strong>
+              </div>
+            </div>
+          </article>
         </section>
 
-        <section
-          v-for="group in coreMetricGroups"
-          :key="group.key"
-          class="evaluation-section"
-        >
+        <section class="evaluation-section evaluation-domain-section">
           <div class="evaluation-section-heading">
             <div>
-              <h3>{{ group.title }}</h3>
-              <p>{{ group.description }}</p>
+              <span class="evaluation-section-kicker">DOMAIN METRICS</span>
+              <h3>车辆、货物、任务与外部环境</h3>
+              <p>按对象切换查看本轮评价；指标状态和不可用原因保持后端原始口径。</p>
             </div>
           </div>
-          <div class="evaluation-metric-table">
-            <div class="evaluation-metric-row evaluation-metric-row--head">
-              <span>指标</span><span>当前值</span><span>状态/说明</span>
-            </div>
-            <div
-              v-for="metricId in group.metricIds"
-              :key="metricId"
-              class="evaluation-metric-row"
-              :class="metricRowClass(metricById(metricId))"
-            >
-              <span class="evaluation-metric-name">{{ metricById(metricId)?.displayName || metricId }}</span>
-              <strong class="evaluation-metric-value">{{ formatMetric(metricById(metricId)) }}</strong>
-              <div class="evaluation-metric-state">
-                <span
-                  class="evaluation-metric-status-pill"
-                  :class="metricStatusClass(metricById(metricId))"
+
+          <div class="evaluation-domain-layout">
+            <nav class="evaluation-domain-tabs" aria-label="评价对象">
+              <button
+                v-for="group in coreMetricGroups"
+                :key="group.key"
+                type="button"
+                :class="{ active: activeMetricGroupKey === group.key }"
+                :aria-pressed="activeMetricGroupKey === group.key"
+                @click="activeMetricGroupKey = group.key"
+              >
+                <span>{{ group.title }}</span>
+                <strong>{{ groupSummary(group.key).available }}/{{ groupSummary(group.key).total }}</strong>
+                <small>可用指标</small>
+              </button>
+            </nav>
+
+            <div v-if="activeMetricGroup" class="evaluation-domain-content">
+              <header class="evaluation-domain-content-head">
+                <div>
+                  <h4>{{ activeMetricGroup.title }}</h4>
+                  <p>{{ activeMetricGroup.description }}</p>
+                </div>
+                <div class="evaluation-domain-statuses">
+                  <span v-if="activeMetricGroupSummary.pending">{{ activeMetricGroupSummary.pending }} 暂不可用</span>
+                  <span v-if="activeMetricGroupSummary.unsupported">{{ activeMetricGroupSummary.unsupported }} 不支持</span>
+                  <span v-if="activeMetricGroupSummary.invalid" class="is-invalid">{{ activeMetricGroupSummary.invalid }} 无效</span>
+                </div>
+              </header>
+
+              <div class="evaluation-metric-table">
+                <div class="evaluation-metric-row evaluation-metric-row--head">
+                  <span>指标</span><span>当前值</span><span>状态/说明</span>
+                </div>
+                <div
+                  v-for="metricId in activeMetricGroup.metricIds"
+                  :key="metricId"
+                  class="evaluation-metric-row"
+                  :class="metricRowClass(metricById(metricId))"
                 >
-                  {{ metricStatusText(metricById(metricId)) }}
-                </span>
-                <details
-                  v-if="hasLongMetricReason(metricById(metricId))"
-                  class="evaluation-metric-reason-details"
-                >
-                  <summary>查看说明</summary>
-                  <small>{{ metricById(metricId)?.reason }}</small>
-                </details>
-                <small v-else-if="metricById(metricId)?.reason" class="evaluation-metric-reason">
-                  {{ metricById(metricId)?.reason }}
-                </small>
+                  <span class="evaluation-metric-name">{{ metricById(metricId)?.displayName || metricId }}</span>
+                  <strong class="evaluation-metric-value">{{ formatMetric(metricById(metricId)) }}</strong>
+                  <div class="evaluation-metric-state">
+                    <span
+                      class="evaluation-metric-status-pill"
+                      :class="metricStatusClass(metricById(metricId))"
+                    >
+                      {{ metricStatusText(metricById(metricId)) }}
+                    </span>
+                    <details
+                      v-if="hasLongMetricReason(metricById(metricId))"
+                      class="evaluation-metric-reason-details"
+                    >
+                      <summary>查看说明</summary>
+                      <small>{{ metricById(metricId)?.reason }}</small>
+                    </details>
+                    <small v-else-if="metricById(metricId)?.reason" class="evaluation-metric-reason">
+                      {{ metricById(metricId)?.reason }}
+                    </small>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -253,19 +313,57 @@
                 </div>
               </div>
             </div>
-            <div>
+            <div class="evaluation-trend-column">
               <h4>指标趋势</h4>
-              <div class="evaluation-compact-table">
-                <div class="evaluation-compact-row evaluation-compact-row--head">
-                  <span>Loop</span><span>Revision</span><span>仿真时间</span><span>指标值</span>
+              <div v-if="trendChartFiniteValues.length" class="evaluation-trend-chart-wrap">
+                <div class="evaluation-trend-chart-title">
+                  <div>
+                    <span>{{ selectedTrendMetricDisplayName }}</span>
+                    <strong>{{ latestTrendMetricText }}</strong>
+                  </div>
+                  <small>最近 {{ trendChartSamples.length }} 个历史快照</small>
                 </div>
-                <div v-for="point in displayedTrendPoints" :key="point.snapshotRevision" class="evaluation-compact-row">
-                  <span>{{ point.loopIndex }}</span>
-                  <span>{{ point.snapshotRevision }}</span>
-                  <span>{{ formatSimTime(point.simTime) }}</span>
-                  <span>{{ formatMetric(point.metrics[selectedTrendMetricId] || null) }}</span>
-                </div>
+                <svg
+                  class="evaluation-trend-chart"
+                  viewBox="0 0 720 220"
+                  role="img"
+                  :aria-label="`${selectedTrendMetricDisplayName}历史趋势`"
+                >
+                  <line v-for="line in trendGridLines" :key="line.y" x1="58" :y1="line.y" x2="700" :y2="line.y" class="evaluation-trend-grid" />
+                  <text v-for="line in trendGridLines" :key="`label-${line.y}`" x="48" :y="line.y + 4" text-anchor="end" class="evaluation-trend-axis-label">{{ line.label }}</text>
+                  <polyline
+                    v-for="(segment, index) in trendChartSegments"
+                    :key="index"
+                    :points="segment"
+                    class="evaluation-trend-line"
+                  />
+                  <circle
+                    v-if="trendChartLastPoint"
+                    :cx="trendChartLastPoint.x"
+                    :cy="trendChartLastPoint.y"
+                    r="5"
+                    class="evaluation-trend-last-point"
+                  />
+                  <text x="58" y="214" class="evaluation-trend-axis-label">{{ trendStartLoopLabel }}</text>
+                  <text x="700" y="214" text-anchor="end" class="evaluation-trend-axis-label">{{ trendEndLoopLabel }}</text>
+                </svg>
               </div>
+              <div v-else class="evaluation-history-empty evaluation-trend-empty">所选指标暂无可绘制的可用值。</div>
+
+              <details class="evaluation-raw-trend-details">
+                <summary>查看原始趋势数据（{{ displayedTrendPoints.length }}）</summary>
+                <div class="evaluation-compact-table">
+                  <div class="evaluation-compact-row evaluation-compact-row--head">
+                    <span>Loop</span><span>Revision</span><span>仿真时间</span><span>指标值</span>
+                  </div>
+                  <div v-for="point in displayedTrendPoints" :key="point.snapshotRevision" class="evaluation-compact-row">
+                    <span>{{ point.loopIndex }}</span>
+                    <span>{{ point.snapshotRevision }}</span>
+                    <span>{{ formatSimTime(point.simTime) }}</span>
+                    <span>{{ formatMetric(point.metrics[selectedTrendMetricId] || null) }}</span>
+                  </div>
+                </div>
+              </details>
             </div>
           </div>
 
@@ -303,7 +401,15 @@
               <span>{{ metric.displayName }}</span>
               <span>{{ formatComparisonMetric(metric.leftValue, metric.leftStatus, metric.unit) }}</span>
               <span>{{ formatComparisonMetric(metric.rightValue, metric.rightStatus, metric.unit) }}</span>
-              <span>{{ formatComparisonDelta(metric.rightMinusLeft, metric.unit) }}</span>
+              <div class="evaluation-comparison-delta">
+                <span>{{ formatComparisonDelta(metric.rightMinusLeft, metric.unit) }}</span>
+                <div v-if="metric.relativeChangeRatio !== null" class="evaluation-comparison-bar" aria-hidden="true">
+                  <i
+                    :class="comparisonBarClass(metric)"
+                    :style="{ width: comparisonBarWidth(metric) }"
+                  ></i>
+                </div>
+              </div>
             </div>
           </div>
         </template>
@@ -326,6 +432,7 @@ import {
 } from '../api/evaluationApi';
 import { shouldAcceptEvaluationSnapshot } from '../utils/evaluationSnapshotPolicy';
 import type {
+  EvaluationMetricComparison,
   EvaluationMetricValue,
   EvaluationMetricValueStatus,
   EvaluationRunComparison,
@@ -385,6 +492,8 @@ const globalMetricIds = Object.freeze([
   'carbonIntensity',
   'waitingServiceCompliant'
 ]);
+const objectiveMetricIds = Object.freeze(globalMetricIds.filter(metricId => metricId !== 'waitingServiceCompliant'));
+const activeMetricGroupKey = ref('vehicle');
 
 const coreMetricGroups = Object.freeze([
   {
@@ -486,6 +595,10 @@ const coreMetricGroups = Object.freeze([
     ]
   }
 ]);
+
+const activeMetricGroup = computed(() =>
+  coreMetricGroups.find(group => group.key === activeMetricGroupKey.value) || coreMetricGroups[0]
+);
 
 /** Phase 7E：从同一快照提取 INVALID 指标，不在前端推断或改写后端诊断。 */
 const invalidMetricDiagnostics = computed(() =>
@@ -604,6 +717,111 @@ const displayedHistorySnapshots = computed(() =>
 const displayedTrendPoints = computed(() =>
   (trend.value?.points || []).slice(-50).reverse()
 );
+
+/** 展示层趋势图只投影后端返回的历史点；缺失值用于断开折线，不补零、不插值。 */
+const trendChartSamples = computed(() =>
+  (trend.value?.points || []).slice(-50).map(point => {
+    const metric = point.metrics[selectedTrendMetricId.value] || null;
+    const value = metric?.status === 'AVAILABLE'
+      && metric.value !== null
+      && Number.isFinite(metric.value)
+      ? metric.value
+      : null;
+    return { loopIndex: point.loopIndex, metric, value };
+  })
+);
+
+const trendChartFiniteValues = computed(() =>
+  trendChartSamples.value
+    .map(sample => sample.value)
+    .filter((value): value is number => value !== null)
+);
+
+const trendChartBounds = computed(() => {
+  if (!trendChartFiniteValues.value.length) return { min: 0, max: 0 };
+  return {
+    min: Math.min(...trendChartFiniteValues.value),
+    max: Math.max(...trendChartFiniteValues.value)
+  };
+});
+
+function trendChartCoordinate(index: number, value: number): { x: number; y: number } {
+  const left = 58;
+  const right = 700;
+  const top = 28;
+  const bottom = 190;
+  const x = trendChartSamples.value.length <= 1
+    ? (left + right) / 2
+    : left + index * (right - left) / (trendChartSamples.value.length - 1);
+  const { min, max } = trendChartBounds.value;
+  const y = max === min ? (top + bottom) / 2 : bottom - (value - min) * (bottom - top) / (max - min);
+  return { x, y };
+}
+
+const trendChartSegments = computed(() => {
+  const segments: string[] = [];
+  let current: string[] = [];
+  trendChartSamples.value.forEach((sample, index) => {
+    if (sample.value === null) {
+      if (current.length > 1) segments.push(current.join(' '));
+      current = [];
+      return;
+    }
+    const point = trendChartCoordinate(index, sample.value);
+    current.push(`${point.x.toFixed(2)},${point.y.toFixed(2)}`);
+  });
+  if (current.length > 1) segments.push(current.join(' '));
+  return segments;
+});
+
+const trendChartLastPoint = computed(() => {
+  for (let index = trendChartSamples.value.length - 1; index >= 0; index -= 1) {
+    const sample = trendChartSamples.value[index];
+    if (sample.value !== null) return trendChartCoordinate(index, sample.value);
+  }
+  return null;
+});
+
+const selectedTrendMetricDefinition = computed(() =>
+  historyMetricOptions.value.find(metric => metric.metricId === selectedTrendMetricId.value) || null
+);
+
+const selectedTrendMetricDisplayName = computed(() =>
+  selectedTrendMetricDefinition.value?.displayName || selectedTrendMetricId.value || '指标趋势'
+);
+
+const latestTrendMetricText = computed(() => {
+  for (let index = trendChartSamples.value.length - 1; index >= 0; index -= 1) {
+    const metric = trendChartSamples.value[index].metric;
+    if (metric?.status === 'AVAILABLE' && metric.value !== null) return formatMetric(metric);
+  }
+  return '--';
+});
+
+const trendGridLines = computed(() => {
+  const { min, max } = trendChartBounds.value;
+  const middle = min + (max - min) / 2;
+  return [
+    { y: 28, label: formatTrendAxisValue(max) },
+    { y: 109, label: formatTrendAxisValue(middle) },
+    { y: 190, label: formatTrendAxisValue(min) }
+  ];
+});
+
+const trendStartLoopLabel = computed(() =>
+  trendChartSamples.value.length ? `Loop ${trendChartSamples.value[0].loopIndex}` : '--'
+);
+const trendEndLoopLabel = computed(() =>
+  trendChartSamples.value.length
+    ? `Loop ${trendChartSamples.value[trendChartSamples.value.length - 1].loopIndex}`
+    : '--'
+);
+
+function formatTrendAxisValue(value: number): string {
+  const unit = selectedTrendMetricDefinition.value?.unit;
+  if (unit === 'ratio') return `${formatPlainNumber(value * 100, 1)}%`;
+  return formatPlainNumber(value, 2);
+}
 
 async function refreshHistory(): Promise<void> {
   historyLoading.value = true;
@@ -820,6 +1038,19 @@ function formatComparisonDelta(delta: number | null, unit: string): string {
   return `${prefix}${formatPlainNumber(delta, 2)} ${unit}`;
 }
 
+/** 对比条仅表达相对变化的方向和幅度，不把正负变化解释成业务好坏。 */
+function comparisonBarWidth(metric: EvaluationMetricComparison): string {
+  if (metric.relativeChangeRatio === null || !Number.isFinite(metric.relativeChangeRatio)) return '0%';
+  const magnitude = Math.min(100, Math.abs(metric.relativeChangeRatio) * 100);
+  return `${magnitude > 0 ? Math.max(4, magnitude) : 0}%`;
+}
+
+function comparisonBarClass(metric: EvaluationMetricComparison): string {
+  const delta = metric.rightMinusLeft;
+  if (delta === null || delta === 0) return 'is-neutral';
+  return delta > 0 ? 'is-positive' : 'is-negative';
+}
+
 function metricStatusLabel(status: EvaluationMetricValueStatus): string {
   return ({
     AVAILABLE: '可用',
@@ -856,6 +1087,10 @@ function metricRowClass(metric: EvaluationMetricValue | null): string {
   return `evaluation-metric-row--${(metric?.status || 'MISSING').toLowerCase().replace('_', '-')}`;
 }
 
+function metricObjectiveClass(metric: EvaluationMetricValue | null): string {
+  return `evaluation-objective-card--${(metric?.status || 'MISSING').toLowerCase().replace('_', '-')}`;
+}
+
 function hasLongMetricReason(metric: EvaluationMetricValue | null): boolean {
   return Boolean(metric?.reason && metric.reason.length > 56);
 }
@@ -887,6 +1122,22 @@ const formattedSimTime = computed(() => {
   return value ? value.replace('T', ' ') : '--';
 });
 
+const serviceConstraintText = computed(() => {
+  const metric = metricById('waitingServiceCompliant');
+  if (!metric || metric.status !== 'AVAILABLE' || metric.value === null) return metricStatusText(metric);
+  return metric.value >= 0.5 ? '满足约束' : '超过阈值';
+});
+
+const serviceConstraintClass = computed(() => {
+  const metric = metricById('waitingServiceCompliant');
+  if (!metric || metric.status !== 'AVAILABLE' || metric.value === null) {
+    return 'evaluation-service-constraint--unknown';
+  }
+  return metric.value >= 0.5
+    ? 'evaluation-service-constraint--ok'
+    : 'evaluation-service-constraint--warning';
+});
+
 const connectionText = computed(() => {
   if (networkError.value) return '连接异常';
   if (polling.value && !snapshot.value) return '正在读取';
@@ -914,6 +1165,13 @@ const deferredSummaries = computed(() => {
     summarizeDeferred('environment', '外部环境', allMetrics.filter(metric => metric.category === 'ENVIRONMENT'))
   ];
 });
+
+function groupSummary(key: string) {
+  return deferredSummaries.value.find(summary => summary.key === key)
+    || { key, title: key, available: 0, pending: 0, unsupported: 0, notApplicable: 0, invalid: 0, total: 0, reason: '' };
+}
+
+const activeMetricGroupSummary = computed(() => groupSummary(activeMetricGroup.value.key));
 
 function summarizeDeferred(key: string, title: string, metrics: EvaluationMetricValue[]) {
   const available = metrics.filter(metric => metric.status === 'AVAILABLE').length;
@@ -1164,9 +1422,19 @@ function readErrorMessage(error: unknown): string {
 .evaluation-objective-grid,
 .evaluation-deferred-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 12px;
   margin-top: 16px;
+}
+
+.evaluation-objective-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+.evaluation-section-kicker {
+  display: block;
+  margin-bottom: 5px;
+  color: #337ecc;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
 }
 
 .evaluation-objective-card,
@@ -1177,6 +1445,253 @@ function readErrorMessage(error: unknown): string {
   border-radius: 10px;
   background: #fbfcfe;
 }
+
+.evaluation-objective-card {
+  position: relative;
+  overflow: hidden;
+  padding: 17px 17px 14px;
+  background:
+    linear-gradient(145deg, rgba(64, 158, 255, 0.08), transparent 56%),
+    #fbfcfe;
+}
+
+.evaluation-objective-card::before {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 3px;
+  background: linear-gradient(90deg, #409eff, #60c7dd);
+  content: '';
+}
+
+.evaluation-objective-head,
+.evaluation-objective-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.evaluation-objective-head > span,
+.evaluation-objective-foot > span {
+  color: #718096;
+  font-size: 11px;
+}
+
+.evaluation-objective-head small {
+  padding: 3px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.evaluation-objective-card > strong {
+  margin: 16px 0 3px;
+  color: #194d7e;
+  font-size: clamp(24px, 2.2vw, 32px);
+  font-variant-numeric: tabular-nums;
+}
+
+.evaluation-objective-card > p {
+  min-height: 38px;
+  margin: 0;
+  color: #516274;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.evaluation-objective-foot {
+  margin-top: 15px;
+  padding-top: 11px;
+  border-top: 1px solid #e5edf5;
+}
+
+.evaluation-objective-foot > strong {
+  margin: 0;
+  color: #438460;
+  font-size: 11px;
+}
+
+.evaluation-objective-card--not-available::before,
+.evaluation-objective-card--not-supported::before,
+.evaluation-objective-card--not-applicable::before,
+.evaluation-objective-card--missing::before { background: #a9b6c4; }
+
+.evaluation-objective-card--invalid::before { background: #d85b5b; }
+
+.evaluation-service-constraint {
+  display: grid;
+  grid-template-columns: minmax(260px, 1.1fr) minmax(360px, 1fr);
+  align-items: center;
+  gap: 22px;
+  margin-top: 14px;
+  padding: 16px 18px;
+  border: 1px solid #dce7f1;
+  border-radius: 11px;
+  background: #f7fafc;
+}
+
+.evaluation-service-main,
+.evaluation-service-values {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.evaluation-service-icon {
+  display: grid;
+  flex: 0 0 48px;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+  border-radius: 13px;
+  background: #e8f3ff;
+  color: #337ecc;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.evaluation-service-main > div > span,
+.evaluation-service-values span {
+  display: block;
+  color: #718096;
+  font-size: 11px;
+}
+
+.evaluation-service-main > div > strong {
+  display: block;
+  margin: 3px 0;
+  color: #2d4661;
+  font-size: 18px;
+}
+
+.evaluation-service-main small {
+  display: block;
+  color: #8290a1;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.evaluation-service-values {
+  justify-content: flex-end;
+}
+
+.evaluation-service-values > div {
+  min-width: 100px;
+  padding-left: 14px;
+  border-left: 1px solid #dce5ee;
+}
+
+.evaluation-service-values strong {
+  display: block;
+  margin-top: 4px;
+  color: #2d4661;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+
+.evaluation-service-constraint--ok {
+  border-color: #cfe9da;
+  background: #f5fbf7;
+}
+
+.evaluation-service-constraint--ok .evaluation-service-icon {
+  background: #dff3e7;
+  color: #38845b;
+}
+
+.evaluation-service-constraint--warning {
+  border-color: #edcf94;
+  background: #fff9ec;
+}
+
+.evaluation-service-constraint--warning .evaluation-service-icon {
+  background: #f9e9c7;
+  color: #a26709;
+}
+
+.evaluation-service-constraint--warning .evaluation-service-main > div > strong { color: #a26709; }
+
+.evaluation-domain-layout {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr);
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.evaluation-domain-tabs {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+
+.evaluation-domain-tabs button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 3px 8px;
+  width: 100%;
+  padding: 12px 13px;
+  border: 1px solid #e1e8f0;
+  border-radius: 9px;
+  background: #f8fafc;
+  color: #536579;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.16s ease, background-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.evaluation-domain-tabs button:hover {
+  border-color: #b7d7f7;
+  background: #f2f8fe;
+}
+
+.evaluation-domain-tabs button.active {
+  border-color: #7eb8ef;
+  background: #edf6ff;
+  box-shadow: inset 3px 0 0 #409eff;
+  color: #245e93;
+}
+
+.evaluation-domain-tabs button > span { font-size: 13px; font-weight: 600; }
+.evaluation-domain-tabs button > strong { font-size: 14px; font-variant-numeric: tabular-nums; }
+.evaluation-domain-tabs button > small { grid-column: 1 / -1; color: #8997a7; font-size: 10px; }
+
+.evaluation-domain-content {
+  min-width: 0;
+  padding: 15px;
+  border: 1px solid #e3eaf2;
+  border-radius: 11px;
+  background: #fbfcfe;
+}
+
+.evaluation-domain-content-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.evaluation-domain-content-head h4 { margin: 0; color: #2d4661; font-size: 16px; }
+.evaluation-domain-content-head p { margin: 4px 0 0; color: #78879a; font-size: 12px; }
+
+.evaluation-domain-statuses {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.evaluation-domain-statuses span {
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: #eef2f6;
+  color: #64748b;
+  font-size: 10px;
+}
+
+.evaluation-domain-statuses .is-invalid { background: #fff0f0; color: #bd4545; }
 
 /* Phase 9A-3：业务约束不满足使用警示色，与 INVALID 的评价事实错误保持视觉区分。 */
 .evaluation-objective-card--violated {
@@ -1356,7 +1871,7 @@ function readErrorMessage(error: unknown): string {
 
 .evaluation-history-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(300px, 0.8fr) minmax(460px, 1.2fr);
   gap: 16px;
   margin-top: 18px;
 }
@@ -1404,6 +1919,123 @@ function readErrorMessage(error: unknown): string {
 .evaluation-comparison-table { margin-top: 12px; }
 .evaluation-history-empty { margin-top: 16px; color: #8793a3; font-size: 13px; }
 
+.evaluation-trend-column { min-width: 0; }
+
+.evaluation-trend-chart-wrap {
+  overflow: hidden;
+  padding: 14px 14px 8px;
+  border: 1px solid #e2eaf2;
+  border-radius: 10px;
+  background:
+    linear-gradient(180deg, rgba(64, 158, 255, 0.07), rgba(255, 255, 255, 0)),
+    #fbfdff;
+}
+
+.evaluation-trend-chart-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.evaluation-trend-chart-title span,
+.evaluation-trend-chart-title small {
+  display: block;
+  color: #7b8999;
+  font-size: 11px;
+}
+
+.evaluation-trend-chart-title strong {
+  display: block;
+  margin-top: 3px;
+  color: #245e93;
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+}
+
+.evaluation-trend-chart {
+  display: block;
+  width: 100%;
+  height: 220px;
+}
+
+.evaluation-trend-grid {
+  stroke: #dde7f1;
+  stroke-dasharray: 4 5;
+  stroke-width: 1;
+}
+
+.evaluation-trend-axis-label {
+  fill: #8795a5;
+  font-size: 10px;
+}
+
+.evaluation-trend-line {
+  fill: none;
+  stroke: #409eff;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 3;
+}
+
+.evaluation-trend-last-point {
+  fill: #fff;
+  stroke: #409eff;
+  stroke-width: 3;
+}
+
+.evaluation-trend-empty {
+  display: grid;
+  min-height: 260px;
+  margin-top: 0;
+  place-items: center;
+  border: 1px dashed #dce5ee;
+  border-radius: 10px;
+  background: #fafcfe;
+}
+
+.evaluation-raw-trend-details {
+  margin-top: 10px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.evaluation-raw-trend-details summary {
+  width: fit-content;
+  cursor: pointer;
+  font-weight: 600;
+  user-select: none;
+}
+
+.evaluation-raw-trend-details .evaluation-compact-table { margin-top: 9px; }
+
+.evaluation-comparison-delta {
+  display: grid;
+  align-content: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.evaluation-comparison-bar {
+  overflow: hidden;
+  width: 100%;
+  height: 4px;
+  border-radius: 999px;
+  background: #edf1f5;
+}
+
+.evaluation-comparison-bar i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #7f8ea1;
+}
+
+.evaluation-comparison-bar i.is-positive { background: #409eff; }
+.evaluation-comparison-bar i.is-negative { background: #62b88a; }
+.evaluation-comparison-bar i.is-neutral { background: #a7b2bf; }
+
 .evaluation-empty-state {
   padding: 70px 20px;
   text-align: center;
@@ -1415,6 +2047,10 @@ function readErrorMessage(error: unknown): string {
 @media (max-width: 1100px) {
   .evaluation-meta-grid { grid-template-columns: repeat(3, minmax(110px, 1fr)); }
   .evaluation-objective-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .evaluation-service-constraint { grid-template-columns: 1fr; }
+  .evaluation-service-values { justify-content: flex-start; }
+  .evaluation-domain-layout { grid-template-columns: 1fr; }
+  .evaluation-domain-tabs { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .evaluation-history-grid { grid-template-columns: 1fr; }
 }
 
@@ -1428,8 +2064,15 @@ function readErrorMessage(error: unknown): string {
   .evaluation-deferred-grid { grid-template-columns: 1fr; }
   .evaluation-history-controls,
   .evaluation-comparison-controls { grid-template-columns: 1fr; }
+  .evaluation-service-values { align-items: stretch; flex-direction: column; }
+  .evaluation-service-values > div { padding: 8px 0 0; border-top: 1px solid #dce5ee; border-left: 0; }
+  .evaluation-domain-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .evaluation-domain-content-head { flex-direction: column; }
+  .evaluation-domain-statuses { justify-content: flex-start; }
   .evaluation-metric-row { grid-template-columns: 1fr; gap: 7px; padding: 12px; }
   .evaluation-metric-row--head { display: none; }
   .evaluation-metric-value { font-size: 16px; }
+  .evaluation-compact-row,
+  .evaluation-comparison-row { min-width: 620px; }
 }
 </style>

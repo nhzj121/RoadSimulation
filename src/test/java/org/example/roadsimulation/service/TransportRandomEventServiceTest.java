@@ -120,6 +120,51 @@ class TransportRandomEventServiceTest {
         assertEquals(101L,stale.getReplacementReservationEventId());
     }
 
+    @Test void frozenAutomaticSettingsOverridePropertiesAndEventsAreCreatedInVehicleIdOrder() {
+        var weather=mock(WeatherEnvironmentService.class);
+        var frozen=new FrozenTransportEventConfiguration(true,true,"456",
+                new WeatherScenarioDTO.EventParameters(1,10,30,.5),
+                new WeatherScenarioDTO.EventParameters(0,30,60,0),null);
+        when(weather.eventConfiguration()).thenReturn(frozen);when(weather.runId()).thenReturn("frozen-run");
+        org.springframework.test.util.ReflectionTestUtils.setField(service,"weatherEnvironmentService",weather);
+        properties.setEnabled(false);properties.setAutoEnabled(false);properties.setSeed(999);
+        Vehicle other=candidate(13L,"O2",10,10);
+        other.transitionToStatus(Vehicle.VehicleStatus.TRANSPORT_DRIVING,simNow,Duration.ofHours(1));
+        Assignment otherTask=new Assignment();otherTask.setId(89L);
+        otherTask.setStatus(Assignment.AssignmentStatus.IN_PROGRESS);otherTask.setAssignedVehicle(other);
+        when(assignmentRepository.findActiveAssignments()).thenReturn(List.of(otherTask,assignment));
+        when(vehicleRepository.findByIdForUpdate(13L)).thenReturn(Optional.of(other));
+        var ids=new AtomicLong(100);var saved=new java.util.ArrayList<TransportRandomEvent>();
+        when(eventRepository.save(any())).thenAnswer(i->{
+            TransportRandomEvent event=i.getArgument(0);
+            if(event.getId()==null){event.setId(ids.incrementAndGet());saved.add(event);}return event;
+        });
+        service.tick(simNow,30,4);
+        assertEquals(List.of(12L,13L),saved.stream().map(TransportRandomEvent::getVehicleId).toList());
+        for(var event:saved){
+            var expected=new RandomEventDecisionPolicy().decide(frozen,4,event.getVehicleId(),30).orElseThrow();
+            assertEquals(expected.eventType(),event.getEventType());assertEquals(expected.speedFactor(),event.getSpeedFactor());
+            assertEquals(simNow.plusMinutes(expected.durationMinutes()),event.getPlannedEndTime());
+            assertEquals(456L,event.getRandomSeed());assertEquals(4,event.getTriggerLoopIndex());
+            assertEquals("frozen-run",event.getRunId());assertEquals(TransportRandomEvent.TriggerSource.AUTO,event.getTriggerSource());
+        }
+    }
+
+    @Test void frozenAutomaticEventsStillRequireDrivingAndNoActiveEvent() {
+        var weather=mock(WeatherEnvironmentService.class);
+        when(weather.eventConfiguration()).thenReturn(new FrozenTransportEventConfiguration(true,true,"456",
+                new WeatherScenarioDTO.EventParameters(1,10,30,.5),
+                new WeatherScenarioDTO.EventParameters(0,30,60,0),null));
+        org.springframework.test.util.ReflectionTestUtils.setField(service,"weatherEnvironmentService",weather);
+        when(assignmentRepository.findActiveAssignments()).thenReturn(List.of(assignment));
+        vehicle.transitionToStatus(Vehicle.VehicleStatus.LOADING,simNow,Duration.ofHours(1));
+        service.tick(simNow,30,4);verify(eventRepository,never()).save(any());
+        vehicle.transitionToStatus(Vehicle.VehicleStatus.TRANSPORT_DRIVING,simNow,Duration.ofHours(1));
+        when(eventRepository.findFirstByVehicleIdAndStatus(12L,TransportRandomEvent.EventStatus.ACTIVE))
+                .thenReturn(Optional.of(new TransportRandomEvent()));
+        service.tick(simNow,30,5);verify(eventRepository,never()).save(any());
+    }
+
     @Test void oneAutomaticTickCanReserveSeparateCandidatesForTwoBufferedAssignments() {
         properties.setAutoEnabled(true);properties.getBreakdown().setHourlyProbability(1);properties.getCongestion().setHourlyProbability(0);
         Vehicle original2=candidate(13L,"O2",10,10);original2.transitionToStatus(Vehicle.VehicleStatus.TRANSPORT_DRIVING,simNow,Duration.ofHours(1));

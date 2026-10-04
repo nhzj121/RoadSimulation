@@ -85,6 +85,26 @@ public final class SandboxScenarioStore {
     }
 
     public SandboxScenarioRevisionV1 publish(Resource baselineResource, String scenarioKey) {
+        return publish(baselineResource, scenarioKey, null, null);
+    }
+
+    public org.example.roadsimulation.sandbox.workspace.SandboxDraftGuard.Saved<SandboxScenarioCompilationReport>
+            saveDraft(Resource baselineResource, Resource scenarioResource, long expectedVersion) {
+        var baseline = baselineLoader.load(baselineResource);
+        var compiled = compiler.compile(baseline, compiler.readDefinition(scenarioResource));
+        var definition = compiled.normalizedDefinition();
+        try (var connection = openConnection()) {
+            configure(connection); safety.requireSafeTarget(jdbcUrl, connection); requireControlSchema(connection);
+            long version = org.example.roadsimulation.sandbox.workspace.SandboxDraftGuard.save(connection, true,
+                    definition.scenarioKey(), definition.displayName(), definition.description(), json(definition), expectedVersion);
+            return new org.example.roadsimulation.sandbox.workspace.SandboxDraftGuard.Saved<>(version, report(compiled));
+        } catch (SQLException failure) {
+            throw new SandboxWorkspaceException("SCENARIO_DRAFT_SAVE_FAILED", "Cannot save scenario draft", failure);
+        }
+    }
+
+    public SandboxScenarioRevisionV1 publish(Resource baselineResource, String scenarioKey,
+                                            Long expectedVersion, String expectedHash) {
         LoadedSandboxBaseline baseline = baselineLoader.load(baselineResource);
         try (Connection connection = openConnection()) {
             configure(connection);
@@ -94,6 +114,14 @@ public final class SandboxScenarioStore {
             try {
                 SandboxScenarioDefinitionV1 draft = readDraftForUpdate(connection, scenarioKey);
                 CompiledSandboxScenario compiled = compiler.compile(baseline, draft);
+                try (var statement = connection.prepareStatement("SELECT row_version FROM sandbox_scenario WHERE scenario_key=?")) {
+                    statement.setString(1, scenarioKey);
+                    try (var rows = statement.executeQuery()) {
+                        rows.next();
+                        org.example.roadsimulation.sandbox.workspace.SandboxDraftGuard.publishing(
+                                expectedVersion, expectedHash, rows.getLong(1), compiled.scenarioDefinitionSha256());
+                    }
+                }
                 SandboxScenarioRevisionV1 existing = findByDefinitionHash(
                         connection, scenarioKey, compiled.scenarioDefinitionSha256());
                 if (existing != null) {
@@ -276,7 +304,7 @@ public final class SandboxScenarioStore {
                 SELECT control_schema_version FROM sandbox_workspace_marker
                 WHERE marker_id=1 AND workspace_kind='ROAD_SIMULATION_SANDBOX'
                 """)) {
-            if (!rows.next() || !Set.of(CONTROL_SCHEMA_VERSION, RUN_CONTROL_SCHEMA_VERSION, "sandbox-control-schema/v4")
+            if (!rows.next() || !Set.of(CONTROL_SCHEMA_VERSION, RUN_CONTROL_SCHEMA_VERSION, "sandbox-control-schema/v4", "sandbox-control-schema/v5", "sandbox-control-schema/v6", "sandbox-control-schema/v7", "sandbox-control-schema/v8", "sandbox-control-schema/v9")
                     .contains(rows.getString(1))) {
                 throw new SandboxWorkspaceException(
                         "CONTROL_SCHEMA_NOT_READY", "Run the phase-two sandbox provisioning upgrade first");

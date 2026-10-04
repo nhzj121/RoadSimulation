@@ -19,11 +19,15 @@ public class POIShipmentRecord {
     private boolean active;
 
     public POIShipmentRecord(POI source, POI dest, Shipment shipment) {
+        this(source, dest, shipment, LocalDateTime.now());
+    }
+
+    public POIShipmentRecord(POI source, POI dest, Shipment shipment, LocalDateTime createdAt) {
         this.pairKey = source.getId() + "_" + dest.getId();
         this.sourcePoiId = source.getId();
         this.destPoiId = dest.getId();
         this.shipmentId = shipment != null ? shipment.getId() : null;
-        this.createdAt = LocalDateTime.now();
+        this.createdAt = java.util.Objects.requireNonNull(createdAt);
         this.lastUpdated = this.createdAt;
         this.active = true;
     }

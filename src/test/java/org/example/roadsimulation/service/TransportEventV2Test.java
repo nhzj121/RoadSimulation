@@ -37,6 +37,35 @@ class TransportEventV2Test {
         new RandomEventDecisionPolicy().decide(config(true),8,5,30);
         assertEquals(first,detail.decide("123",8,5,parameters));
     }
+    @Test void frozenV3ProtocolExercisesAllLevelsWithStableInclusiveDurationBounds(){
+        var policy=new BreakdownDecisionPolicy();
+        var parameters=new WeatherScenarioDTO.BreakdownPolicy("breakdown-v3",.6,30,60,30,60,60,120,.1,60,90);
+        var seen=java.util.EnumSet.noneOf(TransportRandomEvent.BreakdownLevel.class);
+        for(long vehicle=1;vehicle<=200;vehicle++){
+            var expected=policy.decide("20260927",12,vehicle,parameters);
+            var protocol=new SandboxRandomProtocol(new ObjectMapper());
+            protocol.random("20260927",SandboxRandomDomain.TRANSPORT_EVENT_DURATION,
+                    Map.of("vehicleId",vehicle,"loopIndex",12)).nextInt(100);
+            assertEquals(expected,policy.decide("20260927",12,vehicle,parameters));
+            seen.add(expected.level());
+            switch(expected.level()){
+                case MINOR -> {
+                    assertEquals(0,expected.rescueWaitMinutes());assertEquals(0,expected.replacementWaitMinutes());
+                    assertTrue(expected.repairMinutes()>=30&&expected.repairMinutes()<=60);
+                }
+                case ASSISTANCE_REQUIRED -> {
+                    assertTrue(expected.rescueWaitMinutes()>=30&&expected.rescueWaitMinutes()<=60);
+                    assertTrue(expected.repairMinutes()>=60&&expected.repairMinutes()<=120);
+                    assertEquals(0,expected.replacementWaitMinutes());
+                }
+                case REPLACEMENT_REQUIRED -> {
+                    assertEquals(0,expected.rescueWaitMinutes());assertEquals(0,expected.repairMinutes());
+                    assertTrue(expected.replacementWaitMinutes()>=60&&expected.replacementWaitMinutes()<=90);
+                }
+            }
+        }
+        assertEquals(java.util.EnumSet.allOf(TransportRandomEvent.BreakdownLevel.class),seen);
+    }
     @Test void weatherAndEventBoundariesPreservePausedAndDrivingTimeSeparately(){
         var start=LocalDateTime.of(2026,1,1,0,0);
         var weather=List.of(new WeatherDrivingIntegrator.Window(start,start.plusSeconds(1800),1));

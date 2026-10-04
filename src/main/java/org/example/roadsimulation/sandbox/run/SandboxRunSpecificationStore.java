@@ -29,6 +29,17 @@ import java.time.Instant;
 public final class SandboxRunSpecificationStore {
     public static final String CONTROL_SCHEMA_VERSION = "sandbox-control-schema/v3";
     public static final String V2_CONTROL_SCHEMA_VERSION = "sandbox-control-schema/v4";
+    public static final String EXECUTION_CONTROL_SCHEMA_VERSION = "sandbox-control-schema/v5";
+    public static final String JOURNAL_CONTROL_SCHEMA_VERSION = "sandbox-control-schema/v6";
+    public static final String MANAGEMENT_CONTROL_SCHEMA_VERSION = "sandbox-control-schema/v7";
+    public static final String LIFECYCLE_CONTROL_SCHEMA_VERSION = "sandbox-control-schema/v8";
+    public static final String START_REQUEST_CONTROL_SCHEMA_VERSION = "sandbox-control-schema/v9";
+
+    public static boolean supportsV2ControlSchema(String version) {
+        return version != null && java.util.Set.of(V2_CONTROL_SCHEMA_VERSION, EXECUTION_CONTROL_SCHEMA_VERSION,
+                JOURNAL_CONTROL_SCHEMA_VERSION, MANAGEMENT_CONTROL_SCHEMA_VERSION, LIFECYCLE_CONTROL_SCHEMA_VERSION,
+                START_REQUEST_CONTROL_SCHEMA_VERSION).contains(version);
+    }
 
     private final String jdbcUrl;
     private final String username;
@@ -327,6 +338,32 @@ public final class SandboxRunSpecificationStore {
         return compileV2(baselineLoader.load(baseline),new SandboxRunCompilerV2(objectMapper).read(specification));
     }
 
+    /** Read-only template binding. The caller must explicitly select a published scenario revision. */
+    public SandboxRunSpecificationV2 resolveScenarioV2(
+            Resource baselineResource, Resource templateResource, String scenarioKey, int scenarioRevision) {
+        if (scenarioKey == null || scenarioKey.isBlank() || scenarioRevision <= 0) {
+            throw new SandboxRunException("INVALID_SCENARIO_REFERENCE",
+                    "An explicit scenario key and positive revision are required");
+        }
+        var compiler = new SandboxRunCompilerV2(objectMapper);
+        var template = compiler.read(templateResource);
+        if (!SandboxRunSpecificationV2.ARTIFACT_VERSION.equals(template.artifactVersion())) {
+            throw new SandboxRunException("UNSUPPORTED_RUN_SPEC_VERSION", "Template binding requires v2");
+        }
+        var revision = scenarioStore.loadRevision(scenarioKey, scenarioRevision);
+        var scenario = scenarioCompiler.compile(baselineLoader.load(baselineResource), revision.definition());
+        var reference = new SandboxRunSpecificationV1.ScenarioReference(
+                revision.scenarioKey(), revision.revision(),
+                revision.fingerprints().scenarioDefinitionSha256(),
+                revision.fingerprints().effectiveScenarioDataSha256());
+        var resolved = new SandboxRunSpecificationV2(
+                template.artifactVersion(), template.runSpecKey(), template.displayName(), template.description(),
+                reference, template.simulationClock(), template.demand(), template.dispatch(),
+                template.weather(), template.events(), template.vehicleInitialization(),
+                template.driverBehavior(), template.random());
+        return compiler.compile(resolved, revision, scenario).normalizedSpecification();
+    }
+
     private CompiledSandboxRunSpecificationV2 compileV2(LoadedSandboxBaseline baseline,SandboxRunSpecificationV2 specification) {
         if(specification==null || specification.scenario()==null)throw new SandboxRunException("MISSING_SCENARIO_REFERENCE","scenario is required");
         var scenarioRevision=scenarioStore.loadRevision(specification.scenario().scenarioKey(),specification.scenario().revision());
@@ -352,6 +389,25 @@ public final class SandboxRunSpecificationStore {
     }
 
     public SandboxRunSpecificationRevisionV2 publishV2(Resource baselineResource,String key) {
+        return publishV2(baselineResource, key, null, null);
+    }
+
+    public org.example.roadsimulation.sandbox.workspace.SandboxDraftGuard.Saved<CompiledSandboxRunSpecificationV2>
+            saveDraftV2(Resource baseline, Resource specification, long expectedVersion) {
+        var compiled = compileV2(baseline, specification);
+        var spec = compiled.normalizedSpecification();
+        try (var connection = openConnection()) {
+            configure(connection); safety.requireSafeTarget(jdbcUrl, connection); requireV2ControlSchema(connection);
+            long version = org.example.roadsimulation.sandbox.workspace.SandboxDraftGuard.save(connection, false,
+                    spec.runSpecKey(), spec.displayName(), spec.description(), json(spec), expectedVersion);
+            return new org.example.roadsimulation.sandbox.workspace.SandboxDraftGuard.Saved<>(version, compiled);
+        } catch (SQLException failure) {
+            throw new SandboxWorkspaceException("RUN_SPEC_DRAFT_SAVE_FAILED", "Cannot save v2 draft", failure);
+        }
+    }
+
+    public SandboxRunSpecificationRevisionV2 publishV2(Resource baselineResource, String key,
+                                                      Long expectedVersion, String expectedHash) {
         var baseline=baselineLoader.load(baselineResource);
         try(Connection connection=openConnection()) {
             configure(connection);safety.requireSafeTarget(jdbcUrl,connection);requireV2ControlSchema(connection);
@@ -366,6 +422,14 @@ public final class SandboxRunSpecificationStore {
                     }
                 }
                 var compiled=compileV2(baseline,draft);
+                try (var statement = connection.prepareStatement("SELECT row_version FROM sandbox_run_spec WHERE run_spec_key=?")) {
+                    statement.setString(1, key);
+                    try (var rows = statement.executeQuery()) {
+                        rows.next();
+                        org.example.roadsimulation.sandbox.workspace.SandboxDraftGuard.publishing(
+                                expectedVersion, expectedHash, rows.getLong(1), compiled.runSpecificationSha256());
+                    }
+                }
                 if(!key.equals(compiled.normalizedSpecification().runSpecKey()))
                     throw new SandboxWorkspaceException("RUN_SPEC_DRAFT_KEY_MISMATCH","Draft key differs from control-table key");
                 try(var statement=connection.prepareStatement("SELECT revision_json FROM sandbox_run_spec_revision WHERE run_spec_key=? AND run_specification_sha256=?")) {
@@ -441,7 +505,7 @@ public final class SandboxRunSpecificationStore {
     }
     private void requireV2ControlSchema(Connection connection) throws SQLException {
         try(var statement=connection.createStatement();var rows=statement.executeQuery("SELECT control_schema_version FROM sandbox_workspace_marker WHERE marker_id=1")) {
-            if(!rows.next() || !V2_CONTROL_SCHEMA_VERSION.equals(rows.getString(1)))
+            if(!rows.next() || !supportsV2ControlSchema(rows.getString(1)))
                 throw new SandboxWorkspaceException("CONTROL_SCHEMA_NOT_READY","Run the additive sandbox-control-schema/v4 upgrade first");
         }
     }
@@ -459,7 +523,8 @@ public final class SandboxRunSpecificationStore {
                 SELECT control_schema_version FROM sandbox_workspace_marker
                 WHERE marker_id=1 AND workspace_kind='ROAD_SIMULATION_SANDBOX'
                 """)) {
-            if (!rows.next() || !java.util.Set.of(CONTROL_SCHEMA_VERSION,V2_CONTROL_SCHEMA_VERSION).contains(rows.getString(1))) {
+            if (!rows.next() || !(CONTROL_SCHEMA_VERSION.equals(rows.getString(1))
+                    || supportsV2ControlSchema(rows.getString(1)))) {
                 throw new SandboxWorkspaceException(
                         "CONTROL_SCHEMA_NOT_READY", "Run the phase-three sandbox provisioning upgrade first");
             }

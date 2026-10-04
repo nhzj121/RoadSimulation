@@ -21,6 +21,8 @@ import java.util.stream.Collectors;
  */
 @Component
 public class POIShipmentManagerImpl implements POIShipmentManager {
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private org.example.roadsimulation.core.SimulationContext simulationContext;
     @org.springframework.beans.factory.annotation.Autowired
     private org.example.roadsimulation.repository.ShipmentItemRepository shipmentItemRepository;
 
@@ -100,7 +102,7 @@ public class POIShipmentManagerImpl implements POIShipmentManager {
     @Override
     public void registerShipment(POI source, POI dest, Shipment shipment) {
         String key = buildKey(source, dest);
-        POIShipmentRecord record = new POIShipmentRecord(source, dest, shipment);
+        POIShipmentRecord record = new POIShipmentRecord(source, dest, shipment, businessNow());
         activeRecords.put(key, record);
         pairShipmentMap.put(key, shipment);
         sourceToDestMap.put(source.getId(), dest.getId());
@@ -113,7 +115,7 @@ public class POIShipmentManagerImpl implements POIShipmentManager {
         POIShipmentRecord record = activeRecords.remove(key);
         if (record != null) {
             record.setActive(false);
-            record.setLastUpdated(java.time.LocalDateTime.now());
+            record.setLastUpdated(businessNow());
         }
         pairShipmentMap.remove(key);
         // Phase 4 修复：旧运单超时后同源可能已有新目的地，注销旧配对不得清除新运单的索引。
@@ -159,16 +161,17 @@ public class POIShipmentManagerImpl implements POIShipmentManager {
 
     @Override
     public List<POIShipmentRecord> sweepExpiredShipments(int timeoutMinutes) {
-        java.time.LocalDateTime cutoff = java.time.LocalDateTime.now().minusMinutes(timeoutMinutes);
+        java.time.LocalDateTime cutoff = businessNow().minusMinutes(timeoutMinutes);
 
         List<POIShipmentRecord> expired = activeRecords.values().stream()
                 .filter(record -> record.isActive() && record.getCreatedAt().isBefore(cutoff))
                 .filter(record -> !hasActiveTransport(record.getShipmentId()))
+                .sorted(java.util.Comparator.comparing(POIShipmentRecord::getPairKey))
                 .collect(Collectors.toList());
 
         for (POIShipmentRecord record : expired) {
             record.setActive(false);
-            record.setLastUpdated(java.time.LocalDateTime.now());
+            record.setLastUpdated(businessNow());
             activeRecords.remove(record.getPairKey());
             pairShipmentMap.remove(record.getPairKey());
 
@@ -232,6 +235,29 @@ public class POIShipmentManagerImpl implements POIShipmentManager {
     }
 
     // ========== 内部辅助 ==========
+
+    private java.time.LocalDateTime businessNow() {
+        return simulationContext != null && simulationContext.isDeterministicSandboxRun()
+                ? simulationContext.getCurrentSimTime() : java.time.LocalDateTime.now();
+    }
+
+    /** Read-only identity projection; no managed entities or live maps escape. */
+    public Map<String, Object> snapshotBusinessFacts() {
+        List<Map<String, Object>> records = activeRecords.values().stream()
+                .sorted(java.util.Comparator.comparing(POIShipmentRecord::getPairKey))
+                .map(record -> {
+                    Map<String, Object> value = new java.util.LinkedHashMap<>();
+                    value.put("pairKey", record.getPairKey()); value.put("sourcePoiId", record.getSourcePoiId());
+                    value.put("destPoiId", record.getDestPoiId()); value.put("shipmentId", record.getShipmentId());
+                    value.put("createdAt", record.getCreatedAt()); value.put("lastUpdated", record.getLastUpdated());
+                    value.put("active", record.isActive()); return value;
+                }).toList();
+        Map<String, Long> shipments = new java.util.TreeMap<>();
+        pairShipmentMap.forEach((key, shipment) -> shipments.put(key, shipment.getId()));
+        return Map.of("blocked", new java.util.TreeMap<>(poiBlockedStatus), "activeRecords", records,
+                "sourceToDest", new java.util.TreeMap<>(sourceToDestMap), "pairShipmentIds", shipments,
+                "selectionCounts", new java.util.TreeMap<>(poiSelectionCount), "probability", currentProbability);
+    }
 
     private String buildKey(POI source, POI dest) {
         return source.getId() + "_" + dest.getId();
