@@ -17,10 +17,8 @@ public final class SandboxVehicleInitialStateGenerator {
     private static final Set<String> ELIGIBLE_TYPES = Set.of("WAREHOUSE", "DISTRIBUTION_CENTER");
 
     private final SandboxRandomProtocol randomProtocol;
-    private final ObjectMapper objectMapper;
 
     public SandboxVehicleInitialStateGenerator(ObjectMapper objectMapper) {
-        this.objectMapper = objectMapper;
         this.randomProtocol = new SandboxRandomProtocol(objectMapper);
     }
 
@@ -91,15 +89,7 @@ public final class SandboxVehicleInitialStateGenerator {
                 SandboxVehicleInitialState.RANDOM_DERIVED_POI,
                 candidates.get(selected).id(),
                 SandboxRandomDomain.VEHICLE_INITIAL_POI.id(),
-                canonicalKey(key),
+                randomProtocol.canonicalBusinessKey(key),
                 randomProtocol.deriveSeedHex(rootSeed, SandboxRandomDomain.VEHICLE_INITIAL_POI, key));
-    }
-
-    private String canonicalKey(Map<String, Object> key) {
-        try {
-            return objectMapper.writeValueAsString(key);
-        } catch (Exception exception) {
-            throw new IllegalStateException("Cannot serialize vehicle initialization decision key", exception);
-        }
     }
 }

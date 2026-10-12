@@ -7,6 +7,7 @@ import org.example.roadsimulation.entity.POI;
 import org.example.roadsimulation.entity.ProcessingChain;
 import org.example.roadsimulation.entity.ProcessingExecutionFlow;
 import org.example.roadsimulation.entity.ProcessingStage;
+import org.example.roadsimulation.entity.ProcessingStageEdge;
 import org.example.roadsimulation.entity.ProcessingStageExecution;
 import org.example.roadsimulation.entity.ProductionBatch;
 import org.example.roadsimulation.entity.ProductionPlan;
@@ -116,9 +117,13 @@ public class ProductionPlanningServiceImpl implements ProductionPlanningService 
         requireActiveChain(chain);
 
         List<ProcessingStage> stages = sortedStages(chain);
+        List<ProcessingStageEdge> orderedEdges = chain.getEdges() == null
+                ? List.of() : chain.getEdges().stream()
+                .sorted(Comparator.comparing(ProcessingStageEdge::getId,
+                        Comparator.nullsLast(Long::compareTo))).toList();
         List<ProcessingChainGraphValidator.EdgeSpec> edges =
-                ProcessingChainGraphValidator.normalizedEdges(stages, chain.getEdges());
-        ProcessingChainGraphValidator.validate(stages, chain.getEdges());
+                ProcessingChainGraphValidator.normalizedEdges(stages, orderedEdges);
+        ProcessingChainGraphValidator.validate(stages, orderedEdges);
 
         List<ProcessingStage> topologicalOrder =
                 ProcessingChainGraphValidator.topologicalOrder(stages, edges);
@@ -168,7 +173,8 @@ public class ProductionPlanningServiceImpl implements ProductionPlanningService 
                 .orElseThrow(() -> new IllegalArgumentException("生产计划不存在: " + planId));
         List<ProductionPlanNode> nodes =
                 nodeRepository.findByPlanIdOrderByStageOrderAsc(plan.getId());
-        List<ProductionPlanFlow> flows = planFlowRepository.findByPlanId(plan.getId());
+        List<ProductionPlanFlow> flows = planFlowRepository.findByPlanId(plan.getId()).stream()
+                .sorted(Comparator.comparing(ProductionPlanFlow::getId)).toList();
         return mapPlan(plan, nodes, flows);
     }
 
@@ -194,8 +200,11 @@ public class ProductionPlanningServiceImpl implements ProductionPlanningService 
         }
 
         List<ProductionPlanNode> nodes =
-                nodeRepository.findByPlanIdOrderByStageOrderAsc(planId);
-        List<ProductionPlanFlow> planFlows = planFlowRepository.findByPlanId(planId);
+                nodeRepository.findByPlanIdOrderByStageOrderAsc(planId).stream()
+                        .sorted(Comparator.comparing(ProductionPlanNode::getId)).toList();
+        // Execution-flow ids and initial shipment ids are assigned in this order.
+        List<ProductionPlanFlow> planFlows = planFlowRepository.findByPlanId(planId).stream()
+                .sorted(Comparator.comparing(ProductionPlanFlow::getId)).toList();
         if (nodes.isEmpty() || planFlows.isEmpty()) {
             throw new IllegalStateException("生产计划缺少工序节点或物料流");
         }
@@ -425,7 +434,8 @@ public class ProductionPlanningServiceImpl implements ProductionPlanningService 
         }
         return chain.getStages().stream()
                 .filter(Objects::nonNull)
-                .sorted(Comparator.comparing(ProcessingStage::getStageOrder))
+                .sorted(Comparator.comparing(ProcessingStage::getStageOrder)
+                        .thenComparing(ProcessingStage::getId, Comparator.nullsLast(Long::compareTo)))
                 .toList();
     }
 

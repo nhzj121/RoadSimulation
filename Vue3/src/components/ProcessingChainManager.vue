@@ -1,10 +1,16 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { processingChainApi } from '@/api/processingChainApi'
 import type { ProcessingChain, ProcessingChainGraph, ProcessingGraphStage, ProcessingStage } from '@/api/processingChainApi'
 import { poiManagerApi } from '@/api/poiManagerApi'
 import type { POIFromDB } from '@/api/poiManagerApi'
+
+const router = useRouter()
+function goToMain() {
+    void router.push('/')
+}
 
 const chains = ref<ProcessingChain[]>([])
 const stages = ref<ProcessingStage[]>([])
@@ -330,7 +336,10 @@ onMounted(async () => {
     <el-container class="processing-chain-page">
         <el-header class="page-header">
             <div class="header-content">
-                <h2>加工链管理</h2>
+                <div class="header-navigation">
+                    <el-button text class="system-title" @click="goToMain">物流运输仿真系统</el-button>
+                    <h2>加工链管理</h2>
+                </div>
                 <div class="header-actions">
                     <el-button @click="openGraph">查看图结构</el-button>
                     <el-button type="primary" @click="openCreateChain">新建加工链</el-button>
@@ -560,6 +569,23 @@ onMounted(async () => {
     align-items: center;
     justify-content: space-between;
     height: 100%;
+}
+
+.header-navigation {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+}
+
+.system-title {
+    padding: 0;
+    font-size: 20px;
+    font-weight: 600;
+    color: #303133;
+}
+
+.system-title:hover {
+    color: #409eff;
 }
 
 .header-content h2 {

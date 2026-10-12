@@ -47,6 +47,9 @@ public final class SandboxRunCompiler {
     ) {
         SandboxRunSpecificationV1 normalized = normalizeAndValidate(source);
         validateScenarioReference(normalized.scenario(), scenarioRevision, scenario);
+        require(scenario.effectiveData().data().processingChains().stream()
+                        .anyMatch(chain -> "ACTIVE".equals(chain.status())),
+                "PRODUCTION_ACTIVE_CHAIN_REQUIRED", "PRODUCTION requires at least one selected ACTIVE processing chain");
         SandboxAlgorithmProfile profile = profiles.resolve(
                 normalized.dispatch().strategy(), normalized.dispatch().algorithmProfileId());
         List<SandboxVehicleInitialState> states = initialStateGenerator.generate(

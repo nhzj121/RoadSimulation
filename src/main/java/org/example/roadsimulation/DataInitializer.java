@@ -55,6 +55,8 @@ import java.util.stream.Collectors;
 
 @Component
 public class DataInitializer implements CommandLineRunner {
+    @Autowired(required = false)
+    private org.example.roadsimulation.sandbox.run.SandboxRunRuntimeContext sandboxRunRuntimeContext;
     @Autowired
     private org.example.roadsimulation.service.WeatherEnvironmentService weatherEnvironmentService;
 
@@ -288,6 +290,17 @@ public class DataInitializer implements CommandLineRunner {
     @Override
     @Transactional
     public void run(String... args) throws Exception {
+        if (sandboxRunRuntimeContext != null || simulationContext.isDeterministicSandboxRun()) {
+            // Production sandbox demand does not use the legacy random segment/UI state.
+            sourcePoiList = List.of();
+            targetPoiList = List.of();
+            currentGoods = null;
+            currentProcessingSegmentSelection = null;
+            poiIsWithGoods.clear();
+            poiTrueCount.clear();
+            logger.info("Sandbox startup skips legacy random processing-segment initialization");
+            return;
+        }
         System.out.println("Spring Boot 启动完毕，开始执行 DataInitializer...");
 
         initializeFromRandomProcessingSegment();
@@ -2194,6 +2207,7 @@ public class DataInitializer implements CommandLineRunner {
                 dispatchTailFallbackAssignment(assignment, actor, simNow, loop);
                 dispatchedCount++;
             } catch (Exception e) {
+                if (sandboxRunRuntimeContext != null) throw new IllegalStateException("Sandbox tail dispatch failed", e);
                 logger.warn("[TailFallback] Dispatch failed. forcedItem={}, vehicle={}, source={}, reason={}",
                         assignment.getForcedRequest() != null && assignment.getForcedRequest().getShipmentItem() != null
                                 ? assignment.getForcedRequest().getShipmentItem().getId()
@@ -2522,6 +2536,7 @@ public class DataInitializer implements CommandLineRunner {
             }
         } catch (Exception e) {
             logger.warn("超时清理过程出错: {}", e.getMessage());
+            if (sandboxRunRuntimeContext != null) throw new IllegalStateException("Sandbox dispatch cleanup failed", e);
         }
 
         // 1. 捞取所有待拼车的尾货，并按重量降序排序 (FFD 算法的核心第一步)
@@ -2880,6 +2895,7 @@ public class DataInitializer implements CommandLineRunner {
 
         } catch (Exception e) {
             System.err.println("VRP 路线成本精算时发生异常: " + e.getMessage());
+            if (sandboxRunRuntimeContext != null) throw new IllegalStateException("Sandbox route cost collection failed", e);
         }
 
         System.out.printf("🚀 [VRP 派车] 车辆 %s 成功拼载 %d 票货物 (总重 %.2ft)，生成多点行程单！%n",
@@ -3605,6 +3621,11 @@ public class DataInitializer implements CommandLineRunner {
      */
     @PreDestroy
     public void cleanupOnShutdown() {
+        if (sandboxRunRuntimeContext != null
+                || (simulationContext != null && simulationContext.isDeterministicSandboxRun())) {
+            logger.info("Sandbox shutdown retains business facts; only explicit preparation may clear them");
+            return;
+        }
         System.out.println("项目关闭，清理模拟数据...");
         try {
             weatherEnvironmentService.archiveAndReset(currentSimTimeOrNow());
@@ -3802,6 +3823,10 @@ public class DataInitializer implements CommandLineRunner {
         } catch (Exception e) {
             System.err.println("[FrontendAssignment] register failed for assignment "
                     + assignment.getId() + ": " + e.getMessage());
+            if (sandboxRunRuntimeContext != null
+                    && e instanceof org.example.roadsimulation.sandbox.workspace.SandboxWorkspaceException) {
+                throw (org.example.roadsimulation.sandbox.workspace.SandboxWorkspaceException) e;
+            }
         }
     }
 
@@ -3859,7 +3884,11 @@ public class DataInitializer implements CommandLineRunner {
         } catch (Exception e) {
             logger.error("Failed to rollback assignment allocation. assignmentId={}, reason={}",
                     assignmentId, reason, e);
+            if (sandboxRunRuntimeContext != null) throw new org.example.roadsimulation.sandbox.workspace.SandboxWorkspaceException(
+                    "SANDBOX_ASSIGNMENT_ALLOCATION_FAILED", reason, e);
         }
+        if (sandboxRunRuntimeContext != null) throw new org.example.roadsimulation.sandbox.workspace.SandboxWorkspaceException(
+                "SANDBOX_ASSIGNMENT_ALLOCATION_FAILED", reason);
     }
 
     private AssignmentBriefDTO createAssignmentBriefDTO(Assignment assignment, POI startPOI, POI endPOI, Shipment shipment) {

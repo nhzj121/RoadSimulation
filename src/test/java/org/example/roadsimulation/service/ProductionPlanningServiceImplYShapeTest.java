@@ -105,6 +105,8 @@ class ProductionPlanningServiceImplYShapeTest {
         assertThat(sink.plannedOutputWeight()).isEqualTo(95.0);
 
         assertThat(response.flows()).hasSize(3);
+        assertThat(response.flows()).extracting(ProductionPlanResponse.FlowResponse::inputKey)
+                .containsExactly("steel", "wood", "final");
         assertThat(response.flows())
                 .filteredOn(flow -> flow.inputKey().equals("steel"))
                 .allSatisfy(flow -> assertThat(flow.plannedWeight()).isEqualTo(80.0));
@@ -136,11 +138,10 @@ class ProductionPlanningServiceImplYShapeTest {
 
         List.of(steel, wood, merge, sink).forEach(stage -> stage.setProcessingChain(chain));
         chain.setStages(new ArrayList<>(List.of(steel, wood, merge, sink)));
-        chain.setEdges(new ArrayList<>(List.of(
-                new ProcessingStageEdge(chain, steel, merge, steelInput),
-                new ProcessingStageEdge(chain, wood, merge, woodInput),
-                new ProcessingStageEdge(chain, merge, sink, finalInput)
-        )));
+        var steelEdge = new ProcessingStageEdge(chain, steel, merge, steelInput); steelEdge.setId(301L);
+        var woodEdge = new ProcessingStageEdge(chain, wood, merge, woodInput); woodEdge.setId(302L);
+        var finalEdge = new ProcessingStageEdge(chain, merge, sink, finalInput); finalEdge.setId(303L);
+        chain.setEdges(new ArrayList<>(List.of(finalEdge, woodEdge, steelEdge)));
         return chain;
     }
 

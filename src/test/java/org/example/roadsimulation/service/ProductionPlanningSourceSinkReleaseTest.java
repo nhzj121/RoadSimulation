@@ -83,8 +83,9 @@ class ProductionPlanningSourceSinkReleaseTest {
         when(planRepository.findById(100L)).thenReturn(Optional.of(plan));
         when(batchRepository.existsByPlanId(100L)).thenReturn(false);
         when(nodeRepository.findByPlanIdOrderByStageOrderAsc(100L))
-                .thenReturn(List.of(source, processing, sink));
-        when(planFlowRepository.findByPlanId(100L)).thenReturn(List.of(first, last));
+                .thenReturn(List.of(sink, source, processing));
+        // Simulate an unordered database result; runtime ids must still follow plan-flow ids.
+        when(planFlowRepository.findByPlanId(100L)).thenReturn(List.of(last, first));
         when(batchRepository.save(any(ProductionBatch.class))).thenAnswer(invocation -> {
             ProductionBatch batch = invocation.getArgument(0);
             batch.setId(400L);
@@ -114,6 +115,10 @@ class ProductionPlanningSourceSinkReleaseTest {
         assertThat(response.executions().get(0).actualOutputWeight()).isEqualTo(72.0);
         assertThat(response.flows()).allSatisfy(flowResponse ->
                 assertThat(flowResponse.fromExecutionId()).isNotNull());
+        assertThat(response.flows()).extracting(flowResponse -> flowResponse.sku())
+                .containsExactly("RAW", "FINAL");
+        assertThat(response.flows()).extracting(flowResponse -> flowResponse.id())
+                .containsExactly(600L, 601L);
 
         ArgumentCaptor<ProcessingExecutionFlow> initialFlow =
                 ArgumentCaptor.forClass(ProcessingExecutionFlow.class);

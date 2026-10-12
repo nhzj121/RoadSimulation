@@ -25,8 +25,11 @@ public final class SandboxRandomProtocol {
     private final LexicographicJsonSha256 canonicalizer;
 
     public SandboxRandomProtocol(ObjectMapper objectMapper) {
-        this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper must not be null");
-        this.canonicalizer = new LexicographicJsonSha256(objectMapper);
+        Objects.requireNonNull(objectMapper, "objectMapper must not be null");
+        // Stable decision keys are protocol-owned JSON, never application DTOs.
+        // Ignore application naming, pretty-printing and custom serializer settings.
+        this.objectMapper = new ObjectMapper();
+        this.canonicalizer = new LexicographicJsonSha256(this.objectMapper);
     }
 
     public long deriveSeed(String rootSeed, SandboxRandomDomain domain, Map<String, ?> stableBusinessKey) {
@@ -49,6 +52,13 @@ public final class SandboxRandomProtocol {
 
     public String deriveSeedHex(String rootSeed, SandboxRandomDomain domain, Map<String, ?> stableBusinessKey) {
         return HexFormat.of().toHexDigits(deriveSeed(rootSeed, domain, stableBusinessKey));
+    }
+
+    /** The same protocol-owned representation is used for persisted decision traces. */
+    public String canonicalBusinessKey(Map<String, ?> stableBusinessKey) {
+        Objects.requireNonNull(stableBusinessKey, "stableBusinessKey must not be null");
+        return new String(canonicalizer.canonicalBytes(objectMapper.valueToTree(stableBusinessKey)),
+                StandardCharsets.UTF_8);
     }
 
     public SplitMix64V1 random(String rootSeed, SandboxRandomDomain domain, Map<String, ?> stableBusinessKey) {

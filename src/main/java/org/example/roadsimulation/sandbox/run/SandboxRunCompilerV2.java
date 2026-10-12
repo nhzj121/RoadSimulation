@@ -16,7 +16,8 @@ public final class SandboxRunCompilerV2 {
     private final SandboxRunCompiler common;
     private final LexicographicJsonSha256 hash;
     public SandboxRunCompilerV2(ObjectMapper json) {
-        this.json=json.copy().disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+        this.json=json.copy().disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
+                .disable(com.fasterxml.jackson.databind.DeserializationFeature.ACCEPT_FLOAT_AS_INT);
         common=new SandboxRunCompiler(this.json);hash=new LexicographicJsonSha256(this.json);
     }
     public SandboxRunSpecificationV2 read(Resource source) {

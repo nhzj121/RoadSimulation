@@ -20,6 +20,9 @@ import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.Arrays;
@@ -27,6 +30,9 @@ import java.util.Map;
 
 /** Standalone sandbox administration command. It does not start the simulation application. */
 public final class SandboxWorkspaceCli {
+
+    private static final String DEFAULT_RUN_SPEC =
+            "classpath:sandbox/runs/default-production-original-v2.json";
 
     private static final String DEFAULT_URL = "jdbc:mysql://localhost:3306/vehicle_scheduler_sandbox"
             + "?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai"
@@ -82,8 +88,18 @@ public final class SandboxWorkspaceCli {
                     case "prepare-scenario" -> scenarioPreparer.prepare(
                             baseline, required(options, "scenario-key"), positiveInt(options, "revision"));
                     case "verify-scenario" -> scenarioPreparer.verify(baseline);
+                    case "resolve-run-spec" -> {
+                        var resolved = runs.resolveScenarioV2(baseline, baselineResource(
+                                        options.getOrDefault("run-spec", DEFAULT_RUN_SPEC)),
+                                required(options, "scenario-key"), positiveInt(options, "scenario-revision"));
+                        if (!options.containsKey("output")) yield resolved;
+                        Path output = writeResolvedSpecification(required(options, "output"), resolved, objectMapper);
+                        yield Map.of("artifactVersion", resolved.artifactVersion(),
+                                "runSpecKey", resolved.runSpecKey(), "scenario", resolved.scenario(),
+                                "output", output.toString());
+                    }
                     case "compile-run-spec" -> {
-                        Resource source=baselineResource(required(options,"run-spec"));
+                        Resource source=baselineResource(options.getOrDefault("run-spec",DEFAULT_RUN_SPEC));
                         if (isV2(source,objectMapper)) yield runs.compileV2(baseline,source);
                         yield runs.compile(baseline,source);
                     }
@@ -110,7 +126,7 @@ public final class SandboxWorkspaceCli {
                             "UNSUPPORTED_COMMAND",
                             "Command must be prepare, verify, compile-scenario, save-draft, "
                                     + "publish-scenario, export-scenario, prepare-scenario, verify-scenario, "
-                                    + "compile-run-spec, save-run-draft, publish-run-spec, export-run-spec, "
+                                    + "resolve-run-spec, compile-run-spec, save-run-draft, publish-run-spec, export-run-spec, "
                                     + "prepare-run, verify-run or derive-seed: "
                                     + command);
                 };
@@ -136,12 +152,27 @@ public final class SandboxWorkspaceCli {
         }
     }
 
-    private static void shutdownMysqlCleanupThread() {
+    static void shutdownMysqlCleanupThread() {
         try {
             Class<?> cleanup = Class.forName("com.mysql.cj.jdbc.AbandonedConnectionCleanupThread");
             cleanup.getMethod("checkedShutdown").invoke(null);
         } catch (ReflectiveOperationException ignored) {
             // MariaDB's driver does not create this MySQL Connector/J cleanup thread.
+        }
+    }
+
+    static Path writeResolvedSpecification(
+            String location, SandboxRunSpecificationV2 specification, ObjectMapper mapper) {
+        Path output = Path.of(location).toAbsolutePath().normalize();
+        try {
+            String json = mapper.copy().disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
+                    .writerWithDefaultPrettyPrinter().writeValueAsString(specification);
+            Files.writeString(output, json + System.lineSeparator(), StandardCharsets.UTF_8,
+                    StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+            return output;
+        } catch (java.io.IOException exception) {
+            throw new SandboxWorkspaceException("RUN_SPEC_OUTPUT_FAILED",
+                    "Cannot create resolved JSON; parent directory must exist and output must be a new file", exception);
         }
     }
 

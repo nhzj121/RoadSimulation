@@ -38,6 +38,8 @@ class SandboxRunCompilerV2Test {
     @Test void templateGeneratesFullWindowAndStableHashesIndependentOfDateSerialization() {
         var a=compile(spec);var b=new SandboxRunCompilerV2(json.copy().disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)).compile(spec,revision,scenario);
         assertEquals(a,b);assertEquals(85,a.vehicleInitialStates().size());
+        assertEquals(a,new SandboxRunCompilerV2(json.copy().enable(SerializationFeature.INDENT_OUTPUT))
+                .compile(spec,revision,scenario));
         assertEquals(spec.simulationClock().totalLoops()*spec.simulationClock().tickDurationSeconds(),
                 a.weatherTimeline().get(a.weatherTimeline().size()-1).endMinute()*60);
         assertEquals(a.runSpecificationSha256(),compile(changed(spec.weather(),spec.events(),spec.simulationClock().totalLoops(),"renamed")).runSpecificationSha256());
@@ -74,5 +76,31 @@ class SandboxRunCompilerV2Test {
         var tree=json.valueToTree(spec);((com.fasterxml.jackson.databind.node.ObjectNode)tree).put("artifactVersion","sandbox-run-specification/v1");
         var invalid=json.convertValue(tree,SandboxRunSpecificationV2.class);
         assertEquals("UNSUPPORTED_RUN_SPEC_VERSION",assertThrows(SandboxRunException.class,()->compile(invalid)).errorCode());
+    }
+    @Test void fractionalLoopCountIsRejectedRatherThanTruncated() throws Exception {
+        var tree = (com.fasterxml.jackson.databind.node.ObjectNode) json.valueToTree(spec);
+        ((com.fasterxml.jackson.databind.node.ObjectNode) tree.path("simulationClock")).put("totalLoops", 3.5);
+        assertEquals("RUN_SPEC_READ_FAILED", assertThrows(SandboxRunException.class, () -> new SandboxRunCompilerV2(json)
+                .read(new org.springframework.core.io.ByteArrayResource(json.writeValueAsBytes(tree)))).errorCode());
+    }
+    @Test void genericEmptyChainScenarioIsEditableButCannotCompileAProductionRun() {
+        var baseline = new SandboxBaselineLoader(json).load(new ClassPathResource("sandbox/baseline/baseline-v1.json"));
+        var compiler = new SandboxScenarioCompiler(json);
+        var definition = (com.fasterxml.jackson.databind.node.ObjectNode) json.valueToTree(scenario.normalizedDefinition());
+        ((com.fasterxml.jackson.databind.node.ObjectNode) definition.path("selection").path("processingChains"))
+                .put("mode", "EXPLICIT_IDS");
+        scenario = compiler.compile(baseline, json.convertValue(definition, SandboxScenarioDefinitionV1.class));
+        revision = new SandboxScenarioRevisionV1(SandboxScenarioRevisionV1.ARTIFACT_VERSION,
+                scenario.normalizedDefinition().scenarioKey(), 2, scenario.normalizedDefinition(), scenario.resolvedSelection(),
+                new SandboxScenarioRevisionV1.Fingerprints(SandboxScenarioCodec.CANONICALIZATION,
+                        scenario.scenarioDefinitionSha256(), scenario.effectiveData().baseDataProjectionSha256(),
+                        scenario.effectiveData().effectiveScenarioDataSha256()), Instant.now());
+        var tree = (com.fasterxml.jackson.databind.node.ObjectNode) json.valueToTree(spec);
+        tree.set("scenario", json.valueToTree(new SandboxRunSpecificationV1.ScenarioReference(
+                revision.scenarioKey(), 2, revision.fingerprints().scenarioDefinitionSha256(),
+                revision.fingerprints().effectiveScenarioDataSha256())));
+        var invalid = json.convertValue(tree, SandboxRunSpecificationV2.class);
+        assertEquals("PRODUCTION_ACTIVE_CHAIN_REQUIRED", assertThrows(SandboxRunException.class,
+                () -> compile(invalid)).errorCode());
     }
 }

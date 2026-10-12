@@ -1,0 +1,8 @@
+import type { EvaluationSnapshot } from './evaluation'
+export interface RecordedPoint {longitude:number;latitude:number}
+export interface RecordedRow {id:number;[field:string]:unknown}
+export interface RecordedPoi extends RecordedRow,RecordedPoint {name:string;poiType:string|null}
+export interface RecordedVehicle extends RecordedRow {licensePlate:string|null;currentStatus:string|null;currentPoiId:number|null;positionSource:'POI_LINK'|'IN_TRANSIT'|'UNKNOWN';position:RecordedPoint|null;currentLoad:number|null;currentVolumn:number|null}
+export interface RecordedLeg extends RecordedRow {vehicleId:number|null;assignmentId:number;fromPoiId:number|null;toPoiId:number|null;from:RecordedPoint|null;to:RecordedPoint|null;progressStatus:string|null;distanceMeters:number|null;executedDistanceMeters:number|null;sequenceIndex:number;geometrySource:string}
+export interface SandboxMapContext {artifactVersion:'sandbox-map-context/v1';executionId:string;manifestSha256:string;positionPolicy:string;pois:RecordedPoi[];scenarioKey:string;scenarioRevision:number;integrityScope:string}
+export interface SandboxMapSnapshot {artifactVersion:'sandbox-map-snapshot/v1';executionId:string;manifestSha256:string;loopIndex:number;simTime:string;tickSha256:string;factsSha256:string;evaluationSha256:string;factVersion:string;integrityScope:string;ledgerIntegrity:'NOT_CHECKED';positionPolicy:string;evaluation:EvaluationSnapshot;projection:{pois:RecordedPoi[];vehicles:RecordedVehicle[];legs:RecordedLeg[];assignments:RecordedRow[];nodes:RecordedRow[];shipments:RecordedRow[];cargo:RecordedRow[];events:RecordedRow[];drivingProgress:Array<Record<string,unknown>>;weather:Array<Record<string,unknown>>}}

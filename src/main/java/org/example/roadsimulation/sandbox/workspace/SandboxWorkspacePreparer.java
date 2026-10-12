@@ -44,7 +44,8 @@ public final class SandboxWorkspacePreparer {
             SandboxWorkspaceSafety.SCENARIO_REVISION_TABLE,
             SandboxWorkspaceSafety.RUN_SPEC_TABLE,
             SandboxWorkspaceSafety.RUN_SPEC_REVISION_TABLE,
-            SandboxWorkspaceSafety.RUN_VEHICLE_INITIAL_STATE_TABLE
+            SandboxWorkspaceSafety.RUN_VEHICLE_INITIAL_STATE_TABLE,
+            "sandbox_execution", "sandbox_execution_tick", "sandbox_management_job"
     );
 
     private final String jdbcUrl;
@@ -92,6 +93,19 @@ public final class SandboxWorkspacePreparer {
     }
 
     SandboxPreparationReport prepare(LoadedSandboxBaseline loaded, EffectiveBaseData effective) {
+        try (Connection connection = openConnection()) {
+            safety.requireSafeTarget(jdbcUrl, connection);
+            safety.acquirePreparationLock(connection);
+            try { return prepareWithHeldLock(connection, loaded, effective, null); }
+            finally { safety.releasePreparationLock(connection); }
+        } catch (SQLException exception) {
+            throw new SandboxWorkspaceException("DATABASE_CONNECTION_FAILED", "Cannot prepare sandbox workspace", exception);
+        }
+    }
+
+    SandboxPreparationReport prepareWithHeldLock(Connection connection, LoadedSandboxBaseline loaded,
+            EffectiveBaseData effective, String jobId) throws SQLException {
+        safety.requirePreparationLockHeld(connection);
         baselineValidator.validateBaseline(loaded.baseline());
         baselineValidator.validateEffectiveData(effective.data());
         String suppliedHash = effectiveDataCodec.hash(
@@ -100,33 +114,22 @@ public final class SandboxWorkspacePreparer {
             throw new SandboxWorkspaceException(
                     "EFFECTIVE_DATA_HASH_MISMATCH", "Effective base data hash is invalid");
         }
-        try (Connection connection = openConnection()) {
-            configureSession(connection);
-            safety.requireSafeTarget(jdbcUrl, connection);
-            safety.acquirePreparationLock(connection);
-            boolean markerCanBeUpdated = false;
-            try {
-                updateMarkerPreparing(connection, loaded, effective);
-                markerCanBeUpdated = true;
-                rebuildSchema(connection);
-                restoreAndVerify(connection, loaded, effective);
-                return report(connection, loaded, effective, SandboxWorkspaceState.BASE_DATA_READY, null, null);
-            } catch (Exception exception) {
-                rollbackQuietly(connection);
-                if (markerCanBeUpdated) {
-                    markFailed(connection, exception);
-                }
-                if (exception instanceof SandboxWorkspaceException workspaceException) {
-                    throw workspaceException;
-                }
-                throw new SandboxWorkspaceException(
-                        "PREPARATION_FAILED", "Sandbox workspace preparation failed", exception);
-            } finally {
-                safety.releasePreparationLock(connection);
-            }
-        } catch (SQLException exception) {
-            throw new SandboxWorkspaceException(
-                    "DATABASE_CONNECTION_FAILED", "Cannot prepare sandbox workspace", exception);
+        configureSession(connection);
+        safety.requireSafeTarget(jdbcUrl, connection);
+        safety.requireNoUnfinishedExecution(connection, jobId);
+        boolean markerCanBeUpdated = false;
+        try {
+            updateMarkerPreparing(connection, loaded, effective);
+            safety.clearExecutionReference(connection);
+            markerCanBeUpdated = true;
+            rebuildSchema(connection);
+            restoreAndVerify(connection, loaded, effective);
+            return report(connection, loaded, effective, SandboxWorkspaceState.BASE_DATA_READY, null, null);
+        } catch (Exception exception) {
+            rollbackQuietly(connection);
+            if (markerCanBeUpdated) markFailed(connection, exception);
+            if (exception instanceof SandboxWorkspaceException workspaceException) throw workspaceException;
+            throw new SandboxWorkspaceException("PREPARATION_FAILED", "Sandbox workspace preparation failed", exception);
         }
     }
 

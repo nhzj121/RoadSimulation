@@ -8,6 +8,7 @@
         <div class="navbar-menu">
           <ElButton text @click="goToPOIManager">POI点管理</ElButton>
           <ElButton text @click="goToProcessingChainManager">加工链管理</ElButton>
+          <ModeNavigationButton to="/sandbox" label="数据沙箱" />
           <ElButton text @click="openMonitorPanel('vehicles')">车辆监控</ElButton>
           <ElButton text @click="openMonitorPanel('shipments')">运单监控</ElButton>
           <ElButton text @click="openMonitorPanel('assignments')">任务监控</ElButton>
@@ -58,9 +59,9 @@
                 />
               </div>
               <div class="control-group" style="margin-top: 15px;">
-                <ElButton type="primary" :disabled="resetInProgress || hasPreparedExperimentScenario || isExperimentRunActive" @click="startSimulation">▶ 开始</ElButton>
-                <ElButton type="primary" :disabled="resetInProgress || isExperimentRunActive" @click="pauseSimulation">⏸ 暂停</ElButton>
-                <ElButton :loading="resetInProgress" :disabled="resetInProgress || isExperimentRunActive" @click="resetSimulation">↻ 重置</ElButton>
+                <ElButton type="primary" :disabled="simulationControlBusy || resetInProgress || hasPreparedExperimentScenario || isExperimentRunActive" @click="startSimulation">▶ 开始</ElButton>
+                <ElButton type="primary" :disabled="simulationControlBusy || resetInProgress || isExperimentRunActive" @click="pauseSimulation">⏸ 暂停</ElButton>
+                <ElButton :loading="resetInProgress" :disabled="simulationControlBusy || resetInProgress || isExperimentRunActive" @click="resetSimulation">↻ 重置</ElButton>
               </div>
               <div v-if="hasPreparedExperimentScenario" class="experiment-start-lock">
                 已准备实验场景，请清除实验标记后再启动普通仿真。
@@ -130,6 +131,16 @@
         <div v-if="missingRouteAssignmentIds.size" class="route-recovery-notice" role="status">
           {{ missingRouteAssignmentIds.size }} 个任务等待路线恢复；继续仿真后将自动重试。
         </div>
+        <!-- 评价概览只负责打开现有右侧监控容器，不改变地图尺寸、路线或车辆动画。 -->
+        <ElButton
+            v-if="activeMainView === 'map' && !isMonitorPanelVisible"
+            class="evaluation-overview-trigger"
+            type="primary"
+            plain
+            @click="openMonitorPanel('evaluation')"
+        >
+          评价概览
+        </ElButton>
         <div
             v-if="floatingVehicleInfo.visible"
             ref="vehicleFloatingInfoWindowRef"
@@ -157,7 +168,7 @@
           </div>
 
           <div class="vehicle-floating-info-body">
-            <VehicleImpactDetails :vehicle="floatingVehicleMonitor" :weather="monitorWeather" />
+            <VehicleImpactDetails :vehicle="floatingVehicleImpactDisplay" :weather="monitorWeather" />
             <div class="vehicle-floating-status-row">
               <span class="vehicle-floating-status-dot" :style="{ backgroundColor: floatingVehicleLiveStatus.color }"></span>
               <span>{{ floatingVehicleLiveStatus.text }}</span>
@@ -357,6 +368,13 @@
                   暂无活跃运输任务
                 </div>
               </div>
+            </ElTabPane>
+            <ElTabPane label="评价概览" name="evaluation">
+              <!-- 仅在页签可见时挂载：关闭或切换后立即停止评价快照轮询。 -->
+              <EvaluationOverviewPanel
+                  v-if="isMonitorPanelVisible && activeMonitorTab === 'evaluation'"
+                  @open-full="openEvaluationDashboard"
+              />
             </ElTabPane>
           </ElTabs>
         </ElAside>
@@ -981,7 +999,9 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, onUnmounted, markRaw , nextTick} from "vue";
+import { ref, reactive, computed, watch, onMounted, onUnmounted, markRaw , nextTick} from "vue";
+import ModeNavigationButton from './ModeNavigationButton.vue';
+import { beginNavigationOperation, setLocalOrdinaryNavigation, clearLocalOrdinaryNavigation } from '../navigation/modeNavigation';
 import VehicleImpactDetails from './VehicleImpactDetails.vue';
 import { useRouter } from 'vue-router';
 import { useVehicleArrivalMonitor } from '@/composables/useVehicleArrivalMonitor';
@@ -992,6 +1012,7 @@ import WeatherPanel from './WeatherPanel.vue';
 import request from "../utils/request";
 // Phase 6C：新增独立评价视图，不向地图动画管理器注入任何评价状态。
 import EvaluationDashboard from './EvaluationDashboard.vue';
+import EvaluationOverviewPanel from './EvaluationOverviewPanel.vue';
 import AMapLoader from "@amap/amap-jsapi-loader";
 import factoryIcon from '../../public/icons/factory.png';
 import warehouseIcon from '../../public/icons/warehouse.png';
@@ -1000,7 +1021,6 @@ import maintenanceIcon from '../../public/icons/maintenance-center.png';
 import restAreaIcon from '../../public/icons/rest-area.png';
 import transportIcon from '../../public/icons/distribution-center.png';
 import testIcon from '../../public/icons/test.png';
-import { mergeLiveVehicleDisplay } from '../utils/liveVehicleDisplay';
 import { assignmentPollingMode, createWeatherRouteCache } from '../utils/weatherRouteCache';
 import { assignmentRenderIdentity, createAssignmentRecoveryTracker, reconcileAssignmentRenderOwner, removeVehicleRenderRegistration } from '../utils/assignmentRenderOwnership';
 import { VEHICLE_STATUS_PRESENTATIONS, vehicleStatusPresentation } from '../utils/vehicleStatusPresentation';
@@ -1033,6 +1053,7 @@ import {
 } from "element-plus";
 
 let map = null;
+let mapViewDisposed = false;
 let AMapLib = null; // 保存加载后的 AMap 构造对象
 const shipmentCount = ref(1);
 const shipments = ref([]);
@@ -3144,6 +3165,12 @@ const poiMarkers = ref([]); // 存储POI标记
 const currentPOIs = ref([]); // 当前显示的POI数据
 const isSimulationRunning = ref(false); // 仿真运行状态
 const resetInProgress = ref(false); // 重置过程中禁止重复操作
+const simulationControlBusy = ref(false);
+watch(() => [isSimulationRunning.value, isExperimentRunActive.value, resetInProgress.value,
+  simulationControlBusy.value, experimentRun.loading, experimentPrep.loading], () => {
+  setLocalOrdinaryNavigation({ running: isSimulationRunning.value, comparison: isExperimentRunActive.value,
+    busy: resetInProgress.value || simulationControlBusy.value || experimentRun.loading || experimentPrep.loading });
+}, { immediate: true, flush: 'sync' });
 const useHeuristicDispatch = ref(false); // 是否启用启发式调度
 const simulationGeneration = ref(0);
 let routePlanningAbortController = null;
@@ -3233,6 +3260,10 @@ function unmarkDrawnVehicleIcon(vehicleId) {
     nextIds.delete(iconId);
     drawnVehicleIconIds.value = nextIds;
     syncRegisteredVehicleStats();
+    if (String(floatingVehicleInfo.vehicleId) === iconId) {
+      floatingVehicleInfo.visible = false;
+      floatingVehicleInfo.loading = false;
+    }
   }
 }
 
@@ -3425,6 +3456,17 @@ class VehicleStatusManager {
 
       // 2. 更新载重信息
       this.updateVehicleLoadInfo(vehicle, status, additionalData);
+
+      // Keep a frontend-owned display snapshot on the assignment registered to the marker.
+      // Backend polling may already be reporting the next assignment for this vehicle.
+      const displayAssignment = this.assignmentData.get(vehicleId) || additionalData.assignment;
+      if (displayAssignment) {
+        displayAssignment.frontendStatus = status;
+        displayAssignment.frontendActionDescription = vehicle.actionDescription;
+        displayAssignment.currentLoad = vehicle.currentLoad;
+        displayAssignment.currentVolume = vehicle.currentVolume;
+        if (vehicle.vrpProgress) displayAssignment.vrpProgress = vehicle.vrpProgress;
+      }
 
       // 3. 更新位置信息（如果有提供）
       if (additionalData.position) {
@@ -4786,7 +4828,7 @@ const handleVehicleArrived = async (assignmentId, vehicleId, endPOIId, licensePl
  * 启动仿真
  */
 const startSimulation = async () => {
-  if (resetInProgress.value) {
+  if (resetInProgress.value || simulationControlBusy.value) {
     return;
   }
   if (isExperimentRunActive.value) {
@@ -4798,6 +4840,8 @@ const startSimulation = async () => {
     return;
   }
 
+  simulationControlBusy.value = true;
+  const releaseNavigation = beginNavigationOperation();
   try {
     const runGeneration = beginSimulationGeneration();
     console.log("开始仿真");
@@ -4844,6 +4888,9 @@ const startSimulation = async () => {
     ElMessage.error('启动仿真失败：' + error.message);
     isSimulationRunning.value = false;
     invalidateSimulationGeneration();
+  } finally {
+    simulationControlBusy.value = false;
+    releaseNavigation();
   }
   if (isSimulationRunning.value && animationManager) arrivalMonitor.startMonitoring(getVehiclePositions, getPOIList);
 };
@@ -4852,7 +4899,7 @@ const startSimulation = async () => {
  * 暂停仿真
  */
 const pauseSimulation = async () => {
-  if (resetInProgress.value) {
+  if (resetInProgress.value || simulationControlBusy.value) {
     return;
   }
   if (isExperimentRunActive.value) {
@@ -4860,6 +4907,8 @@ const pauseSimulation = async () => {
     return;
   }
 
+  simulationControlBusy.value = true;
+  const releaseNavigation = beginNavigationOperation();
   try {
     console.log("已暂停仿真");
 
@@ -4875,6 +4924,9 @@ const pauseSimulation = async () => {
   } catch (error) {
     console.error("暂停仿真失败：", error);
     ElMessage.error('暂停仿真失败：' + error.message);
+  } finally {
+    simulationControlBusy.value = false;
+    releaseNavigation();
   }
 }
 
@@ -4882,7 +4934,7 @@ const pauseSimulation = async () => {
  * 重置仿真
  */
 const resetSimulation = async () => {
-  if (resetInProgress.value) {
+  if (resetInProgress.value || simulationControlBusy.value) {
     return;
   }
   if (isExperimentRunActive.value) {
@@ -4890,6 +4942,7 @@ const resetSimulation = async () => {
     return;
   }
 
+  const releaseNavigation = beginNavigationOperation();
   let confirmResult;
   try {
     // 简洁版确认对话框
@@ -4904,6 +4957,7 @@ const resetSimulation = async () => {
     );
   } catch (_) {
     ElMessage.info('已取消重置操作');
+    releaseNavigation();
     return;
   }
 
@@ -4968,6 +5022,7 @@ const resetSimulation = async () => {
     ElMessage.error(`后端清理失败，请重试 reset：${error.message || error}`);
   } finally {
     resetInProgress.value = false;
+    releaseNavigation();
   }
 };
 
@@ -5292,18 +5347,153 @@ const handleRandomEventTriggered = async () => {
   await updateVehicleInfo();
 };
 
-const floatingVehicleMonitor = computed(() => monitorVehicles.find(vehicle => String(vehicle.vehicleId) === String(floatingVehicleInfo.vehicleId)) || null);
+function pickFloatingText(...values) {
+  return values.find(value => typeof value === 'string' && value.trim().length > 0);
+}
+
+function pickFloatingQuantity(...values) {
+  return values.find(value => Number.isFinite(Number(value)) && Number(value) > 0);
+}
+
+function getFloatingAnimation(routeData) {
+  const assignmentId = routeData?.assignment?.assignmentId;
+  if (assignmentId === null || assignmentId === undefined || !animationManager?.animations) {
+    return null;
+  }
+  return animationManager.animations.get(assignmentId)
+      || animationManager.animations.get(String(assignmentId))
+      || animationManager.animations.get(Number(assignmentId))
+      || null;
+}
+
+function resolveCurrentFrontendLeg(routeData) {
+  const assignment = routeData?.assignment;
+  if (!assignment) return { from: null, to: null };
+
+  const animation = getFloatingAnimation(routeData);
+  if (assignment.vrp === true && Array.isArray(routeData.stages)) {
+    const rawStageIndex = Number(animation?.currentStageIndex ?? assignment.vrpProgress?.currentStageIndex ?? 0);
+    const stageIndex = Number.isFinite(rawStageIndex)
+        ? Math.max(0, Math.min(routeData.stages.length - 1, rawStageIndex))
+        : 0;
+    const currentStage = routeData.stages[stageIndex];
+    const previousStage = stageIndex > 0 ? routeData.stages[stageIndex - 1] : null;
+    return {
+      from: previousStage?.nodeInfo?.poiName || '车辆当前位置',
+      to: currentStage?.nodeInfo?.poiName || null
+    };
+  }
+
+  const currentStage = Number(animation?.currentStage) === 2 ? 2 : 1;
+  if (currentStage === 2) {
+    return {
+      from: assignment.startPOIName || null,
+      to: assignment.endPOIName || null
+    };
+  }
+  return {
+    from: '车辆当前位置',
+    to: assignment.startPOIName || null
+  };
+}
+
+function findFloatingAssignmentSupplement(routeAssignment, vehicleId) {
+  if (!routeAssignment?.assignmentId) return null;
+  return monitorAssignments.find(item =>
+      String(item.assignmentId) === String(routeAssignment.assignmentId)
+      && String(item.vehicleId) === String(vehicleId)
+  ) || null;
+}
+
 const floatingVehicleLiveDisplay = computed(() => {
   const cachedAssignment = floatingVehicleInfo.assignment || {};
   const cachedInfo = floatingVehicleInfo.vehicleInfo || {};
-  if (!monitorWeather.value?.runId) return { assignment: cachedAssignment, vehicleInfo: cachedInfo, currentStatus: floatingVehicleInfo.currentStatus };
-  const liveVehicle = floatingVehicleMonitor.value;
-  const assignmentId = liveVehicle?.assignmentId ?? cachedAssignment.assignmentId;
-  const liveAssignment = monitorAssignments.find(item => String(item.assignmentId) === String(assignmentId) && String(item.vehicleId) === String(floatingVehicleInfo.vehicleId));
-  return mergeLiveVehicleDisplay({ ...cachedAssignment, ...cachedInfo }, liveVehicle, liveAssignment);
+  const projectedVehicle = projectVisibleVehicleForSidebar(floatingVehicleInfo.vehicleId);
+  const routeData = findVisibleVehicleRouteData(floatingVehicleInfo.vehicleId);
+  const routeAssignment = routeData?.assignment || null;
+  if (!projectedVehicle || !routeAssignment) {
+    return {
+      assignment: cachedAssignment,
+      vehicleInfo: cachedInfo,
+      currentStatus: floatingVehicleInfo.currentStatus
+    };
+  }
+  const cachedSameAssignment = String(cachedAssignment.assignmentId) === String(routeAssignment.assignmentId)
+      ? cachedAssignment
+      : {};
+  const supplement = findFloatingAssignmentSupplement(routeAssignment, floatingVehicleInfo.vehicleId) || {};
+  const currentLeg = resolveCurrentFrontendLeg(routeData);
+  const displayAssignment = {
+    ...supplement,
+    ...cachedSameAssignment,
+    ...routeAssignment,
+    routeName: pickFloatingText(routeAssignment.routeName, cachedSameAssignment.routeName, supplement.routeName),
+    startPOIName: currentLeg.from,
+    endPOIName: currentLeg.to,
+    goodsName: pickFloatingText(routeAssignment.goodsName, cachedSameAssignment.goodsName, supplement.goodsName),
+    quantity: pickFloatingQuantity(routeAssignment.quantity, cachedSameAssignment.quantity, supplement.quantity) ?? 0,
+    driverId: routeAssignment.driverId ?? cachedSameAssignment.driverId ?? supplement.driverId ?? projectedVehicle.driverId ?? null,
+    driverName: pickFloatingText(
+        routeAssignment.driverName,
+        cachedSameAssignment.driverName,
+        supplement.driverName,
+        projectedVehicle.driverName
+    ),
+    driverStatus: routeAssignment.driverStatus
+        || cachedSameAssignment.driverStatus
+        || supplement.driverStatus
+        || projectedVehicle.driverStatus
+  };
+  return {
+    assignment: displayAssignment,
+    vehicleInfo: {
+      ...cachedInfo,
+      ...projectedVehicle,
+      currentAssignment: displayAssignment.routeName || projectedVehicle.currentAssignment,
+      startPOI: displayAssignment.startPOIName,
+      endPOI: displayAssignment.endPOIName,
+      goodsInfo: displayAssignment.goodsName || projectedVehicle.goodsInfo,
+      quantity: displayAssignment.quantity
+    },
+    currentStatus: projectedVehicle.status
+  };
 });
 const floatingVehicleDisplayAssignment = computed(() => floatingVehicleLiveDisplay.value.assignment || {});
 const floatingVehicleDisplayInfo = computed(() => floatingVehicleLiveDisplay.value.vehicleInfo || {});
+const floatingVehicleImpactDisplay = computed(() => {
+  const vehicle = floatingVehicleDisplayInfo.value;
+  const status = floatingVehicleLiveDisplay.value.currentStatus;
+  if (!vehicle?.vehicleId || !status) return null;
+
+  const routeData = findVisibleVehicleRouteData(vehicle.vehicleId);
+  const animation = getFloatingAnimation(routeData);
+  const activeEvent = animation ? animation.activeRandomEvent : (vehicle.activeEvent || null);
+  const driving = ['ORDER_DRIVING', 'TRANSPORT_DRIVING'].includes(status);
+  const stopped = vehicleStatusPresentation(status).stopped;
+  const normalizeFactor = (value, fallback = 1) => {
+    const factor = Number(value);
+    return Number.isFinite(factor) ? Math.max(0, Math.min(1, factor)) : fallback;
+  };
+  const weatherFactor = normalizeFactor(
+      animation?.environmentSpeedFactor,
+      normalizeFactor(monitorWeather.value?.speedFactor)
+  );
+  const eventFactor = normalizeFactor(
+      animation?.eventSpeedFactor,
+      activeEvent ? normalizeFactor(activeEvent.speedFactor) : 1
+  );
+  const effectiveSpeedFactor = driving
+      ? weatherFactor * eventFactor
+      : stopped ? 0 : null;
+
+  return {
+    ...vehicle,
+    status,
+    statusText: vehicleStatusPresentation(status).text,
+    activeEvent,
+    effectiveSpeedFactor
+  };
+});
 const floatingVehicleDriverText = computed(() => {
   const assignment = floatingVehicleDisplayAssignment.value || {};
   const vehicleInfo = floatingVehicleInfo.vehicleInfo || {};
@@ -5568,14 +5758,6 @@ const updateVehicleInfo = async () => {
 
     if (activeMonitorVehicles && Array.isArray(activeMonitorVehicles)) {
       activeMonitorVehicles.forEach(monitorVehicle => {
-        if (monitorVehicle.drivingPhaseKey && vehicleMap.has(monitorVehicle.vehicleId)) {
-          const vehicle = vehicleMap.get(monitorVehicle.vehicleId);
-          vehicle.status = monitorVehicle.status;
-          vehicle.currentLoad = Math.max(0, toNumber(monitorVehicle.currentLoad));
-          vehicle.currentVolume = Math.max(0, toNumber(monitorVehicle.currentVolume));
-          vehicle.loadPercentage = vehicle.maxLoadCapacity > 0 ? Math.min(100, vehicle.currentLoad / vehicle.maxLoadCapacity * 100) : 0;
-          vehicle.volumePercentage = vehicle.maxVolumeCapacity > 0 ? Math.min(100, vehicle.currentVolume / vehicle.maxVolumeCapacity * 100) : 0;
-        }
         if (!monitorVehicle.vehicleId || vehicleMap.has(monitorVehicle.vehicleId)) {
           return;
         }
@@ -6499,16 +6681,121 @@ const normalizeMapPosition = (position) => {
   return Number.isFinite(lng) && Number.isFinite(lat) ? [lng, lat] : null;
 };
 
-const vehicleMonitorDisplayVehicles = computed(() => vehicles.filter(vehicle => {
-  if (monitorWeather.value?.runId && monitorVehicles.some(v => String(v.vehicleId) === String(vehicle.id))) return true;
-  const iconId = getVehicleIconId(vehicle?.id);
-  if (!iconId || !drawnVehicleIconIds.value.has(iconId)) {
-    return false;
-  }
+function findVisibleVehicleRouteData(vehicleId) {
+  const iconId = getVehicleIconId(vehicleId);
+  if (!iconId || !drawnVehicleIconIds.value.has(iconId)) return null;
 
-  const marker = vehicleStatusManager.value?.vehicleMarkers?.get(vehicle.id);
-  return markerHasValidPosition(marker);
-}));
+  const marker = lookupMapByLooseId(vehicleStatusManager.value?.vehicleMarkers, vehicleId);
+  if (!markerHasValidPosition(marker)) return null;
+
+  for (const [assignmentId, routeData] of activeRoutes.value.entries()) {
+    const drawn = Array.from(drawnAssignmentIds.value)
+        .some(id => String(id) === String(assignmentId));
+    if (drawn
+        && !routeData?.drawing
+        && !routeData?.cleaned
+        && String(routeData?.assignment?.vehicleId) === iconId) {
+      return routeData;
+    }
+  }
+  return null;
+}
+
+function projectVisibleVehicleForSidebar(vehicleId, backendVehicle = null) {
+  const routeData = findVisibleVehicleRouteData(vehicleId);
+  const assignment = routeData?.assignment;
+  if (!assignment) return null;
+
+  const sourceVehicle = backendVehicle
+      || vehicles.find(vehicle => String(vehicle.id) === String(vehicleId))
+      || { id: vehicleId };
+  const managerInfo = vehicleStatusManager.value?.getVehicleInfo?.(vehicleId) || {};
+  const monitorVehicle = monitorVehicles.find(vehicle => String(vehicle.vehicleId) === String(vehicleId)) || null;
+  const activeEvent = monitorVehicle?.activeEvent
+      || monitorActiveEvents.find(event => String(event.vehicleId) === String(vehicleId))
+      || null;
+  const backendStatus = monitorVehicle?.status || sourceVehicle.status;
+  const forcedBackendStatus = ['BREAKDOWN', 'SCRAPPED', 'RESERVED_REPLACEMENT'].includes(backendStatus)
+      ? backendStatus
+      : null;
+  const activeBreakdown = activeEvent?.eventType === 'VEHICLE_BREAKDOWN'
+      && (!activeEvent.status || activeEvent.status === 'ACTIVE')
+      && activeEvent.breakdownLevel !== 'REPLACEMENT_REQUIRED';
+  const status = forcedBackendStatus
+      || (activeBreakdown ? 'BREAKDOWN' : null)
+      || assignment.frontendStatus
+      || managerInfo.status
+      || assignment.vehicleStatus
+      || sourceVehicle.status
+      || 'IDLE';
+  const currentLoad = Math.max(0, toFiniteNumber(
+      assignment.currentLoad ?? managerInfo.currentLoad ?? sourceVehicle.currentLoad,
+      0
+  ));
+  const currentVolume = Math.max(0, toFiniteNumber(
+      assignment.currentVolume ?? managerInfo.currentVolume ?? sourceVehicle.currentVolume,
+      0
+  ));
+  const maxLoadCapacity = Math.max(0, toFiniteNumber(
+      sourceVehicle.maxLoadCapacity ?? assignment.maxLoadCapacity ?? managerInfo.maxLoadCapacity,
+      0
+  ));
+  const maxVolumeCapacity = Math.max(0, toFiniteNumber(
+      sourceVehicle.maxVolumeCapacity ?? assignment.maxVolumeCapacity ?? managerInfo.maxVolumeCapacity,
+      0
+  ));
+  const markerPosition = normalizeMapPosition(
+      lookupMapByLooseId(vehicleStatusManager.value?.vehicleMarkers, vehicleId)?.getPosition?.()
+  );
+  const actionDescription = forcedBackendStatus || activeBreakdown
+      ? displayStatusTextForVehicleStatus(status)
+      : assignment.frontendActionDescription
+          || managerInfo.actionDescription
+          || assignment.actionDescription
+          || sourceVehicle.actionDescription;
+
+  return {
+    ...sourceVehicle,
+    id: vehicleId,
+    vehicleId,
+    assignmentId: assignment.assignmentId,
+    licensePlate: assignment.licensePlate || sourceVehicle.licensePlate || managerInfo.licensePlate || `车辆${vehicleId}`,
+    status,
+    currentAssignment: assignment.routeName || assignment.currentAssignment || `任务 ${assignment.assignmentId}`,
+    goodsInfo: assignment.goodsName || '',
+    quantity: assignment.quantity || 0,
+    startPOI: assignment.startPOIName || null,
+    endPOI: assignment.endPOIName || null,
+    currentLoad,
+    maxLoadCapacity,
+    currentVolume,
+    maxVolumeCapacity,
+    loadPercentage: calculateUsagePercent(currentLoad, maxLoadCapacity),
+    volumePercentage: calculateUsagePercent(currentVolume, maxVolumeCapacity),
+    actionDescription,
+    vrpProgress: assignment.vrpProgress || managerInfo.vrpProgress || null,
+    currentLongitude: markerPosition?.[0] ?? managerInfo.currentLongitude,
+    currentLatitude: markerPosition?.[1] ?? managerInfo.currentLatitude,
+    activeEvent
+  };
+}
+
+const vehicleMonitorDisplayVehicles = computed(() => {
+  const displayedVehicleIds = new Set();
+  const projectedVehicles = [];
+  activeRoutes.value.forEach(routeData => {
+    const vehicleId = routeData?.assignment?.vehicleId;
+    const iconId = getVehicleIconId(vehicleId);
+    if (!iconId || displayedVehicleIds.has(iconId)) return;
+    const backendVehicle = vehicles.find(vehicle => String(vehicle.id) === iconId) || null;
+    const projectedVehicle = projectVisibleVehicleForSidebar(vehicleId, backendVehicle);
+    if (projectedVehicle) {
+      displayedVehicleIds.add(iconId);
+      projectedVehicles.push(projectedVehicle);
+    }
+  });
+  return projectedVehicles;
+});
 
 const normalizeDisplayId = (value) => {
   if (value === null || value === undefined) return null;
@@ -7484,10 +7771,11 @@ const initVehicleStatusManager = () => {
 // Refresh reconstructs the view from backend snapshots, without restarting the run.
 const restoreWeatherRunView = async () => {
   await updateVehicleInfo();
-  if (!monitorWeather.value?.runId || isExperimentRunActive.value) return;
+  if (mapViewDisposed || isExperimentRunActive.value) return;
   const config = await simulationController.getConfig();
-  if (!config?.success) throw new Error(config?.message || '读取仿真状态失败');
-  const running = Boolean(config.data?.running);
+  if (mapViewDisposed) return;
+  if (!config?.success || typeof config.data?.running !== 'boolean') throw new Error(config?.message || '读取仿真状态失败');
+  const running = config.data.running;
   const generation = beginSimulationGeneration();
   isSimulationRunning.value = running;
   restoringWeatherView = true;
@@ -7497,6 +7785,7 @@ const restoreWeatherRunView = async () => {
   } finally {
     restoringWeatherView = false;
   }
+  if (mapViewDisposed) return;
   if (running && isActiveTransportGeneration(generation)) {
     animationManager.startAll();
     startSimulationTimer();
@@ -7519,6 +7808,7 @@ onMounted(() => {
     plugins: ["AMap.Scale", "AMap.Driving", "AMap.Marker", "AMap.Polyline", "AMap.InfoWindow", "AMap.MoveAnimation"],
   })
       .then(async (AMap) => {
+        if (mapViewDisposed) return;
         AMapLib = AMap; // 保存 AMap 构造体以便后续创建覆盖物
         map = new AMap.Map("container", {
           viewMode: "3D",
@@ -7548,6 +7838,8 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  mapViewDisposed = true;
+  clearLocalOrdinaryNavigation();
   stopFloatingVehicleInfoDrag();
   if (isExperimentRunActive.value) {
     try {
@@ -7595,6 +7887,16 @@ onUnmounted(() => {
 
 <style scoped>
 .route-recovery-notice { position: absolute; z-index: 600; top: 12px; left: 50%; transform: translateX(-50%); padding: 8px 12px; border-radius: 6px; background: #fff7e6; color: #8a5a00; box-shadow: 0 2px 10px rgba(0,0,0,.15); font-size: 12px; }
+.evaluation-overview-trigger {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 700;
+  border-color: rgba(64, 158, 255, .42);
+  background: rgba(255, 255, 255, .94);
+  box-shadow: 0 6px 20px rgba(34, 70, 110, .14);
+  backdrop-filter: blur(8px);
+}
 .page-container {
   height: 100vh;
   width: 100vw;

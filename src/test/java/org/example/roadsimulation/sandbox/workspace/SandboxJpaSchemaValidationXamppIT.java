@@ -12,6 +12,7 @@ import org.springframework.test.context.ContextConfiguration;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @DataJpaTest(properties = {
+        "sandbox.management.enabled=false",
         "spring.jpa.hibernate.ddl-auto=validate",
         "spring.sql.init.mode=never"
 })

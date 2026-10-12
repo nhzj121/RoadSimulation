@@ -24,6 +24,7 @@ import org.springframework.transaction.event.TransactionalEventListener;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Comparator;
 
 /** Runtime orchestration for demand-driven production batches. */
 @Service
@@ -37,6 +38,8 @@ public class ProductionExecutionServiceImpl implements ProductionExecutionServic
     private final ProductionBatchRepository batchRepository;
     private final TransportDemandService transportDemandService;
     private final ProductionDeliveryProcessor deliveryProcessor;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private org.example.roadsimulation.sandbox.run.SandboxRunRuntimeContext sandboxRunRuntimeContext;
 
     public ProductionExecutionServiceImpl(
             ProcessingStageExecutionRepository executionRepository,
@@ -63,11 +66,14 @@ public class ProductionExecutionServiceImpl implements ProductionExecutionServic
             return;
         }
 
-        for (Long shipmentId : event.shipmentIds()) {
+        for (Long shipmentId : event.shipmentIds().stream().sorted().toList()) {
             try {
                 // 合并修复：实际生产投影在 ProductionDeliveryProcessor 的 REQUIRES_NEW 事务中完成。
                 deliveryProcessor.processShipment(shipmentId, event.deliveredAt());
             } catch (RuntimeException productionFailure) {
+                if (sandboxRunRuntimeContext != null) {
+                    throw new IllegalStateException("Sandbox production delivery projection failed", productionFailure);
+                }
                 // 临时异常保留 WAITING_TRANSPORT，下一轮恢复扫描会重试；不得传播到运输主链。
                 log.error(
                         "Production delivery projection failed and will be retried: shipmentId={}",
@@ -87,7 +93,7 @@ public class ProductionExecutionServiceImpl implements ProductionExecutionServic
 
         List<ProcessingStageExecution> executions = executionRepository.findByStatus(
                 ProcessingStageExecution.ExecutionStatus.PROCESSING
-        );
+        ).stream().sorted(Comparator.comparing(ProcessingStageExecution::getId)).toList();
         for (ProcessingStageExecution execution : executions) {
             if (execution.getStartedAt() == null) {
                 continue;
@@ -114,7 +120,7 @@ public class ProductionExecutionServiceImpl implements ProductionExecutionServic
     private void reconcileDeliveredTransportFlows(LocalDateTime simNow) {
         List<ProcessingExecutionFlow> waitingFlows = executionFlowRepository.findByStatus(
                 ProcessingExecutionFlow.FlowStatus.WAITING_TRANSPORT
-        );
+        ).stream().sorted(Comparator.comparing(ProcessingExecutionFlow::getId)).toList();
         for (ProcessingExecutionFlow flow : waitingFlows) {
             Shipment shipment = flow.getShipment();
             if (shipment == null || shipment.getStatus() != Shipment.ShipmentStatus.DELIVERED) {
@@ -124,6 +130,9 @@ public class ProductionExecutionServiceImpl implements ProductionExecutionServic
                 // 恢复路径使用当前权威仿真时间启动下游工序，不使用系统墙钟时间。
                 deliveryProcessor.processFlow(flow.getId(), simNow);
             } catch (RuntimeException productionFailure) {
+                if (sandboxRunRuntimeContext != null) {
+                    throw new IllegalStateException("Sandbox production delivery recovery failed", productionFailure);
+                }
                 // 普通临时错误保持 WAITING_TRANSPORT，避免阻塞同一轮其它生产流与运输主循环。
                 log.error(
                         "Production delivery recovery failed and will be retried: flowId={}, shipmentId={}",
@@ -142,7 +151,8 @@ public class ProductionExecutionServiceImpl implements ProductionExecutionServic
                 .orElseThrow(() -> new IllegalArgumentException("生产批次不存在: " + batchId));
         List<ProcessingStageExecution> executions =
                 executionRepository.findByBatchIdOrderByStageOrderAsc(batch.getId());
-        List<ProcessingExecutionFlow> flows = executionFlowRepository.findByBatchId(batch.getId());
+        List<ProcessingExecutionFlow> flows = executionFlowRepository.findByBatchId(batch.getId()).stream()
+                .sorted(Comparator.comparing(ProcessingExecutionFlow::getId)).toList();
         return mapBatch(batch, executions, flows);
     }
 
@@ -162,7 +172,8 @@ public class ProductionExecutionServiceImpl implements ProductionExecutionServic
         execution.getPlanNode().setStatus(ProductionPlanNode.NodeStatus.COMPLETED);
 
         List<ProcessingExecutionFlow> outgoingFlows =
-                executionFlowRepository.findByFromExecutionId(execution.getId());
+                executionFlowRepository.findByFromExecutionId(execution.getId()).stream()
+                        .sorted(Comparator.comparing(ProcessingExecutionFlow::getId)).toList();
         if (outgoingFlows.isEmpty()) {
             ProductionBatch batch = execution.getBatch();
             batch.setActualFinalOutputWeight(output);

@@ -11,14 +11,7 @@
     <div v-if="event">预计{{ event.breakdownLevel === 'REPLACEMENT_REQUIRED' ? '替换车辆就绪' : stopped ? '维修完成' : '拥堵结束' }}：{{ time(event.plannedEndTime) }}（仿真时间）</div>
     <div v-if="event?.repairStartTime">维修开始：{{ time(event.repairStartTime) }}（仿真时间）</div>
     <div v-if="event?.resolvedTime">维修结束：{{ time(event.resolvedTime) }}（仿真时间）</div>
-    <template v-if="hasProgress">
-      <label>本段驾驶进度：{{ percent }}%</label>
-      <progress :value="percent" max="100" aria-label="本段驾驶进度" />
-      <div>剩余正常驾驶工作量：{{ (vehicle.remainingDrivingSeconds / 60).toFixed(1) }} 分钟</div>
-      <small>指正常速度下还需开多久；实际到达时间还受后续天气、拥堵和故障影响。</small>
-    </template>
-    <small v-else>驾驶进度等待后端更新。</small>
-    <small>动画倍速只调整地图播放速度，不改变上述仿真计算。</small>
+    <small>动画倍速只调整地图播放速度，不计入上述速度倍率。</small>
   </section>
 </template>
 
@@ -32,8 +25,6 @@ const event = computed(() => props.vehicle?.activeEvent)
 const statusPresentation = computed(() => vehicleStatusPresentation(props.vehicle?.status))
 const stopped = computed(() => isStoppedVehicleStatus(props.vehicle?.status))
 const driving = computed(() => ['ORDER_DRIVING', 'TRANSPORT_DRIVING'].includes(props.vehicle?.status))
-const hasProgress = computed(() => props.vehicle?.drivingPhaseKey && Number.isFinite(props.vehicle?.drivingProgress) && Number.isFinite(props.vehicle?.remainingDrivingSeconds))
-const percent = computed(() => Math.round(Math.max(0, Math.min(1, props.vehicle?.drivingProgress || 0)) * 100))
 const factor = value => Number.isFinite(value) ? Number(value.toFixed(3)) : '等待更新'
 const time = value => value ? String(value).replace('T', ' ').slice(0, 19) : '等待更新'
 </script>

@@ -42,6 +42,7 @@ public final class SandboxScenarioCompiler {
 
     public SandboxScenarioCompiler(ObjectMapper objectMapper) {
         this.objectMapper = objectMapper.copy()
+                .disable(DeserializationFeature.ACCEPT_FLOAT_AS_INT)
                 .enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
         this.baselineLoader = new SandboxBaselineLoader(this.objectMapper);
         this.baselineValidator = new SandboxBaselineValidator();

@@ -21,6 +21,31 @@ import static org.mockito.Mockito.*;
 
 class DataInitializerOriginalVrpDispatchTest {
 
+    @Test
+    void sandboxStartupSkipsLegacyRandomInitialization() throws Exception {
+        var initializer = spy(dataInitializer());
+        org.springframework.test.util.ReflectionTestUtils.setField(initializer, "sandboxRunRuntimeContext",
+                mock(org.example.roadsimulation.sandbox.run.SandboxRunRuntimeContext.class));
+        initializer.run();
+        verify(initializer, never()).getRandomProcessingChainSegmentSelection();
+        verifyNoInteractions(processingChainRepository, goodsRepository, poiRepository);
+        org.junit.jupiter.api.Assertions.assertTrue(initializer.sourcePoiList.isEmpty());
+        org.junit.jupiter.api.Assertions.assertTrue(initializer.targetPoiList.isEmpty());
+        org.junit.jupiter.api.Assertions.assertNull(initializer.currentGoods);
+    }
+
+    @Test
+    void ordinaryStartupStillInitializesLegacyState() throws Exception {
+        var initializer = spy(dataInitializer());
+        doReturn(java.util.Optional.empty()).when(initializer).getRandomProcessingChainSegmentSelection();
+        var goods = new org.example.roadsimulation.entity.Goods(); goods.setName("Cement");
+        doReturn(goods).when(initializer).getGoodsForTest("CEMENT");
+        initializer.run();
+        verify(initializer).getRandomProcessingChainSegmentSelection();
+        verify(poiRepository).findByPoiType(POI.POIType.GAS_STATION);
+        assertEquals(goods, initializer.currentGoods);
+    }
+
     private final EnrollmentRepository enrollmentRepository = mock(EnrollmentRepository.class);
     private final GoodsRepository goodsRepository = mock(GoodsRepository.class);
     private final POIRepository poiRepository = mock(POIRepository.class);

@@ -1,9 +1,10 @@
 package org.example.roadsimulation.sandbox.workspace;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.example.roadsimulation.sandbox.run.SandboxRunSpecificationRevisionV1;
+import org.example.roadsimulation.sandbox.run.SandboxRunCompilerV2;
 import org.example.roadsimulation.sandbox.run.SandboxRunSpecificationStore;
 import org.example.roadsimulation.sandbox.run.SandboxRunSpecificationV1;
+import org.example.roadsimulation.sandbox.run.SandboxRunSpecificationV2;
 import org.example.roadsimulation.sandbox.scenario.definition.SandboxScenarioRevisionV1;
 import org.example.roadsimulation.sandbox.scenario.definition.SandboxScenarioStore;
 import org.junit.jupiter.api.Test;
@@ -29,7 +30,7 @@ class SandboxRunWorkspaceXamppIT {
     private static final ClassPathResource SCENARIO = new ClassPathResource(
             "sandbox/scenarios/default-all-eligible-v1.json");
     private static final ClassPathResource RUN_SPEC = new ClassPathResource(
-            "sandbox/runs/default-production-original-v1.json");
+            "sandbox/runs/default-production-original-v2.json");
 
     @Test
     void preparesAndVerifiesOfficialRunSpecification() throws Exception {
@@ -46,12 +47,10 @@ class SandboxRunWorkspaceXamppIT {
                 .prepare(BASELINE, scenario.scenarioKey(), scenario.revision());
 
         SandboxRunSpecificationStore runs = new SandboxRunSpecificationStore(url, user, password, mapper);
-        SandboxRunSpecificationV1 template = mapper.readValue(
-                RUN_SPEC.getInputStream(), SandboxRunSpecificationV1.class);
-        SandboxRunSpecificationV1 resolvedTemplate = withScenarioRevision(template, scenario);
-        runs.saveDraft(BASELINE, new ByteArrayResource(mapper.writeValueAsBytes(resolvedTemplate)));
-        SandboxRunSpecificationRevisionV1 revision = runs.publish(
-                BASELINE, "production-baseline-seed-20260927");
+        SandboxRunSpecificationV2 template = new SandboxRunCompilerV2(mapper).read(RUN_SPEC);
+        SandboxRunSpecificationV2 resolvedTemplate = withScenarioRevision(template, scenario);
+        runs.saveDraftV2(BASELINE, new ByteArrayResource(mapper.writeValueAsBytes(resolvedTemplate)));
+        var revision = runs.publishV2(BASELINE, resolvedTemplate.runSpecKey());
         SandboxRunWorkspacePreparer preparer = new SandboxRunWorkspacePreparer(
                 url, user, password, mapper);
         SandboxRunPreparationReport prepared = preparer.prepare(
@@ -63,12 +62,14 @@ class SandboxRunWorkspaceXamppIT {
         assertEquals(85L, prepared.rowCounts().get("vehicle"));
         assertEquals(85L, prepared.randomVehicleCount());
         assertEquals(1016, prepared.eligibleVehicleInitialPoiCount());
+        assertEquals(SandboxRunSpecificationV2.ARTIFACT_VERSION, prepared.artifactVersion());
+        assertEquals(revision.fingerprints().weatherTimelineSha256(), prepared.weatherTimelineSha256());
+        assertEquals(revision.fingerprints().eventConfigurationSha256(), prepared.eventConfigurationSha256());
 
-        SandboxRunSpecificationV1 bDefinition = withRootSeed(
+        SandboxRunSpecificationV2 bDefinition = withRootSeed(
                 revision.specification(), "20260928");
-        runs.saveDraft(BASELINE, new ByteArrayResource(mapper.writeValueAsBytes(bDefinition)));
-        SandboxRunSpecificationRevisionV1 revisionB = runs.publish(
-                BASELINE, revision.runSpecKey());
+        runs.saveDraftV2(BASELINE, new ByteArrayResource(mapper.writeValueAsBytes(bDefinition)));
+        var revisionB = runs.publishV2(BASELINE, revision.runSpecKey());
         SandboxRunPreparationReport preparedB = preparer.prepare(
                 BASELINE, revisionB.runSpecKey(), revisionB.revision());
         assertNotEquals(prepared.preparedRunFactsSha256(), preparedB.preparedRunFactsSha256());
@@ -78,6 +79,8 @@ class SandboxRunWorkspaceXamppIT {
         assertEquals(prepared.preparedRunFactsSha256(), restoredA.preparedRunFactsSha256());
         assertEquals(prepared.resolvedVehicleInitialStateSha256(),
                 restoredA.resolvedVehicleInitialStateSha256());
+        assertEquals(prepared.weatherTimelineSha256(), restoredA.weatherTimelineSha256());
+        assertEquals(prepared.eventConfigurationSha256(), restoredA.eventConfigurationSha256());
 
         SandboxRunWorkspacePreparer broken = new SandboxRunWorkspacePreparer(
                 url, user, password, mapper,
@@ -108,29 +111,29 @@ class SandboxRunWorkspaceXamppIT {
         }
     }
 
-    private SandboxRunSpecificationV1 withRootSeed(
-            SandboxRunSpecificationV1 source,
+    private SandboxRunSpecificationV2 withRootSeed(
+            SandboxRunSpecificationV2 source,
             String rootSeed
     ) {
-        return new SandboxRunSpecificationV1(
+        return new SandboxRunSpecificationV2(
                 source.artifactVersion(), source.runSpecKey(), source.displayName(), source.description(),
                 source.scenario(), source.simulationClock(), source.demand(), source.dispatch(),
-                source.environment(), source.vehicleInitialization(), source.driverBehavior(),
+                source.weather(), source.events(), source.vehicleInitialization(), source.driverBehavior(),
                 new SandboxRunSpecificationV1.RandomProtocol(
                         source.random().protocolId(), rootSeed));
     }
 
-    private SandboxRunSpecificationV1 withScenarioRevision(
-            SandboxRunSpecificationV1 source,
+    private SandboxRunSpecificationV2 withScenarioRevision(
+            SandboxRunSpecificationV2 source,
             SandboxScenarioRevisionV1 scenario
     ) {
-        return new SandboxRunSpecificationV1(
+        return new SandboxRunSpecificationV2(
                 source.artifactVersion(), source.runSpecKey(), source.displayName(), source.description(),
                 new SandboxRunSpecificationV1.ScenarioReference(
                         scenario.scenarioKey(), scenario.revision(),
                         scenario.fingerprints().scenarioDefinitionSha256(),
                         scenario.fingerprints().effectiveScenarioDataSha256()),
-                source.simulationClock(), source.demand(), source.dispatch(), source.environment(),
+                source.simulationClock(), source.demand(), source.dispatch(), source.weather(), source.events(),
                 source.vehicleInitialization(), source.driverBehavior(), source.random());
     }
 

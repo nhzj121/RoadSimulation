@@ -37,6 +37,7 @@ import java.util.concurrent.locks.ReentrantLock;
 public class SimulationMainLoop {
 
     private final ReentrantLock lifecycleLock = new ReentrantLock(true);
+    private Thread controlledTickOwner;
 
     private final DataInitializer dataInitializer;
     private final StateUpdateService stateUpdateService;
@@ -108,6 +109,10 @@ public class SimulationMainLoop {
      */
     @Scheduled(fixedRate = 4000)
     public void executeMainLoop() {
+        // A published sandbox is driven only by the controlled, synchronous owner.
+        if (simulationContext.isDeterministicSandboxRun() && !isControlledTick()) {
+            return;
+        }
         if (shouldAbortLoop()) {
             return;
         }
@@ -161,6 +166,7 @@ public class SimulationMainLoop {
                         System.out.println("周期性超时清理: 释放了 " + expiredCount + " 个卡住的POI");
                     }
                 } catch (Exception e) {
+                    if (isControlledTick()) throw new IllegalStateException("Sandbox timeout cleanup failed", e);
                     System.err.println("超时清理执行异常: " + e.getMessage());
                 }
             }
@@ -191,7 +197,8 @@ public class SimulationMainLoop {
             // Phase 1：状态更新接收本轮唯一 SimulationTick；秒预算将在后续进度阶段真正消费。
             if(transportRandomEventService!=null) transportRandomEventService.tick(simNow,
                     simulationContext.getMinutesPerLoop(),currentTick.loopIndex());
-            stateUpdateService.tick(currentTick);
+            if (isControlledTick()) stateUpdateService.tickStrict(currentTick);
+            else stateUpdateService.tick(currentTick);
             if (shouldAbortLoop()) {
                 return;
             }
@@ -199,16 +206,60 @@ public class SimulationMainLoop {
             // Phase 4：先结算到期的装卸动作，再让新激活的行驶路段消费本轮秒预算。
             if(transportRandomEventService!=null) transportRandomEventService.settleDueEvents(currentTick.tickEnd());
             EvaluationLoopExecutionReport executionReport = advanceTransportProgressSafely(currentTick);
+            if (isControlledTick() && (executionReport.candidateQueryFailed()
+                    || executionReport.failedAssignmentCount() > 0)) {
+                throw new IllegalStateException("Sandbox authoritative transport progress failed: "
+                        + executionReport.errorCodes());
+            }
             if (shouldAbortLoop()) {
                 return;
             }
 
             // Phase 6B：严格位于状态/路段/生命周期推进之后、loopCount++ 之前；每轮只调用一次。
-            evaluationSnapshotService.captureCompletedTick(currentTick, executionReport);
+            var evaluation = evaluationSnapshotService.captureCompletedTick(currentTick, executionReport);
+            if (isControlledTick() && (evaluation.snapshotStatus()
+                    == org.example.roadsimulation.evaluation.EvaluationSnapshotStatus.FAILED
+                    || evaluation.errorCodes().contains(EvaluationSnapshotService.HISTORY_PERSIST_FAILED))) {
+                throw new IllegalStateException("Sandbox evaluation recording failed: " + evaluation.errorCodes());
+            }
             simulationContext.incrementLoop();
         } finally {
             lifecycleLock.unlock();
         }
+    }
+
+    /** Strict sandbox entry. Ordinary scheduling cannot enter this owner's tick. */
+    public org.example.roadsimulation.evaluation.EvaluationSnapshot executeControlledTick(int expectedIndex) {
+        lifecycleLock.lock();
+        boolean owned = false;
+        try {
+            if (!simulationContext.isDeterministicSandboxRun() || simulationContext.isRunning()
+                    || simulationContext.isResetting() || simulationContext.getLoopCount() != expectedIndex
+                    || controlledTickOwner != null) {
+                throw new IllegalStateException("Controlled tick requires an idle deterministic clock at the expected index");
+            }
+            if (weatherEnvironmentService.runId() == null) weatherEnvironmentService.start(null, null);
+            evaluationSnapshotService.beginRegularRunIfAbsent(simulationContext.beginRunIfAbsent());
+            controlledTickOwner = Thread.currentThread();
+            owned = true;
+            simulationContext.setRunning(true);
+            executeMainLoop();
+            if (simulationContext.getLoopCount() != expectedIndex + 1) {
+                throw new IllegalStateException("Controlled tick aborted before completion");
+            }
+            return evaluationSnapshotService.latest()
+                    .orElseThrow(() -> new IllegalStateException("Completed tick has no evaluation snapshot"));
+        } finally {
+            if (owned) {
+                simulationContext.setRunning(false);
+                controlledTickOwner = null;
+            }
+            lifecycleLock.unlock();
+        }
+    }
+
+    private boolean isControlledTick() {
+        return controlledTickOwner == Thread.currentThread();
     }
 
     public LocalDateTime getCurrentSimTime() {
@@ -342,6 +393,11 @@ public class SimulationMainLoop {
         return simulationContext.isRunning();
     }
 
+    /** Read-only navigation observation; never waits for or acquires the business lock. */
+    public boolean isNavigationLifecycleBusy() {
+        return simulationContext.isResetting() || lifecycleLock.isLocked();
+    }
+
     private boolean shouldAbortLoop() {
         if (simulationModeGuard != null && simulationModeGuard.isDispatchComparisonExperimentActive()) {
             return true;
@@ -397,6 +453,7 @@ public class SimulationMainLoop {
                     notAssignedItems
             );
         } catch (Exception ex) {
+            if (isControlledTick()) throw new IllegalStateException("Sandbox cost normalization failed", ex);
             System.err.println("Cost baseline normalization snapshot failed: " + ex.getMessage());
         }
     }

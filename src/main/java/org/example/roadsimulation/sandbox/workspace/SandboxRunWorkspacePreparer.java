@@ -96,37 +96,52 @@ public final class SandboxRunWorkspacePreparer {
             String runSpecKey,
             int runSpecRevision
     ) {
-        PreparedInputs inputs = loadAndValidate(baselineResource, runSpecKey, runSpecRevision);
         try (Connection connection = openConnection()) {
-            configure(connection);
             safety.requireSafeTarget(jdbcUrl, connection);
-            requireControlSchema(connection);
-            requireCompatibleBaselineMarker(connection, inputs.baseline());
             safety.acquirePreparationLock(connection);
-            boolean markerUpdated = false;
             try {
-                markPreparing(connection, inputs);
-                markerUpdated = true;
-                rebuildBusinessSchema(connection);
-                writeVersionedMarker(connection, inputs);
-                restoreAndVerify(connection, inputs);
-                return report(connection, inputs, SandboxWorkspaceState.RUN_SPEC_READY);
-            } catch (Exception exception) {
-                rollbackQuietly(connection);
-                if (markerUpdated) {
-                    markFailed(connection, exception);
-                }
-                if (exception instanceof SandboxWorkspaceException workspaceException) {
-                    throw workspaceException;
-                }
-                throw new SandboxWorkspaceException(
-                        "RUN_PREPARATION_FAILED", "Deterministic run preparation failed", exception);
+                return prepareWithHeldLock(connection, baselineResource, runSpecKey, runSpecRevision, null);
             } finally {
                 safety.releasePreparationLock(connection);
             }
         } catch (SQLException exception) {
             throw new SandboxWorkspaceException(
                     "RUN_DATABASE_CONNECTION_FAILED", "Cannot prepare deterministic run workspace", exception);
+        }
+    }
+
+    /** Worker owns this connection's lock through both preparation and execution. Does not release it. */
+    public SandboxRunPreparationReport prepareWithHeldLock(Connection connection, Resource baselineResource,
+            String runSpecKey, int runSpecRevision, String jobId) throws SQLException {
+        safety.requirePreparationLockHeld(connection);
+        configure(connection);
+        safety.requireSafeTarget(jdbcUrl, connection);
+        requireControlSchema(connection);
+        safety.requireManagementJobOwner(connection, jobId);
+        PreparedInputs inputs = loadAndValidate(baselineResource, runSpecKey, runSpecRevision);
+        if (jobId != null) {
+            try (var statement = connection.createStatement(); var rows = statement.executeQuery(
+                    "SELECT workspace_state FROM sandbox_workspace_marker WHERE marker_id=1")) {
+                if (rows.next() && "EMPTY".equals(rows.getString(1))) {
+                    baseVerifier.prepareWithHeldLock(connection, inputs.baseline(), baselineLoader.selectAllEligible(inputs.baseline()), jobId);
+                }
+            }
+        }
+        requireCompatibleBaselineMarker(connection, inputs.baseline());
+        safety.requireNoUnfinishedExecution(connection, jobId);
+        boolean markerUpdated = false;
+        try {
+            markPreparing(connection, inputs);
+            markerUpdated = true;
+            rebuildBusinessSchema(connection);
+            writeVersionedMarker(connection, inputs);
+            restoreAndVerify(connection, inputs);
+            return report(connection, inputs, SandboxWorkspaceState.RUN_SPEC_READY);
+        } catch (Exception exception) {
+            rollbackQuietly(connection);
+            if (markerUpdated) markFailed(connection, exception);
+            if (exception instanceof SandboxWorkspaceException workspace) throw workspace;
+            throw new SandboxWorkspaceException("RUN_PREPARATION_FAILED", "Deterministic run preparation failed", exception);
         }
     }
 
@@ -222,6 +237,7 @@ public final class SandboxRunWorkspacePreparer {
     }
 
     private void markPreparing(Connection connection, PreparedInputs inputs) throws SQLException {
+        safety.clearExecutionReference(connection);
         var revision = inputs.runRevision();
         var compiled = inputs.run();
         try (PreparedStatement statement = connection.prepareStatement("""
@@ -402,7 +418,8 @@ public final class SandboxRunWorkspacePreparer {
                     || !baseline.baseline().fingerprints().restorationPayloadSha256().equals(rows.getString(3))
                     || !baseline.baseline().fingerprints().simulationFactsSha256().equals(rows.getString(4))
                     || !eligible.effectiveBaseDataSha256().equals(rows.getString(5))
-                    || !List.of("SCENARIO_DATA_READY", "RUN_SPEC_READY", "FAILED").contains(rows.getString(6))) {
+                    || !List.of("BASE_DATA_READY", "SCENARIO_DATA_READY", "RUN_SPEC_READY", "EXECUTION_COMPLETED", "EXECUTION_CANCELLED", "FAILED")
+                            .contains(rows.getString(6))) {
                 throw new SandboxWorkspaceException(
                         "SCENARIO_WORKSPACE_NOT_READY", "Workspace baseline marker is not ready for a run specification");
             }
@@ -451,8 +468,8 @@ public final class SandboxRunWorkspacePreparer {
     private void requireControlSchema(Connection connection) throws SQLException {
         try (Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery(
                 "SELECT control_schema_version FROM sandbox_workspace_marker WHERE marker_id=1")) {
-            if (!rows.next() || !List.of(SandboxRunSpecificationStore.CONTROL_SCHEMA_VERSION,
-                    SandboxRunSpecificationStore.V2_CONTROL_SCHEMA_VERSION).contains(rows.getString(1))) {
+            if (!rows.next() || !(SandboxRunSpecificationStore.CONTROL_SCHEMA_VERSION.equals(rows.getString(1))
+                    || SandboxRunSpecificationStore.supportsV2ControlSchema(rows.getString(1)))) {
                 throw new SandboxWorkspaceException(
                         "CONTROL_SCHEMA_NOT_READY", "Run the phase-three sandbox provisioning upgrade first");
             }
@@ -560,7 +577,7 @@ public final class SandboxRunWorkspacePreparer {
     }
 
     private void writeVersionedMarker(Connection connection, PreparedInputs inputs) throws SQLException {
-        if (!SandboxRunSpecificationStore.V2_CONTROL_SCHEMA_VERSION.equals(controlSchemaVersion(connection))) {
+        if (!SandboxRunSpecificationStore.supportsV2ControlSchema(controlSchemaVersion(connection))) {
             if (inputs.runRevision().weatherTimelineSha256()!=null)
                 throw new SandboxWorkspaceException("CONTROL_SCHEMA_NOT_READY","v2 requires control schema v4");
             return;
@@ -576,7 +593,7 @@ public final class SandboxRunWorkspacePreparer {
     }
 
     private void verifyVersionedMarker(Connection connection, PreparedInputs inputs) throws SQLException {
-        if (!SandboxRunSpecificationStore.V2_CONTROL_SCHEMA_VERSION.equals(controlSchemaVersion(connection))) {
+        if (!SandboxRunSpecificationStore.supportsV2ControlSchema(controlSchemaVersion(connection))) {
             if (inputs.runRevision().weatherTimelineSha256()!=null)
                 throw new SandboxWorkspaceException("CONTROL_SCHEMA_NOT_READY","v2 requires control schema v4");
             return;

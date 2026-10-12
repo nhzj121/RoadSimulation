@@ -48,6 +48,9 @@ public final class SandboxRunRuntimeContext {
     private volatile SandboxRunSpecificationRevisionV1 revision;
     private volatile SandboxRunSpecificationRevisionV2 revisionV2;
     private volatile String deterministicSimulationRunId;
+    @Value("${sandbox.baseline-resource:classpath:sandbox/baseline/baseline-v1.json}")
+    private org.springframework.core.io.Resource baselineResource =
+            new org.springframework.core.io.ClassPathResource("sandbox/baseline/baseline-v1.json");
 
     public SandboxRunRuntimeContext(
             DataSource dataSource,
@@ -148,8 +151,8 @@ public final class SandboxRunRuntimeContext {
             SandboxRunSpecificationRevisionV1 loaded,
             List<SandboxVehicleInitialState> storedStates
     ) {
-        if (!java.util.Set.of(SandboxRunSpecificationStore.CONTROL_SCHEMA_VERSION,
-                SandboxRunSpecificationStore.V2_CONTROL_SCHEMA_VERSION).contains(marker.controlSchemaVersion())
+        if (!(SandboxRunSpecificationStore.CONTROL_SCHEMA_VERSION.equals(marker.controlSchemaVersion())
+                || SandboxRunSpecificationStore.supportsV2ControlSchema(marker.controlSchemaVersion()))
                 || !"RUN_SPEC_READY".equals(marker.workspaceState())
                 || !SandboxRandomProtocol.PROTOCOL_ID.equals(marker.randomProtocolId())
                 || !loaded.runSpecKey().equals(marker.runSpecKey())
@@ -292,7 +295,7 @@ public final class SandboxRunRuntimeContext {
             }
         }
         if(!SandboxRunSpecificationRevisionV2.ARTIFACT_VERSION.equals(objectMapper.readTree(encoded).path("artifactVersion").asText())) return false;
-        if(!SandboxRunSpecificationStore.V2_CONTROL_SCHEMA_VERSION.equals(marker.controlSchemaVersion()))
+        if(!SandboxRunSpecificationStore.supportsV2ControlSchema(marker.controlSchemaVersion()))
             throw new SandboxWorkspaceException("CONTROL_SCHEMA_NOT_READY","v2 requires control schema v4");
         var loaded=objectMapper.readValue(encoded,SandboxRunSpecificationRevisionV2.class);
         var reference=loaded.specification().scenario();
@@ -306,8 +309,7 @@ public final class SandboxRunRuntimeContext {
                         org.example.roadsimulation.sandbox.scenario.definition.SandboxScenarioRevisionV1.class);
             }
         }
-        var baseline=new org.example.roadsimulation.sandbox.baseline.SandboxBaselineLoader(objectMapper).load(
-                new org.springframework.core.io.ClassPathResource("sandbox/baseline/baseline-v1.json"));
+        var baseline=new org.example.roadsimulation.sandbox.baseline.SandboxBaselineLoader(objectMapper).load(baselineResource);
         var scenario=new org.example.roadsimulation.sandbox.scenario.definition.SandboxScenarioCompiler(objectMapper).compile(baseline,scene.definition());
         var compiled=new SandboxRunCompilerV2(objectMapper).compile(loaded.specification(),scene,scenario);
         if(!"RUN_SPEC_READY".equals(marker.workspaceState()) || !loaded.runSpecKey().equals(marker.runSpecKey())

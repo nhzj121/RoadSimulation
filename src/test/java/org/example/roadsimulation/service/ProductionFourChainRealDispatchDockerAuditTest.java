@@ -32,6 +32,7 @@ import static org.mockito.Mockito.doNothing;
         classes = RoadSimulationApplication.class,
         webEnvironment = SpringBootTest.WebEnvironment.NONE,
         properties = {
+                "sandbox.management.enabled=false",
                 "spring.datasource.url=jdbc:mysql://127.0.0.1:3307/roadsim_collation_audit"
                         + "?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC",
                 "spring.datasource.username=root",
