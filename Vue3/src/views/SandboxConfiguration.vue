@@ -1,35 +1,45 @@
 <template>
   <main v-number-accessibility class="sandbox-page">
-    <header>
-      <div><h1>数据沙箱 · 配置与发布</h1><p>独立实验配置；不修改普通仿真数据。发布后可显式准备并运行。</p><router-link to="/sandbox/tasks">查看任务与进度</router-link></div>
+    <header class="page-header">
+      <div><span class="page-eyebrow">实验工作台</span><h1>数据沙箱 · 配置与发布</h1><p>独立实验配置；不修改普通仿真数据。发布后可显式准备并运行。</p></div>
+      <router-link to="/sandbox/tasks" class="header-link">查看任务与进度 <span aria-hidden="true">→</span></router-link>
     </header>
     <el-alert title="发布只生成不可变配置版本，不代表已开始运行。路径事实尚未冻结。" type="info" :closable="false" />
     <el-alert v-if="error" :title="error" type="error" :closable="false" class="notice" />
-    <section class="connection">
+    <section class="connection sandbox-card">
       <el-tag :type="connected ? 'success' : 'warning'">{{ connected ? '沙箱管理可用' : '沙箱管理不可用' }}</el-tag>
-      <span v-if="baselineId">基线：{{ baselineId }}</span>
-      <span v-if="workspace">工作库：{{ workspace.workspace_state }} · {{ workspace.control_schema_version }}</span>
+      <span v-if="baselineId" class="connection-fact">基线：{{ baselineId }}</span>
+      <span v-if="workspace" class="connection-fact">工作库：{{ workspace.workspace_state }} · {{ workspace.control_schema_version }}</span>
       <el-button :loading="busy" @click="connect">重新检查连接</el-button>
     </section>
-    <p v-if="!connected">请在后端显式启用sandbox.management.enabled，并配置独立沙箱账号。此页面不接收数据库地址、用户名或密码。</p>
+    <p v-if="!connected" class="setup-help">请在后端显式启用sandbox.management.enabled，并配置独立沙箱账号。此页面不接收数据库地址、用户名或密码。</p>
 
-    <el-tabs v-model="tab">
+    <el-tabs v-model="tab" class="configuration-tabs">
       <el-tab-pane label="1. 场景选择与覆盖" name="scenario">
-        <div class="toolbar">
+        <div class="toolbar sandbox-card">
+          <span class="toolbar-label">读取场景</span>
           <el-input v-model="scenarioLoadKey" placeholder="场景Key" :disabled="busy" />
           <el-button :disabled="!connected || busy" @click="loadScenarioDraft">加载草稿</el-button>
           <el-input-number v-model="scenarioLoadRevision" :min="1" :disabled="busy" />
           <el-button :disabled="!connected || busy" @click="loadScenarioRevision">选用已发布版本</el-button>
           <el-button :disabled="!connected || busy" @click="listFamilies('scenarios')">查看场景列表</el-button>
         </div>
-        <el-form v-if="scenario" :disabled="busy || !connected" label-width="155px">
+        <el-form v-if="scenario" :disabled="busy || !connected" label-width="155px" class="configuration-form">
+          <section class="form-section sandbox-card">
+          <div class="section-heading"><span class="section-number">01</span><div><h2 class="sandbox-section-heading">场景标识与基线</h2><p class="sandbox-caption">场景名称用于识别实验，基础数据以绑定的基线为准。</p></div></div>
+          <div class="metadata-grid">
           <el-form-item label="场景Key"><el-input v-model="scenario.scenarioKey" placeholder="小写字母、数字、短横线" /></el-form-item>
           <el-form-item label="显示名称"><el-input v-model="scenario.displayName" /></el-form-item>
           <el-form-item label="说明"><el-input v-model="scenario.description" type="textarea" /></el-form-item>
+          </div>
           <el-collapse>
             <el-collapse-item title="基线只读指纹" name="baseline"><pre>{{ scenario.baseline }}</pre></el-collapse-item>
           </el-collapse>
-          <h3>车辆属性筛选（空值表示不限）</h3>
+          </section>
+          <div class="section-heading selection-heading"><span class="section-number">02</span><div><h2 class="sandbox-section-heading">参与实验的数据</h2><p class="sandbox-caption">先确定参与范围，再通过编译预览检查最终集合与依赖关系。</p></div></div>
+          <div class="selection-grid">
+          <section class="selection-card sandbox-card">
+          <h3 class="filter-heading">车辆属性筛选（空值表示不限）</h3>
             <div class="filter-grid">
               <el-form-item label="载重下限（吨）"><el-input-number v-model="scenario.selection.vehicles.minimumLoadCapacityTonnes" :min="0" /></el-form-item>
               <el-form-item label="载重上限（吨）"><el-input-number v-model="scenario.selection.vehicles.maximumLoadCapacityTonnes" :min="0" /></el-form-item>
@@ -39,15 +49,26 @@
             <el-form-item label="车型"><el-select v-model="scenario.selection.vehicles.vehicleTypes" multiple filterable allow-create default-first-option><el-option v-for="v in vehicleTypes" :key="v" :value="v" :label="v" /></el-select></el-form-item>
             <el-form-item label="车身型号"><el-select v-model="scenario.selection.vehicles.modelTypes" multiple filterable allow-create default-first-option><el-option v-for="v in modelTypes" :key="v" :value="v" :label="v" /></el-select></el-form-item>
           <SandboxSelectionEditor :key="selectionEpoch + '-vehicles'" title="车辆" type="vehicles" :selection="scenario.selection.vehicles" :disabled="busy || !connected" @invalid="selectionErrors.vehicles = $event" />
+          </section>
+          <section class="selection-card sandbox-card">
+          <h3 class="filter-heading">POI筛选</h3>
             <el-form-item label="POI类型"><el-select v-model="scenario.selection.pois.poiTypes" multiple filterable allow-create default-first-option><el-option v-for="v in poiTypes" :key="v" :value="v" :label="v" /></el-select></el-form-item>
           <SandboxSelectionEditor :key="selectionEpoch + '-pois'" title="POI" type="pois" :selection="scenario.selection.pois" :disabled="busy || !connected" @invalid="selectionErrors.pois = $event" />
+          </section>
+          <section class="selection-card sandbox-card">
+          <h3 class="filter-heading">货物筛选</h3>
             <el-form-item label="货物类别"><el-select v-model="scenario.selection.goods.categories" multiple filterable allow-create default-first-option><el-option v-for="v in categories" :key="v" :value="v" :label="v" /></el-select></el-form-item>
           <SandboxSelectionEditor :key="selectionEpoch + '-goods'" title="货物" type="goods" :selection="scenario.selection.goods" :disabled="busy || !connected" @invalid="selectionErrors.goods = $event" />
+          </section>
+          <section class="selection-card sandbox-card">
           <SandboxSelectionEditor :key="selectionEpoch + '-chains'" title="完整加工链" type="processing-chains" :selection="scenario.selection.processingChains" :disabled="busy || !connected" @invalid="selectionErrors.chains = $event" />
-          <p>不自动补回加工链引用的货物和POI。通用场景可以保存为空加工链，但PRODUCTION运行必须包含至少一条有效ACTIVE链。</p>
+          </section>
+          </div>
+          <section class="form-section sandbox-card chain-reference">
+          <p class="rule-note">不自动补回加工链引用的货物和POI。通用场景可以保存为空加工链，但PRODUCTION运行必须包含至少一条有效ACTIVE链。</p>
           <el-collapse>
             <el-collapse-item title="加工链基线参考（输入ID、输出比例与模板POI）" name="chains">
-              <div v-for="chain in chains" :key="chain.id"><h4>{{ chain.id }} · {{ chain.chainName }} · {{ chain.status }}</h4>
+              <div v-for="chain in chains" :key="chain.id" class="chain-table"><h4>{{ chain.id }} · {{ chain.chainName }} · {{ chain.status }}</h4>
                 <el-table :data="chain.stages" size="small">
                   <el-table-column prop="id" label="加工段ID" /><el-table-column prop="stageName" label="名称" />
                   <el-table-column prop="processingPoiId" label="模板POI" /><el-table-column prop="outputWeightRatio" label="基线输出比例" />
@@ -56,8 +77,12 @@
               </div>
             </el-collapse-item>
           </el-collapse>
-          <h3>覆盖项（留空表示沿用基线）</h3>
-          <p>输出比例(0,1]、最多6位小数；同段输入占比合计为1。数量按正整数件。固定POI只允许已选仓库或配送中心。</p>
+          </section>
+          <section class="form-section sandbox-card">
+          <div class="section-heading"><span class="section-number">03</span><div><h3 class="sandbox-section-heading">覆盖项（留空表示沿用基线）</h3><p class="sandbox-caption">只修改本场景中的数据，不更改正式基线。</p></div></div>
+          <p class="rule-note">输出比例(0,1]、最多6位小数；同段输入占比合计为1。数量按正整数件。固定POI只允许已选仓库或配送中心。</p>
+          <div class="overrides-grid">
+          <section class="override-group">
           <h4>加工段输出比例</h4>
           <div v-for="(row, index) in scenario.overrides.stageOutputRatios" :key="index" class="override-row">
             <el-input-number v-model="row.stageId" :min="1" aria-label="加工段ID" />
@@ -65,6 +90,8 @@
             <el-button @click="removeOverride('stageOutputRatios', index)">删除</el-button>
           </div>
           <el-button @click="addOverride('stageOutputRatios')">添加输出比例覆盖</el-button>
+          </section>
+          <section class="override-group">
           <h4>加工输入占比</h4>
           <div v-for="(row, index) in scenario.overrides.processingInputShares" :key="index" class="override-row">
             <el-input-number v-model="row.inputId" :min="1" aria-label="加工输入ID" />
@@ -72,20 +99,28 @@
             <el-button @click="removeOverride('processingInputShares', index)">删除</el-button>
           </div>
           <el-button @click="addOverride('processingInputShares')">添加输入占比覆盖</el-button>
+          </section>
+          <section class="override-group">
           <h4>初始库存（POI / 货物 / 件数）</h4>
           <div v-for="(row, index) in scenario.overrides.initialInventories" :key="index" class="override-row">
             <el-input-number v-model="row.poiId" :min="1" aria-label="库存POI ID" /><el-input-number v-model="row.goodsId" :min="1" aria-label="库存货物ID" />
             <el-input-number v-model="row.quantity" :min="1" aria-label="库存件数" /><el-button @click="removeOverride('initialInventories', index)">删除</el-button>
           </div>
           <el-button @click="addOverride('initialInventories')">添加初始库存</el-button>
+          </section>
+          <section class="override-group">
           <h4>固定车辆初始POI（车辆 / POI）</h4>
           <div v-for="(row, index) in scenario.overrides.vehicleInitialPois" :key="index" class="override-row">
             <el-input-number v-model="row.vehicleId" :min="1" aria-label="固定车辆ID" /><el-input-number v-model="row.poiId" :min="1" aria-label="固定POI ID" />
-            <span>FIXED_POI</span><el-button @click="removeOverride('vehicleInitialPois', index)">删除</el-button>
+            <span class="policy-label">FIXED_POI</span><el-button @click="removeOverride('vehicleInitialPois', index)">删除</el-button>
           </div>
           <el-button @click="addOverride('vehicleInitialPois')">添加固定POI</el-button>
+          </section>
+          </div>
+          </section>
         </el-form>
-        <div v-if="scenario" class="actions">
+        <div v-if="scenario" class="actions sandbox-card">
+          <span class="toolbar-label">校验与发布</span>
           <el-button :disabled="!canEdit" @click="previewScenario">编译预览</el-button>
           <el-button :disabled="!canEdit || scenarioWriteLocked || !scenarioPreviewCurrent" @click="saveScenario">保存草稿</el-button>
           <el-button type="primary" :disabled="!canEdit || scenarioWriteLocked || !scenarioPublishable" @click="publishScenario">发布场景版本</el-button>
@@ -94,8 +129,8 @@
           <el-button :disabled="busy" @click="exportScenario">导出JSON</el-button>
           <el-button :disabled="busy || !connected" @click="openImport('scenario')">导入JSON</el-button>
         </div>
-        <p v-if="scenario">{{ scenarioSavedCurrent ? `已保存草稿，行版本${scenarioVersion}` : scenarioUsesPublished ? '已选用发布版本，未改动其内容' : '有未保存的本地修改或尚未保存' }}。重复发布相同数据定义复用Revision，名称/说明变化不生成数据版本。编辑已有Key请先加载其草稿；选用历史Revision不会获取可覆盖草稿的权限。</p>
-        <p v-if="scenarioWriteLocked">场景写操作已锁定，请先导出本地修改并重新加载服务端草稿。</p>
+        <p v-if="scenario" class="draft-status">{{ scenarioSavedCurrent ? `已保存草稿，行版本${scenarioVersion}` : scenarioUsesPublished ? '已选用发布版本，未改动其内容' : '有未保存的本地修改或尚未保存' }}。重复发布相同数据定义复用Revision，名称/说明变化不生成数据版本。编辑已有Key请先加载其草稿；选用历史Revision不会获取可覆盖草稿的权限。</p>
+        <p v-if="scenarioWriteLocked" class="locked-note">场景写操作已锁定，请先导出本地修改并重新加载服务端草稿。</p>
         <section v-if="scenarioPreviewCurrent && scenarioPreview" class="preview">
           <h3>编译通过 · 最终数据集合</h3><p>各表数量：{{ scenarioPreview.rowCounts }} · 固定车辆 {{ scenarioPreview.fixedVehicleCount }}</p>
           <p class="fingerprint">场景指纹：{{ scenarioPreview.scenarioDefinitionSha256 }}</p><p class="fingerprint">有效数据：{{ scenarioPreview.effectiveScenarioDataSha256 }}</p>
@@ -108,34 +143,45 @@
       </el-tab-pane>
 
       <el-tab-pane label="2. 运行规格与发布" name="run">
-        <div class="toolbar">
+        <div class="toolbar sandbox-card">
+          <span class="toolbar-label">读取运行规格</span>
           <el-input v-model="runLoadKey" placeholder="运行规格Key" :disabled="busy" /><el-button :disabled="!connected || busy" @click="loadRunDraft">加载v2草稿</el-button>
           <el-input-number v-model="runLoadRevision" :min="1" :disabled="busy" /><el-button :disabled="!connected || busy" @click="loadRunRevision">读取v2发布版本</el-button>
           <el-button :disabled="!connected || busy" @click="listFamilies('runs')">查看规格列表</el-button>
         </div>
-        <p v-if="!run">先发布或选用场景版本，再生成运行模板；也可以加载已存在的v2草稿。</p>
+        <p v-if="!run" class="empty-state sandbox-card">先发布或选用场景版本，再生成运行模板；也可以加载已存在的v2草稿。</p>
         <el-alert v-if="runBindingStale" title="场景配置已改变。已保留旧运行草稿，但其场景绑定已失效；请发布/选用场景版本后显式重新绑定，或重新加载已保存规格。" type="warning" :closable="false" />
         <el-button v-if="run && publishedScenario" :disabled="busy || !connected" @click="bindPublishedScenario">保留运行参数，绑定当前已选场景版本</el-button>
-        <el-form v-if="run" :disabled="busy || !connected" label-width="170px">
+        <el-form v-if="run" :disabled="busy || !connected" label-width="170px" class="configuration-form">
+          <section class="form-section sandbox-card">
+          <div class="section-heading"><span class="section-number">01</span><div><h2 class="sandbox-section-heading">运行标识与核心参数</h2><p class="sandbox-caption">绑定已发布场景，设置本次实验的种子、轮次与调度策略。</p></div></div>
+          <div class="metadata-grid">
           <el-form-item label="运行规格Key"><el-input v-model="run.runSpecKey" /></el-form-item>
           <el-form-item label="显示名称"><el-input v-model="run.displayName" /></el-form-item>
           <el-form-item label="说明"><el-input v-model="run.description" type="textarea" /></el-form-item>
+          </div>
+          <div class="run-parameters-grid">
           <el-form-item label="已绑定场景版本"><span>{{ run.scenario.scenarioKey }} / Revision {{ run.scenario.revision }}</span></el-form-item>
           <el-form-item label="顶层种子（整数文本）"><el-input v-model="run.random.rootSeed" placeholder="例如20260927；不要使用浮点数" /></el-form-item>
           <el-form-item label="固定仿真轮次"><el-input-number v-model="run.simulationClock.totalLoops" :min="1" :max="17520" /></el-form-item>
           <el-form-item label="调度策略"><el-select v-model="run.dispatch.strategy" @change="changeStrategy"><el-option label="原有VRP（ORIGINAL）" value="ORIGINAL" /><el-option label="现有启发式（HEURISTIC）" value="HEURISTIC" /></el-select></el-form-item>
           <el-form-item label="司机随机行为"><el-switch v-model="run.driverBehavior.enabled" /></el-form-item>
-          <h3>天气配置</h3>
+          </div>
+          </section>
+          <section class="form-section sandbox-card">
+          <div class="section-heading"><span class="section-number">02</span><div><h3 class="sandbox-section-heading">天气配置</h3><p class="sandbox-caption">沿用受控随机天气或明确指定时间线，保留每类天气的权重和速度系数。</p></div></div>
           <el-form-item label="天气来源"><el-select :model-value="run.weather.sourceMode" @change="changeWeather"><el-option value="SEEDED_GENERATION" label="顶层种子派生天气" /><el-option value="EXPLICIT_TIMELINE" label="明确指定时间线" /></el-select></el-form-item>
           <template v-if="run.weather.sourceMode === 'SEEDED_GENERATION'">
             <el-form-item label="天气间隔（分钟）"><el-input-number v-model="run.weather.intervalMinutes" :min="1" /></el-form-item>
-            <div v-for="(weather, index) in weatherTypes" :key="weather" class="override-row">
-              <span>{{ weather }}</span><label>权重 <el-input-number v-if="run.weather.weights" v-model="run.weather.weights[index]" :min="0" /></label>
+            <div class="weather-grid">
+            <div v-for="(weather, index) in weatherTypes" :key="weather" class="override-row weather-row">
+              <span class="weather-label">{{ weather }}</span><label>权重 <el-input-number v-if="run.weather.weights" v-model="run.weather.weights[index]" :min="0" /></label>
               <label>速度系数 <el-input-number v-if="run.weather.speedFactors" v-model="run.weather.speedFactors[weather]" :min="0.000001" :max="1" :step="0.1" /></label>
+            </div>
             </div>
           </template>
           <template v-else>
-            <p>从第0分钟起连续覆盖全时域（{{ run.simulationClock.totalLoops * 30 }}分钟）；改变轮次后需重新核对覆盖范围。</p>
+            <p class="rule-note">从第0分钟起连续覆盖全时域（{{ run.simulationClock.totalLoops * 30 }}分钟）；改变轮次后需重新核对覆盖范围。</p>
             <div v-for="(slice, index) in run.weather.timeSlices" :key="index" class="override-row">
               <el-input-number v-model="slice.startMinute" :min="0" aria-label="开始分钟" /><el-input-number v-model="slice.endMinute" :min="1" aria-label="结束分钟" />
               <el-select v-model="slice.weatherType"><el-option v-for="w in weatherTypes" :key="w" :label="w" :value="w" /></el-select>
@@ -143,32 +189,42 @@
             </div>
             <el-button @click="addWeatherSlice">添加时间段</el-button>
           </template>
-          <h3>自动交通事件</h3>
+          </section>
+          <section class="form-section sandbox-card">
+          <div class="section-heading"><span class="section-number">03</span><div><h3 class="sandbox-section-heading">自动交通事件</h3><p class="sandbox-caption">控制事件启用状态、发生概率及持续时间。</p></div></div>
+          <div class="run-parameters-grid">
           <el-form-item label="启用事件系统"><el-switch v-model="run.events.enabled" @change="eventEnabledChanged" /></el-form-item>
           <el-form-item label="启用自动事件"><el-switch v-model="run.events.autoEnabled" :disabled="!run.events.enabled" /></el-form-item>
-          <p>自动事件使用受控随机规则；不开启时不生成自动事件。本页面不提供手动触发事件。</p>
-          <div class="filter-grid" v-for="kind in eventTypes" :key="kind">
+          </div>
+          <p class="rule-note">自动事件使用受控随机规则；不开启时不生成自动事件。本页面不提供手动触发事件。</p>
+          <div class="events-grid">
+          <div class="filter-grid event-group" v-for="kind in eventTypes" :key="kind">
             <h4>{{ kind === 'congestion' ? '拥堵' : '故障' }}</h4>
             <el-form-item label="每小时发生概率"><el-input-number v-model="run.events[kind].hourlyProbability" :min="0" :max="1" :step="0.01" /></el-form-item>
             <el-form-item label="持续时间下限（分）"><el-input-number v-model="run.events[kind].minDurationMinutes" :min="1" /></el-form-item>
             <el-form-item label="持续时间上限（分）"><el-input-number v-model="run.events[kind].maxDurationMinutes" :min="1" /></el-form-item>
             <el-form-item label="速度系数"><el-input-number v-model="run.events[kind].speedFactor" :disabled="kind === 'breakdown'" :min="0" :max="1" :step="0.1" /></el-form-item>
           </div>
+          </div>
+          </section>
+          <section class="form-section sandbox-card protocol-section">
           <el-collapse>
             <el-collapse-item title="只读运行协议与策略参数" name="protocol">
               <p>起始时刻2026-01-01 00:00，每轮1800秒；PRODUCTION每6轮生成需求，调度每3轮。算法参数来自已登记配置，不开放GA/归一化内部参数。</p>
               <pre>{{ readonlyRunProtocol }}</pre>
             </el-collapse-item>
           </el-collapse>
+          </section>
         </el-form>
-        <div v-if="run" class="actions">
+        <div v-if="run" class="actions sandbox-card">
+          <span class="toolbar-label">校验与发布</span>
           <el-button :disabled="!canRunEdit" @click="previewRun">编译预览</el-button><el-button :disabled="!canRunEdit || runWriteLocked || !runPreviewCurrent" @click="saveRun">保存草稿</el-button>
           <el-button type="primary" :disabled="!canRunEdit || runWriteLocked || !runPublishable" @click="publishRun">发布运行规格</el-button>
           <el-button :disabled="busy || !runSavedDefinition" @click="restoreRunLocal">放弃本地修改</el-button>
           <el-button :disabled="busy" @click="exportRun">导出JSON</el-button><el-button :disabled="!canEdit" @click="openImport('run')">导入JSON</el-button>
         </div>
-        <p v-if="run">{{ runSavedCurrent ? `已保存草稿，行版本${runVersion}` : runUsesPublished ? '已选用发布版本，未改动其内容' : '有未保存的本地修改或尚未保存' }}。绑定发布场景，不读取当前工作库作为新配置的基础。</p>
-        <p v-if="runWriteLocked">运行规格写操作已锁定，请先导出本地修改并重新加载服务端草稿。</p>
+        <p v-if="run" class="draft-status">{{ runSavedCurrent ? `已保存草稿，行版本${runVersion}` : runUsesPublished ? '已选用发布版本，未改动其内容' : '有未保存的本地修改或尚未保存' }}。绑定发布场景，不读取当前工作库作为新配置的基础。</p>
+        <p v-if="runWriteLocked" class="locked-note">运行规格写操作已锁定，请先导出本地修改并重新加载服务端草稿。</p>
         <section v-if="runPreviewCurrent && runPreview" class="preview">
           <h3>编译通过</h3><p>初态车辆 {{ runPreview.vehicleInitialStates.length }}，候选初始POI {{ runPreview.eligibleVehicleInitialPoiCount }}，天气段 {{ runPreview.weatherTimeline.length }}</p>
           <p class="fingerprint">规格：{{ runPreview.runSpecificationSha256 }}</p><p class="fingerprint">车辆初态：{{ runPreview.resolvedVehicleInitialStateSha256 }}</p>
@@ -179,8 +235,8 @@
         <SandboxStartPanel :revision="publishedRun" :enabled="canStartPublished" />
       </el-tab-pane>
     </el-tabs>
-    <el-dialog v-model="importVisible" title="导入配置JSON（只修改本地草稿）" width="70%"><el-input v-model="importText" type="textarea" :rows="16" /><template #footer><el-button @click="importVisible = false">取消</el-button><el-button @click="applyImport">应用到本地</el-button></template></el-dialog>
-    <el-dialog v-model="familiesVisible" title="已保存配置族" width="70%"><el-table :data="families"><el-table-column prop="scenario_key" label="场景Key" /><el-table-column prop="run_spec_key" label="规格Key" /><el-table-column prop="display_name" label="名称" /><el-table-column prop="row_version" label="草稿行版本" /><el-table-column label="操作"><template #default="{row}"><el-button @click="pickFamily(row)">加载草稿</el-button></template></el-table-column></el-table><el-button :disabled="familiesOffset === 0 || busy" @click="listFamilies(familyKind, familiesOffset - 50)">上一页</el-button><el-button :disabled="!familiesMore || busy" @click="listFamilies(familyKind, familiesOffset + 50)">下一页</el-button></el-dialog>
+    <el-dialog v-model="importVisible" title="导入配置JSON（只修改本地草稿）" width="70%" class="sandbox-configuration-dialog"><div class="dialog-content"><p class="dialog-hint">导入内容先经过校验，仅应用到本地草稿，不直接启动实验。</p><el-input v-model="importText" type="textarea" :rows="16" class="json-editor" /></div><template #footer><el-button @click="importVisible = false">取消</el-button><el-button @click="applyImport">应用到本地</el-button></template></el-dialog>
+    <el-dialog v-model="familiesVisible" title="已保存配置族" width="70%" class="sandbox-configuration-dialog"><div class="dialog-content"><el-table :data="families"><el-table-column prop="scenario_key" label="场景Key" /><el-table-column prop="run_spec_key" label="规格Key" /><el-table-column prop="display_name" label="名称" /><el-table-column prop="row_version" label="草稿行版本" /><el-table-column label="操作"><template #default="{row}"><el-button @click="pickFamily(row)">加载草稿</el-button></template></el-table-column></el-table><div class="dialog-pagination"><el-button :disabled="familiesOffset === 0 || busy" @click="listFamilies(familyKind, familiesOffset - 50)">上一页</el-button><el-button :disabled="!familiesMore || busy" @click="listFamilies(familyKind, familiesOffset + 50)">下一页</el-button></div></div></el-dialog>
   </main>
 </template>
 
@@ -411,12 +467,86 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload))
 </script>
 
 <style scoped>
-.sandbox-page { max-width: 1250px; margin: 0 auto; padding: 24px; color: #303133; }
-header, .connection, .toolbar, .actions, .override-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-header { justify-content: space-between; } h1 { margin: 0; font-size: 25px; }
-.connection, .toolbar, .actions { margin: 18px 0; } .toolbar .el-input { width: 230px; }
-.notice { margin-top: 12px; } .filter-grid { display: grid; grid-template-columns: repeat(2, minmax(280px, 1fr)); gap: 8px; }
-.override-row { margin: 10px 0; } .preview { background: #f0f7f5; border: 1px solid #bcd9d0; border-radius: 8px; padding: 16px; margin-top: 16px; }
-pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 450px; overflow: auto; } .fingerprint { overflow-wrap: anywhere; font-family: monospace; }
-@media(max-width: 700px) { .sandbox-page { padding: 12px; } .filter-grid { grid-template-columns: 1fr; } }
+.sandbox-page { max-width: 1664px; margin: 0 auto; padding: 28px 32px 48px; color: #303133; }
+.page-header { display: flex; justify-content: space-between; align-items: center; gap: 24px; margin-bottom: 20px; }
+.page-eyebrow { display: block; margin-bottom: 4px; font-size: 12px; color: #606266; letter-spacing: 1px; }
+h1 { margin: 0 0 6px; font-size: 26px; font-weight: 600; line-height: 1.5; }
+.page-header p { font-size: 14px; }
+.header-link { flex-shrink: 0; font-size: 14px; text-decoration: none; padding: 10px 16px; background: #fff; border: 1px solid #dcdfe6; border-radius: 6px; }
+.header-link:hover { border-color: #a0cfff; background: #ecf5ff; }
+.connection, .toolbar, .actions, .override-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.connection { margin: 16px 0; padding: 16px 20px; font-size: 13px; }
+.connection-fact { overflow-wrap: anywhere; }
+.connection > .el-button { margin-left: auto; }
+.setup-help { padding: 0 4px 16px; font-size: 13px; }
+.configuration-tabs { margin-top: 22px; }
+.configuration-tabs :deep(.el-tabs__header) { margin-bottom: 20px; }
+.configuration-tabs :deep(.el-tabs__item) { height: 48px; font-size: 16px; font-weight: 600; }
+.configuration-tabs :deep(.el-tabs__nav-wrap::after) { height: 1px; background: #dcdfe6; }
+.configuration-tabs :deep(.el-tabs__active-bar) { height: 3px; }
+.toolbar, .actions { padding: 16px 20px; margin-bottom: 20px; }
+.toolbar-label { font-size: 14px; font-weight: 600; margin-right: 6px; color: #303133; }
+.toolbar .el-input { width: 230px; }
+.toolbar .el-input-number { width: 140px; }
+.toolbar .el-button + .el-button, .actions .el-button + .el-button, .override-row .el-button + .el-button { margin-left: 0; }
+.notice { margin-top: 12px; }
+.configuration-form { display: flex; flex-direction: column; gap: 20px; }
+.form-section { padding: 24px; }
+.section-heading { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 22px; }
+.section-number { display: inline-flex; justify-content: center; align-items: center; width: 32px; height: 32px; flex-shrink: 0; border-radius: 6px; background: #ecf5ff; color: #337ecc; font-size: 13px; font-weight: 600; }
+.section-heading p { margin-top: 4px; }
+.selection-heading { margin: 4px 0 -4px; padding: 0 4px; }
+.metadata-grid, .run-parameters-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 32px; }
+.metadata-grid > :last-child { grid-column: 1 / -1; }
+.run-parameters-grid { margin-top: 16px; }
+.configuration-form :deep(.el-form-item) { margin-bottom: 18px; }
+.configuration-form :deep(.el-form-item__label) { font-size: 13px; color: #606266; }
+.configuration-form :deep(.el-form-item__content) { min-width: 0; }
+.configuration-form :deep(.el-select) { width: 100%; }
+.configuration-form :deep(.el-input-number) { max-width: 100%; }
+.selection-grid, .overrides-grid, .events-grid, .weather-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.selection-card { padding: 20px; min-width: 0; }
+.filter-heading { margin: -20px -20px 20px; padding: 14px 20px; background: #fafafa; border-bottom: 1px solid #ebeef5; border-radius: 10px 10px 0 0; font-size: 15px; font-weight: 600; }
+.filter-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; }
+.selection-card .filter-grid :deep(.el-form-item) { display: block; }
+.selection-card .filter-grid :deep(.el-form-item__label) { float: none; display: block; width: auto !important; padding: 0 0 6px; height: auto; line-height: 1.5; text-align: left; }
+.selection-card .filter-grid :deep(.el-form-item__content) { margin-left: 0 !important; }
+.rule-note { padding: 12px 16px; margin-bottom: 18px; background: #fafafa; border: 1px solid #ebeef5; border-radius: 6px; font-size: 13px; line-height: 1.8; }
+.chain-table + .chain-table { margin-top: 20px; }
+.chain-table h4 { font-size: 14px; font-weight: 600; margin: 8px 0 12px; }
+.override-group, .event-group { min-width: 0; padding: 18px; background: #fafafa; border: 1px solid #ebeef5; border-radius: 8px; }
+.override-group h4, .event-group h4 { font-size: 14px; font-weight: 600; margin-bottom: 16px; }
+.override-row { margin: 12px 0; gap: 10px; }
+.override-row .el-input-number { width: 156px; }
+.override-row > .el-select { width: 180px; }
+.policy-label { padding: 3px 8px; border-radius: 4px; background: #ecf5ff; color: #337ecc; font-size: 12px; }
+.weather-grid { gap: 12px; }
+.weather-row { margin: 0; padding: 16px; border: 1px solid #ebeef5; border-radius: 8px; background: #fafafa; }
+.weather-label { min-width: 60px; font-size: 13px; font-weight: 600; }
+.weather-row label { display: flex; align-items: center; gap: 10px; font-size: 13px; color: #606266; }
+.event-group { grid-template-columns: 1fr; }
+.event-group :deep(.el-form-item:last-child) { margin-bottom: 0; }
+.protocol-section { padding-top: 8px; padding-bottom: 8px; }
+.configuration-form :deep(.el-collapse), .preview :deep(.el-collapse) { border-color: #ebeef5; }
+.configuration-form :deep(.el-collapse-item__header), .preview :deep(.el-collapse-item__header) { font-size: 13px; font-weight: 500; color: #606266; background: transparent; }
+.configuration-form :deep(.el-collapse-item__wrap), .preview :deep(.el-collapse-item__wrap) { background: transparent; }
+.actions { margin: 20px 0 12px; }
+.draft-status { font-size: 13px; line-height: 1.8; padding: 0 4px; }
+.locked-note { margin-top: 12px; padding: 12px 16px; color: #b45309; background: #fdf6ec; border: 1px solid #faecd8; border-radius: 6px; }
+.preview { background: #fff; border: 1px solid #c2e7b0; border-left: 4px solid #67c23a; border-radius: 8px; padding: 20px 24px; margin-top: 20px; }
+.preview h3 { font-size: 16px; font-weight: 600; margin-bottom: 12px; }
+.preview p { margin-bottom: 10px; font-size: 13px; }
+.empty-state { padding: 40px 24px; text-align: center; font-size: 14px; margin: 20px 0; }
+pre { padding: 16px; border: 1px solid #ebeef5; border-radius: 6px; background: #fafafa; font-size: 12px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 450px; overflow: auto; }
+.fingerprint { overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+.dialog-content { color: #303133; }
+.dialog-hint { margin-bottom: 16px; color: #606266; font-size: 13px; }
+.json-editor :deep(textarea) { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 13px; line-height: 1.7; }
+.dialog-pagination { display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px; }
+:global(.sandbox-configuration-dialog) { color-scheme: light; background: #fff; color: #303133; border-radius: 10px; max-width: 1120px; }
+:global(.sandbox-configuration-dialog .el-dialog__header) { margin-right: 0; padding: 20px 24px; border-bottom: 1px solid #ebeef5; background: #fafafa; border-radius: 10px 10px 0 0; }
+:global(.sandbox-configuration-dialog .el-dialog__body) { padding: 24px; }
+:global(.sandbox-configuration-dialog .el-dialog__footer) { padding: 16px 24px; border-top: 1px solid #ebeef5; }
+@media (max-width: 1200px) { .sandbox-page { padding: 24px; } .selection-grid, .events-grid, .weather-grid { grid-template-columns: 1fr; } }
+@media (max-width: 800px) { .sandbox-page { padding: 16px; } .page-header { align-items: flex-start; flex-direction: column; gap: 12px; } .metadata-grid, .run-parameters-grid, .overrides-grid, .filter-grid { grid-template-columns: 1fr; } .form-section { padding: 20px; } .connection > .el-button { margin-left: 0; } }
 </style>

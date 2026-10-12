@@ -42,8 +42,8 @@
             <div><span>循环序号</span><strong>{{ snapshot.loopIndex }}</strong></div>
             <div><span>快照版本</span><strong>{{ snapshot.snapshotRevision }}</strong></div>
             <div><span>仿真时间</span><strong>{{ formattedSimTime }}</strong></div>
-            <div><span>已处理任务</span><strong>{{ snapshot.processedAssignmentCount }}</strong></div>
-            <div><span>失败任务</span><strong>{{ snapshot.failedAssignmentCount }}</strong></div>
+            <div><span>本轮处理任务</span><strong>{{ snapshot.processedAssignmentCount }}</strong></div>
+            <div><span>本轮失败任务</span><strong>{{ snapshot.failedAssignmentCount }}</strong></div>
           </div>
           <div class="evaluation-thresholds">
             <span>低载阈值 {{ formatRatio(snapshot.thresholds.lowLoadRatioThreshold) }}</span>
@@ -184,7 +184,7 @@
 
               <div class="evaluation-metric-table">
                 <div class="evaluation-metric-row evaluation-metric-row--head">
-                  <span>指标</span><span>当前值</span><span>状态/说明</span>
+                  <span>指标</span><span>当前值</span><span>单位</span><span>状态/说明</span>
                 </div>
                 <div
                   v-for="metricId in activeMetricGroup.metricIds"
@@ -192,9 +192,10 @@
                   class="evaluation-metric-row"
                   :class="metricRowClass(metricById(metricId))"
                 >
-                  <span class="evaluation-metric-name">{{ metricById(metricId)?.displayName || metricId }}</span>
-                  <strong class="evaluation-metric-value">{{ formatMetric(metricById(metricId)) }}</strong>
-                  <div class="evaluation-metric-state">
+                  <span class="evaluation-metric-name" data-label="指标">{{ metricById(metricId)?.displayName || metricId }}</span>
+                  <strong class="evaluation-metric-value" data-label="当前值">{{ formatMetricValueOnly(metricById(metricId)) }}</strong>
+                  <span class="evaluation-metric-unit" data-label="单位">{{ metricUnitText(metricById(metricId)) }}</span>
+                  <div class="evaluation-metric-state" data-label="状态/说明">
                     <span
                       class="evaluation-metric-status-pill"
                       :class="metricStatusClass(metricById(metricId))"
@@ -225,19 +226,22 @@
               <p>汇总全部 70 项后端指标状态；缺失和不支持项不会被前端补成 0。</p>
             </div>
           </div>
-          <div class="evaluation-deferred-grid">
-            <div v-for="summary in deferredSummaries" :key="summary.key" class="evaluation-deferred-card">
-              <span>{{ summary.title }}</span>
-              <strong>{{ summary.available }}/{{ summary.total }} 项可用</strong>
-              <div class="evaluation-deferred-counts">
-                <span v-if="summary.pending">{{ summary.pending }} 项暂不可用</span>
-                <span v-if="summary.unsupported">{{ summary.unsupported }} 项不支持</span>
-                <span v-if="summary.notApplicable">{{ summary.notApplicable }} 项不适用</span>
-                <span v-if="summary.invalid">{{ summary.invalid }} 项无效</span>
+          <details class="evaluation-contract-details">
+            <summary>查看四类指标的数据可用性汇总</summary>
+            <div class="evaluation-deferred-grid">
+              <div v-for="summary in deferredSummaries" :key="summary.key" class="evaluation-deferred-card">
+                <span>{{ summary.title }}</span>
+                <strong>{{ summary.available }}/{{ summary.total }} 项可用</strong>
+                <div class="evaluation-deferred-counts">
+                  <span v-if="summary.pending">{{ summary.pending }} 项暂不可用</span>
+                  <span v-if="summary.unsupported">{{ summary.unsupported }} 项不支持</span>
+                  <span v-if="summary.notApplicable">{{ summary.notApplicable }} 项不适用</span>
+                  <span v-if="summary.invalid">{{ summary.invalid }} 项无效</span>
+                </div>
+                <small :title="summary.reason">{{ summary.reason }}</small>
               </div>
-              <small :title="summary.reason">{{ summary.reason }}</small>
             </div>
-          </div>
+          </details>
         </section>
 
         <footer class="evaluation-footer">
@@ -299,56 +303,19 @@
           </div>
 
           <div class="evaluation-history-grid">
-            <div>
-              <h4>快照历史</h4>
-              <div class="evaluation-compact-table">
-                <div class="evaluation-compact-row evaluation-compact-row--head">
-                  <span>Loop</span><span>Revision</span><span>仿真时间</span><span>状态</span>
-                </div>
-                <div v-for="item in displayedHistorySnapshots" :key="item.snapshotRevision" class="evaluation-compact-row">
-                  <span>{{ item.loopIndex }}</span>
-                  <span>{{ item.snapshotRevision }}</span>
-                  <span>{{ formatSimTime(item.simTime) }}</span>
-                  <span>{{ snapshotStatusLabel(item.snapshotStatus) }}</span>
-                </div>
-              </div>
-            </div>
             <div class="evaluation-trend-column">
-              <h4>指标趋势</h4>
-              <div v-if="trendChartFiniteValues.length" class="evaluation-trend-chart-wrap">
-                <div class="evaluation-trend-chart-title">
-                  <div>
-                    <span>{{ selectedTrendMetricDisplayName }}</span>
-                    <strong>{{ latestTrendMetricText }}</strong>
-                  </div>
-                  <small>最近 {{ trendChartSamples.length }} 个历史快照</small>
+              <div class="evaluation-analysis-heading">
+                <div>
+                  <h4>指标趋势</h4>
+                  <p>{{ selectedTrendMetricDisplayName }} · {{ latestTrendMetricText }}</p>
                 </div>
-                <svg
-                  class="evaluation-trend-chart"
-                  viewBox="0 0 720 220"
-                  role="img"
-                  :aria-label="`${selectedTrendMetricDisplayName}历史趋势`"
-                >
-                  <line v-for="line in trendGridLines" :key="line.y" x1="58" :y1="line.y" x2="700" :y2="line.y" class="evaluation-trend-grid" />
-                  <text v-for="line in trendGridLines" :key="`label-${line.y}`" x="48" :y="line.y + 4" text-anchor="end" class="evaluation-trend-axis-label">{{ line.label }}</text>
-                  <polyline
-                    v-for="(segment, index) in trendChartSegments"
-                    :key="index"
-                    :points="segment"
-                    class="evaluation-trend-line"
-                  />
-                  <circle
-                    v-if="trendChartLastPoint"
-                    :cx="trendChartLastPoint.x"
-                    :cy="trendChartLastPoint.y"
-                    r="5"
-                    class="evaluation-trend-last-point"
-                  />
-                  <text x="58" y="214" class="evaluation-trend-axis-label">{{ trendStartLoopLabel }}</text>
-                  <text x="700" y="214" text-anchor="end" class="evaluation-trend-axis-label">{{ trendEndLoopLabel }}</text>
-                </svg>
+                <span>{{ trend?.points.length || 0 }} 个历史快照</span>
               </div>
-              <div v-else class="evaluation-history-empty evaluation-trend-empty">所选指标暂无可绘制的可用值。</div>
+              <EvaluationTrendChart
+                :trend="trend"
+                :metric-id="selectedTrendMetricId"
+                :loading="historyLoading"
+              />
 
               <details class="evaluation-raw-trend-details">
                 <summary>查看原始趋势数据（{{ displayedTrendPoints.length }}）</summary>
@@ -365,6 +332,21 @@
                 </div>
               </details>
             </div>
+
+            <details class="evaluation-snapshot-details">
+              <summary>查看快照历史（最近 {{ displayedHistorySnapshots.length }} 条）</summary>
+              <div class="evaluation-compact-table">
+                <div class="evaluation-compact-row evaluation-compact-row--head">
+                  <span>Loop</span><span>Revision</span><span>仿真时间</span><span>状态</span>
+                </div>
+                <div v-for="item in displayedHistorySnapshots" :key="item.snapshotRevision" class="evaluation-compact-row">
+                  <span>{{ item.loopIndex }}</span>
+                  <span>{{ item.snapshotRevision }}</span>
+                  <span>{{ formatSimTime(item.simTime) }}</span>
+                  <span>{{ snapshotStatusLabel(item.snapshotStatus) }}</span>
+                </div>
+              </div>
+            </details>
           </div>
 
           <div class="evaluation-comparison-controls">
@@ -393,23 +375,41 @@
             >比较最终快照</ElButton>
           </div>
 
+          <section v-if="comparison" class="evaluation-comparison-analysis">
+            <div class="evaluation-comparison-analysis-head">
+              <div>
+                <h4>单指标最终快照对比</h4>
+                <p>仅比较同一契约版本下两次运行的最终revision。</p>
+              </div>
+              <label>
+                <span>对比指标</span>
+                <select v-model="selectedComparisonMetricId">
+                  <option
+                    v-for="metric in displayedComparisonMetrics"
+                    :key="`comparison-chart-${metric.metricId}`"
+                    :value="metric.metricId"
+                  >
+                    {{ metric.displayName }}（{{ metric.metricId }}）
+                  </option>
+                </select>
+              </label>
+            </div>
+            <EvaluationRunComparisonChart
+              :comparison="comparison"
+              :metric-id="selectedComparisonMetricId"
+            />
+          </section>
+
           <div v-if="comparison" class="evaluation-comparison-table">
             <div class="evaluation-comparison-row evaluation-comparison-row--head">
-              <span>指标</span><span>左侧最终值</span><span>右侧最终值</span><span>差值（右−左）</span>
+              <span>指标</span><span>左侧最终值</span><span>右侧最终值</span><span>差值（右−左）</span><span>相对变化</span>
             </div>
             <div v-for="metric in displayedComparisonMetrics" :key="metric.metricId" class="evaluation-comparison-row">
               <span>{{ metric.displayName }}</span>
               <span>{{ formatComparisonMetric(metric.leftValue, metric.leftStatus, metric.unit) }}</span>
               <span>{{ formatComparisonMetric(metric.rightValue, metric.rightStatus, metric.unit) }}</span>
-              <div class="evaluation-comparison-delta">
-                <span>{{ formatComparisonDelta(metric.rightMinusLeft, metric.unit) }}</span>
-                <div v-if="metric.relativeChangeRatio !== null" class="evaluation-comparison-bar" aria-hidden="true">
-                  <i
-                    :class="comparisonBarClass(metric)"
-                    :style="{ width: comparisonBarWidth(metric) }"
-                  ></i>
-                </div>
-              </div>
+              <span>{{ formatComparisonDelta(metric.rightMinusLeft, metric.unit) }}</span>
+              <span>{{ formatComparisonRelative(metric.relativeChangeRatio) }}</span>
             </div>
           </div>
         </template>
@@ -421,6 +421,8 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { ElButton } from 'element-plus';
+import EvaluationRunComparisonChart from './EvaluationRunComparisonChart.vue';
+import EvaluationTrendChart from './EvaluationTrendChart.vue';
 import {
   downloadEvaluationHistory,
   fetchEvaluationHistory,
@@ -432,7 +434,6 @@ import {
 } from '../api/evaluationApi';
 import { shouldAcceptEvaluationSnapshot } from '../utils/evaluationSnapshotPolicy';
 import type {
-  EvaluationMetricComparison,
   EvaluationMetricValue,
   EvaluationMetricValueStatus,
   EvaluationRunComparison,
@@ -471,6 +472,7 @@ const trend = ref<EvaluationTrend | null>(null);
 const comparison = ref<EvaluationRunComparison | null>(null);
 const selectedHistoryRunId = ref('');
 const selectedTrendMetricId = ref('emptyMileageRatio');
+const selectedComparisonMetricId = ref('emptyMileageRatio');
 const leftRunId = ref('');
 const rightRunId = ref('');
 const historyLoading = ref(false);
@@ -718,70 +720,6 @@ const displayedTrendPoints = computed(() =>
   (trend.value?.points || []).slice(-50).reverse()
 );
 
-/** 展示层趋势图只投影后端返回的历史点；缺失值用于断开折线，不补零、不插值。 */
-const trendChartSamples = computed(() =>
-  (trend.value?.points || []).slice(-50).map(point => {
-    const metric = point.metrics[selectedTrendMetricId.value] || null;
-    const value = metric?.status === 'AVAILABLE'
-      && metric.value !== null
-      && Number.isFinite(metric.value)
-      ? metric.value
-      : null;
-    return { loopIndex: point.loopIndex, metric, value };
-  })
-);
-
-const trendChartFiniteValues = computed(() =>
-  trendChartSamples.value
-    .map(sample => sample.value)
-    .filter((value): value is number => value !== null)
-);
-
-const trendChartBounds = computed(() => {
-  if (!trendChartFiniteValues.value.length) return { min: 0, max: 0 };
-  return {
-    min: Math.min(...trendChartFiniteValues.value),
-    max: Math.max(...trendChartFiniteValues.value)
-  };
-});
-
-function trendChartCoordinate(index: number, value: number): { x: number; y: number } {
-  const left = 58;
-  const right = 700;
-  const top = 28;
-  const bottom = 190;
-  const x = trendChartSamples.value.length <= 1
-    ? (left + right) / 2
-    : left + index * (right - left) / (trendChartSamples.value.length - 1);
-  const { min, max } = trendChartBounds.value;
-  const y = max === min ? (top + bottom) / 2 : bottom - (value - min) * (bottom - top) / (max - min);
-  return { x, y };
-}
-
-const trendChartSegments = computed(() => {
-  const segments: string[] = [];
-  let current: string[] = [];
-  trendChartSamples.value.forEach((sample, index) => {
-    if (sample.value === null) {
-      if (current.length > 1) segments.push(current.join(' '));
-      current = [];
-      return;
-    }
-    const point = trendChartCoordinate(index, sample.value);
-    current.push(`${point.x.toFixed(2)},${point.y.toFixed(2)}`);
-  });
-  if (current.length > 1) segments.push(current.join(' '));
-  return segments;
-});
-
-const trendChartLastPoint = computed(() => {
-  for (let index = trendChartSamples.value.length - 1; index >= 0; index -= 1) {
-    const sample = trendChartSamples.value[index];
-    if (sample.value !== null) return trendChartCoordinate(index, sample.value);
-  }
-  return null;
-});
-
 const selectedTrendMetricDefinition = computed(() =>
   historyMetricOptions.value.find(metric => metric.metricId === selectedTrendMetricId.value) || null
 );
@@ -791,37 +729,13 @@ const selectedTrendMetricDisplayName = computed(() =>
 );
 
 const latestTrendMetricText = computed(() => {
-  for (let index = trendChartSamples.value.length - 1; index >= 0; index -= 1) {
-    const metric = trendChartSamples.value[index].metric;
+  const points = trend.value?.points || [];
+  for (let index = points.length - 1; index >= 0; index -= 1) {
+    const metric = points[index].metrics[selectedTrendMetricId.value] || null;
     if (metric?.status === 'AVAILABLE' && metric.value !== null) return formatMetric(metric);
   }
   return '--';
 });
-
-const trendGridLines = computed(() => {
-  const { min, max } = trendChartBounds.value;
-  const middle = min + (max - min) / 2;
-  return [
-    { y: 28, label: formatTrendAxisValue(max) },
-    { y: 109, label: formatTrendAxisValue(middle) },
-    { y: 190, label: formatTrendAxisValue(min) }
-  ];
-});
-
-const trendStartLoopLabel = computed(() =>
-  trendChartSamples.value.length ? `Loop ${trendChartSamples.value[0].loopIndex}` : '--'
-);
-const trendEndLoopLabel = computed(() =>
-  trendChartSamples.value.length
-    ? `Loop ${trendChartSamples.value[trendChartSamples.value.length - 1].loopIndex}`
-    : '--'
-);
-
-function formatTrendAxisValue(value: number): string {
-  const unit = selectedTrendMetricDefinition.value?.unit;
-  if (unit === 'ratio') return `${formatPlainNumber(value * 100, 1)}%`;
-  return formatPlainNumber(value, 2);
-}
 
 async function refreshHistory(): Promise<void> {
   historyLoading.value = true;
@@ -904,6 +818,10 @@ async function loadComparison(): Promise<void> {
   historyError.value = '';
   try {
     comparison.value = await fetchEvaluationRunComparison(leftRunId.value, rightRunId.value);
+    const metricIds = new Set(displayedComparisonMetrics.value.map(metric => metric.metricId));
+    if (!metricIds.has(selectedComparisonMetricId.value)) {
+      selectedComparisonMetricId.value = displayedComparisonMetrics.value[0]?.metricId || '';
+    }
   } catch (error: unknown) {
     comparison.value = null;
     historyError.value = readErrorMessage(error);
@@ -984,15 +902,6 @@ function metricById(metricId: string): EvaluationMetricValue | null {
   return snapshot.value?.metrics?.[metricId] || null;
 }
 
-/** Phase 9A-3：只对明确可用且不满足的服务约束着色；N/A/INVALID 继续使用状态样式。 */
-function isViolatedServiceConstraint(metricId: string): boolean {
-  const metric = metricById(metricId);
-  return metricId === 'waitingServiceCompliant'
-    && metric?.status === 'AVAILABLE'
-    && metric.value !== null
-    && metric.value < 0.5;
-}
-
 function formatMetric(metric: EvaluationMetricValue | null): string {
   if (!metric || metric.status !== 'AVAILABLE' || metric.value === null) {
     return '--';
@@ -1005,6 +914,21 @@ function formatMetric(metric: EvaluationMetricValue | null): string {
   }
   const digits = ['vehicle', 'task', 'road', 'event'].includes(metric.unit) ? 0 : 2;
   return `${formatPlainNumber(metric.value, digits)} ${metric.unit}`;
+}
+
+function formatMetricValueOnly(metric: EvaluationMetricValue | null): string {
+  if (!metric || metric.status !== 'AVAILABLE' || metric.value === null) return '--';
+  if (metric.unit === 'ratio') return formatPlainNumber(metric.value * 100, 2);
+  if (metric.unit === 'boolean') return metric.value >= 0.5 ? '满足' : '不满足';
+  const digits = ['vehicle', 'task', 'road', 'event'].includes(metric.unit) ? 0 : 2;
+  return formatPlainNumber(metric.value, digits);
+}
+
+function metricUnitText(metric: EvaluationMetricValue | null): string {
+  if (!metric) return '--';
+  if (metric.unit === 'ratio') return '%';
+  if (metric.unit === 'boolean') return '状态';
+  return metric.unit;
 }
 
 function formatRatio(value: number): string {
@@ -1038,17 +962,10 @@ function formatComparisonDelta(delta: number | null, unit: string): string {
   return `${prefix}${formatPlainNumber(delta, 2)} ${unit}`;
 }
 
-/** 对比条仅表达相对变化的方向和幅度，不把正负变化解释成业务好坏。 */
-function comparisonBarWidth(metric: EvaluationMetricComparison): string {
-  if (metric.relativeChangeRatio === null || !Number.isFinite(metric.relativeChangeRatio)) return '0%';
-  const magnitude = Math.min(100, Math.abs(metric.relativeChangeRatio) * 100);
-  return `${magnitude > 0 ? Math.max(4, magnitude) : 0}%`;
-}
-
-function comparisonBarClass(metric: EvaluationMetricComparison): string {
-  const delta = metric.rightMinusLeft;
-  if (delta === null || delta === 0) return 'is-neutral';
-  return delta > 0 ? 'is-positive' : 'is-negative';
+function formatComparisonRelative(relativeChangeRatio: number | null): string {
+  if (relativeChangeRatio === null || !Number.isFinite(relativeChangeRatio)) return '--';
+  const prefix = relativeChangeRatio > 0 ? '+' : '';
+  return `${prefix}${formatPlainNumber(relativeChangeRatio * 100, 2)}%`;
 }
 
 function metricStatusLabel(status: EvaluationMetricValueStatus): string {
@@ -1206,9 +1123,7 @@ function readErrorMessage(error: unknown): string {
   inset: 60px 0 0;
   z-index: 3200;
   overflow: hidden;
-  background:
-    radial-gradient(circle at 12% 5%, rgba(64, 158, 255, 0.12), transparent 28%),
-    #f4f7fb;
+  background: #f4f7fb;
   color: #263445;
 }
 
@@ -1286,8 +1201,7 @@ function readErrorMessage(error: unknown): string {
   margin-top: 18px;
   border: 1px solid #e0e8f2;
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.96);
-  box-shadow: 0 8px 28px rgba(45, 68, 95, 0.06);
+  background: #fff;
 }
 
 .evaluation-alert { padding: 12px 16px; }
@@ -1450,9 +1364,7 @@ function readErrorMessage(error: unknown): string {
   position: relative;
   overflow: hidden;
   padding: 17px 17px 14px;
-  background:
-    linear-gradient(145deg, rgba(64, 158, 255, 0.08), transparent 56%),
-    #fbfcfe;
+  background: #fbfcfe;
 }
 
 .evaluation-objective-card::before {
@@ -1461,7 +1373,7 @@ function readErrorMessage(error: unknown): string {
   right: 0;
   left: 0;
   height: 3px;
-  background: linear-gradient(90deg, #409eff, #60c7dd);
+  background: #409eff;
   content: '';
 }
 
@@ -1693,15 +1605,6 @@ function readErrorMessage(error: unknown): string {
 
 .evaluation-domain-statuses .is-invalid { background: #fff0f0; color: #bd4545; }
 
-/* Phase 9A-3：业务约束不满足使用警示色，与 INVALID 的评价事实错误保持视觉区分。 */
-.evaluation-objective-card--violated {
-  border-color: #edc679;
-  background: #fff9ec;
-  box-shadow: inset 0 3px 0 #d9a441;
-}
-
-.evaluation-objective-card--violated strong { color: #a26709; }
-
 .evaluation-objective-card strong,
 .evaluation-deferred-card strong {
   display: block;
@@ -1710,7 +1613,6 @@ function readErrorMessage(error: unknown): string {
   font-size: 24px;
 }
 
-.evaluation-card-state,
 .evaluation-deferred-card small {
   display: block;
   overflow: hidden;
@@ -1730,7 +1632,7 @@ function readErrorMessage(error: unknown): string {
 
 .evaluation-metric-row {
   display: grid;
-  grid-template-columns: minmax(180px, 1.2fr) minmax(130px, 0.7fr) minmax(240px, 2fr);
+  grid-template-columns: minmax(190px, 1.25fr) minmax(105px, 0.65fr) minmax(90px, 0.45fr) minmax(240px, 1.7fr);
   align-items: center;
   gap: 16px;
   min-height: 42px;
@@ -1757,6 +1659,7 @@ function readErrorMessage(error: unknown): string {
 
 .evaluation-metric-name { color: #34465a; }
 .evaluation-metric-value { color: #1f3652; font-variant-numeric: tabular-nums; }
+.evaluation-metric-unit { color: #718096; font-size: 12px; }
 .evaluation-metric-state { min-width: 0; }
 
 .evaluation-metric-status-pill {
@@ -1809,6 +1712,8 @@ function readErrorMessage(error: unknown): string {
 }
 
 .evaluation-deferred-grid { grid-template-columns: minmax(0, 1fr); }
+.evaluation-contract-details { margin-top: 14px; color: #64748b; font-size: 12px; }
+.evaluation-contract-details > summary { width: fit-content; cursor: pointer; font-weight: 600; user-select: none; }
 .evaluation-deferred-card strong { font-size: 19px; }
 .evaluation-deferred-counts { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 8px; }
 .evaluation-deferred-counts span {
@@ -1871,7 +1776,7 @@ function readErrorMessage(error: unknown): string {
 
 .evaluation-history-grid {
   display: grid;
-  grid-template-columns: minmax(300px, 0.8fr) minmax(460px, 1.2fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
   margin-top: 18px;
 }
@@ -1900,7 +1805,7 @@ function readErrorMessage(error: unknown): string {
 }
 
 .evaluation-comparison-row {
-  grid-template-columns: minmax(180px, 1.3fr) repeat(3, minmax(130px, 1fr));
+  grid-template-columns: minmax(180px, 1.3fr) repeat(4, minmax(120px, 1fr));
 }
 
 .evaluation-compact-row:first-child,
@@ -1921,79 +1826,20 @@ function readErrorMessage(error: unknown): string {
 
 .evaluation-trend-column { min-width: 0; }
 
-.evaluation-trend-chart-wrap {
-  overflow: hidden;
-  padding: 14px 14px 8px;
-  border: 1px solid #e2eaf2;
-  border-radius: 10px;
-  background:
-    linear-gradient(180deg, rgba(64, 158, 255, 0.07), rgba(255, 255, 255, 0)),
-    #fbfdff;
-}
-
-.evaluation-trend-chart-title {
+.evaluation-analysis-heading,
+.evaluation-comparison-analysis-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 6px;
+  margin-bottom: 10px;
 }
 
-.evaluation-trend-chart-title span,
-.evaluation-trend-chart-title small {
-  display: block;
-  color: #7b8999;
-  font-size: 11px;
-}
-
-.evaluation-trend-chart-title strong {
-  display: block;
-  margin-top: 3px;
-  color: #245e93;
-  font-size: 20px;
-  font-variant-numeric: tabular-nums;
-}
-
-.evaluation-trend-chart {
-  display: block;
-  width: 100%;
-  height: 220px;
-}
-
-.evaluation-trend-grid {
-  stroke: #dde7f1;
-  stroke-dasharray: 4 5;
-  stroke-width: 1;
-}
-
-.evaluation-trend-axis-label {
-  fill: #8795a5;
-  font-size: 10px;
-}
-
-.evaluation-trend-line {
-  fill: none;
-  stroke: #409eff;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 3;
-}
-
-.evaluation-trend-last-point {
-  fill: #fff;
-  stroke: #409eff;
-  stroke-width: 3;
-}
-
-.evaluation-trend-empty {
-  display: grid;
-  min-height: 260px;
-  margin-top: 0;
-  place-items: center;
-  border: 1px dashed #dce5ee;
-  border-radius: 10px;
-  background: #fafcfe;
-}
+.evaluation-analysis-heading h4,
+.evaluation-comparison-analysis-head h4 { margin: 0; }
+.evaluation-analysis-heading p,
+.evaluation-comparison-analysis-head p { margin: 4px 0 0; color: #718096; font-size: 12px; }
+.evaluation-analysis-heading > span { color: #718096; font-size: 11px; }
 
 .evaluation-raw-trend-details {
   margin-top: 10px;
@@ -2010,31 +1856,34 @@ function readErrorMessage(error: unknown): string {
 
 .evaluation-raw-trend-details .evaluation-compact-table { margin-top: 9px; }
 
-.evaluation-comparison-delta {
+.evaluation-snapshot-details { color: #64748b; font-size: 12px; }
+.evaluation-snapshot-details > summary { width: fit-content; cursor: pointer; font-weight: 600; user-select: none; }
+.evaluation-snapshot-details .evaluation-compact-table { margin-top: 9px; }
+
+.evaluation-comparison-analysis {
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid #e3eaf2;
+  border-radius: 10px;
+  background: #fbfcfe;
+}
+
+.evaluation-comparison-analysis-head label {
   display: grid;
-  align-content: center;
   gap: 5px;
-  min-width: 0;
+  min-width: min(340px, 45vw);
+  color: #64748b;
+  font-size: 11px;
 }
 
-.evaluation-comparison-bar {
-  overflow: hidden;
-  width: 100%;
-  height: 4px;
-  border-radius: 999px;
-  background: #edf1f5;
+.evaluation-comparison-analysis-head select {
+  min-height: 34px;
+  padding: 6px 9px;
+  border: 1px solid #d9e2ec;
+  border-radius: 7px;
+  background: #fff;
+  color: #334155;
 }
-
-.evaluation-comparison-bar i {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: #7f8ea1;
-}
-
-.evaluation-comparison-bar i.is-positive { background: #409eff; }
-.evaluation-comparison-bar i.is-negative { background: #62b88a; }
-.evaluation-comparison-bar i.is-neutral { background: #a7b2bf; }
 
 .evaluation-empty-state {
   padding: 70px 20px;
@@ -2071,8 +1920,19 @@ function readErrorMessage(error: unknown): string {
   .evaluation-domain-statuses { justify-content: flex-start; }
   .evaluation-metric-row { grid-template-columns: 1fr; gap: 7px; padding: 12px; }
   .evaluation-metric-row--head { display: none; }
+  .evaluation-metric-row > [data-label]::before {
+    display: block;
+    margin-bottom: 3px;
+    color: #8994a3;
+    content: attr(data-label);
+    font-size: 10px;
+    font-weight: 400;
+  }
   .evaluation-metric-value { font-size: 16px; }
-  .evaluation-compact-row,
-  .evaluation-comparison-row { min-width: 620px; }
+  .evaluation-compact-row { min-width: 620px; }
+  .evaluation-comparison-row { min-width: 760px; }
+  .evaluation-analysis-heading,
+  .evaluation-comparison-analysis-head { flex-direction: column; }
+  .evaluation-comparison-analysis-head label { width: 100%; min-width: 0; }
 }
 </style>
