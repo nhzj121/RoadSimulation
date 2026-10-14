@@ -182,39 +182,53 @@
                 </div>
               </header>
 
-              <div class="evaluation-metric-table">
-                <div class="evaluation-metric-row evaluation-metric-row--head">
-                  <span>指标</span><span>当前值</span><span>单位</span><span>状态/说明</span>
-                </div>
-                <div
-                  v-for="metricId in activeMetricGroup.metricIds"
-                  :key="metricId"
-                  class="evaluation-metric-row"
-                  :class="metricRowClass(metricById(metricId))"
-                >
-                  <span class="evaluation-metric-name" data-label="指标">{{ metricById(metricId)?.displayName || metricId }}</span>
-                  <strong class="evaluation-metric-value" data-label="当前值">{{ formatMetricValueOnly(metricById(metricId)) }}</strong>
-                  <span class="evaluation-metric-unit" data-label="单位">{{ metricUnitText(metricById(metricId)) }}</span>
-                  <div class="evaluation-metric-state" data-label="状态/说明">
-                    <span
-                      class="evaluation-metric-status-pill"
-                      :class="metricStatusClass(metricById(metricId))"
-                    >
-                      {{ metricStatusText(metricById(metricId)) }}
-                    </span>
-                    <details
-                      v-if="hasLongMetricReason(metricById(metricId))"
-                      class="evaluation-metric-reason-details"
-                    >
-                      <summary>查看说明</summary>
-                      <small>{{ metricById(metricId)?.reason }}</small>
-                    </details>
-                    <small v-else-if="metricById(metricId)?.reason" class="evaluation-metric-reason">
-                      {{ metricById(metricId)?.reason }}
-                    </small>
+              <!-- 对象可视化仅接收已接受的评价快照；外部环境及历史区域保持现状。 -->
+              <EvaluationDomainMetrics
+                v-if="activeMetricGroup.key !== 'environment'"
+                :key="activeMetricGroup.key"
+                :snapshot="snapshot"
+                :group-key="activeMetricGroup.key"
+              />
+              <component
+                :is="activeMetricGroup.key === 'environment' ? 'div' : 'details'"
+                :key="`metric-details-${activeMetricGroup.key}`"
+                class="evaluation-domain-details"
+              >
+                <summary v-if="activeMetricGroup.key !== 'environment'">完整指标明细（{{ activeMetricGroup.metricIds.length }} 项）</summary>
+                <div class="evaluation-metric-table">
+                  <div class="evaluation-metric-row evaluation-metric-row--head">
+                    <span>指标</span><span>当前值</span><span>单位</span><span>状态/说明</span>
+                  </div>
+                  <div
+                    v-for="metricId in activeMetricGroup.metricIds"
+                    :key="metricId"
+                    class="evaluation-metric-row"
+                    :class="metricRowClass(metricById(metricId))"
+                  >
+                    <span class="evaluation-metric-name" data-label="指标">{{ metricById(metricId)?.displayName || metricId }}</span>
+                    <strong class="evaluation-metric-value" data-label="当前值">{{ formatMetricValueOnly(metricById(metricId)) }}</strong>
+                    <span class="evaluation-metric-unit" data-label="单位">{{ metricUnitText(metricById(metricId)) }}</span>
+                    <div class="evaluation-metric-state" data-label="状态/说明">
+                      <span
+                        class="evaluation-metric-status-pill"
+                        :class="metricStatusClass(metricById(metricId))"
+                      >
+                        {{ metricStatusText(metricById(metricId)) }}
+                      </span>
+                      <details
+                        v-if="hasLongMetricReason(metricById(metricId))"
+                        class="evaluation-metric-reason-details"
+                      >
+                        <summary>查看说明</summary>
+                        <small>{{ metricById(metricId)?.reason }}</small>
+                      </details>
+                      <small v-else-if="metricById(metricId)?.reason" class="evaluation-metric-reason">
+                        {{ metricById(metricId)?.reason }}
+                      </small>
+                    </div>
                   </div>
                 </div>
-              </div>
+              </component>
             </div>
           </div>
         </section>
@@ -421,6 +435,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { ElButton } from 'element-plus';
+import EvaluationDomainMetrics from './EvaluationDomainMetrics.vue';
 import EvaluationRunComparisonChart from './EvaluationRunComparisonChart.vue';
 import EvaluationTrendChart from './EvaluationTrendChart.vue';
 import {
@@ -1604,6 +1619,9 @@ function readErrorMessage(error: unknown): string {
 }
 
 .evaluation-domain-statuses .is-invalid { background: #fff0f0; color: #bd4545; }
+
+details.evaluation-domain-details { margin-top: 16px; }
+.evaluation-domain-details > summary { width: fit-content; cursor: pointer; color: #64748b; font-size: 12px; font-weight: 600; user-select: none; }
 
 .evaluation-objective-card strong,
 .evaluation-deferred-card strong {
