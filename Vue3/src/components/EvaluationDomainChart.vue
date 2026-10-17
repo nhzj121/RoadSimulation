@@ -1,10 +1,10 @@
 <template>
-  <article class="domain-chart" :aria-label="model.title">
+  <article class="domain-chart" :class="{ 'domain-chart--compact': compact }" :aria-label="model.title">
     <header>
-      <h5>{{ model.title }}</h5>
-      <p>{{ model.description }}</p>
+      <h5 :title="model.description">{{ model.title }}</h5>
+      <p v-if="!compact">{{ model.description }}</p>
     </header>
-    <div v-if="model.kind !== 'bars' && (model.state === 'ready' || model.state === 'empty')" class="domain-chart__total">
+    <div v-if="!compact && model.kind !== 'bars' && (model.state === 'ready' || model.state === 'empty')" class="domain-chart__total">
       <span>{{ totalLabel }}</span><strong>{{ domainNumber(model.total) }} {{ domainUnit(model.unit) }}</strong>
     </div>
     <div
@@ -27,7 +27,7 @@
         role="img"
         :aria-label="model.title"
       ></div>
-      <div v-if="model.state === 'ready'" class="domain-chart__legend" :class="{ 'domain-chart__legend--inline': !isRing }">
+      <div v-if="model.state === 'ready' || (showZeroLegend && model.state === 'empty')" class="domain-chart__legend" :class="{ 'domain-chart__legend--inline': !isRing }">
         <template v-if="model.inner.length">
           <h6>内环 · 执行状态</h6>
           <div v-for="item in model.inner" :key="`inner-${item.label}`" class="domain-chart__legend-item" :title="item.note || ''">
@@ -41,7 +41,7 @@
         <div v-for="item in model.items" :key="item.label" class="domain-chart__legend-item" :title="item.note || ''">
           <i :style="{ backgroundColor: item.color }"></i>
           <span>{{ item.label }}</span>
-          <strong>{{ domainNumber(item.value) }} {{ domainUnit(model.unit) }}</strong>
+          <strong>{{ domainNumber(item.value) }}<template v-if="!compact || !isRing"> {{ domainUnit(model.unit) }}</template></strong>
           <small v-if="model.kind !== 'bars'">{{ shareText(item.value) }}</small>
           <small v-if="item.threshold !== undefined">P95 阈值 {{ domainNumber(item.threshold) }} s</small>
         </div>
@@ -56,7 +56,9 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { domainChartOption, domainNumber, domainUnit } from '../utils/evaluationDomainPresentation';
 import type { DomainChartModel } from '../utils/evaluationDomainPresentation';
 
-const props = withDefaults(defineProps<{ model: DomainChartModel; visible?: boolean }>(), { visible: true });
+// 紧凑模式仅供主仿真数据栏，完整评价页仍使用原默认布局。
+const props = withDefaults(defineProps<{ model: DomainChartModel; visible?: boolean; compact?: boolean; centerLabel?: string; showZeroLegend?: boolean }>(),
+  { visible: true, compact: false, centerLabel: '', showZeroLegend: false });
 interface ChartInstance {
   setOption: (option: Record<string, unknown>, replace: boolean) => void;
   resize: () => void;
@@ -117,14 +119,20 @@ async function renderChart(): Promise<void> {
         observer.observe(chartHost.value);
       }
     }
-    instance.setOption(domainChartOption(props.model), true);
+    const option = domainChartOption(props.model);
+    if (props.compact && isRing.value) {
+      option.title = { ...(option.title as Record<string, unknown>), subtext: props.centerLabel || totalLabel.value,
+        ...(props.showZeroLegend ? { text: `${domainNumber(props.model.total, 0)} ${domainUnit(props.model.unit)}` } : {}),
+        textStyle: { color: '#24394f', fontSize: 23, fontWeight: 600 } };
+    }
+    instance.setOption(option, true);
     instance.resize();
   } catch {
     disposeChart();
     chartWarning.value = '图表暂时无法绘制';
   }
 }
-watch([() => props.model, () => props.visible], () => void renderChart(), { flush: 'post' });
+watch([() => props.model, () => props.visible, () => props.compact, () => props.centerLabel], () => void renderChart(), { flush: 'post' });
 onMounted(() => { mounted = true; void renderChart(); });
 onUnmounted(() => { mounted = false; renderRevision += 1; disposeChart(); });
 </script>
@@ -151,10 +159,21 @@ onUnmounted(() => { mounted = false; renderRevision += 1; disposeChart(); });
 .domain-chart__state--invalid { color: #aa4545; background: #fff4f4; }
 .domain-chart__state--warning { color: #946825; background: #fff9ee; }
 .domain-chart__notice { margin: 10px 0 0; color: #8290a1; font-size: 11px; line-height: 1.6; }
+/* 不缩小整个页面：仅主数据栏的图形和图例紧凑，图例始终占一行。 */
+.domain-chart--compact { padding: 10px; }
+.domain-chart--compact .domain-chart__body--ring { display: block; }
+.domain-chart--compact .domain-chart__canvas--ring { height: 170px; }
+.domain-chart--compact .domain-chart__canvas { flex: none; }
+.domain-chart--compact .domain-chart__legend { display: flex; flex-wrap: nowrap; gap: 8px; overflow-x: auto; margin-top: 5px; padding-bottom: 4px; }
+.domain-chart--compact .domain-chart__legend-item { flex: 0 0 auto; flex-wrap: nowrap; white-space: nowrap; gap: 4px; }
+.domain-chart--compact .domain-chart__legend-item small { display: none; }
+.domain-chart--compact .domain-chart__state { margin-top: 8px; padding: 12px; }
+.domain-chart--compact .domain-chart__legend-note { display: none; }
 @media (max-width: 720px) {
   .domain-chart { padding: 13px; }
   .domain-chart__body--ring { flex-direction: column; align-items: stretch; }
   .domain-chart__canvas--ring { flex: none; height: 230px; }
   .domain-chart__legend { flex: none; }
 }
+@media (max-width: 720px) { .domain-chart--compact .domain-chart__canvas--ring { height: 170px; } }
 </style>

@@ -3,7 +3,7 @@
     <header class="data-left-panel__header">
       <div>
         <span class="data-left-panel__eyebrow">LIVE OPERATIONS</span>
-        <h3 id="simulation-data-left-title">运行健康与运力效率</h3>
+        <h3 id="simulation-data-left-title">效率与成本</h3>
       </div>
       <span class="data-left-panel__connection" :class="connectionClass">
         <i></i>{{ connectionText }}
@@ -31,72 +31,11 @@
     </div>
 
     <template v-else>
-      <section class="data-left-panel__run" aria-label="当前运行状态">
-        <div>
-          <span>Loop</span>
-          <strong>{{ viewModel.loopIndex }}</strong>
-        </div>
-        <div>
-          <span>仿真时间</span>
-          <strong>{{ viewModel.simTimeText }}</strong>
-        </div>
-        <span
-          class="data-left-panel__snapshot-status"
-          :class="`data-left-panel__snapshot-status--${viewModel.snapshotStatusClass}`"
-        >
-          {{ viewModel.snapshotStatusText }}
-        </span>
-      </section>
-
-      <section class="data-left-panel__health" aria-label="本轮运行健康">
-        <div>
-          <span>处理任务</span>
-          <strong>{{ viewModel.processedAssignmentCount }}</strong>
-        </div>
-        <div :class="{ 'data-left-panel__health-item--warning': viewModel.failedAssignmentCount > 0 }">
-          <span>失败任务</span>
-          <strong>{{ viewModel.failedAssignmentCount }}</strong>
-        </div>
-        <div :class="{ 'data-left-panel__health-item--warning': viewModel.errorCount > 0 }">
-          <span>本轮错误</span>
-          <strong>{{ viewModel.errorCount }}</strong>
-        </div>
-      </section>
-
-      <section class="data-left-panel__section" aria-labelledby="capacity-kpi-title">
-        <div class="data-left-panel__section-title">
-          <div>
-            <span>当前状态</span>
-            <h4 id="capacity-kpi-title">车辆与运力</h4>
-          </div>
-          <small>后端评价快照</small>
-        </div>
-        <div class="data-left-panel__kpi-grid">
-          <article
-            v-for="kpi in viewModel.kpis"
-            :key="kpi.metricId"
-            class="data-left-panel__kpi"
-            :class="`data-left-panel__kpi--${kpi.status.toLowerCase().replace('_', '-')}`"
-            :title="kpi.reason || kpi.statusText"
-          >
-            <span>{{ kpi.label }}</span>
-            <strong>{{ kpi.valueText }}</strong>
-            <small v-if="kpi.status !== 'AVAILABLE'">{{ kpi.statusText }}</small>
-          </article>
-        </div>
-        <div
-          class="data-left-panel__remaining"
-          :title="viewModel.remainingCapacity.reason || viewModel.remainingCapacity.statusText"
-        >
-          <span>{{ viewModel.remainingCapacity.label }}</span>
-          <strong>{{ viewModel.remainingCapacity.valueText }}</strong>
-        </div>
-      </section>
 
       <section class="data-left-panel__section data-left-panel__trend" aria-labelledby="capacity-trend-title">
         <div class="data-left-panel__section-title">
           <div>
-            <span>本次打开期间</span>
+            <span>本页已采集 · 缺轮断线</span>
             <h4 id="capacity-trend-title">运力效率趋势</h4>
           </div>
           <small>最多 30 个快照</small>
@@ -105,7 +44,7 @@
           当前两个效率指标暂无可绘制数值，缺失值不会按 0 展示。
         </div>
         <div v-if="viewModel.trend.availablePointCount && chartUnavailable" class="data-left-panel__chart-state data-left-panel__chart-state--warning" role="status">
-          图表暂不可用；上方当前值仍可正常查阅，将在下一次更新或重新展开时重试。
+          图表暂不可用；完整评价仍可查阅指标，将在下一次更新或重新展开时重试。
         </div>
         <!-- Phase 6 修复：警告只隐藏容器，不销毁 DOM，恢复后可重新绑定图表。 -->
         <div
@@ -117,17 +56,26 @@
         ></div>
       </section>
 
-      <footer class="data-left-panel__footer">
-        <span>每 1 s 检查最新快照</span>
-        <ElButton type="primary" plain size="small" @click="emit('open-full')">完整评价</ElButton>
-      </footer>
     </template>
+    <section class="data-left-panel__section" aria-labelledby="cost-breakdown-title">
+      <div class="data-left-panel__section-title">
+        <div><span>原成本监控 · 调度窗口</span><h4 id="cost-breakdown-title">Cost A–E 归一化分解</h4></div>
+        <small :title="costUpdatedAt ? `页面采样时间：${costUpdatedAt}` : '尚未取得成本采样'">{{ costUpdatedAt || '等待采样' }}</small>
+      </div>
+      <p class="data-left-panel__cost-note">1.0 为原 P95 基准；淡色柱表示 A/C/D 延用最近有效值，详情见提示。</p>
+      <SimulationPresentationChart :option="costOption" :visible="visible" :height="170" label="Cost A 至 E 归一化成本指数与 P95 基准对照" />
+    </section>
+    <footer v-if="viewModel && !initialLoading && !waitingForSnapshot" class="data-left-panel__footer">
+      <span>每 1 s 检查最新评价快照</span>
+      <ElButton type="primary" plain size="small" @click="emit('open-full')">完整评价</ElButton>
+    </footer>
   </section>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { ElButton } from 'element-plus';
+import SimulationPresentationChart from './SimulationPresentationChart.vue';
 import type { SimulationEvaluationFeedState } from '../../composables/useSimulationEvaluationFeed';
 import type { EvaluationSnapshot } from '../../types/evaluation';
 import { buildSimulationDataLeftViewModel } from '../../utils/simulationDataLeftPresentation';
@@ -137,7 +85,9 @@ const props = withDefaults(defineProps<{
   feedState: SimulationEvaluationFeedState;
   trendSnapshots: EvaluationSnapshot[];
   visible?: boolean;
-}>(), { visible: true });
+  costOption?: Record<string, unknown> | null;
+  costUpdatedAt?: string;
+}>(), { visible: true, costOption: null, costUpdatedAt: '' });
 const emit = defineEmits<{ (event: 'open-full'): void }>();
 const snapshot = computed(() => props.feedState.snapshot);
 const initialLoading = computed(() => props.feedState.initialLoading);
@@ -336,10 +286,11 @@ onUnmounted(() => { chartMounted = false; chartRenderRevision++; disposeChart();
 .data-left-panel__remaining span { color: #606f7b; font-size: 11px; }
 .data-left-panel__remaining strong { font-size: 15px; font-variant-numeric: tabular-nums; }
 
-.data-left-panel__chart { width: 100%; height: 220px; margin-top: 8px; }
+.data-left-panel__chart { width: 100%; height: 190px; margin-top: 8px; }
 .data-left-panel__chart-state { min-height: 150px; margin-top: 10px; padding: 16px; border: 1px dashed #d9e2ec; border-radius: 8px; display: grid; place-items: center; box-sizing: border-box; color: #718096; background: #fafcfe; font-size: 12px; line-height: 1.6; text-align: center; }
 .data-left-panel__chart-state--warning { border-color: #e7d0a4; color: #906421; background: #fffaf0; }
 .data-left-panel__footer { padding: 12px 2px 2px; color: #909399; font-size: 11px; }
+.data-left-panel__cost-note { margin: 8px 0 0; font-size: 10px; line-height: 1.6; color: #8290a1; }
 
 @media (max-width: 1400px) {
   .data-left-panel__kpi-grid { grid-template-columns: 1fr; }

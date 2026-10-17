@@ -12,6 +12,7 @@ export interface SimulationEvaluationFeedState {
   waitingForSnapshot: boolean;
   networkError: string;
   polling: boolean;
+  lastSuccessfulReadAt?: string | null;
 }
 interface FeedOptions {
   enabled: Ref<boolean>;
@@ -25,9 +26,9 @@ interface FeedOptions {
   unschedule?: (timer: unknown) => void;
 }
 const initialState = (): SimulationEvaluationFeedState => ({ snapshot: null, initialLoading: true,
-  waitingForSnapshot: true, networkError: '', polling: false });
+  waitingForSnapshot: true, networkError: '', polling: false, lastSuccessfulReadAt: null });
 
-/** Phase 6：单份评价数据源属于数据工作区，与侧栏隐藏、抽屉和图表生命周期无关。 */
+/** 单份评价展示数据源，由父页面按运行/查阅状态启停，不驱动仿真或评价公式。 */
 export function useSimulationEvaluationFeed(options: FeedOptions) {
   const feedState = reactive(initialState());
   const trendSnapshots = ref<EvaluationSnapshot[]>([]);
@@ -54,11 +55,12 @@ export function useSimulationEvaluationFeed(options: FeedOptions) {
     options.onObservation({ ...observation, phase: 'start', receivedAt: new Date().toISOString() });
     try {
       const result = await fetchLatest(current.signal);
-      // 隐藏侧栏不改变 generation；离开工作区或 reset 才取消并隔离迟到响应。
+      // 工作区切换不再停用运行中的采集；暂停采集或 reset 仍隔离迟到响应。
       if (!isCurrent()) return;
       options.onObservation({ ...observation, phase: 'success', receivedAt: new Date().toISOString(),
         data: result.kind === 'empty' ? null : result.snapshot });
       feedState.networkError = '';
+      feedState.lastSuccessfulReadAt = new Date().toISOString();
       if (result.kind === 'empty') {
         feedState.snapshot = null; trendSnapshots.value = []; feedState.waitingForSnapshot = true;
       } else if (shouldAcceptEvaluationSnapshot(feedState.snapshot, result.snapshot)) {
@@ -77,21 +79,25 @@ export function useSimulationEvaluationFeed(options: FeedOptions) {
       if (isCurrent()) { controller = null; feedState.polling = false; feedState.initialLoading = false; }
     }
   }
-  function stop(): void {
+  // 展示修复：暂停请求不等于 reset；切换工作区时缓存继续属于父页面。
+  function stop(clearData = false): void {
     generation++;
     if (timer !== null) unschedule(timer);
     timer = null;
     controller?.abort(); controller = null;
-    Object.assign(feedState, initialState());
-    trendSnapshots.value = [];
+    feedState.polling = false;
+    if (clearData) {
+      Object.assign(feedState, initialState());
+      trendSnapshots.value = [];
+    }
   }
-  watch([options.enabled, options.epoch], ([enabled]) => {
-    stop();
+  watch([options.enabled, options.epoch], ([enabled, epoch], previous) => {
+    stop(previous !== undefined && epoch !== previous[1]);
     if (enabled) {
       void pollLatestSnapshot();
       timer = schedule(() => void pollLatestSnapshot(), 1000);
     } else options.onSuspend();
   }, { immediate: true, flush: 'post' });
-  onScopeDispose(() => { disposed = true; stop(); });
+  onScopeDispose(() => { disposed = true; stop(true); });
   return { feedState, trendSnapshots };
 }

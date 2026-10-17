@@ -2,30 +2,37 @@
   <section class="data-bottom-shell" :class="{ 'data-bottom-shell--collapsed': collapsed, 'data-bottom-shell--compact': compact }" aria-labelledby="simulation-data-bottom-title">
     <header class="data-bottom-shell__header">
       <div>
-        <h3 id="simulation-data-bottom-title">运行观察记录</h3>
-        <p v-show="!collapsed">本次页面会话 · 最近50条 · 采样之间的事件可能未被观察到</p>
+        <h3 id="simulation-data-bottom-title">四个优化目标</h3>
+        <p v-show="!collapsed">后端评价 · 原值未归一化<span v-if="snapshot"> · Loop {{ snapshot.loopIndex }} · {{ formatTime(snapshot.simTime) }} · {{ snapshotStatusText }}</span></p>
       </div>
-      <nav v-show="!collapsed" class="data-bottom-shell__filters" aria-label="记录分类">
-        <button v-for="item in filters" :key="item.value" type="button"
-          :aria-pressed="filter === item.value" @click="filter = item.value">{{ item.label }}</button>
-      </nav>
+      <small class="data-bottom-shell__health" :title="healthDetail">{{ sourceHealthText(state.health.evaluation) }}</small>
     </header>
-    <div v-if="collapsed" class="data-bottom-shell__summary" aria-label="监控摘要">
-      <span v-for="source in sources" :key="source.key" :title="source.label + '：' + sourceHealthText(state.health[source.key])">
-        {{ source.label }}：{{ sourceHealthText(state.health[source.key]) }}
-      </span>
+    <div v-if="collapsed" class="data-bottom-shell__summary" aria-label="四目标摘要">
+      <span v-if="!objectives.length">等待评价快照</span>
+      <span v-for="objective in objectives" :key="objective.metricId" :title="`${objective.label}：${objective.valueText}；${objective.reason || objective.statusText}`">目标{{ objective.index }}：{{ objective.valueText }}</span>
     </div>
-    <div v-show="!collapsed" class="data-bottom-shell__sources" aria-label="数据源更新状态">
-      <div v-for="source in sources" :key="source.key" class="data-bottom-shell__source"
-        :class="{ 'data-bottom-shell__source--error': state.health[source.key].currentError }">
-        <div><strong>{{ source.label }}</strong><span>{{ sourceHealthText(state.health[source.key]) }}</span></div>
-        <small>最近成功接收（页面时间）：{{ formatTime(state.health[source.key].lastSuccessAt) }}</small>
-        <small v-if="state.health[source.key].lastFailure" :title="state.health[source.key].lastFailure">
-          最近失败：{{ state.health[source.key].lastFailure }}
-        </small>
+    <div v-show="!collapsed" class="data-bottom-shell__main">
+      <p v-if="feedState?.networkError" class="data-bottom-shell__warning" role="alert">{{ feedState.networkError }}<span v-if="snapshot">；显示最近成功评价快照。</span></p>
+      <div v-if="!snapshot" class="data-bottom-shell__empty" role="status">{{ feedState?.initialLoading ? '正在读取评价快照。' : '等待首个评价快照，四目标不以 0 代替缺失值。' }}</div>
+      <div v-else class="data-bottom-shell__objectives">
+        <article v-for="objective in objectives" :key="objective.metricId" class="data-bottom-shell__objective" :title="objective.reason || objective.statusText">
+          <div><span>目标 {{ objective.index }} · 越低越好</span><small>{{ objective.statusText }}</small></div>
+          <strong>{{ objective.valueText }}</strong><h4>{{ objective.label }}</h4>
+          <SimulationPresentationChart :option="sparkline(objective.metricId, objective.index)" :visible="visible && !collapsed" :height="30" :label="`${objective.label}最近快照趋势`" empty-text="暂无可用趋势点" />
+        </article>
+      </div>
+      <div v-if="overview" class="data-bottom-shell__evaluation-note">
+        <span :title="`${overview.serviceConstraint.cargoP95Text} / ${overview.serviceConstraint.taskP95Text}；阈值 ${overview.serviceConstraint.thresholdText}`">P95 等待约束：{{ overview.serviceConstraint.resultText }}</span>
+        <span v-if="overview.errorCodes.length" class="data-bottom-shell__warning" :title="overview.errorCodes.join('、')">本轮评价提示 {{ overview.errorCodes.length }} 项</span>
       </div>
     </div>
-    <div v-show="!collapsed" class="data-bottom-shell__content">
+    <details v-show="!collapsed" class="data-bottom-shell__details">
+      <summary>事件与异常记录 · {{ state.records.length }} 条</summary>
+      <p class="data-bottom-shell__record-note">页面会话最近50条；采样之间的事件可能未被观察到。{{ healthDetail }}</p>
+      <nav class="data-bottom-shell__filters" aria-label="记录分类">
+        <button v-for="item in filters" :key="item.value" type="button" :aria-pressed="filter === item.value" @click="filter = item.value">{{ item.label }}</button>
+      </nav>
+      <div class="data-bottom-shell__content">
       <div v-if="!records.length" class="data-bottom-shell__empty" role="status">
         {{ filter === 'all' ? '当前会话尚无可展示的变化记录。' : '该分类暂无记录。' }}
       </div>
@@ -44,7 +51,8 @@
           </div>
         </li>
       </ol>
-    </div>
+      </div>
+    </details>
   </section>
 </template>
 
@@ -52,13 +60,26 @@
 import { computed, ref } from 'vue';
 import { filterSessionRecords, sourceHealthText } from '../../utils/simulationSessionRecords';
 import type { DataSource, RecordCategory, RecordFilter, SessionRecordsState } from '../../utils/simulationSessionRecords';
+import type { SimulationEvaluationFeedState } from '../../composables/useSimulationEvaluationFeed';
+import type { EvaluationSnapshot } from '../../types/evaluation';
+import { buildSimulationDataRightViewModel } from '../../utils/simulationDataRightPresentation';
+import { objectiveSparkline } from '../../utils/simulationWorkspacePresentation';
+import SimulationPresentationChart from './SimulationPresentationChart.vue';
 
 // Phase 5：组件只消费父级会话状态，卸载/隐藏不会改变记录，也不建立网络请求。
-const props = withDefaults(defineProps<{ state: SessionRecordsState; collapsed?: boolean; compact?: boolean }>(), { collapsed: false, compact: false });
+const props = withDefaults(defineProps<{ state: SessionRecordsState; collapsed?: boolean; compact?: boolean; visible?: boolean;
+  feedState?: SimulationEvaluationFeedState; trendSnapshots?: EvaluationSnapshot[] }>(), { collapsed: false, compact: false, visible: true, trendSnapshots: () => [] });
+const snapshot = computed(() => props.feedState?.snapshot || null);
+const snapshotStatusText = computed(() => ({ COMPLETE: '完整', PARTIAL: '部分完成', FAILED: '失败' }[snapshot.value?.snapshotStatus || 'COMPLETE']));
+const overview = computed(() => snapshot.value ? buildSimulationDataRightViewModel(snapshot.value) : null);
+const objectives = computed(() => overview.value?.objectives || []);
+const colors = ['#168baf', '#337ecc', '#c68a2e', '#278577'];
+const sparkline = (id: string, index: number) => snapshot.value ? objectiveSparkline(snapshot.value, props.trendSnapshots, id, colors[index - 1]) : null;
+const healthDetail = computed(() => sources.map(source => `${source.label}：${sourceHealthText(props.state.health[source.key])}；最近成功接收（页面时间）：${formatTime(props.state.health[source.key].lastSuccessAt)}`).join('。'));
 const filter = ref<RecordFilter>('all');
 const filters: Array<{ value: RecordFilter; label: string }> = [
   { value: 'all', label: '全部' }, { value: 'random', label: '随机事件' },
-  { value: 'exception', label: '异常' }, { value: 'monitor', label: '监控' }
+  { value: 'exception', label: '异常' }
 ];
 const sources: Array<{ key: DataSource; label: string }> = [
   { key: 'transport', label: '运输监控' }, { key: 'evaluation', label: '评价快照' }
@@ -78,9 +99,25 @@ function formatTime(value: string | null): string {
 
 <style scoped>
 .data-bottom-shell { height: 100%; min-height: 0; display: flex; flex-direction: column; padding: 12px 16px; box-sizing: border-box; border-top: 1px solid #dcdfe6; color: #303133; background: #fff; overflow: hidden; }
+.data-bottom-shell:not(.data-bottom-shell--collapsed) { overflow-y: auto; padding: 8px 12px; }
+.data-bottom-shell__main { margin-top: 8px; }
+.data-bottom-shell__objectives { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.data-bottom-shell__objective { min-width: 0; padding: 8px 10px 3px; border: 1px solid #dfe7f1; border-top: 3px solid #337ecc; border-radius: 8px; background: #f8fbfe; }
+.data-bottom-shell__objective > div { display: flex; justify-content: space-between; gap: 5px; color: #8290a1; font-size: 10px; line-height: 14px; }
+.data-bottom-shell__objective strong { display: block; margin-top: 4px; font-size: 24px; line-height: 28px; font-variant-numeric: tabular-nums; color: #24394f; overflow-wrap: anywhere; }
+.data-bottom-shell__objective h4 { margin: 4px 0 0; min-height: 28px; font-size: 11px; font-weight: 500; line-height: 14px; color: #718096; }
+.data-bottom-shell__evaluation-note { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 6px; color: #718096; font-size: 11px; }
+.data-bottom-shell__warning { color: #b88230; font-size: 11px; overflow-wrap: anywhere; }
+.data-bottom-shell__health { font-size: 10px; color: #8290a1; }
+.data-bottom-shell__details { margin-top: 6px; padding-top: 6px; border-top: 1px solid #edf0f5; font-size: 11px; }
+.data-bottom-shell__details summary { cursor: pointer; color: #337ecc; }
+.data-bottom-shell__record-note { color: #8290a1; font-size: 10px; }
+.data-bottom-shell__details .data-bottom-shell__content { max-height: 180px; margin-top: 8px; }
+.data-bottom-shell--collapsed .data-bottom-shell__health { display: none; }
+@media (max-width: 560px) { .data-bottom-shell__objectives { grid-template-columns: repeat(2, minmax(0, 1fr)); } .data-bottom-shell__objective strong { font-size: 20px; } }
 .data-bottom-shell__header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; flex-shrink: 0; }
-.data-bottom-shell h3 { margin: 0; font-size: 15px; line-height: 22px; }
-.data-bottom-shell__header p { margin: 2px 0 0; color: #7b8797; font-size: 10px; }
+.data-bottom-shell h3 { margin: 0; font-size: 15px; line-height: 20px; }
+.data-bottom-shell__header p { margin: 2px 0 0; color: #7b8797; font-size: 10px; line-height: 12px; }
 .data-bottom-shell__filters { display: flex; gap: 4px; flex-wrap: wrap; }
 .data-bottom-shell__filters button { padding: 4px 8px; border: 1px solid #dfe5ec; border-radius: 5px; color: #606266; background: #fff; font-size: 11px; cursor: pointer; }
 .data-bottom-shell__filters button[aria-pressed="true"] { color: #337ecc; background: #ecf5ff; border-color: #b3d8ff; }

@@ -61,6 +61,7 @@ public class SandboxManagementController {
     @GetMapping("/executions/{id}/configuration") public Object configuration(@PathVariable String id) { return service.executionConfiguration(id); }
     @GetMapping("/executions/{id}/map-context") public Object mapContext(@PathVariable String id) { return service.mapContext(id); }
     @GetMapping("/executions/{id}/ticks/{index}/map") public Object mapSnapshot(@PathVariable String id,@PathVariable int index) { return service.mapSnapshot(id,index); }
+    @GetMapping("/executions/{id}/ticks/{index}/service-activity") public Object serviceActivity(@PathVariable String id,@PathVariable int index,@RequestParam(defaultValue="10") int windowLoops) { return service.serviceActivity(id,index,windowLoops); }
     @GetMapping("/executions/{id}/evaluations") public Object evaluations(@PathVariable String id, @RequestParam(defaultValue="0") int offset, @RequestParam(defaultValue="50") int limit,
             @RequestParam(required=false) Integer fromLoopIndex,@RequestParam(required=false) Integer toLoopIndex) {
         return fromLoopIndex==null && toLoopIndex==null ? service.evaluations(id,offset,limit) : service.evaluations(id,offset,limit,fromLoopIndex,toLoopIndex);

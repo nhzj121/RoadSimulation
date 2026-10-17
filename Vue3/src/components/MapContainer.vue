@@ -165,6 +165,8 @@
             v-if="isDataWorkspace && activeMainView === 'map'"
             :feed-state="simulationDataFeedState"
             :trend-snapshots="simulationDataTrendSnapshots"
+            :cost-option="simulationDataCostOption"
+            :cost-updated-at="costHistory.times[costHistory.times.length - 1] || ''"
             :visible="isDataLeftVisible"
             @open-full="openEvaluationDashboard"
         />
@@ -181,7 +183,7 @@
             :aria-expanded="!dataRightPanelCollapsed" @click="openDataDrawer('right')">右侧数据</button>
           <span v-if="!dataLayout.leftDrawer && !dataLayout.rightDrawer">实时评价与会话记录</span>
           <button type="button" :aria-expanded="!dataBottomCollapsed" @click="dataBottomCollapsed = !dataBottomCollapsed">
-            {{ dataBottomCollapsed ? '展开记录' : '收起记录' }}
+            {{ dataBottomCollapsed ? '展开评价' : '收起评价' }}
           </button>
         </nav>
         <!-- 地图 DOM 始终是同一个节点；数据视图只调整其外围布局。 -->
@@ -322,6 +324,9 @@
             v-if="activeMainView === 'map' && isDataWorkspace"
             class="map-data-bottom-panel"
             :state="simulationSessionRecords"
+            :feed-state="simulationDataFeedState"
+            :trend-snapshots="simulationDataTrendSnapshots"
+            :visible="!dataBottomCollapsed"
             :collapsed="dataBottomCollapsed"
             :compact="dataLayout.mode === 'compact' || dataLayout.mode === 'mobile'"
             :class="{ 'map-data-bottom-panel--collapsed': dataBottomCollapsed }"
@@ -483,6 +488,8 @@
             <SimulationDataRightPanel
                 class="data-monitor-panel"
                 :feed-state="simulationDataFeedState"
+                :visible-vehicles="vehicleMonitorDisplayVehicles"
+                :activity-chart="vehicleDisplayActivityChart"
                 :visible="!dataRightPanelCollapsed"
                 @open-full="openEvaluationDashboard"
             />
@@ -494,9 +501,12 @@
 
     </ElContainer>
 
-    <!-- Phase 6C：组件仅在评价视图中挂载，离开页面即停止其独立轮询。 -->
+    <!-- 实时评价复用父页面的单份 latest 数据源，历史查询仍由评价页管理。 -->
     <EvaluationDashboard
       v-if="activeMainView === 'evaluationDashboard'"
+      :visible-vehicles="vehicleMonitorDisplayVehicles"
+      :vehicle-activity-chart="vehicleDisplayActivityChart"
+      :shared-feed-state="simulationDataFeedState"
       @back="returnToMapView"
     />
 
@@ -1130,6 +1140,8 @@ import SimulationDataRightPanel from './simulation-data/SimulationDataRightPanel
 import SimulationDataBottomPanel from './simulation-data/SimulationDataBottomPanel.vue';
 import { createSessionRecords, observeSessionRequest, observeRouteWaiting } from '../utils/simulationSessionRecords';
 import { useSimulationEvaluationFeed } from '../composables/useSimulationEvaluationFeed';
+import { useVehicleDisplayActivity } from '../composables/useVehicleDisplayActivity';
+import { mainWorkspaceCostOption } from '../utils/simulationWorkspacePresentation';
 import { simulationDataLayout, clampSimulationFloatingPosition } from '../utils/simulationDataLayout';
 import AMapLoader from "@amap/amap-jsapi-loader";
 import factoryIcon from '../../public/icons/factory.png';
@@ -3170,6 +3182,9 @@ const buildNormalizedBreakdownOption = () => {
   };
 };
 
+// 数据左栏仅复用现有成本图构建器和共享延用缓存；不修改成本请求、计算或主循环。
+const simulationDataCostOption = computed(() => isDataLeftVisible.value ? mainWorkspaceCostOption(buildNormalizedBreakdownOption()) : null);
+
 const buildCostShareOption = () => buildPieOption(
     'Cost A-E 维度占比',
     rawCostMetrics.value
@@ -3471,9 +3486,10 @@ const poiMarkers = ref([]); // 存储POI标记
 const currentPOIs = ref([]); // 当前显示的POI数据
 const isSimulationRunning = ref(false); // 仿真运行状态
 const resetInProgress = ref(false); // 重置过程中禁止重复操作
-// Phase 6：沿用已有唯一评价轮询；左栏隐藏、右栏收起均不影响数据源。
+// 展示采集随成功启动的仿真持续运行，与用户是否打开数据视图无关。
 const { feedState: simulationDataFeedState, trendSnapshots: simulationDataTrendSnapshots } = useSimulationEvaluationFeed({
-  enabled: computed(() => isDataWorkspace.value && activeMainView.value === 'map' && !resetInProgress.value),
+  enabled: computed(() => !resetInProgress.value && (isSimulationRunning.value || isExperimentRunExecuting.value
+    || activeMainView.value === 'evaluationDashboard' || (isDataWorkspace.value && activeMainView.value === 'map'))),
   epoch: computed(() => simulationSessionRecords.value.epoch),
   requestBase: () => simulationSessionRecords.value.health.evaluation.requestId,
   onObservation: handleEvaluationRequestObservation,
@@ -5043,6 +5059,37 @@ let animationManager = null;
 
 // 状态管理器引用
 const vehicleStatusManager = ref(null);
+// 展示修复：观察既有回调，不插入或改写任何动画/业务状态迁移。
+const { activityChart: vehicleDisplayActivityChart } = useVehicleDisplayActivity({
+  manager: vehicleStatusManager,
+  epoch: computed(() => simulationSessionRecords.value.epoch),
+  // 两个视图共享一个窗口，只扩展展示过期刷新条件，不增加请求或观察者。
+  visible: computed(() => activeMainView.value === 'evaluationDashboard'
+    || (isDataWorkspace.value && activeMainView.value === 'map' && !dataRightPanelCollapsed.value)),
+  runIds: () => [simulationSessionRecords.value.runIds.transport, simulationSessionRecords.value.runIds.evaluation],
+  suppressed: () => mapViewDisposed || resetInProgress.value || restoringWeatherView,
+  assignmentFor: (vehicleId, source) => {
+    const route = findVisibleVehicleRouteData(vehicleId);
+    const assignment = lookupMapByLooseId(source.assignmentData, vehicleId);
+    // 兼容就绪任务查询；初始阶段由下方注册上下文单独观察，不更改原投影。
+    return route && route.assignment === assignment ? assignment.assignmentId : null;
+  },
+  taskFor: (vehicleId, source) => {
+    const assignment = lookupMapByLooseId(source.assignmentData, vehicleId);
+    const route = assignment && lookupMapByLooseId(activeRoutes.value, assignment.assignmentId);
+    const marker = lookupMapByLooseId(source.vehicleMarkers, vehicleId);
+    if (!route || route.cleaned || route.assignment !== assignment || !markerHasValidPosition(marker)) return null;
+    return { assignmentId: assignment.assignmentId, render: route,
+      ready: !route.drawing && findVisibleVehicleRouteData(vehicleId) === route,
+      recovery: Boolean(route.replacementRecovery || assignment.replacementRecovery) };
+  },
+  // 只提交已经发生的回调，不根据这些注册标识合成状态转换；失败绘制的暂存记录会丢弃。
+  readiness: () => {
+    const drawn = new Set(Array.from(drawnAssignmentIds.value, String));
+    return Array.from(activeRoutes.value, ([id, route]) =>
+      `${id}:${Boolean(route.drawing)}:${Boolean(route.cleaned)}:${drawn.has(String(id))}`).join('|');
+  }
+});
 const arrivalAckInFlight = new Set();
 const arrivalAckCompleted = new Set();
 
