@@ -1,6 +1,6 @@
 <template>
   <main class="sandbox-tasks">
-    <h1>数据沙箱 · 任务与进度</h1><router-link to="/sandbox">返回配置与发布</router-link>
+    <h1>数据沙箱 · 任务与进度</h1><router-link to="/sandbox">返回配置与发布</router-link> · <router-link to="/sandbox/comparison">历史结果对比</router-link>
     <p>刷新或关闭页面不停止后台任务；此页不推进业务、不支持暂停或恢复。</p>
     <el-alert v-if="error" :title="error" type="error" :closable="false" />
     <el-alert v-if="operationNotice" :title="operationNotice" type="info" :closable="false" />

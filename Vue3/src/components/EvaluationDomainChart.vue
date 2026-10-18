@@ -120,6 +120,9 @@ async function renderChart(): Promise<void> {
       }
     }
     const option = domainChartOption(props.model);
+    if (!props.compact && isRing.value && props.centerLabel) {
+      option.title = { ...(option.title as Record<string, unknown>), subtext: props.centerLabel };
+    }
     if (props.compact && isRing.value) {
       option.title = { ...(option.title as Record<string, unknown>), subtext: props.centerLabel || totalLabel.value,
         ...(props.showZeroLegend ? { text: `${domainNumber(props.model.total, 0)} ${domainUnit(props.model.unit)}` } : {}),

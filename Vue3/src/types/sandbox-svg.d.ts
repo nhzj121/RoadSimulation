@@ -7,10 +7,11 @@ declare global {
     interface IntrinsicElements {
       // vue-tsc 0.39 also emits native JSX for Vue's presentation-only slot outlet.
       slot: HTMLAttributes & ReservedProps & { name?: string; group?: RecordedMetricDomain }
-      div: HTMLAttributes & ReservedProps & { ariaLabel?: HTMLAttributes['aria-label']; ariaLive?: HTMLAttributes['aria-live'] }
+      div: HTMLAttributes & ReservedProps & { ariaLabel?: HTMLAttributes['aria-label']; ariaLive?: HTMLAttributes['aria-live']; dataLabel?: string; 'data-label'?: string }
       line: SandboxSvgAttributes
       polyline: SandboxSvgAttributes
       circle: SandboxSvgAttributes
+      rect: SandboxSvgAttributes
     }
   }
 }
