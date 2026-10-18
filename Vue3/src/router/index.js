@@ -7,6 +7,7 @@ import { ElMessage } from 'element-plus'
 import { createModeNavigationGuard } from '../navigation/modeNavigation'
 
 const routes = [
+    { path: '/sandbox/comparison', name: 'SandboxComparison', component: () => import('@/views/SandboxComparison.vue') },
     { path: '/sandbox/executions/:id/map', name: 'SandboxMap', component: () => import('@/views/SandboxMap.vue') },
     { path: '/sandbox/executions/:id/results', name: 'SandboxResults', component: () => import('@/views/SandboxResults.vue') },
     { path: '/sandbox/tasks', name: 'SandboxTasks', component: () => import('@/views/SandboxTasks.vue') },

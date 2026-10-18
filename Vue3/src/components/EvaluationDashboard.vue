@@ -182,39 +182,57 @@
                 </div>
               </header>
 
-              <div class="evaluation-metric-table">
-                <div class="evaluation-metric-row evaluation-metric-row--head">
-                  <span>指标</span><span>当前值</span><span>单位</span><span>状态/说明</span>
-                </div>
-                <div
-                  v-for="metricId in activeMetricGroup.metricIds"
-                  :key="metricId"
-                  class="evaluation-metric-row"
-                  :class="metricRowClass(metricById(metricId))"
-                >
-                  <span class="evaluation-metric-name" data-label="指标">{{ metricById(metricId)?.displayName || metricId }}</span>
-                  <strong class="evaluation-metric-value" data-label="当前值">{{ formatMetricValueOnly(metricById(metricId)) }}</strong>
-                  <span class="evaluation-metric-unit" data-label="单位">{{ metricUnitText(metricById(metricId)) }}</span>
-                  <div class="evaluation-metric-state" data-label="状态/说明">
-                    <span
-                      class="evaluation-metric-status-pill"
-                      :class="metricStatusClass(metricById(metricId))"
-                    >
-                      {{ metricStatusText(metricById(metricId)) }}
-                    </span>
-                    <details
-                      v-if="hasLongMetricReason(metricById(metricId))"
-                      class="evaluation-metric-reason-details"
-                    >
-                      <summary>查看说明</summary>
-                      <small>{{ metricById(metricId)?.reason }}</small>
-                    </details>
-                    <small v-else-if="metricById(metricId)?.reason" class="evaluation-metric-reason">
-                      {{ metricById(metricId)?.reason }}
-                    </small>
+              <!-- 仅车辆首图使用前端地图口径；其它对象指标、外部环境及历史区域保持原快照口径。 -->
+              <EvaluationDomainMetrics
+                v-if="activeMetricGroup.key !== 'environment'"
+                :key="activeMetricGroup.key"
+                :snapshot="snapshot"
+                :group-key="activeMetricGroup.key"
+              >
+                <template #vehicle-state>
+                  <VehicleDisplayStatusChart :visible-vehicles="visibleVehicles" :activity-chart="vehicleActivityChart" />
+                </template>
+              </EvaluationDomainMetrics>
+              <component
+                :is="activeMetricGroup.key === 'environment' ? 'div' : 'details'"
+                :key="`metric-details-${activeMetricGroup.key}`"
+                class="evaluation-domain-details"
+              >
+                <summary v-if="activeMetricGroup.key !== 'environment'">完整指标明细（{{ activeMetricGroup.metricIds.length }} 项）</summary>
+                <div class="evaluation-metric-table">
+                  <div class="evaluation-metric-row evaluation-metric-row--head">
+                    <span>指标</span><span>当前值</span><span>单位</span><span>状态/说明</span>
+                  </div>
+                  <div
+                    v-for="metricId in activeMetricGroup.metricIds"
+                    :key="metricId"
+                    class="evaluation-metric-row"
+                    :class="metricRowClass(metricById(metricId))"
+                  >
+                    <span class="evaluation-metric-name" data-label="指标">{{ metricById(metricId)?.displayName || metricId }}</span>
+                    <strong class="evaluation-metric-value" data-label="当前值">{{ formatMetricValueOnly(metricById(metricId)) }}</strong>
+                    <span class="evaluation-metric-unit" data-label="单位">{{ metricUnitText(metricById(metricId)) }}</span>
+                    <div class="evaluation-metric-state" data-label="状态/说明">
+                      <span
+                        class="evaluation-metric-status-pill"
+                        :class="metricStatusClass(metricById(metricId))"
+                      >
+                        {{ metricStatusText(metricById(metricId)) }}
+                      </span>
+                      <details
+                        v-if="hasLongMetricReason(metricById(metricId))"
+                        class="evaluation-metric-reason-details"
+                      >
+                        <summary>查看说明</summary>
+                        <small>{{ metricById(metricId)?.reason }}</small>
+                      </details>
+                      <small v-else-if="metricById(metricId)?.reason" class="evaluation-metric-reason">
+                        {{ metricById(metricId)?.reason }}
+                      </small>
+                    </div>
                   </div>
                 </div>
-              </div>
+              </component>
             </div>
           </div>
         </section>
@@ -419,8 +437,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { ElButton } from 'element-plus';
+import EvaluationDomainMetrics from './EvaluationDomainMetrics.vue';
+import VehicleDisplayStatusChart from './VehicleDisplayStatusChart.vue';
+import type { VisibleVehicleDisplay } from '../utils/simulationWorkspacePresentation';
+import type { DomainChartModel } from '../utils/evaluationDomainPresentation';
+import type { SimulationEvaluationFeedState } from '../composables/useSimulationEvaluationFeed';
 import EvaluationRunComparisonChart from './EvaluationRunComparisonChart.vue';
 import EvaluationTrendChart from './EvaluationTrendChart.vue';
 import {
@@ -454,6 +477,9 @@ interface EvaluationWarning {
 }
 
 /** Phase 6C：由父级切回地图；评价页本身不控制仿真生命周期。 */
+// 车辆首图只读透传父页面现有展示数据，不参与本页后端评价轮询。
+const props = defineProps<{ visibleVehicles?: VisibleVehicleDisplay[]; vehicleActivityChart?: DomainChartModel;
+  sharedFeedState?: SimulationEvaluationFeedState }>();
 const emit = defineEmits<{ (event: 'back'): void }>();
 
 const POLL_INTERVAL_MS = 1000;
@@ -464,6 +490,18 @@ const polling = ref(false);
 const lastSuccessfulReadAt = ref<Date | null>(null);
 let pollingTimer: number | null = null;
 let activeRequest: AbortController | null = null;
+
+// 有父级共享源时只镜像展示状态，不另起 latest 请求；独立挂载仍保留原兼容轮询。
+watch(() => [props.sharedFeedState?.snapshot, props.sharedFeedState?.waitingForSnapshot,
+  props.sharedFeedState?.networkError, props.sharedFeedState?.polling, props.sharedFeedState?.lastSuccessfulReadAt], () => {
+  const feed = props.sharedFeedState;
+  if (!feed) return;
+  snapshot.value = feed.snapshot;
+  waitingForSnapshot.value = feed.waitingForSnapshot;
+  networkError.value = feed.networkError;
+  polling.value = feed.polling;
+  lastSuccessfulReadAt.value = feed.lastSuccessfulReadAt ? new Date(feed.lastSuccessfulReadAt) : null;
+}, { immediate: true, flush: 'sync' });
 
 // Phase 9C：历史状态与实时轮询解耦，历史请求失败不能清空当前 latest 快照。
 const runSummaries = ref<EvaluationRunSummary[]>([]);
@@ -853,7 +891,7 @@ async function exportHistory(format: 'csv' | 'json'): Promise<void> {
 
 /** Phase 6C：单请求互斥，慢请求期间不叠加第二次读取。 */
 async function pollLatestEvaluationSnapshot(): Promise<void> {
-  if (polling.value) {
+  if (props.sharedFeedState || polling.value) {
     return;
   }
   polling.value = true;
@@ -884,10 +922,12 @@ async function pollLatestEvaluationSnapshot(): Promise<void> {
 
 /** Phase 6C：组件挂载即读取，卸载即停止，避免后台隐藏轮询。 */
 onMounted(() => {
-  void pollLatestEvaluationSnapshot();
+  if (!props.sharedFeedState) {
+    void pollLatestEvaluationSnapshot();
+    pollingTimer = window.setInterval(() => void pollLatestEvaluationSnapshot(), POLL_INTERVAL_MS);
+  }
   // Phase 9C：历史只在进入页面时和用户主动刷新时查询，不跟随 1 秒 latest 轮询压数据库。
   void refreshHistory();
-  pollingTimer = window.setInterval(() => void pollLatestEvaluationSnapshot(), POLL_INTERVAL_MS);
 });
 
 onUnmounted(() => {
@@ -1604,6 +1644,9 @@ function readErrorMessage(error: unknown): string {
 }
 
 .evaluation-domain-statuses .is-invalid { background: #fff0f0; color: #bd4545; }
+
+details.evaluation-domain-details { margin-top: 16px; }
+.evaluation-domain-details > summary { width: fit-content; cursor: pointer; color: #64748b; font-size: 12px; font-weight: 600; user-select: none; }
 
 .evaluation-objective-card strong,
 .evaluation-deferred-card strong {

@@ -1,4 +1,7 @@
 import axios from 'axios'
+import type { SandboxComparison, SandboxExecutionList } from '../types/sandbox-comparison'
+import type { SandboxServiceActivity } from '../types/sandbox-service-activity'
+import type { SandboxVehicleStates } from '../types/sandbox-vehicle-states'
 import type { SandboxMapContext, SandboxMapSnapshot } from '../types/sandbox-map'
 import type { SandboxExecutionSummary, SandboxExecutionConfiguration, SandboxEvaluationPage } from '../types/sandbox'
 import type { SandboxCatalogPage, SandboxDraftView, SandboxRunDefinition, SandboxRunPreview, SandboxRunRevision, SandboxSaved, SandboxScenarioDefinition, SandboxScenarioPreview, SandboxScenarioRevision, SandboxStartRequest, SandboxStartReceipt, SandboxJobView, SandboxJobList } from '../types/sandbox'
@@ -22,6 +25,10 @@ async function call<T>(method: 'get' | 'post', url: string, data?: unknown, opti
 }
 const keyPath = (key: string) => encodeURIComponent(key)
 export const sandboxApi = {
+  executions: (offset = 0, signal?: AbortSignal) => call<SandboxExecutionList>('get', `/executions?offset=${offset}&limit=50`, undefined, {signal}),
+  compareExecutions: (left: string, right: string, signal?: AbortSignal) => call<SandboxComparison>('get', `/comparisons?leftExecutionId=${keyPath(left)}&rightExecutionId=${keyPath(right)}`, undefined, {signal}),
+  vehicleStates: (id:string,index:number,includeWindow:boolean,signal?:AbortSignal) => call<SandboxVehicleStates>('get',`/executions/${keyPath(id)}/ticks/${index}/vehicle-states?includeWindow=${includeWindow}`,undefined,{signal}),
+  serviceActivity: (id:string,index:number,windowLoops:number,signal?:AbortSignal) => call<SandboxServiceActivity>('get',`/executions/${keyPath(id)}/ticks/${index}/service-activity?windowLoops=${windowLoops}`,undefined,{signal}),
   mapContext: (id:string,signal?:AbortSignal) => call<SandboxMapContext>('get',`/executions/${keyPath(id)}/map-context`,undefined,{signal}),
   mapSnapshot: (id:string,index:number,signal?:AbortSignal) => call<SandboxMapSnapshot>('get',`/executions/${keyPath(id)}/ticks/${index}/map`,undefined,{signal}),
   resultDownloadUrl: (id: string, format: 'json' | 'csv') => client.getUri({url:`/executions/${keyPath(id)}/export?format=${format}`}),

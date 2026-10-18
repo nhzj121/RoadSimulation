@@ -1,9 +1,33 @@
 <template>
-  <ElContainer class="page-container">
-    <ElHeader class="header-navbar">
+  <ElContainer class="page-container" :class="{ 'page-container--data': isDataWorkspace && activeMainView === 'map' }">
+    <ElHeader class="header-navbar" :inert="dataDrawerVisible ? '' : undefined">
       <div class="navbar-content">
         <div class="navbar-left">
           <h2 class="navbar-title" @click="gotoMain">物流运输仿真系统</h2>
+          <!-- Phase 1：该开关只改变主仿真工作区的展示布局，不参与仿真状态与业务状态计算。 -->
+          <div v-if="activeMainView === 'map'" class="workspace-view-control">
+            <ElButtonGroup class="workspace-view-switch" aria-label="主仿真界面视图">
+              <ElButton
+                  size="small"
+                  :type="mapWorkspaceMode === 'operation' ? 'primary' : 'default'"
+                  :plain="mapWorkspaceMode !== 'operation'"
+                  :aria-pressed="mapWorkspaceMode === 'operation'"
+                  @click="setMapWorkspaceMode('operation')"
+              >
+                运行视图
+              </ElButton>
+              <ElButton
+                  size="small"
+                  :type="mapWorkspaceMode === 'data' ? 'primary' : 'default'"
+                  :plain="mapWorkspaceMode !== 'data'"
+                  :aria-pressed="mapWorkspaceMode === 'data'"
+                  @click="setMapWorkspaceMode('data')"
+              >
+                数据视图
+              </ElButton>
+            </ElButtonGroup>
+            <span class="workspace-view-hint">仅切换展示</span>
+          </div>
         </div>
         <div class="navbar-menu">
           <ElButton text @click="goToPOIManager">POI点管理</ElButton>
@@ -22,9 +46,22 @@
         </div>
       </div>
     </ElHeader>
-    <ElContainer>
-      <ElAside width="320px" class="side-panel">
-        <div class="side-panel-scroll">
+    <ElContainer
+        class="map-workspace"
+        :class="{ 'map-workspace--data': isDataWorkspace,
+          'map-workspace--compact': dataLayout.mode === 'compact', 'map-workspace--mobile': dataLayout.mode === 'mobile' }"
+    >
+      <ElAside :width="leftWorkspaceWidth" class="side-panel" ref="dataLeftAsideRef"
+          v-show="!isDataWorkspace || isDataLeftVisible"
+          :class="{ 'side-panel--data': isDataWorkspace, 'data-aside--drawer': isDataWorkspace && dataLayout.leftDrawer }"
+          :style="{ '--data-left-width': leftWorkspaceWidth }"
+          :role="isDataWorkspace && dataLayout.leftDrawer ? 'dialog' : undefined"
+          :aria-modal="isDataWorkspace && dataLayout.leftDrawer ? 'true' : undefined"
+          :aria-label="isDataWorkspace ? '运行健康与运力数据' : undefined"
+          :inert="dataDrawerVisible && !dataLeftDrawerOpen ? '' : undefined" tabindex="-1"
+          @keydown="handleDataDrawerKeydown($event, 'left')">
+        <!-- v-show 保留既有控制组件实例，切换数据视图不会销毁其内部状态。 -->
+        <div v-show="!isDataWorkspace" class="side-panel-scroll">
 
           <div class="panel-section">
             <ElCard shadow="never" class="box-card simulation-control">
@@ -124,16 +161,40 @@
             </ElCard>
           </div>
         </div>
+        <SimulationDataLeftPanel
+            v-if="isDataWorkspace && activeMainView === 'map'"
+            :feed-state="simulationDataFeedState"
+            :trend-snapshots="simulationDataTrendSnapshots"
+            :cost-option="simulationDataCostOption"
+            :cost-updated-at="costHistory.times[costHistory.times.length - 1] || ''"
+            :visible="isDataLeftVisible"
+            @open-full="openEvaluationDashboard"
+        />
+        <button v-if="isDataWorkspace && dataLayout.leftDrawer" class="data-drawer-close" type="button"
+          @click="closeDataDrawer('left')" aria-label="关闭左侧数据">关闭</button>
       </ElAside>
 
-      <ElMain>
-        <div id="container"></div>
+      <ElMain class="map-main" :inert="dataDrawerVisible ? '' : undefined">
+        <!-- Phase 6：抽屉入口放在独立工具条，避免占用地图覆盖物交互位置。 -->
+        <nav v-if="isDataWorkspace && activeMainView === 'map'" class="data-workspace-tools" aria-label="数据区域控制">
+          <button v-if="dataLayout.leftDrawer" type="button" :aria-expanded="dataLeftDrawerOpen"
+            @click="openDataDrawer('left')">左侧数据</button>
+          <button v-if="dataLayout.rightDrawer || dataRightPanelCollapsed" type="button"
+            :aria-expanded="!dataRightPanelCollapsed" @click="openDataDrawer('right')">右侧数据</button>
+          <span v-if="!dataLayout.leftDrawer && !dataLayout.rightDrawer">实时评价与会话记录</span>
+          <button type="button" :aria-expanded="!dataBottomCollapsed" @click="dataBottomCollapsed = !dataBottomCollapsed">
+            {{ dataBottomCollapsed ? '展开评价' : '收起评价' }}
+          </button>
+        </nav>
+        <!-- 地图 DOM 始终是同一个节点；数据视图只调整其外围布局。 -->
+        <div ref="mapCanvasRegionRef" class="map-canvas-region">
+          <div id="container"></div>
         <div v-if="missingRouteAssignmentIds.size" class="route-recovery-notice" role="status">
           {{ missingRouteAssignmentIds.size }} 个任务等待路线恢复；继续仿真后将自动重试。
         </div>
         <!-- 评价概览只负责打开现有右侧监控容器，不改变地图尺寸、路线或车辆动画。 -->
         <ElButton
-            v-if="activeMainView === 'map' && !isMonitorPanelVisible"
+            v-if="activeMainView === 'map' && !isMonitorPanelVisible && !isDataWorkspace"
             class="evaluation-overview-trigger"
             type="primary"
             plain
@@ -258,10 +319,32 @@
             </div>
           </div>
         </div>
+        </div>
+        <SimulationDataBottomPanel
+            v-if="activeMainView === 'map' && isDataWorkspace"
+            class="map-data-bottom-panel"
+            :state="simulationSessionRecords"
+            :feed-state="simulationDataFeedState"
+            :trend-snapshots="simulationDataTrendSnapshots"
+            :visible="!dataBottomCollapsed"
+            :collapsed="dataBottomCollapsed"
+            :compact="dataLayout.mode === 'compact' || dataLayout.mode === 'mobile'"
+            :class="{ 'map-data-bottom-panel--collapsed': dataBottomCollapsed }"
+        />
       </ElMain>
 
+      <!--
+        运行监控继续使用原有固定侧栏和缩放过渡；即使切换到数据视图也只隐藏、不卸载，
+        从而保留原页签、滚动位置和组件状态。数据右栏不得复用这个带 transform 的容器，
+        否则其 ECharts canvas 与滚动内容会进入同一个缩放合成层。
+      -->
       <transition name="el-zoom-in-left">
-        <ElAside v-show="isMonitorPanelVisible" width="340px" class="right-side-panel monitor-panel">
+        <ElAside
+            v-show="activeMainView === 'map' && !isDataWorkspace && isMonitorPanelVisible"
+            width="340px"
+            class="right-side-panel right-side-panel--operation monitor-panel"
+        >
+          <div class="operation-monitor-surface">
           <div class="monitor-header">
             <span>运行监控</span>
             <ElButton link type="info" @click="closeMonitorPanel">✖</ElButton>
@@ -372,19 +455,58 @@
             <ElTabPane label="评价概览" name="evaluation">
               <!-- 仅在页签可见时挂载：关闭或切换后立即停止评价快照轮询。 -->
               <EvaluationOverviewPanel
-                  v-if="isMonitorPanelVisible && activeMonitorTab === 'evaluation'"
+                  v-if="isMonitorPanelVisible && !isDataWorkspace && activeMonitorTab === 'evaluation'"
                   @open-full="openEvaluationDashboard"
               />
             </ElTabPane>
           </ElTabs>
+          </div>
         </ElAside>
       </transition>
 
+      <!--
+        数据右栏是工作区的普通 flex 子项，不参与运行监控的缩放过渡。
+        template 仅控制数据模式生命周期，v-show 负责收起/展开并保留面板当前滚动状态。
+      -->
+      <template v-if="activeMainView === 'map' && isDataWorkspace">
+        <ElAside
+            v-show="!dataRightPanelCollapsed"
+            :width="rightWorkspaceWidth"
+            class="right-side-panel right-side-panel--data monitor-panel"
+            ref="dataRightAsideRef"
+            :class="{ 'data-aside--drawer': dataLayout.rightDrawer }"
+            :style="{ '--data-right-width': rightWorkspaceWidth }"
+            :role="dataLayout.rightDrawer ? 'dialog' : undefined" :aria-modal="dataLayout.rightDrawer ? 'true' : undefined"
+            :inert="dataLeftDrawerOpen ? '' : undefined"
+            aria-label="目标、结构与约束数据" tabindex="-1" @keydown="handleDataDrawerKeydown($event, 'right')"
+        >
+          <div class="data-monitor-surface">
+            <div class="monitor-header">
+              <span>实时数据</span>
+              <ElButton link type="info" @click="closeDataDrawer('right')">{{ dataLayout.rightDrawer ? '关闭' : '收起' }}</ElButton>
+            </div>
+            <SimulationDataRightPanel
+                class="data-monitor-panel"
+                :feed-state="simulationDataFeedState"
+                :visible-vehicles="vehicleMonitorDisplayVehicles"
+                :activity-chart="vehicleDisplayActivityChart"
+                :visible="!dataRightPanelCollapsed"
+                @open-full="openEvaluationDashboard"
+            />
+          </div>
+        </ElAside>
+      </template>
+
+      <div v-if="dataDrawerVisible" class="data-drawer-backdrop" aria-hidden="true" @click="closeActiveDataDrawer"></div>
+
     </ElContainer>
 
-    <!-- Phase 6C：组件仅在评价视图中挂载，离开页面即停止其独立轮询。 -->
+    <!-- 实时评价复用父页面的单份 latest 数据源，历史查询仍由评价页管理。 -->
     <EvaluationDashboard
       v-if="activeMainView === 'evaluationDashboard'"
+      :visible-vehicles="vehicleMonitorDisplayVehicles"
+      :vehicle-activity-chart="vehicleDisplayActivityChart"
+      :shared-feed-state="simulationDataFeedState"
       @back="returnToMapView"
     />
 
@@ -1013,6 +1135,14 @@ import request from "../utils/request";
 // Phase 6C：新增独立评价视图，不向地图动画管理器注入任何评价状态。
 import EvaluationDashboard from './EvaluationDashboard.vue';
 import EvaluationOverviewPanel from './EvaluationOverviewPanel.vue';
+import SimulationDataLeftPanel from './simulation-data/SimulationDataLeftPanel.vue';
+import SimulationDataRightPanel from './simulation-data/SimulationDataRightPanel.vue';
+import SimulationDataBottomPanel from './simulation-data/SimulationDataBottomPanel.vue';
+import { createSessionRecords, observeSessionRequest, observeRouteWaiting } from '../utils/simulationSessionRecords';
+import { useSimulationEvaluationFeed } from '../composables/useSimulationEvaluationFeed';
+import { useVehicleDisplayActivity } from '../composables/useVehicleDisplayActivity';
+import { mainWorkspaceCostOption } from '../utils/simulationWorkspacePresentation';
+import { simulationDataLayout, clampSimulationFloatingPosition } from '../utils/simulationDataLayout';
 import AMapLoader from "@amap/amap-jsapi-loader";
 import factoryIcon from '../../public/icons/factory.png';
 import warehouseIcon from '../../public/icons/warehouse.png';
@@ -1055,6 +1185,11 @@ import {
 let map = null;
 let mapViewDisposed = false;
 let AMapLib = null; // 保存加载后的 AMap 构造对象
+// Phase 2：只观察地图外层容器尺寸；不替换 #container，也不重建 AMap 实例。
+const mapCanvasRegionRef = ref(null);
+let mapContainerResizeObserver = null;
+let mapResizeAnimationFrame = null;
+let mapResizeFallbackTimer = null;
 const shipmentCount = ref(1);
 const shipments = ref([]);
 const router = useRouter()
@@ -1075,6 +1210,125 @@ const highlightedShipmentId = ref(null);
 const highlightedAssignmentId = ref(null);
 let highlightTimer = null; // 高亮定时器
 const activeMainView = ref('map');
+
+// Phase 1：主仿真工作区的展示模式与原有主视图导航完全分离。
+// 这里只控制左右栏和底部区域的可见性，不参与仿真、地图或运输业务状态。
+const MAP_WORKSPACE_MODES = Object.freeze({
+  OPERATION: 'operation',
+  DATA: 'data'
+});
+const mapWorkspaceMode = ref(MAP_WORKSPACE_MODES.OPERATION);
+const dataRightPanelCollapsed = ref(false);
+// Phase 6：断点只控制布局与抽屉，不进入仿真状态。数据源始终独立于这些展示状态。
+const dataViewportWidth = ref(typeof window === 'undefined' ? 1920 : window.innerWidth);
+const dataViewportHeight = ref(typeof window === 'undefined' ? 1080 : window.innerHeight);
+const dataLayout = computed(() => simulationDataLayout(dataViewportWidth.value, dataViewportHeight.value));
+const dataLeftDrawerOpen = ref(false);
+const dataBottomCollapsed = ref(dataLayout.value.collapsedBottomDefault);
+const dataLeftAsideRef = ref(null);
+const dataRightAsideRef = ref(null);
+let dataDrawerReturnFocus = null;
+const isDataLeftVisible = computed(() => isDataWorkspace.value && activeMainView.value === 'map'
+    && (!dataLayout.value.leftDrawer || dataLeftDrawerOpen.value));
+const dataDrawerVisible = computed(() => isDataWorkspace.value && activeMainView.value === 'map'
+    && ((dataLayout.value.leftDrawer && dataLeftDrawerOpen.value)
+      || (dataLayout.value.rightDrawer && !dataRightPanelCollapsed.value)));
+const dataDrawerElement = side => {
+  const aside = side === 'left' ? dataLeftAsideRef.value : dataRightAsideRef.value;
+  return aside?.$el || aside || null;
+};
+const restoreDataDrawerFocus = () => nextTick(() => {
+  if (dataDrawerVisible.value) return;
+  const target = dataDrawerReturnFocus?.isConnected && dataDrawerReturnFocus.getClientRects().length > 0
+    ? dataDrawerReturnFocus : document.querySelector('.workspace-view-switch button:last-child');
+  target?.focus();
+  dataDrawerReturnFocus = null;
+});
+const closeDataDrawer = side => {
+  const wasDrawer = side === 'left' ? dataLayout.value.leftDrawer : dataLayout.value.rightDrawer;
+  if (side === 'left') dataLeftDrawerOpen.value = false;
+  else dataRightPanelCollapsed.value = true;
+  if (wasDrawer) restoreDataDrawerFocus();
+};
+const closeActiveDataDrawer = () => closeDataDrawer(dataLeftDrawerOpen.value ? 'left' : 'right');
+const openDataDrawer = async side => {
+  const isDrawer = side === 'left' ? dataLayout.value.leftDrawer : dataLayout.value.rightDrawer;
+  if (isDrawer) dataDrawerReturnFocus = document.activeElement;
+  if (side === 'left') {
+    dataLeftDrawerOpen.value = true;
+    if (dataLayout.value.rightDrawer) dataRightPanelCollapsed.value = true;
+  } else { dataRightPanelCollapsed.value = false; dataLeftDrawerOpen.value = false; }
+  await nextTick();
+  if (isDrawer) (dataDrawerElement(side)?.querySelector('button') || dataDrawerElement(side))?.focus();
+};
+const handleDataDrawerKeydown = (event, side) => {
+  if (!dataDrawerVisible.value) return;
+  if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeDataDrawer(side); return; }
+  if (event.key !== 'Tab') return;
+  const element = dataDrawerElement(side);
+  const targets = Array.from(element?.querySelectorAll('button:not([disabled]), a[href], input:not([disabled]), [tabindex="0"]') || [])
+      .filter(target => target.getClientRects().length > 0);
+  const first = targets[0], last = targets[targets.length - 1];
+  if (!first) { event.preventDefault(); element?.focus(); return; }
+  if (event.shiftKey && (document.activeElement === first || document.activeElement === element)) {
+    event.preventDefault(); last.focus();
+  } else if (!event.shiftKey && (document.activeElement === last || document.activeElement === element)) {
+    event.preventDefault(); first.focus();
+  }
+};
+const updateDataViewport = () => {
+  dataViewportWidth.value = window.innerWidth;
+  dataViewportHeight.value = window.innerHeight;
+};
+watch(() => dataLayout.value.mode, (mode, previous) => {
+  const wasOpen = dataLeftDrawerOpen.value || (previous === 'mobile' && !dataRightPanelCollapsed.value);
+  dataLeftDrawerOpen.value = false;
+  dataRightPanelCollapsed.value = dataLayout.value.rightDrawer;
+  if (wasOpen) restoreDataDrawerFocus();
+});
+watch(() => dataLayout.value.collapsedBottomDefault, collapsed => { dataBottomCollapsed.value = collapsed; });
+// Phase 6 修复：导航仅清理模态抽屉的展示状态，返回地图不复活旧遮罩或焦点锁。
+// 桌面常驻右栏不受影响；原导航函数、activeMainView 的赋值与业务请求均保持不变。
+watch(activeMainView, view => {
+  if (view === 'map') return;
+  dataLeftDrawerOpen.value = false;
+  if (dataLayout.value.rightDrawer) dataRightPanelCollapsed.value = true;
+  dataDrawerReturnFocus = null;
+});
+// Phase 5：日志属于父级页面会话，数据栏的挂载、折叠不清空记录。
+const simulationSessionRecords = ref(createSessionRecords());
+let transportObservationRequestId = 0;
+const observeSimulationRequestSafely = observation => {
+  // 只屏蔽展示观察；原请求、同步数据与业务清理的执行方式保持原样。
+  if (mapViewDisposed || resetInProgress.value) return;
+  try {
+    simulationSessionRecords.value = observeSessionRequest(simulationSessionRecords.value, observation);
+  } catch (error) {
+    console.error('[会话观察] 记录失败:', error);
+  }
+};
+const handleEvaluationRequestObservation = observation => {
+  if (activeMainView.value !== 'map' || !isDataWorkspace.value) return;
+  observeSimulationRequestSafely({ ...observation, source: 'evaluation' });
+};
+const isDataWorkspace = computed(() => mapWorkspaceMode.value === MAP_WORKSPACE_MODES.DATA);
+const leftWorkspaceWidth = computed(() => isDataWorkspace.value ? `${dataLayout.value.leftWidth}px` : '320px');
+const rightWorkspaceWidth = computed(() => isDataWorkspace.value ? `${dataLayout.value.rightWidth}px` : '340px');
+
+const setMapWorkspaceMode = (mode) => {
+  if (!Object.values(MAP_WORKSPACE_MODES).includes(mode)) {
+    return;
+  }
+  mapWorkspaceMode.value = mode;
+  if (mode === MAP_WORKSPACE_MODES.DATA) {
+    // 数据视图优先保留右栏；用户仍可在右栏内主动收起。
+    dataRightPanelCollapsed.value = dataLayout.value.rightDrawer;
+    dataLeftDrawerOpen.value = false;
+    dataBottomCollapsed.value = dataLayout.value.collapsedBottomDefault;
+  }
+  else dataLeftDrawerOpen.value = false;
+};
+
 const vehicleFloatingInfoWindowRef = ref(null);
 const FLOATING_VEHICLE_INFO_DEFAULT_POSITION = Object.freeze({ left: 16, top: 16 });
 const floatingVehicleInfo = reactive({
@@ -1225,12 +1479,73 @@ const scrollToVehicle = (vehicleId) => {
 // --- 右侧监控面板相关状态 ---
 const isMonitorPanelVisible = ref(false);
 const activeMonitorTab = ref('vehicles');
+// Phase 2：将同一帧内来自左右栏、底栏和窗口变化的多次尺寸通知合并为一次 resize。
+// resize 仅通知既有地图重新读取容器尺寸，不操作覆盖物、路线或车辆动画。
+const runScheduledMapResize = () => {
+  mapResizeAnimationFrame = null;
+  const mapRegion = mapCanvasRegionRef.value;
+  if (mapViewDisposed || !map || !mapRegion) {
+    return;
+  }
+  const regionRect = mapRegion.getBoundingClientRect();
+  if (regionRect.width <= 0 || regionRect.height <= 0) {
+    return;
+  }
+  map.resize?.();
+  // Phase 6：重读已显示浮窗的像素尺寸，只限制坐标，不修改车辆或动画数据。
+  if (floatingVehicleInfo.visible) setFloatingVehicleInfoPosition(floatingVehicleInfo.position.left, floatingVehicleInfo.position.top);
+};
+
+const scheduleMapResize = () => {
+  if (mapViewDisposed || mapResizeAnimationFrame !== null) {
+    return;
+  }
+  mapResizeAnimationFrame = window.requestAnimationFrame(runScheduledMapResize);
+};
 
 const resizeMapAfterPanelChange = () => {
-  setTimeout(() => {
-    map?.resize?.();
-  }, 80);
+  nextTick(() => {
+    scheduleMapResize();
+    if (mapResizeFallbackTimer !== null) {
+      clearTimeout(mapResizeFallbackTimer);
+    }
+    // Element Plus 的显隐过渡结束后再校正一次，避免只取得过渡中的中间尺寸。
+    mapResizeFallbackTimer = window.setTimeout(() => {
+      mapResizeFallbackTimer = null;
+      scheduleMapResize();
+    }, 180);
+  });
 };
+
+const startMapContainerResizeObserver = () => {
+  if (typeof ResizeObserver === 'undefined' || !mapCanvasRegionRef.value) {
+    return;
+  }
+  mapContainerResizeObserver?.disconnect();
+  mapContainerResizeObserver = new ResizeObserver(() => {
+    scheduleMapResize();
+  });
+  mapContainerResizeObserver.observe(mapCanvasRegionRef.value);
+};
+
+const stopMapContainerResizeObserver = () => {
+  mapContainerResizeObserver?.disconnect();
+  mapContainerResizeObserver = null;
+  if (mapResizeAnimationFrame !== null) {
+    window.cancelAnimationFrame(mapResizeAnimationFrame);
+    mapResizeAnimationFrame = null;
+  }
+  if (mapResizeFallbackTimer !== null) {
+    clearTimeout(mapResizeFallbackTimer);
+    mapResizeFallbackTimer = null;
+  }
+};
+
+// Phase 2：工作区切换和数据右栏收展只触发尺寸同步，不触发任何数据刷新。
+watch([mapWorkspaceMode, dataRightPanelCollapsed], () => {
+  resizeMapAfterPanelChange();
+}, { flush: 'post' });
+watch([dataLeftDrawerOpen, dataBottomCollapsed], () => resizeMapAfterPanelChange(), { flush: 'post' });
 
 const openMonitorPanel = async (tab = 'vehicles') => {
   if (tab === 'costs') {
@@ -1238,6 +1553,8 @@ const openMonitorPanel = async (tab = 'vehicles') => {
     return;
   }
   activeMainView.value = 'map';
+  // 顶部原监控入口始终对应原运行监控面板，不改变既有入口语义。
+  mapWorkspaceMode.value = MAP_WORKSPACE_MODES.OPERATION;
   disposeRuntimeDashboardCharts();
   activeMonitorTab.value = tab;
   isMonitorPanelVisible.value = true;
@@ -1254,6 +1571,7 @@ const openMonitorPanel = async (tab = 'vehicles') => {
 
 const openVehicleMonitorPanelWithoutMapResize = async () => {
   activeMainView.value = 'map';
+  mapWorkspaceMode.value = MAP_WORKSPACE_MODES.OPERATION;
   disposeRuntimeDashboardCharts();
   activeMonitorTab.value = 'vehicles';
   isMonitorPanelVisible.value = true;
@@ -2864,6 +3182,9 @@ const buildNormalizedBreakdownOption = () => {
   };
 };
 
+// 数据左栏仅复用现有成本图构建器和共享延用缓存；不修改成本请求、计算或主循环。
+const simulationDataCostOption = computed(() => isDataLeftVisible.value ? mainWorkspaceCostOption(buildNormalizedBreakdownOption()) : null);
+
 const buildCostShareOption = () => buildPieOption(
     'Cost A-E 维度占比',
     rawCostMetrics.value
@@ -3165,6 +3486,19 @@ const poiMarkers = ref([]); // 存储POI标记
 const currentPOIs = ref([]); // 当前显示的POI数据
 const isSimulationRunning = ref(false); // 仿真运行状态
 const resetInProgress = ref(false); // 重置过程中禁止重复操作
+// 展示采集随成功启动的仿真持续运行，与用户是否打开数据视图无关。
+const { feedState: simulationDataFeedState, trendSnapshots: simulationDataTrendSnapshots } = useSimulationEvaluationFeed({
+  enabled: computed(() => !resetInProgress.value && (isSimulationRunning.value || isExperimentRunExecuting.value
+    || activeMainView.value === 'evaluationDashboard' || (isDataWorkspace.value && activeMainView.value === 'map'))),
+  epoch: computed(() => simulationSessionRecords.value.epoch),
+  requestBase: () => simulationSessionRecords.value.health.evaluation.requestId,
+  onObservation: handleEvaluationRequestObservation,
+  onSuspend: () => { simulationSessionRecords.value.health.evaluation.phase = 'inactive'; }
+});
+// Phase 5：观察已确认 reset 的开始，不进入 reset 业务函数；清空比较基线并隔离旧在途结果。
+watch(resetInProgress, resetting => {
+  if (resetting) simulationSessionRecords.value = createSessionRecords(simulationSessionRecords.value.epoch + 1);
+}, { flush: 'sync' });
 const simulationControlBusy = ref(false);
 watch(() => [isSimulationRunning.value, isExperimentRunActive.value, resetInProgress.value,
   simulationControlBusy.value, experimentRun.loading, experimentPrep.loading], () => {
@@ -3186,6 +3520,12 @@ const activeRoutes = ref(new Map()); // 当前活动的路线映射，key为assi
 const routePlanningCache = new Map();
 const weatherRouteCache = createWeatherRouteCache(typeof sessionStorage === 'undefined' ? null : sessionStorage);
 const missingRouteAssignmentIds = reactive(new Set());
+// Phase 5：顶部提示继续使用原有 Set；底栏仅记录其数量变化，reset 清空不生成解除记录。
+watch(() => missingRouteAssignmentIds.size, count => {
+  if (!mapViewDisposed && !resetInProgress.value) {
+    simulationSessionRecords.value = observeRouteWaiting(simulationSessionRecords.value, count, new Date().toISOString());
+  }
+}, { flush: 'sync' });
 let weatherRouteCacheRunId = null;
 
 const syncWeatherRouteCacheRun = (runId) => {
@@ -4719,6 +5059,37 @@ let animationManager = null;
 
 // 状态管理器引用
 const vehicleStatusManager = ref(null);
+// 展示修复：观察既有回调，不插入或改写任何动画/业务状态迁移。
+const { activityChart: vehicleDisplayActivityChart } = useVehicleDisplayActivity({
+  manager: vehicleStatusManager,
+  epoch: computed(() => simulationSessionRecords.value.epoch),
+  // 两个视图共享一个窗口，只扩展展示过期刷新条件，不增加请求或观察者。
+  visible: computed(() => activeMainView.value === 'evaluationDashboard'
+    || (isDataWorkspace.value && activeMainView.value === 'map' && !dataRightPanelCollapsed.value)),
+  runIds: () => [simulationSessionRecords.value.runIds.transport, simulationSessionRecords.value.runIds.evaluation],
+  suppressed: () => mapViewDisposed || resetInProgress.value || restoringWeatherView,
+  assignmentFor: (vehicleId, source) => {
+    const route = findVisibleVehicleRouteData(vehicleId);
+    const assignment = lookupMapByLooseId(source.assignmentData, vehicleId);
+    // 兼容就绪任务查询；初始阶段由下方注册上下文单独观察，不更改原投影。
+    return route && route.assignment === assignment ? assignment.assignmentId : null;
+  },
+  taskFor: (vehicleId, source) => {
+    const assignment = lookupMapByLooseId(source.assignmentData, vehicleId);
+    const route = assignment && lookupMapByLooseId(activeRoutes.value, assignment.assignmentId);
+    const marker = lookupMapByLooseId(source.vehicleMarkers, vehicleId);
+    if (!route || route.cleaned || route.assignment !== assignment || !markerHasValidPosition(marker)) return null;
+    return { assignmentId: assignment.assignmentId, render: route,
+      ready: !route.drawing && findVisibleVehicleRouteData(vehicleId) === route,
+      recovery: Boolean(route.replacementRecovery || assignment.replacementRecovery) };
+  },
+  // 只提交已经发生的回调，不根据这些注册标识合成状态转换；失败绘制的暂存记录会丢弃。
+  readiness: () => {
+    const drawn = new Set(Array.from(drawnAssignmentIds.value, String));
+    return Array.from(activeRoutes.value, ([id, route]) =>
+      `${id}:${Boolean(route.drawing)}:${Boolean(route.cleaned)}:${drawn.has(String(id))}`).join('|');
+  }
+});
 const arrivalAckInFlight = new Set();
 const arrivalAckCompleted = new Set();
 
@@ -5629,9 +6000,21 @@ const recordDashboardMonitorSnapshot = () => {
 };
 
 const fetchTransportMonitor = async () => {
-  const response = await request.get('/api/simulation/monitor/active');
+  // Phase 5：为原请求添加只读观察，序号与 epoch 仅保护展示日志，不控制运输数据同步。
+  const observation = { source: 'transport', epoch: simulationSessionRecords.value.epoch,
+    requestId: ++transportObservationRequestId };
+  observeSimulationRequestSafely({ ...observation, phase: 'start', receivedAt: new Date().toISOString() });
+  let response;
+  try {
+    response = await request.get('/api/simulation/monitor/active');
+  } catch (error) {
+    observeSimulationRequestSafely({ ...observation, phase: 'failure', receivedAt: new Date().toISOString(),
+      error: error?.response?.data?.message || error?.message || '运输监控读取失败' });
+    throw error;
+  }
   const monitorData = response.data || {};
   syncTransportMonitorData(monitorData);
+  observeSimulationRequestSafely({ ...observation, phase: 'success', receivedAt: new Date().toISOString(), data: monitorData });
   return monitorData;
 };
 
@@ -7148,12 +7531,7 @@ const clampFloatingVehicleInfoPosition = (left, top) => {
   }
   const width = windowEl?.offsetWidth || 360;
   const height = windowEl?.offsetHeight || 280;
-  const maxLeft = Math.max(minLeft, rect.width - width - 8);
-  const maxTop = Math.max(minTop, rect.height - height - 8);
-  return {
-    left: Math.min(Math.max(minLeft, left), maxLeft),
-    top: Math.min(Math.max(minTop, top), maxTop)
-  };
+  return clampSimulationFloatingPosition(left, top, rect.width, rect.height, width, height);
 };
 
 const setFloatingVehicleInfoPosition = (left, top) => {
@@ -7796,6 +8174,11 @@ const restoreWeatherRunView = async () => {
 };
 
 onMounted(() => {
+  // Phase 6：只监听视口尺寸，组件卸载时成对移除。
+  updateDataViewport();
+  window.addEventListener('resize', updateDataViewport);
+  // Phase 2：组件挂载后开始观察现有地图区域，监听纯布局尺寸变化。
+  startMapContainerResizeObserver();
   fetchCurrentExperimentScenario().catch(error => {
     console.error('读取当前实验场景失败:', error);
   });
@@ -7815,6 +8198,8 @@ onMounted(() => {
           zoom: 11,
           center: [104.066158, 30.657150],
         });
+        // 地图异步创建完成时，使用当前工作区的最终尺寸完成首次校正。
+        resizeMapAfterPanelChange();
 
         // 初始化状态管理器
         initVehicleStatusManager();
@@ -7838,7 +8223,10 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  window.removeEventListener('resize', updateDataViewport);
+  dataDrawerReturnFocus = null;
   mapViewDisposed = true;
+  stopMapContainerResizeObserver();
   clearLocalOrdinaryNavigation();
   stopFloatingVehicleInfoDrag();
   if (isExperimentRunActive.value) {
@@ -7923,6 +8311,25 @@ onUnmounted(() => {
   width: 100%;
 }
 
+.navbar-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-shrink: 0;
+}
+
+.workspace-view-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.workspace-view-hint {
+  color: #909399;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 .navbar-title {
   margin: 0;
   color: #303133;
@@ -7938,6 +8345,13 @@ onUnmounted(() => {
 .navbar-menu {
   display: flex;
   gap: 10px;
+  min-width: 0;
+}
+
+.map-workspace {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 
 /* 侧边栏样式 - 整体滚动 */
@@ -8404,6 +8818,40 @@ onUnmounted(() => {
   position: relative;
 }
 
+.map-main {
+  height: calc(100vh - 60px);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  /* 将高德地图内部的高 z-index 图层限制在地图工作区，不能覆盖相邻数据侧栏。 */
+  isolation: isolate;
+  z-index: 0;
+}
+
+.map-canvas-region {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.map-data-bottom-panel {
+  /* Phase 1 验收调整：占主工作区原地图可用高度约三分之一。 */
+  flex: 0 0 33.333%;
+  min-height: 0;
+}
+
+.data-right-open-trigger {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 720;
+  background: rgba(255, 255, 255, .94);
+  box-shadow: 0 6px 20px rgba(34, 70, 110, .14);
+}
+
 .vehicle-floating-info-window {
   position: absolute;
   width: 360px;
@@ -8761,21 +9209,104 @@ onUnmounted(() => {
 
 /* ==================== 右侧成本监控面板美化 ==================== */
 .right-side-panel {
-  flex: 0 0 340px;
-  width: 340px;
-  min-width: 340px;
   height: calc(100vh - 60px);
-  position: fixed;
-  top: 60px;
-  right: 0;
-  bottom: 0;
   background-color: #f7f8fa; /* 覆盖黑底色，统一侧边栏背景 */
   border-left: 1px solid #e6e6e6;
   display: flex;
   flex-direction: column;
   box-shadow: -2px 0 8px rgba(0, 0, 0, 0.05); /* 左侧加一点阴影区分层次 */
+}
+
+/* 原运行监控保持固定浮层与既有过渡行为。 */
+.right-side-panel--operation {
+  position: fixed;
+  top: 60px;
+  right: 0;
+  bottom: 0;
+  flex: 0 0 340px;
+  width: 340px;
+  min-width: 340px;
   z-index: 3000;
 }
+
+.right-side-panel--data {
+  position: relative;
+  top: auto;
+  right: auto;
+  bottom: auto;
+  flex: 0 0 var(--data-right-width, 400px);
+  width: var(--data-right-width, 400px);
+  min-width: 0;
+  align-self: stretch;
+  /* ElAside 默认 overflow:auto；数据模式只允许内部内容区滚动。 */
+  overflow: hidden;
+  isolation: isolate;
+  z-index: 20;
+}
+
+.operation-monitor-surface,
+.data-monitor-surface {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.data-monitor-surface {
+  overflow: hidden;
+}
+
+.data-monitor-panel {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* Phase 6：以下布局仅作用于数据工作区，覆盖原左栏旧断点的 !important 宽度。 */
+.map-workspace--data .side-panel--data {
+  position: relative;
+  flex: 0 0 var(--data-left-width, 380px);
+  width: var(--data-left-width, 380px) !important;
+  min-width: 0;
+  overflow: hidden;
+  isolation: isolate;
+  z-index: 20;
+}
+.map-workspace--data .map-canvas-region { min-height: min(180px, 35vh); }
+.data-workspace-tools { flex: 0 0 auto; min-height: 36px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 5px 10px; border-bottom: 1px solid #e4e7ed; background: #fff; font-size: 11px; color: #718096; }
+.data-workspace-tools button, .data-drawer-close { border: 1px solid #dfe5ec; border-radius: 5px; padding: 4px 8px; color: #337ecc; background: #f5f9ff; font-size: 11px; cursor: pointer; }
+.data-workspace-tools button:last-child { margin-left: auto; }
+.data-workspace-tools button:focus-visible, .data-drawer-close:focus-visible { outline: 2px solid #409eff; outline-offset: 2px; }
+.map-workspace--compact .map-data-bottom-panel { flex-basis: 33.333%; }
+.map-workspace--mobile .map-data-bottom-panel { flex-basis: 45%; }
+.map-workspace--data .map-data-bottom-panel--collapsed { flex: 0 0 52px; }
+.map-workspace--data .side-panel--data.data-aside--drawer,
+.map-workspace--data .right-side-panel--data.data-aside--drawer {
+  position: fixed;
+  top: 60px;
+  bottom: 0;
+  height: calc(100vh - 60px);
+  max-width: calc(100vw - 24px);
+  z-index: 3200;
+}
+.map-workspace--data .side-panel--data.data-aside--drawer { left: 0; }
+.map-workspace--data .right-side-panel--data.data-aside--drawer { right: 0; }
+.data-drawer-backdrop { position: fixed; inset: 60px 0 0; z-index: 3100; background: rgba(22, 36, 52, .28); }
+.data-drawer-close { position: absolute; top: 12px; right: 12px; z-index: 2; background: #fff; }
+.side-panel--data.data-aside--drawer :deep(.data-left-panel) { padding-top: 48px; }
+.page-container--data .navbar-menu { flex: 1; overflow-x: auto; white-space: nowrap; scrollbar-width: thin; }
+.page-container--data .navbar-menu > * { flex-shrink: 0; }
+.page-container--data .navbar-content { min-width: 0; padding-left: 0; }
+@media (max-width: 900px) {
+  .page-container--data .header-navbar { padding: 0 8px; }
+  .page-container--data .navbar-left { gap: 8px; }
+  .page-container--data .navbar-title { max-width: 125px; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .page-container--data .workspace-view-hint { display: none; }
+}
+@media (max-width: 480px) { .page-container--data .navbar-title { max-width: 65px; } }
 
 .monitor-panel {
   padding: 0;

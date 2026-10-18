@@ -179,8 +179,12 @@ public final class SandboxManagementService {
         return result;
     }
     public SandboxResultReader.SandboxExecutionConfigurationV1 executionConfiguration(String id) { return results.configuration(id); }
+    public JsonNode compareExecutions(String leftId, String rightId) { return new SandboxComparisonReader(results).read(leftId, rightId); }
     public JsonNode mapContext(String id) { return new SandboxMapReader(results).context(id); }
     public JsonNode mapSnapshot(String id,int index) { return new SandboxMapReader(results).snapshot(id,index); }
+    public JsonNode serviceActivity(String id,int index,int windowLoops) { return new SandboxServiceActivityReader(results).read(id,index,windowLoops); }
+    public JsonNode vehicleStates(String id,int index) { return new SandboxVehicleStateReader(results).read(id,index); }
+    public JsonNode vehicleStates(String id,int index,boolean includeWindow) { return new SandboxVehicleStateReader(results).read(id,index,includeWindow); }
     public SandboxResultExporter.PreparedExport exportResult(String id,String format) { return new SandboxResultExporter(results).prepare(id,format); }
     public Map<String, Object> verifyExecution(String id) {
         if (!VERIFY_BUSY.compareAndSet(false,true)) throw new SandboxWorkspaceException("VERIFICATION_BUSY","Another manual verification is active");
