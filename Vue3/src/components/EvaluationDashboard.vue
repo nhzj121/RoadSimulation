@@ -54,13 +54,13 @@
             <span>契约 v{{ snapshot.contractVersion }}</span>
           </div>
           <div
-            v-if="evaluationWarnings.length"
+            v-if="displayedEvaluationWarnings.length"
             class="evaluation-warning-stack"
             aria-live="polite"
           >
             <!-- Phase 7E-R：机器码、用户提示和事实详情分层展示，避免一行红字承担全部诊断职责。 -->
             <article
-              v-for="warning in evaluationWarnings"
+              v-for="warning in displayedEvaluationWarnings"
               :key="warning.key"
               class="evaluation-warning"
               :class="`evaluation-warning--${warning.level}`"
@@ -456,6 +456,7 @@ import {
   isEvaluationRequestCanceled
 } from '../api/evaluationApi';
 import { shouldAcceptEvaluationSnapshot } from '../utils/evaluationSnapshotPolicy';
+import { evaluationWarningsForDisplay } from '../utils/temporaryDisplaySettings';
 import type {
   EvaluationMetricValue,
   EvaluationMetricValueStatus,
@@ -730,6 +731,9 @@ const evaluationWarnings = computed<EvaluationWarning[]>(() => {
   }
   return warnings;
 });
+
+// Temporary presentation filter: keep the original snapshot and all diagnostics intact.
+const displayedEvaluationWarnings = computed(() => evaluationWarningsForDisplay(evaluationWarnings.value));
 
 /** Phase 9C：所选运行摘要来自持久化历史列表，不从当前 latest 推断。 */
 const selectedHistorySummary = computed(() =>

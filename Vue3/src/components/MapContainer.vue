@@ -109,11 +109,12 @@
             </ElCard>
           </div>
 
-          <div class="panel-section">
+          <!-- Presentation only: keep WeatherPanel mounted for prepareStart()/refresh(). -->
+          <div v-show="temporaryDisplaySettings.showWeatherControls" class="panel-section">
             <WeatherPanel ref="weatherPanel" :weather="monitorWeather" :disabled="resetInProgress || hasPreparedExperimentScenario || isExperimentRunActive" />
           </div>
 
-          <div class="panel-section">
+          <div v-show="temporaryDisplaySettings.showRandomEventControls" class="panel-section">
             <RandomEventPanel
                 :vehicles="eventEligibleVehicles"
                 :active-events="monitorActiveEvents"
@@ -1131,6 +1132,7 @@ import { poiManagerApi } from "../api/poiManagerApi";
 import { simulationController} from "@/api/simulationController";
 import RandomEventPanel from './RandomEventPanel.vue';
 import WeatherPanel from './WeatherPanel.vue';
+import { temporaryDisplaySettings } from '../utils/temporaryDisplaySettings';
 import request from "../utils/request";
 // Phase 6C：新增独立评价视图，不向地图动画管理器注入任何评价状态。
 import EvaluationDashboard from './EvaluationDashboard.vue';

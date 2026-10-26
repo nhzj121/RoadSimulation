@@ -8,7 +8,7 @@
     <el-alert v-else-if="blocked" :title="`记录不可用于正常展示或导出：${error}。不会自动修复。`" type="error" :closable="false" />
     <template v-else>
       <el-alert v-if="error" :title="error" type="error" :closable="false" />
-      <div class="read-toolbar"><p v-if="lastUpdated">最后读取：{{ lastUpdated }}{{ stale ? '（信息已过期；当前网络错误不代表实验失败）' : '' }}</p><el-button :disabled="loading" @click="refresh">重新查询结果</el-button></div>
+      <div class="read-toolbar"><p v-if="lastUpdated && stale">信息已过期；当前网络错误不代表实验失败。</p><el-button :disabled="loading" @click="refresh">重新查询结果</el-button></div>
       <template v-if="summary">
         <section class="results-card execution-overview" aria-label="执行概览">
           <div class="section-heading"><div><span class="results-eyebrow">EXECUTION OVERVIEW</span><h2>{{ resultLabel(summary.resultKind) }}</h2></div><span class="readonly-label">永久记录 · 只读</span></div>
