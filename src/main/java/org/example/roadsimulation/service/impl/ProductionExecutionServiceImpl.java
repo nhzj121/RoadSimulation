@@ -1,5 +1,6 @@
 package org.example.roadsimulation.service.impl;
 
+import org.example.roadsimulation.service.production.ProductionRules;
 import org.example.roadsimulation.dto.ProductionBatchResponse;
 import org.example.roadsimulation.entity.ProcessingExecutionFlow;
 import org.example.roadsimulation.entity.ProcessingStage;
@@ -163,7 +164,7 @@ public class ProductionExecutionServiceImpl implements ProductionExecutionServic
         double ratio = execution.getStage().getOutputWeightRatio() == null
                 ? 1.0
                 : execution.getStage().getOutputWeightRatio();
-        double output = round(input * ratio);
+        double output = ProductionRules.completedOutput(input, ratio);
 
         execution.setActualOutputWeight(output);
         execution.setProgressPercent(100);
@@ -188,10 +189,6 @@ public class ProductionExecutionServiceImpl implements ProductionExecutionServic
             }
         }
         executionRepository.save(execution);
-    }
-
-    private double round(double value) {
-        return Math.round(value * 1000.0) / 1000.0;
     }
 
     private ProductionBatchResponse mapBatch(

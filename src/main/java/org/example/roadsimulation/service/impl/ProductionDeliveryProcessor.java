@@ -1,5 +1,6 @@
 package org.example.roadsimulation.service.impl;
 
+import org.example.roadsimulation.service.production.ProductionRules;
 import org.example.roadsimulation.entity.ProcessingExecutionFlow;
 import org.example.roadsimulation.entity.ProcessingStageExecution;
 import org.example.roadsimulation.entity.ProductionBatch;
@@ -189,6 +190,6 @@ public class ProductionDeliveryProcessor {
     }
 
     private double round(double value) {
-        return Math.round(value * 1000.0) / 1000.0;
+        return ProductionRules.round(value);
     }
 }

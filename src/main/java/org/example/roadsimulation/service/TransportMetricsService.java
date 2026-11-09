@@ -29,6 +29,8 @@ public class TransportMetricsService {
     private final ShipmentRepository shipmentRepository;
     private final VehicleRepository vehicleRepository;
     private final GaodeRoutePlanningQueueService routePlanningQueueService;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private TransportLegMetricProvider executionMetricProvider;
 
     public TransportMetricsService(
             AssignmentLegRepository assignmentLegRepository,
@@ -306,6 +308,16 @@ public class TransportMetricsService {
     }
 
     private RouteMetric calculateRouteMetric(RoutePoint from, RoutePoint to, boolean allowFallback) {
+        if (executionMetricProvider != null && executionMetricProvider.active()) {
+            if (from == null || to == null) throw new IllegalStateException("PLAN_PATH_ENDPOINT_MISSING");
+            var metric = executionMetricProvider.metric(from.poi == null ? null : from.poi.getId(),
+                    from.poi == null ? decimal(from.lon) : from.poi.getLongitude(),
+                    from.poi == null ? decimal(from.lat) : from.poi.getLatitude(),
+                    to.poi == null ? null : to.poi.getId(),
+                    to.poi == null ? decimal(to.lon) : to.poi.getLongitude(),
+                    to.poi == null ? decimal(to.lat) : to.poi.getLatitude());
+            return new RouteMetric(metric.distanceMeters(), metric.drivingSeconds());
+        }
         if (from == null || to == null || !from.hasCoordinates() || !to.hasCoordinates()) {
             if (!allowFallback) {
                 throw new RouteMetricPlanningException("Route point coordinates are missing");
@@ -387,6 +399,8 @@ public class TransportMetricsService {
                 || normalized.contains("not accepting requests")
                 || normalized.contains("discarded");
     }
+
+    private static BigDecimal decimal(Double value) { return value == null ? null : BigDecimal.valueOf(value); }
 
     private void sleepBeforeStrictRetry(int attempt) {
         try {

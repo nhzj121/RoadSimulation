@@ -79,6 +79,7 @@ public final class SandboxExecutionStore {
                 if (!rows.next()) throw new SandboxWorkspaceException("EXECUTION_NOT_FOUND", "No execution with the requested ID");
                 String manifestText = rows.getString("manifest_json");
                 manifest = artifactJson.readTree(manifestText); previous = rows.getString("manifest_sha256");
+                verifyPlanManifest(manifest);
                 if (previous == null) throw new SandboxWorkspaceException("EXECUTION_UNJOURNALED", "Legacy v5 execution has no permanent tick journal");
                 require(previous.equals(SandboxExecutionJson.hashManifestText(manifestText)), "Manifest fingerprint mismatch");
                 requested = rows.getInt("requested_loops"); completed = rows.getInt("completed_loops"); status = rows.getString("execution_status");
@@ -115,6 +116,13 @@ public final class SandboxExecutionStore {
                     JsonNode facts = artifactJson.readTree(rows.getString("facts_json"));
                     JsonNode business = artifactJson.readTree(rows.getString("business_facts_json"));
                     JsonNode evaluation = artifactJson.readTree(rows.getString("evaluation_json"));
+                    if ("GLOBAL_PLAN".equals(manifest.path("executionMode").asText())) {
+                        var planFacts=facts.path("runtime").path("planExecution");
+                        require(manifest.path("planExecutionTaskSha256").asText().equals(planFacts.path("state").path("taskFingerprint").asText()),
+                                "Plan tick belongs to a different task");
+                        require(manifest.path("planExecutionTask").path("compiledProblem").path("dependencies").path("catalogFingerprint").asText()
+                                .equals(planFacts.path("mapping").path("catalogFingerprint").asText()), "Plan mapping catalog mismatch");
+                    }
                     String factsHash = canonical.hash(facts), businessHash = canonical.hash(business), evaluationHash = canonical.hash(evaluation);
                     require(factsHash.equals(rows.getString("facts_sha256")) && businessHash.equals(rows.getString("business_facts_sha256"))
                             && evaluationHash.equals(rows.getString("evaluation_sha256")), "Tick payload fingerprint mismatch");
@@ -163,5 +171,20 @@ public final class SandboxExecutionStore {
 
     private void require(boolean condition, String message) {
         if (!condition) throw new SandboxWorkspaceException("EXECUTION_RECORD_CORRUPT", message);
+    }
+
+    private void verifyPlanManifest(JsonNode manifest) {
+        boolean plan="sandbox-execution-manifest/v3".equals(manifest.path("artifactVersion").asText());
+        require(plan=="GLOBAL_PLAN".equals(manifest.path("executionMode").asText()),"Plan mode/version mismatch");
+        if(!plan)return;
+        var task=org.example.roadsimulation.sandbox.optimization.OptimizationJson.read(manifest.path("planExecutionTask").toString(),
+                org.example.roadsimulation.sandbox.optimization.PlanExecutionTask.class);
+        require(task.fingerprint().equals(manifest.path("planExecutionTaskSha256").asText()),"Plan task fingerprint mismatch");
+        var baseline=new org.springframework.core.io.ByteArrayResource(manifest.path("baselinePackage").toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        try {
+            var scene=json.treeToValue(manifest.path("scenarioRevision"),org.example.roadsimulation.sandbox.scenario.definition.SandboxScenarioRevisionV1.class);
+            var run=json.treeToValue(manifest.path("runRevision"),org.example.roadsimulation.sandbox.run.SandboxRunSpecificationRevisionV2.class);
+            org.example.roadsimulation.sandbox.optimization.PlanExecutionAuthentication.verify(task,baseline,scene,run);
+        }catch(Exception failure){throw new SandboxWorkspaceException("EXECUTION_RECORD_CORRUPT","Cannot authenticate frozen plan input",failure);}
     }
 }

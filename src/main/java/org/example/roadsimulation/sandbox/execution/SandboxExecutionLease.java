@@ -1,8 +1,12 @@
 package org.example.roadsimulation.sandbox.execution;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.example.roadsimulation.sandbox.baseline.SandboxBaselinePackageV1;
+import org.example.roadsimulation.sandbox.optimization.PlanExecutionAuthentication;
+import org.example.roadsimulation.sandbox.optimization.PlanExecutionTask;
 import org.example.roadsimulation.sandbox.run.SandboxRunSpecificationRevisionV2;
 import org.example.roadsimulation.sandbox.run.SandboxRunSpecificationStore;
+import org.example.roadsimulation.sandbox.scenario.definition.SandboxScenarioStore;
 import org.example.roadsimulation.sandbox.workspace.*;
 import org.springframework.core.io.Resource;
 
@@ -23,37 +27,49 @@ public final class SandboxExecutionLease implements AutoCloseable {
     private final SandboxRunSpecificationRevisionV2 revision;
     private final JsonNode baselinePackage;
     private final String jobId;
+    private final SandboxBaselinePackageV1.Data preparedPlanData;
+    private final String preparedPlanFingerprint;
     private final String executionId = UUID.randomUUID().toString();
     private boolean created;
+    private String planTaskFingerprint;
     // Execution phase, not the management job's failure-closing status. Moving a
     // failed job to FINALIZING must not erase the phase in which it actually failed.
     private String executionPhase = "STARTUP";
 
     private SandboxExecutionLease(Connection connection, SandboxWorkspaceSafety safety,
                                   SandboxRunPreparationReport preparation,
-                                  SandboxRunSpecificationRevisionV2 revision, JsonNode baselinePackage, String jobId) {
+                                  SandboxRunSpecificationRevisionV2 revision, JsonNode baselinePackage, String jobId,
+                                  SandboxBaselinePackageV1.Data preparedPlanData, String preparedPlanFingerprint) {
         this.connection = connection;
         this.safety = safety;
         this.preparation = preparation;
         this.revision = revision;
         this.baselinePackage = baselinePackage.deepCopy();
         this.jobId = jobId;
+        this.preparedPlanData = preparedPlanData;
+        this.preparedPlanFingerprint = preparedPlanFingerprint;
     }
 
     public static SandboxExecutionLease acquire(String url, String user, String password,
             Resource baseline, String key, int revisionNumber, ObjectMapper json) {
-        return acquire(url, user, password, baseline, key, revisionNumber, json, null);
+        return acquire(url, user, password, baseline, key, revisionNumber, json, null, null);
     }
 
     /** A management worker prepares and executes under one lock/connection, without a handoff gap. */
     public static SandboxExecutionLease prepareAndAcquire(String url, String user, String password,
             Resource baseline, String key, int revisionNumber, ObjectMapper json, String jobId) {
         if (jobId == null) throw new SandboxWorkspaceException("MISSING_JOB", "Worker requires a reserved job");
-        return acquire(url, user, password, baseline, key, revisionNumber, json, jobId);
+        return acquire(url, user, password, baseline, key, revisionNumber, json, jobId, null);
+    }
+
+    /** Plan worker authenticates the plan before changing the workspace and keeps the preparation lock. */
+    public static SandboxExecutionLease prepareAndAcquirePlan(String url, String user, String password,
+            Resource baseline, PlanExecutionTask task, ObjectMapper json) {
+        return acquire(url, user, password, baseline, task.runSpecKey(), task.runSpecRevision(), json, null, task);
     }
 
     private static SandboxExecutionLease acquire(String url, String user, String password,
-            Resource baseline, String key, int revisionNumber, ObjectMapper json, String jobId) {
+            Resource baseline, String key, int revisionNumber, ObjectMapper json, String jobId, PlanExecutionTask task) {
         Connection connection = null;
         var safety = new SandboxWorkspaceSafety();
         boolean locked = false;
@@ -76,18 +92,33 @@ public final class SandboxExecutionLease implements AutoCloseable {
                             "Provision the additive sandbox-control-schema/v6 upgrade before execution");
                 }
             }
-            if (jobId != null) new SandboxRunWorkspacePreparer(url, user, password, json)
-                    .prepareWithHeldLock(connection, baseline, key, revisionNumber, jobId);
-            var prepared = new SandboxRunWorkspacePreparer(url, user, password, json).verify(baseline);
+            var runStore = new SandboxRunSpecificationStore(url, user, password, json);
+            var preparer = new SandboxRunWorkspacePreparer(url, user, password, json);
+            SandboxRunSpecificationRevisionV2 published;
+            SandboxRunPreparationReport prepared;
+            SandboxBaselinePackageV1.Data authenticated = null;
+            if (task != null) {
+                try (var input = baseline.getInputStream()) {
+                    baseline = new org.springframework.core.io.ByteArrayResource(input.readAllBytes());
+                }
+                published = runStore.loadRevisionV2(key, revisionNumber);
+                var ref = published.specification().scenario();
+                var scene = new SandboxScenarioStore(url, user, password, json).loadRevision(ref.scenarioKey(), ref.revision());
+                authenticated = PlanExecutionAuthentication.verify(task, baseline, scene, published);
+                prepared = preparer.prepareWithHeldLock(connection, baseline, key, revisionNumber, null);
+            } else {
+                if (jobId != null) preparer.prepareWithHeldLock(connection, baseline, key, revisionNumber, jobId);
+                prepared = preparer.verify(baseline);
+                published = runStore.loadRevisionV2(key, revisionNumber);
+            }
             if (!key.equals(prepared.runSpecKey()) || revisionNumber != prepared.runSpecRevision()
                     || !"sandbox-run-specification/v2".equals(prepared.artifactVersion())) {
                 throw new SandboxWorkspaceException("EXECUTION_REVISION_MISMATCH",
                         "Execution accepts only the explicitly requested, currently prepared v2 revision");
             }
-            var published = new SandboxRunSpecificationStore(url, user, password, json)
-                    .loadRevisionV2(key, revisionNumber);
             try (var input = baseline.getInputStream()) {
-                return new SandboxExecutionLease(connection, safety, prepared, published, json.readTree(input), jobId);
+                return new SandboxExecutionLease(connection, safety, prepared, published, json.readTree(input), jobId,
+                        authenticated, task == null ? null : task.fingerprint());
             }
         } catch (Exception failure) {
             if (connection != null) {
@@ -102,6 +133,12 @@ public final class SandboxExecutionLease implements AutoCloseable {
     public String executionId() { return executionId; }
     public SandboxRunPreparationReport preparation() { return preparation; }
     public SandboxRunSpecificationRevisionV2 revision() { return revision; }
+
+    public SandboxBaselinePackageV1.Data preparedPlanData(PlanExecutionTask task) {
+        if (preparedPlanData == null || !task.fingerprint().equals(preparedPlanFingerprint))
+            throw new IllegalArgumentException("Plan differs from the one authenticated before preparation");
+        return preparedPlanData;
+    }
 
     public void requireHeld() {
         try (var statement = connection.prepareStatement("SELECT IS_USED_LOCK(?)=CONNECTION_ID()")) {
@@ -139,6 +176,25 @@ public final class SandboxExecutionLease implements AutoCloseable {
     }
 
     public void create(ObjectMapper json) {
+        if (preparedPlanData != null) throw new IllegalStateException("This lease requires a global plan");
+        create(json, null);
+    }
+
+    public void createPlan(ObjectMapper json, org.example.roadsimulation.sandbox.optimization.PlanExecutionTask task) {
+        java.util.Objects.requireNonNull(task);
+        if (!revision.runSpecKey().equals(task.runSpecKey()) || revision.revision() != task.runSpecRevision()
+                || !preparation.runSpecificationSha256().equals(task.compiledProblem().sourceRunSha256()))
+            throw new IllegalArgumentException("Plan execution lease identity mismatch");
+        create(json, task);
+    }
+
+    public void requirePlanCompatible(org.example.roadsimulation.sandbox.optimization.PlanExecutionRuntime plan) {
+        boolean active=plan!=null&&plan.active();
+        if ((planTaskFingerprint!=null)!=active || (active&&!planTaskFingerprint.equals(plan.state().task().fingerprint())))
+            throw new SandboxWorkspaceException("PLAN_EXECUTION_IDENTITY_MISMATCH", "Installed plan must match the authenticated execution manifest");
+    }
+
+    private void create(ObjectMapper json, org.example.roadsimulation.sandbox.optimization.PlanExecutionTask task) {
         requireHeld();
         try {
             // Read the published JSON using this authenticated, already locked connection.
@@ -150,6 +206,12 @@ public final class SandboxExecutionLease implements AutoCloseable {
                     scenarioRevision = json.readTree(rows.getString(1));
                 }
             }
+            if (task != null && preparedPlanData != null) preparedPlanData(task);
+            else if(task!=null) {
+                var scene=json.treeToValue(scenarioRevision,org.example.roadsimulation.sandbox.scenario.definition.SandboxScenarioRevisionV1.class);
+                org.example.roadsimulation.sandbox.optimization.PlanExecutionAuthentication.verify(task,
+                        new org.springframework.core.io.ByteArrayResource(json.writeValueAsBytes(baselinePackage)),scene,revision);
+            }
             ObjectNode manifestNode = json.valueToTree(Map.of(
                     "artifactVersion", "sandbox-execution-manifest/v2",
                     "preparation", preparation,
@@ -159,6 +221,12 @@ public final class SandboxExecutionLease implements AutoCloseable {
             manifestNode.set("baselinePackage", baselinePackage);
             manifestNode.set("scenarioRevision", scenarioRevision);
             manifestNode.set("initialDatabaseFacts", new SandboxBusinessFactCapture(json).readDatabase(connection));
+            if (task != null) {
+                manifestNode.put("artifactVersion", "sandbox-execution-manifest/v3");
+                manifestNode.put("executionMode", "GLOBAL_PLAN");
+                manifestNode.set("planExecutionTask", json.valueToTree(task));
+                manifestNode.put("planExecutionTaskSha256", task.fingerprint());
+            }
             var canonical = new LexicographicJsonSha256(json);
             String manifest = new String(canonical.canonicalBytes(manifestNode), java.nio.charset.StandardCharsets.UTF_8);
             requirePacketCapacity(manifest);
@@ -185,6 +253,7 @@ public final class SandboxExecutionLease implements AutoCloseable {
                 }
             });
             created = true;
+            planTaskFingerprint=task==null?null:task.fingerprint();
         } catch (Exception failure) {
             if (failure instanceof SandboxWorkspaceException workspace) throw workspace;
             throw new SandboxWorkspaceException("EXECUTION_CREATE_FAILED", "Cannot create execution record", failure);
@@ -194,6 +263,8 @@ public final class SandboxExecutionLease implements AutoCloseable {
     /** The completed counter advances atomically with the durable tick, never before it. */
     public void recordTick(SimulationTick tick, EvaluationSnapshot evaluation, ObjectNode runtimeFacts, ObjectMapper json) {
         requireHeld();
+        if(planTaskFingerprint!=null&&!planTaskFingerprint.equals(runtimeFacts.path("planExecution").path("state").path("taskFingerprint").asText()))
+            throw new SandboxWorkspaceException("PLAN_EXECUTION_IDENTITY_MISMATCH","Plan facts must belong to this execution");
         if (!preparation.deterministicSimulationRunId().equals(evaluation.simulationRunId())
                 || tick.loopIndex() != evaluation.loopIndex() || !tick.tickEnd().equals(evaluation.simTime())
                 || evaluation.snapshotStatus() == org.example.roadsimulation.evaluation.EvaluationSnapshotStatus.FAILED

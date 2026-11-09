@@ -1,5 +1,6 @@
 package org.example.roadsimulation.service.impl;
 
+import org.example.roadsimulation.service.production.ProductionRules;
 import org.example.roadsimulation.dto.CreateProductionPlanRequest;
 import org.example.roadsimulation.dto.ProductionBatchResponse;
 import org.example.roadsimulation.dto.ProductionPlanResponse;
@@ -34,7 +35,6 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -290,59 +290,10 @@ public class ProductionPlanningServiceImpl implements ProductionPlanningService 
             List<ProcessingStage> stages,
             List<ProcessingChainGraphValidator.EdgeSpec> edges,
             List<ProcessingStage> topologicalOrder,
-            ProcessingStage sink,
-            double finalDemand
-    ) {
-        Map<ProcessingStage, Double> outputs = new IdentityHashMap<>();
-        Map<ProcessingStage, Map<String, Double>> inputWeights = new IdentityHashMap<>();
-        outputs.put(sink, finalDemand);
-
-        List<ProcessingChainGraphValidator.InputSpec> sinkInputs =
-                ProcessingChainGraphValidator.inputs(sink);
-        if (sinkInputs.size() != 1) {
-            throw new IllegalArgumentException("末端接收节点必须且只能接收一种最终阶段货物");
-        }
-        ProcessingChainGraphValidator.InputSpec sinkInput = sinkInputs.get(0);
-        ProcessingChainGraphValidator.EdgeSpec finalEdge = requireIncomingEdge(
-                edges, sink, sinkInput);
-        inputWeights.put(sink, Map.of(sinkInput.inputKey(), finalDemand));
-        outputs.merge(finalEdge.fromStage(), finalDemand, Double::sum);
-
-        for (int i = topologicalOrder.size() - 1; i >= 0; i--) {
-            ProcessingStage stage = topologicalOrder.get(i);
-            if (stage == sink) {
-                continue;
-            }
-            double output = outputs.getOrDefault(stage, 0.0);
-            if (output <= 0 || !Double.isFinite(output)) {
-                throw new IllegalStateException("工序需求量无效: " + stage.getStageName());
-            }
-
-            if (isSourceStage(stage, edges)) {
-                validateCapacity(stage, output);
-                inputWeights.put(stage, Map.of());
-                continue;
-            }
-
-            double ratio = outputRatio(stage);
-            double totalInput = round(output / ratio);
-            validateCapacity(stage, totalInput);
-
-            Map<String, Double> weights = new LinkedHashMap<>();
-            for (ProcessingChainGraphValidator.InputSpec input :
-                    ProcessingChainGraphValidator.inputs(stage)) {
-                double weight = round(totalInput * input.inputShare());
-                if (weight <= 0 || !Double.isFinite(weight)) {
-                    throw new IllegalStateException("工序输入量无效: " + stage.getStageName());
-                }
-                weights.put(input.inputKey(), weight);
-                ProcessingChainGraphValidator.EdgeSpec incoming =
-                        requireIncomingEdge(edges, stage, input);
-                outputs.merge(incoming.fromStage(), weight, Double::sum);
-            }
-            inputWeights.put(stage, weights);
-        }
-        return new PlanCalculation(outputs, inputWeights);
+            ProcessingStage sink, double finalDemand) {
+        var result = ProductionRules.calculatePlan(
+                stages, edges, topologicalOrder, sink, finalDemand);
+        return new PlanCalculation(result.outputs(), result.inputWeights());
     }
 
     private List<ProductionPlanNode> createPlanNodes(
@@ -461,47 +412,12 @@ public class ProductionPlanningServiceImpl implements ProductionPlanningService 
         if (inputs.size() != 1) {
             throw new IllegalArgumentException("末端接收节点必须且只能接收一种最终阶段货物");
         }
-        requireIncomingEdge(edges, sink, inputs.get(0));
+        ProductionRules.requireIncomingEdge(edges, sink, inputs.get(0));
         return inputs.get(0).sku();
     }
 
-    private ProcessingChainGraphValidator.EdgeSpec requireIncomingEdge(
-            List<ProcessingChainGraphValidator.EdgeSpec> edges,
-            ProcessingStage stage,
-            ProcessingChainGraphValidator.InputSpec input
-    ) {
-        return edges.stream()
-                .filter(edge -> edge.toStage() == stage
-                        && edge.input().inputKey().equals(input.inputKey()))
-                .findFirst()
-                .orElseThrow(() -> new IllegalArgumentException(
-                        "非起点节点输入缺少上游阶段: stage=" + stage.getStageName()
-                                + ", input=" + input.inputKey()
-                ));
-    }
-
-    private boolean isSourceStage(
-            ProcessingStage stage,
-            List<ProcessingChainGraphValidator.EdgeSpec> edges
-    ) {
+    private boolean isSourceStage(ProcessingStage stage, List<ProcessingChainGraphValidator.EdgeSpec> edges) {
         return edges.stream().noneMatch(edge -> edge.toStage() == stage);
-    }
-
-    private void validateCapacity(ProcessingStage stage, double inputWeight) {
-        if (stage.getMinBatchSize() != null && inputWeight < stage.getMinBatchSize()) {
-            throw new IllegalStateException(
-                    "反向计算输入量低于工序最小批量: stage=" + stage.getStageName()
-                            + ", required=" + inputWeight
-                            + ", minBatchSize=" + stage.getMinBatchSize()
-            );
-        }
-        if (stage.getMaxCapacityPerCycle() != null && inputWeight > stage.getMaxCapacityPerCycle()) {
-            throw new IllegalStateException(
-                    "反向计算输入量超过工序单次产能: stage=" + stage.getStageName()
-                            + ", required=" + inputWeight
-                            + ", maxCapacityPerCycle=" + stage.getMaxCapacityPerCycle()
-            );
-        }
     }
 
     private double randomFinalWeight(CreateProductionPlanRequest request) {
@@ -531,12 +447,8 @@ public class ProductionPlanningServiceImpl implements ProductionPlanningService 
         return round(weight);
     }
 
-    private double outputRatio(ProcessingStage stage) {
-        return stage.getOutputWeightRatio() == null ? 1.0 : stage.getOutputWeightRatio();
-    }
-
     private double round(double value) {
-        return Math.round(value * 1000.0) / 1000.0;
+        return ProductionRules.round(value);
     }
 
     private String generatePlanNo() {

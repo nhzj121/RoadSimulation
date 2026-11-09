@@ -23,6 +23,8 @@ public class SandboxRuntimeFactCollector {
     private final GetCostService costs;
     private final CostBaselineNormalizationService normalization;
     private final POIShipmentManagerImpl pois;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private org.example.roadsimulation.sandbox.optimization.PlanExecutionCoordinator planExecution;
 
     public SandboxRuntimeFactCollector(ObjectMapper json, VehicleRepository vehicles, AssignmentRepository assignments,
             GetCostService costs, CostBaselineNormalizationService normalization, POIShipmentManagerImpl pois) {
@@ -47,6 +49,7 @@ public class SandboxRuntimeFactCollector {
         result.set("normalizationBaseline", json.valueToTree(normalization.exportCurrentBaselineDetail()));
         result.set("normalizationWindow", json.valueToTree(normalization.exportLatestWindowDetail()));
         result.set("poiManager", json.valueToTree(pois.snapshotBusinessFacts()));
+        if (planExecution != null && planExecution.active()) result.set("planExecution", json.valueToTree(planExecution.afterCompletedTick()));
         return result;
     }
 }
