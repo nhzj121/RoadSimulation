@@ -18,6 +18,8 @@ public final class SandboxControlledRunExecutor {
     private final SimulationContext clock;
     private final SandboxRunRuntimeContext runtime;
     private final AtomicBoolean claimed = new AtomicBoolean();
+    @org.springframework.beans.factory.annotation.Autowired(required=false)
+    private org.example.roadsimulation.sandbox.optimization.PlanExecutionRuntime planRuntime;
 
     public SandboxControlledRunExecutor(SimulationMainLoop mainLoop, SimulationContext clock,
                                         SandboxRunRuntimeContext runtime) {
@@ -35,6 +37,7 @@ public final class SandboxControlledRunExecutor {
                     "Execution requires a fresh, prepared v2 runtime at loop zero");
         }
         lease.requireCompatible(runtime);
+        lease.requirePlanCompatible(planRuntime);
         int horizon = runtime.simulationClock().totalLoops();
         if (horizon <= 0 || !claimed.compareAndSet(false, true)) {
             throw new SandboxWorkspaceException("SANDBOX_EXECUTION_ALREADY_CLAIMED",

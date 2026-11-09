@@ -1,5 +1,6 @@
 package org.example.roadsimulation.service;
 
+import org.example.roadsimulation.service.production.ProductionRules;
 import org.example.roadsimulation.config.SimulationRuntimeConfig;
 import org.example.roadsimulation.core.SimulationTick;
 import org.example.roadsimulation.dto.CreateProductionPlanRequest;
@@ -29,8 +30,8 @@ import java.util.concurrent.ThreadLocalRandom;
 @Service
 public class ProductionDemandGenerator {
 
-    static final int MIN_FINAL_QUANTITY = 10;
-    static final int MAX_FINAL_QUANTITY = 34;
+    static final int MIN_FINAL_QUANTITY = ProductionRules.MIN_FINAL_QUANTITY;
+    static final int MAX_FINAL_QUANTITY = ProductionRules.MAX_FINAL_QUANTITY;
     private static final Logger log = LoggerFactory.getLogger(ProductionDemandGenerator.class);
 
     private final ProcessingChainRepository chainRepository;
@@ -106,13 +107,11 @@ public class ProductionDemandGenerator {
                     "processingChainId", chain.getId());
             planSeed = sandboxRunRuntimeContext.deriveSeed(
                     SandboxRandomDomain.PRODUCTION_FINAL_QUANTITY, key);
-            quantity = sandboxRunRuntimeContext.random(
-                    SandboxRandomDomain.PRODUCTION_FINAL_QUANTITY, key).nextInt(
-                    MAX_FINAL_QUANTITY - MIN_FINAL_QUANTITY + 1) + MIN_FINAL_QUANTITY;
+            quantity = ProductionRules.finalQuantity(
+                    bound -> sandboxRunRuntimeContext.random(SandboxRandomDomain.PRODUCTION_FINAL_QUANTITY, key).nextInt(bound));
         } else {
             planSeed = derivedSeed(runtimeConfig.getDemandRandomSeed(), round, chain.getId());
-            quantity = new Random(planSeed).nextInt(
-                    MAX_FINAL_QUANTITY - MIN_FINAL_QUANTITY + 1) + MIN_FINAL_QUANTITY;
+            quantity = ProductionRules.finalQuantity(new Random(planSeed)::nextInt);
         }
         double finalWeight = roundWeight(quantity * finalGoods.getWeightPerUnit());
         CreateProductionPlanRequest request = new CreateProductionPlanRequest(
@@ -161,6 +160,6 @@ public class ProductionDemandGenerator {
     }
 
     private double roundWeight(double value) {
-        return Math.round(value * 1000.0) / 1000.0;
+        return ProductionRules.round(value);
     }
 }

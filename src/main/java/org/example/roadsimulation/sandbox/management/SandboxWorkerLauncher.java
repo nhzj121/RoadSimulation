@@ -21,6 +21,12 @@ public class SandboxWorkerLauncher {
 
     public static List<String> command(String jobId, Path javaHome, Path source, String classpath, String main) {
         SandboxManagementJobStore.uuid(jobId);
+        var result = new ArrayList<>(javaCommand(javaHome, source, classpath, main));
+        result.add(jobId);
+        return List.copyOf(result);
+    }
+
+    public static List<String> javaCommand(Path javaHome, Path source, String classpath, String main) {
         List<String> result = new ArrayList<>();
         String executable = System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("win") ? "java.exe" : "java";
         result.add(javaHome.resolve("bin").resolve(executable).toString());
@@ -32,7 +38,7 @@ public class SandboxWorkerLauncher {
             if (classpath == null || classpath.isBlank()) throw new IllegalArgumentException("Missing worker classpath");
             result.add("-cp"); result.add(classpath); result.add(main);
         }
-        result.add(jobId); return List.copyOf(result);
+        return List.copyOf(result);
     }
 
     public static void environment(Map<String, String> environment, SandboxManagementSettings settings) {

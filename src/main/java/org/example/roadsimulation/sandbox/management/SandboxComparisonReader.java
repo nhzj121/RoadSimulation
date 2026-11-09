@@ -16,6 +16,9 @@ public final class SandboxComparisonReader {
         if (Objects.equals(leftId, rightId)) throw new SandboxWorkspaceException("INVALID_ARGUMENT", "Different executions required");
         return reader.snapshot(c -> {
             var left = reader.context(c, leftId); var right = reader.context(c, rightId);
+            if ("GLOBAL_PLAN".equals(left.manifest().path("executionMode").asText())
+                    || "GLOBAL_PLAN".equals(right.manifest().path("executionMode").asText()))
+                throw new SandboxWorkspaceException("PLAN_COMPARISON_NOT_SUPPORTED", "Use the plan execution artifacts; source dispatch labels are not effective strategies");
             requireCompleted(left); requireCompleted(right);
             if (!left.start().equals(right.start()) || left.durationSeconds() != right.durationSeconds()
                     || left.recorded() != right.recorded())

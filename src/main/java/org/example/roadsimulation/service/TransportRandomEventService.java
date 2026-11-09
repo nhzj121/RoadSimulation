@@ -28,6 +28,10 @@ import java.util.Objects;
 
 @Service
 public class TransportRandomEventService {
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private org.example.roadsimulation.sandbox.optimization.PlanExecutionRuntime planExecution;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private org.example.roadsimulation.core.SimulationContext simulationClock;
     @org.springframework.beans.factory.annotation.Autowired
     private DriverResourceService driverResources;
     @PersistenceContext
@@ -506,6 +510,9 @@ public class TransportRandomEventService {
         Vehicle original=vehicleRepository.findByIdForUpdate(event.getVehicleId()).orElse(null);
         Assignment assignment=assignmentRepository.findById(event.getAssignmentId()).orElse(null);
         String failure=replacementGuardFailure(event,original,candidate,assignment);
+        if (failure == null && planExecution != null && planExecution.active()
+                && !planExecution.canReplace(assignment.getId(),candidate,event.getRequiredLoad(),event.getRequiredVolume()))
+            failure="PLAN_SPARE_NO_LONGER_ELIGIBLE";
         if(failure!=null){
             cancelAttempt(event,candidate,failure,simNow);resolveReplacementFailure(event,failure,simNow);return;
         }
@@ -519,6 +526,18 @@ public class TransportRandomEventService {
         candidate.activateReplacement(restored,event.getReplacementReadyTime(),
                 Duration.ofSeconds(Math.max(0,Optional.ofNullable(event.getRemainingStatusSeconds()).orElse(0L))));
         assignmentRepository.save(assignment);vehicleRepository.save(original);vehicleRepository.save(candidate);
+        if (planExecution != null && planExecution.active()) {
+            long assignmentId=assignment.getId(), originalId=original.getId(), spareId=candidate.getId();
+            var context=planExecution.state().task().plan().problem();
+            int loop=simulationClock==null?Math.toIntExact(Math.min(context.totalLoops()-1,
+                    Math.max(0,java.time.Duration.between(context.simulationStart(),simNow).getSeconds()/context.tickSeconds())))
+                    :simulationClock.getLoopCount();
+            var at=event.getReplacementReadyTime();
+            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                    new org.springframework.transaction.support.TransactionSynchronization() {
+                        @Override public void afterCommit() { planExecution.handoff(assignmentId,originalId,spareId,loop,at); }
+                    });
+        }
         if(!authoritativeMode()&&drivingProgressService!=null&&drivingProgressService.enabled())
             drivingProgressService.transferAndSettle(original.getId(),candidate,assignment,event.getOriginalDrivingPhaseKey(),event.getReplacementReadyTime(),simNow);
         event.setStatus(TransportRandomEvent.EventStatus.RESOLVED);event.setBreakdownPhase(TransportRandomEvent.BreakdownPhase.REPLACED);
@@ -586,6 +605,7 @@ public class TransportRandomEventService {
 
     private boolean eligibleCandidate(Vehicle v,TransportRandomEvent event){
         return v!=null&&!Objects.equals(v.getId(),event.getVehicleId())&&v.getCurrentStatus()==Vehicle.VehicleStatus.IDLE
+                &&(planExecution==null||!planExecution.active()||planExecution.canReplace(event.getAssignmentId(),v,event.getRequiredLoad(),event.getRequiredVolume()))
                 &&v.getMaxLoadCapacity()!=null&&v.getCargoVolume()!=null&&v.getMaxLoadCapacity()>=event.getRequiredLoad()
                 &&v.getCargoVolume()>=event.getRequiredVolume()
                 &&assignmentRepository.findActiveAssignmentByVehicle(v.getId()).isEmpty()
@@ -596,6 +616,7 @@ public class TransportRandomEventService {
 
     private boolean eligibleReservedCandidate(Vehicle v,TransportRandomEvent event){
         return v!=null&&v.getCurrentStatus()==Vehicle.VehicleStatus.RESERVED_REPLACEMENT
+                &&(planExecution==null||!planExecution.active()||planExecution.canReplace(event.getAssignmentId(),v,event.getRequiredLoad(),event.getRequiredVolume()))
                 &&Objects.equals(v.getReplacementReservationEventId(),event.getId())
                 &&v.getMaxLoadCapacity()!=null&&v.getCargoVolume()!=null&&v.getMaxLoadCapacity()>=event.getRequiredLoad()
                 &&v.getCargoVolume()>=event.getRequiredVolume()

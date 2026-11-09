@@ -13,6 +13,9 @@ import java.util.Optional;
 
 @Repository
 public interface ShipmentItemRepository extends JpaRepository<ShipmentItem, Long> {
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT item FROM ShipmentItem item WHERE item.id = :id")
+    Optional<ShipmentItem> findByIdForUpdate(@Param("id") Long id);
     
     Optional<ShipmentItem> findBySku(@Param("sku") String sku);
 

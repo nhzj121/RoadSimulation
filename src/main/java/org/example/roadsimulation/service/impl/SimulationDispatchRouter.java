@@ -14,6 +14,8 @@ public class SimulationDispatchRouter {
     private final SimulationRuntimeConfig runtimeConfig;
     private final OriginalSimulationDispatchService originalDispatchService;
     private final HeuristicSimulationDispatchService heuristicDispatchService;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private org.example.roadsimulation.sandbox.optimization.PlanExecutionCoordinator planExecution;
 
     public SimulationDispatchRouter(
             SimulationRuntimeConfig runtimeConfig,
@@ -26,6 +28,7 @@ public class SimulationDispatchRouter {
     }
 
     public void dispatch() {
+        if (planExecution != null && planExecution.active()) { planExecution.dispatch(); return; }
         DispatchStrategy strategy = runtimeConfig.getDispatchStrategy();
         log.info("[Dispatch] Current strategy: {}", strategy);
 

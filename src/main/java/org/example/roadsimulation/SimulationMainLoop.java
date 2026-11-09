@@ -38,6 +38,8 @@ public class SimulationMainLoop {
 
     private final ReentrantLock lifecycleLock = new ReentrantLock(true);
     private Thread controlledTickOwner;
+    @Autowired(required = false)
+    private org.example.roadsimulation.sandbox.optimization.PlanExecutionCoordinator planExecution;
 
     private final DataInitializer dataInitializer;
     private final StateUpdateService stateUpdateService;
@@ -150,6 +152,7 @@ public class SimulationMainLoop {
             }
 
             demandGenerationCoordinator.generateForTick(currentTick);
+            if (planExecution != null && planExecution.active()) planExecution.observe();
             if (shouldAbortLoop()) {
                 return;
             }
