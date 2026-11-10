@@ -6,7 +6,7 @@
         <div>
           <div class="evaluation-eyebrow">REAL-TIME EVALUATION SNAPSHOT</div>
           <h2>实时运输评价</h2>
-          <p>数据来自每轮业务推进结束后生成的同版本后端快照</p>
+          <p>{{ evaluationSource ? '展示所选沙箱执行的已提交评价快照' : '数据来自每轮业务推进结束后生成的同版本后端快照' }}</p>
         </div>
         <div class="evaluation-topbar-actions">
           <span class="evaluation-connection" :class="connectionClass">
@@ -30,8 +30,8 @@
         <section class="evaluation-run-summary">
           <div class="evaluation-run-heading">
             <div>
-              <span class="evaluation-label">运行标识</span>
-              <strong :title="snapshot.simulationRunId">{{ snapshot.simulationRunId }}</strong>
+              <span class="evaluation-label">{{ evaluationSource ? '沙箱执行编号' : '运行标识' }}</span>
+              <strong :title="evaluationSource?.preferredRunId ?? snapshot.simulationRunId">{{ evaluationSource?.preferredRunId ?? snapshot.simulationRunId }}</strong>
             </div>
             <span class="evaluation-status-badge" :class="snapshotStatusClass">
               {{ snapshotStatusText }}
@@ -190,7 +190,7 @@
                 :group-key="activeMetricGroup.key"
               >
                 <template #vehicle-state>
-                  <VehicleDisplayStatusChart :visible-vehicles="visibleVehicles" :activity-chart="vehicleActivityChart" />
+                  <VehicleDisplayStatusChart :visible-vehicles="visibleVehicles" :activity-chart="vehicleActivityChart" :recorded="!!evaluationSource" />
                 </template>
               </EvaluationDomainMetrics>
               <component
@@ -263,8 +263,11 @@
         </section>
 
         <footer class="evaluation-footer">
-          <span>每 1 s 自动读取最新完整快照</span>
-          <span>最近成功读取：{{ lastSuccessfulReadText }}</span>
+          <span v-if="evaluationSource">当前评价对应第 {{ snapshot.loopIndex + 1 }} 个完整轮次</span>
+          <template v-else>
+            <span>每 1 s 自动读取最新完整快照</span>
+            <span>最近成功读取：{{ lastSuccessfulReadText }}</span>
+          </template>
         </footer>
       </template>
 
@@ -273,7 +276,7 @@
         <div class="evaluation-section-heading">
           <div>
             <h3>历史、趋势与运行对比</h3>
-            <p>历史跨 reset 保留；趋势按原始 loop 展示，对比使用各运行最终快照。</p>
+            <p>{{ evaluationSource ? '沙箱已提交记录 · 趋势按原始轮次展示，对比使用各执行最终快照。' : '历史跨 reset 保留；趋势按原始 loop 展示，对比使用各运行最终快照。' }}</p>
           </div>
           <ElButton :loading="historyLoading" @click="refreshHistory">刷新历史</ElButton>
         </div>
@@ -303,7 +306,7 @@
                 </option>
               </select>
             </label>
-            <div class="evaluation-history-actions">
+            <div v-if="!evaluationSource" class="evaluation-history-actions">
               <ElButton :disabled="!selectedHistoryRunId" :loading="exporting" @click="exportHistory('csv')">
                 下载 CSV
               </ElButton>
@@ -314,10 +317,10 @@
           </div>
 
           <div v-if="selectedHistorySummary" class="evaluation-history-summary">
-            <span>契约 v{{ selectedHistorySummary.contractVersion }}</span>
+            <span>契约 {{ selectedHistorySummary.contractVersion ? 'v' + selectedHistorySummary.contractVersion : '--' }}</span>
             <span>{{ selectedHistorySummary.snapshotCount }} 个快照</span>
             <span>loop {{ selectedHistorySummary.firstLoopIndex }}～{{ selectedHistorySummary.lastLoopIndex }}</span>
-            <span>末轮状态 {{ snapshotStatusLabel(selectedHistorySummary.latestStatus) }}</span>
+            <span>末轮状态 {{ selectedHistorySummary.latestStatus ? snapshotStatusLabel(selectedHistorySummary.latestStatus) : '--' }}</span>
           </div>
 
           <div class="evaluation-history-grid">
@@ -424,9 +427,9 @@
             </div>
             <div v-for="metric in displayedComparisonMetrics" :key="metric.metricId" class="evaluation-comparison-row">
               <span>{{ metric.displayName }}</span>
-              <span>{{ formatComparisonMetric(metric.leftValue, metric.leftStatus, metric.unit) }}</span>
-              <span>{{ formatComparisonMetric(metric.rightValue, metric.rightStatus, metric.unit) }}</span>
-              <span>{{ formatComparisonDelta(metric.rightMinusLeft, metric.unit) }}</span>
+              <span>{{ formatComparisonMetric(metric.leftValue, metric.leftStatus, metric.leftUnit ?? metric.unit) }}</span>
+              <span>{{ formatComparisonMetric(metric.rightValue, metric.rightStatus, metric.rightUnit ?? metric.unit) }}</span>
+              <span :title="metric.incompatibilityReason">{{ metric.incompatibilityReason ? '不可比较' : formatComparisonDelta(metric.rightMinusLeft, metric.unit) }}</span>
               <span>{{ formatComparisonRelative(metric.relativeChangeRatio) }}</span>
             </div>
           </div>
@@ -457,11 +460,11 @@ import {
 } from '../api/evaluationApi';
 import { shouldAcceptEvaluationSnapshot } from '../utils/evaluationSnapshotPolicy';
 import { evaluationWarningsForDisplay } from '../utils/temporaryDisplaySettings';
+import type { WorkspaceEvaluationRun, WorkspaceEvaluationSource } from '../sandbox/workspaceEvaluation';
 import type {
   EvaluationMetricValue,
   EvaluationMetricValueStatus,
   EvaluationRunComparison,
-  EvaluationRunSummary,
   EvaluationSnapshot,
   EvaluationTrend
 } from '../types/evaluation';
@@ -480,7 +483,7 @@ interface EvaluationWarning {
 /** Phase 6C：由父级切回地图；评价页本身不控制仿真生命周期。 */
 // 车辆首图只读透传父页面现有展示数据，不参与本页后端评价轮询。
 const props = defineProps<{ visibleVehicles?: VisibleVehicleDisplay[]; vehicleActivityChart?: DomainChartModel;
-  sharedFeedState?: SimulationEvaluationFeedState }>();
+  sharedFeedState?: SimulationEvaluationFeedState; evaluationSource?: WorkspaceEvaluationSource }>();
 const emit = defineEmits<{ (event: 'back'): void }>();
 
 const POLL_INTERVAL_MS = 1000;
@@ -505,7 +508,7 @@ watch(() => [props.sharedFeedState?.snapshot, props.sharedFeedState?.waitingForS
 }, { immediate: true, flush: 'sync' });
 
 // Phase 9C：历史状态与实时轮询解耦，历史请求失败不能清空当前 latest 快照。
-const runSummaries = ref<EvaluationRunSummary[]>([]);
+const runSummaries = ref<WorkspaceEvaluationRun[]>([]);
 const historySnapshots = ref<EvaluationSnapshot[]>([]);
 const trend = ref<EvaluationTrend | null>(null);
 const comparison = ref<EvaluationRunComparison | null>(null);
@@ -518,6 +521,8 @@ const historyLoading = ref(false);
 const comparisonLoading = ref(false);
 const exporting = ref(false);
 const historyError = ref('');
+let historyRequest: AbortController | undefined;
+let comparisonRequest: AbortController | undefined;
 
 /**
  * 前端展示排除项：只隐藏当前领域模型明确不适用的“未分配任务数”。
@@ -780,100 +785,110 @@ const latestTrendMetricText = computed(() => {
 });
 
 async function refreshHistory(): Promise<void> {
-  historyLoading.value = true;
-  historyError.value = '';
-  try {
-    const runs = await fetchEvaluationRuns();
+  await withHistoryRead(async signal => {
+    const runs = await (props.evaluationSource?.runs(signal) ?? fetchEvaluationRuns());
+    if (signal.aborted) return;
     runSummaries.value = runs;
     const availableIds = new Set(runs.map(run => run.simulationRunId));
+    const preferred = props.evaluationSource?.preferredRunId;
+    const firstRun = preferred && availableIds.has(preferred) ? preferred : runs[0]?.simulationRunId || '';
     if (!availableIds.has(selectedHistoryRunId.value)) {
-      selectedHistoryRunId.value = runs[0]?.simulationRunId || '';
+      selectedHistoryRunId.value = firstRun;
     }
     if (!availableIds.has(leftRunId.value)) {
-      leftRunId.value = runs[0]?.simulationRunId || '';
+      leftRunId.value = firstRun;
     }
     if (!availableIds.has(rightRunId.value) || rightRunId.value === leftRunId.value) {
-      rightRunId.value = runs[1]?.simulationRunId || '';
+      rightRunId.value = runs.find(run => run.simulationRunId !== leftRunId.value)?.simulationRunId || '';
     }
     if (selectedHistoryRunId.value) {
-      await loadSelectedHistoryContent();
+      await loadSelectedHistoryContent(signal);
     } else {
       historySnapshots.value = [];
       trend.value = null;
       comparison.value = null;
     }
+  });
+}
+
+async function withHistoryRead(read: (signal: AbortSignal) => Promise<void>): Promise<void> {
+  historyRequest?.abort();
+  const request = new AbortController();
+  historyRequest = request;
+  historyLoading.value = true;
+  historyError.value = '';
+  try {
+    await read(request.signal);
   } catch (error: unknown) {
-    historyError.value = readErrorMessage(error);
+    if (!request.signal.aborted) historyError.value = readErrorMessage(error);
   } finally {
-    historyLoading.value = false;
+    if (historyRequest === request) historyLoading.value = false;
   }
 }
 
 async function loadSelectedHistory(): Promise<void> {
-  historyLoading.value = true;
-  historyError.value = '';
-  try {
-    await loadSelectedHistoryContent();
-  } catch (error: unknown) {
-    historyError.value = readErrorMessage(error);
-  } finally {
-    historyLoading.value = false;
-  }
+  await withHistoryRead(loadSelectedHistoryContent);
 }
 
-async function loadSelectedHistoryContent(): Promise<void> {
-  if (!selectedHistoryRunId.value) return;
-  historySnapshots.value = await fetchEvaluationHistory(selectedHistoryRunId.value);
+async function loadSelectedHistoryContent(signal: AbortSignal): Promise<void> {
+  const id = selectedHistoryRunId.value;
+  if (!id) return;
+  const history = await (props.evaluationSource?.history(id, signal) ?? fetchEvaluationHistory(id));
+  if (signal.aborted || selectedHistoryRunId.value !== id) return;
+  historySnapshots.value = history;
   const metricIds = new Set(historyMetricOptions.value.map(metric => metric.metricId));
   if (!metricIds.has(selectedTrendMetricId.value)) {
     selectedTrendMetricId.value = historyMetricOptions.value[0]?.metricId || '';
   }
-  await loadSelectedTrendContent();
+  await loadSelectedTrendContent(signal);
 }
 
 async function loadSelectedTrend(): Promise<void> {
-  historyLoading.value = true;
-  historyError.value = '';
-  try {
-    await loadSelectedTrendContent();
-  } catch (error: unknown) {
-    historyError.value = readErrorMessage(error);
-  } finally {
-    historyLoading.value = false;
-  }
+  await withHistoryRead(loadSelectedTrendContent);
 }
 
-async function loadSelectedTrendContent(): Promise<void> {
-  if (!selectedHistoryRunId.value || !selectedTrendMetricId.value) {
+async function loadSelectedTrendContent(signal: AbortSignal): Promise<void> {
+  const id = selectedHistoryRunId.value, metric = selectedTrendMetricId.value;
+  if (!id || !metric) {
     trend.value = null;
     return;
   }
-  trend.value = await fetchEvaluationTrend(
-    selectedHistoryRunId.value,
-    [selectedTrendMetricId.value]
-  );
+  const result = await (props.evaluationSource?.trend(id, [metric], signal) ?? fetchEvaluationTrend(id, [metric]));
+  if (!signal.aborted && id === selectedHistoryRunId.value && metric === selectedTrendMetricId.value) {
+    trend.value = result;
+    if (props.evaluationSource) runSummaries.value = runSummaries.value.map(run =>
+      run.simulationRunId === id ? result.run : run);
+  }
 }
 
 async function loadComparison(): Promise<void> {
   if (!leftRunId.value || !rightRunId.value || leftRunId.value === rightRunId.value) return;
+  comparisonRequest?.abort();
+  const request = new AbortController();
+  comparisonRequest = request;
+  const left = leftRunId.value, right = rightRunId.value;
   comparisonLoading.value = true;
   historyError.value = '';
   try {
-    comparison.value = await fetchEvaluationRunComparison(leftRunId.value, rightRunId.value);
+    const result = await (props.evaluationSource?.compare(left, right, request.signal) ?? fetchEvaluationRunComparison(left, right));
+    if (request.signal.aborted || left !== leftRunId.value || right !== rightRunId.value) return;
+    comparison.value = result;
     const metricIds = new Set(displayedComparisonMetrics.value.map(metric => metric.metricId));
     if (!metricIds.has(selectedComparisonMetricId.value)) {
       selectedComparisonMetricId.value = displayedComparisonMetrics.value[0]?.metricId || '';
     }
   } catch (error: unknown) {
-    comparison.value = null;
-    historyError.value = readErrorMessage(error);
+    if (!request.signal.aborted) {
+      comparison.value = null;
+      historyError.value = readErrorMessage(error);
+    }
   } finally {
-    comparisonLoading.value = false;
+    if (comparisonRequest === request) comparisonLoading.value = false;
   }
 }
 
 async function exportHistory(format: 'csv' | 'json'): Promise<void> {
-  if (!selectedHistoryRunId.value) return;
+  if (props.evaluationSource || !selectedHistoryRunId.value) return;
   exporting.value = true;
   historyError.value = '';
   try {
@@ -895,7 +910,7 @@ async function exportHistory(format: 'csv' | 'json'): Promise<void> {
 
 /** Phase 6C：单请求互斥，慢请求期间不叠加第二次读取。 */
 async function pollLatestEvaluationSnapshot(): Promise<void> {
-  if (props.sharedFeedState || polling.value) {
+  if (props.evaluationSource || props.sharedFeedState || polling.value) {
     return;
   }
   polling.value = true;
@@ -926,7 +941,7 @@ async function pollLatestEvaluationSnapshot(): Promise<void> {
 
 /** Phase 6C：组件挂载即读取，卸载即停止，避免后台隐藏轮询。 */
 onMounted(() => {
-  if (!props.sharedFeedState) {
+  if (!props.evaluationSource && !props.sharedFeedState) {
     void pollLatestEvaluationSnapshot();
     pollingTimer = window.setInterval(() => void pollLatestEvaluationSnapshot(), POLL_INTERVAL_MS);
   }
@@ -940,6 +955,8 @@ onUnmounted(() => {
     pollingTimer = null;
   }
   activeRequest?.abort();
+  historyRequest?.abort();
+  comparisonRequest?.abort();
 });
 
 function metricById(metricId: string): EvaluationMetricValue | null {
@@ -1030,8 +1047,8 @@ function formatSimTime(value: string): string {
   return value ? value.replace('T', ' ') : '--';
 }
 
-function runLabel(run: EvaluationRunSummary): string {
-  const kind = run.runKind === 'DISPATCH_COMPARISON' ? '对比实验' : '普通仿真';
+function runLabel(run: WorkspaceEvaluationRun): string {
+  const kind = props.evaluationSource ? '数据沙箱' : run.runKind === 'DISPATCH_COMPARISON' ? '对比实验' : '普通仿真';
   return `${kind}｜${run.simulationRunId}｜loop ${run.lastLoopIndex}`;
 }
 
@@ -1075,7 +1092,7 @@ const snapshotStatusClass = computed(() =>
 );
 
 const runKindText = computed(() =>
-  snapshot.value?.runKind === 'DISPATCH_COMPARISON' ? '调度对比实验' : '普通仿真'
+  props.evaluationSource ? '沙箱实验' : snapshot.value?.runKind === 'DISPATCH_COMPARISON' ? '调度对比实验' : '普通仿真'
 );
 
 const formattedSimTime = computed(() => {
@@ -1103,6 +1120,7 @@ const connectionText = computed(() => {
   if (networkError.value) return '连接异常';
   if (polling.value && !snapshot.value) return '正在读取';
   if (waitingForSnapshot.value) return '等待快照';
+  if (props.evaluationSource) return polling.value ? '正在读取' : '已提交记录';
   return '动态更新中';
 });
 

@@ -16,6 +16,10 @@ public class SandboxManagementConfiguration implements WebMvcConfigurer {
                 environment.getProperty("sandbox.management.password"));
     }
     @Bean SandboxManagementService sandboxManagementService(SandboxManagementSettings settings, ObjectMapper json) { return new SandboxManagementService(settings, json); }
+    @Bean(destroyMethod = "close") OrdinaryRunAdmission ordinaryRunAdmission(
+            SandboxManagementSettings settings, SandboxManagementService management) {
+        return new OrdinaryRunAdmission(new SandboxManagementJobStore(settings)::open, management);
+    }
     @Bean(destroyMethod = "close") SandboxJobCoordinator sandboxJobCoordinator(SandboxManagementSettings settings) { return new SandboxJobCoordinator(settings, new SandboxWorkerLauncher()); }
     @Override public void addInterceptors(InterceptorRegistry registry) { registry.addInterceptor(new SandboxLocalRequestGuard()).addPathPatterns("/api/sandbox/**"); }
 }

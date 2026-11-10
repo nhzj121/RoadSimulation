@@ -6,7 +6,7 @@
       <span class="data-right-panel__source">前端地图展示</span>
       <nav class="data-right-panel__modes" aria-label="车辆状态统计模式">
         <button type="button" :aria-pressed="vehicleMode === 'current'" @click="vehicleMode = 'current'">当前状态</button>
-        <button type="button" :aria-pressed="vehicleMode === 'activity'" @click="vehicleMode = 'activity'">最近5分钟活动</button>
+        <button v-if="!recorded" type="button" :aria-pressed="vehicleMode === 'activity'" @click="vehicleMode = 'activity'">最近5分钟活动</button>
       </nav>
       <EvaluationDomainChart :model="selectedVehicleChart" :visible="visible" compact show-zero-legend
         :center-label="vehicleMode === 'current' ? '当前可见车辆' : '状态进入次数'" />
@@ -33,7 +33,7 @@ import { buildVisibleVehicleChart, type VisibleVehicleDisplay } from '../../util
 import { createVehicleActivityWindow } from '../../utils/vehicleActivityPresentation';
 import type { DomainChartModel } from '../../utils/evaluationDomainPresentation';
 import EvaluationDomainChart from '../EvaluationDomainChart.vue';
-const props = withDefaults(defineProps<{ feedState: SimulationEvaluationFeedState; visible?: boolean; visibleVehicles?: VisibleVehicleDisplay[]; activityChart?: DomainChartModel }>(),
+const props = withDefaults(defineProps<{ feedState: SimulationEvaluationFeedState; visible?: boolean; visibleVehicles?: VisibleVehicleDisplay[]; activityChart?: DomainChartModel; recorded?: boolean }>(),
   { visible: true, visibleVehicles: () => [] });
 const emit = defineEmits<{ (event: 'open-full'): void }>();
 // 只读取父级已存在的投影，原投影、状态管理器和车辆动画完全不改。

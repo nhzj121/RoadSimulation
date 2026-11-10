@@ -5,11 +5,12 @@
     <p v-if="pending" class="pending-note">请求结果待核对：{{ pending.clientRequestId }} · {{ pending.runSpecKey }} / Revision {{ pending.revision }}。不会自动重试或生成新请求。</p>
     <div class="start-actions">
     <el-button v-if="pending" :disabled="busy" @click="resolvePending">核对启动请求</el-button>
-    <el-button v-if="pending && confirmedAbsent" :disabled="busy" @click="retrySameRequest">使用同一请求标识重新提交</el-button>
-    <el-button type="primary" :disabled="!enabled || !revision || busy || !!pending || storageBlocked" @click="openConfirmation">准备并运行</el-button>
+    <el-button v-if="pending && confirmedAbsent" :disabled="busy || ordinaryBusy" @click="retrySameRequest">使用同一请求标识重新提交</el-button>
+    <el-button type="primary" :disabled="!enabled || !revision || busy || !!pending || storageBlocked || ordinaryBusy" @click="openConfirmation">准备并运行</el-button>
     <router-link to="/sandbox/tasks">查看沙箱任务与进度</router-link>
     </div>
     <p v-if="!enabled" class="disabled-hint">有未保存/未发布修改、绑定失效或后台不可用。请完成发布，或明确加载已发布版本后再运行。</p>
+    <p v-if="ordinaryBusy" class="disabled-hint" role="status">{{ navigationMessage(navigationState.reason) }}</p>
     <el-dialog v-model="confirmation" title="确认准备并运行" width="650px" class="sandbox-start-dialog">
       <template v-if="confirmedRevision">
         <div class="confirmation-facts">
@@ -22,20 +23,22 @@
         <details><summary>实际故障策略</summary><pre>{{ confirmedRevision.specification.events.breakdownPolicy }}</pre></details>
         <p class="confirmation-warning">将重建vehicle_scheduler_sandbox业务表。普通仿真数据不变。准备和核验收尾期间不能取消；运行中只能在完整轮次边界安全取消。关闭页面不停止后台任务。</p>
       </template>
-      <template #footer><el-button @click="confirmation = false">返回</el-button><el-button type="primary" :disabled="busy || !enabled" @click="confirmStart">确认准备并运行</el-button></template>
+      <template #footer><el-button @click="confirmation = false">返回</el-button><el-button type="primary" :disabled="busy || !enabled || ordinaryBusy" @click="confirmStart">确认准备并运行</el-button></template>
     </el-dialog>
   </section>
 </template>
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import type { SandboxRunRevision, SandboxStartRequest } from '../../types/sandbox'
 import { sandboxApi, SandboxApiError } from '../../api/sandbox'
 import { pendingStartKey, parsePendingStart } from '../../sandbox/execution'
-import { beginNavigationOperation } from '../../navigation/modeNavigation'
+import { beginNavigationOperation, navigationMessage, navigationState } from '../../navigation/modeNavigation'
 const props = defineProps<{revision: SandboxRunRevision | null; enabled: boolean}>()
 const router = useRouter(), busy = ref(false), error = ref(''), pending = ref<SandboxStartRequest | null>(null)
 const confirmation = ref(false), confirmedRevision = ref<SandboxRunRevision | null>(null), confirmedAbsent = ref(false), storageBlocked = ref(false)
+const ordinaryBusy = computed(() => navigationState.confirmed
+  && ['ORDINARY_RUNNING', 'ORDINARY_TRANSITION_BUSY', 'COMPARISON_ACTIVE'].includes(navigationState.reason))
 function failure(value: unknown) { error.value = value instanceof SandboxApiError ? `${value.code}：启动状态未确认。请核对请求或任务，不自动重试。` : (value as Error).message }
 function retain(request: SandboxStartRequest) { localStorage.setItem(pendingStartKey, JSON.stringify(request)); pending.value = request; confirmedAbsent.value = false }
 async function submitPending() {
@@ -50,7 +53,7 @@ async function submitPending() {
   } catch (value) { failure(value) } finally { busy.value = false; releaseNavigation() }
 }
 async function openConfirmation() {
-  if (!props.enabled || !props.revision || pending.value || busy.value) return
+  if (!props.enabled || !props.revision || pending.value || busy.value || ordinaryBusy.value) return
   busy.value = true; error.value = ''
   try {
     const workspace = await sandboxApi.workspace()
@@ -61,7 +64,7 @@ async function openConfirmation() {
   } catch (value) { failure(value) } finally { busy.value = false }
 }
 async function confirmStart() {
-  if (!props.enabled || !confirmedRevision.value || pending.value || busy.value) return
+  if (!props.enabled || !confirmedRevision.value || pending.value || busy.value || ordinaryBusy.value) return
   try {
     const request = {clientRequestId: crypto.randomUUID(), runSpecKey: confirmedRevision.value.runSpecKey, revision: confirmedRevision.value.revision}
     // Persist BEFORE the write: reload or response loss must retain the SAME identity.
@@ -82,7 +85,7 @@ async function resolvePending() {
     } else failure(value)
   } finally { busy.value = false }
 }
-async function retrySameRequest() { if (confirmedAbsent.value) await submitPending() }
+async function retrySameRequest() { if (confirmedAbsent.value && !ordinaryBusy.value) await submitPending() }
 onMounted(() => { try { pending.value = parsePendingStart(localStorage.getItem(pendingStartKey)) } catch (value) { storageBlocked.value = true; failure(value) } })
 </script>
 <style scoped>

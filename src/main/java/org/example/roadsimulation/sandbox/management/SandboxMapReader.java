@@ -22,6 +22,12 @@ public final class SandboxMapReader {
             result.put("integrityScope","MANIFEST_PAYLOAD");return result;});
     }
     public ObjectNode snapshot(String id,int index) {
+        return readTick(id,index,false);
+    }
+    public ObjectNode replayTick(String id,int index) {
+        return readTick(id,index,true);
+    }
+    private ObjectNode readTick(String id,int index,boolean replay) {
         if(index<0) throw new SandboxWorkspaceException("INVALID_RANGE","Nonnegative loop required");
         return reader.snapshot(c->{var ctx=reader.context(c,id);
             if(index>=ctx.recorded()) throw new SandboxWorkspaceException("TICK_NOT_FOUND","No complete recorded tick");
@@ -44,6 +50,19 @@ public final class SandboxMapReader {
                         &&SandboxTickIntegrity.hash(reader.mapper(),tick,factsHash,r.getString("business_facts_sha256"),r.getString("evaluation_sha256"),previous).equals(r.getString("tick_sha256")),"EXECUTION_RECORD_CORRUPT");
                     var projected=projection.project(facts.path("database"));
                     SandboxResultReader.require(projected.path("pois").equals(projection.pois(ctx.manifest().path("initialDatabaseFacts"))),"EXECUTION_RECORD_CORRUPT");
+                    if(replay) {
+                        var result=identity("sandbox-road-replay-tick/v1",ctx);
+                        result.put("loopIndex",index);
+                        result.put("tickSha256",r.getString("tick_sha256"));
+                        result.put("tickStart",tick.tickStart().toString());
+                        result.put("tickEnd",tick.tickEnd().toString());
+                        result.set("facts",projection.replayFacts(facts.path("database"),projected));
+                        if(index==0) {
+                            var initial=ctx.manifest().path("initialDatabaseFacts");
+                            result.set("initialVehicles",projection.project(initial).path("vehicles"));
+                        }
+                        return result;
+                    }
                     var result=identity("sandbox-map-snapshot/v1",ctx);result.put("loopIndex",index);result.put("simTime",tick.tickEnd().toString());
                     result.put("tickSha256",r.getString("tick_sha256"));result.put("factsSha256",factsHash);result.put("evaluationSha256",r.getString("evaluation_sha256"));
                     result.put("factVersion",version);result.put("integrityScope","MANIFEST_RAW_FACTS_EVALUATION_AND_LOCAL_TICK_LINK");

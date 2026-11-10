@@ -2,7 +2,8 @@ import axios from 'axios'
 import type { SandboxComparison, SandboxExecutionList } from '../types/sandbox-comparison'
 import type { SandboxServiceActivity } from '../types/sandbox-service-activity'
 import type { SandboxVehicleStates } from '../types/sandbox-vehicle-states'
-import type { SandboxMapContext, SandboxMapSnapshot } from '../types/sandbox-map'
+import type { RecordedPoint, SandboxMapContext, SandboxMapSnapshot } from '../types/sandbox-map'
+import type { RoadReplayTick } from '../types/sandbox-road-replay'
 import type { SandboxExecutionSummary, SandboxExecutionConfiguration, SandboxEvaluationPage } from '../types/sandbox'
 import type { SandboxCatalogPage, SandboxDraftView, SandboxRunDefinition, SandboxRunPreview, SandboxRunRevision, SandboxSaved, SandboxScenarioDefinition, SandboxScenarioPreview, SandboxScenarioRevision, SandboxStartRequest, SandboxStartReceipt, SandboxJobView, SandboxJobList } from '../types/sandbox'
 
@@ -31,6 +32,9 @@ export const sandboxApi = {
   serviceActivity: (id:string,index:number,windowLoops:number,signal?:AbortSignal) => call<SandboxServiceActivity>('get',`/executions/${keyPath(id)}/ticks/${index}/service-activity?windowLoops=${windowLoops}`,undefined,{signal}),
   mapContext: (id:string,signal?:AbortSignal) => call<SandboxMapContext>('get',`/executions/${keyPath(id)}/map-context`,undefined,{signal}),
   mapSnapshot: (id:string,index:number,signal?:AbortSignal) => call<SandboxMapSnapshot>('get',`/executions/${keyPath(id)}/ticks/${index}/map`,undefined,{signal}),
+  roadReplayTick: (id:string,index:number,signal?:AbortSignal) => call<RoadReplayTick>('get',`/executions/${keyPath(id)}/ticks/${index}/replay`,undefined,{signal}),
+  prepareRoadReplayRoute: (id:string,loopIndex:number,legId:number,signal?:AbortSignal) =>
+    call<{artifactVersion:string;routeKey:string;points:RecordedPoint[]}>('post', `/executions/${keyPath(id)}/road-replay/routes`, {loopIndex,legId}, {signal}),
   resultDownloadUrl: (id: string, format: 'json' | 'csv') => client.getUri({url:`/executions/${keyPath(id)}/export?format=${format}`}),
   executionSummary: (id: string, signal?: AbortSignal) => call<SandboxExecutionSummary>('get', `/executions/${keyPath(id)}/summary`, undefined, {signal}),
   executionConfiguration: (id: string, signal?: AbortSignal) => call<SandboxExecutionConfiguration>('get', `/executions/${keyPath(id)}/configuration`, undefined, {signal}),

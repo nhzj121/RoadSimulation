@@ -1,9 +1,7 @@
 <template>
-  <ElContainer class="page-container" :class="{ 'page-container--data': isDataWorkspace && activeMainView === 'map' }">
-    <ElHeader class="header-navbar" :inert="dataDrawerVisible ? '' : undefined">
-      <div class="navbar-content">
-        <div class="navbar-left">
-          <h2 class="navbar-title" @click="gotoMain">物流运输仿真系统</h2>
+  <ElContainer direction="vertical" class="page-container" :class="{ 'page-container--data': isDataWorkspace && activeMainView === 'map' }">
+    <SimulationWorkspaceHeader :data-view="isDataWorkspace" :inert="dataDrawerVisible ? '' : undefined" @home="gotoMain">
+      <template #view>
           <!-- Phase 1：该开关只改变主仿真工作区的展示布局，不参与仿真状态与业务状态计算。 -->
           <div v-if="activeMainView === 'map'" class="workspace-view-control">
             <ElButtonGroup class="workspace-view-switch" aria-label="主仿真界面视图">
@@ -28,8 +26,7 @@
             </ElButtonGroup>
             <span class="workspace-view-hint">仅切换展示</span>
           </div>
-        </div>
-        <div class="navbar-menu">
+      </template>
           <ElButton text @click="goToPOIManager">POI点管理</ElButton>
           <ElButton text @click="goToProcessingChainManager">加工链管理</ElButton>
           <ModeNavigationButton to="/sandbox" label="数据沙箱" />
@@ -43,9 +40,7 @@
           <ElButton type="primary" text @click="openEvaluationDashboard">
             实时评价
           </ElButton>
-        </div>
-      </div>
-    </ElHeader>
+    </SimulationWorkspaceHeader>
     <ElContainer
         class="map-workspace"
         :class="{ 'map-workspace--data': isDataWorkspace,
@@ -96,10 +91,11 @@
                 />
               </div>
               <div class="control-group" style="margin-top: 15px;">
-                <ElButton type="primary" :disabled="simulationControlBusy || resetInProgress || hasPreparedExperimentScenario || isExperimentRunActive" @click="startSimulation">▶ 开始</ElButton>
+                <ElButton type="primary" :disabled="sandboxRunBusy || simulationControlBusy || resetInProgress || hasPreparedExperimentScenario || isExperimentRunActive" @click="startSimulation">▶ 开始</ElButton>
                 <ElButton type="primary" :disabled="simulationControlBusy || resetInProgress || isExperimentRunActive" @click="pauseSimulation">⏸ 暂停</ElButton>
-                <ElButton :loading="resetInProgress" :disabled="simulationControlBusy || resetInProgress || isExperimentRunActive" @click="resetSimulation">↻ 重置</ElButton>
+                <ElButton :loading="resetInProgress" :disabled="sandboxRunBusy || simulationControlBusy || resetInProgress || isExperimentRunActive" @click="resetSimulation">↻ 重置</ElButton>
               </div>
+              <p v-if="sandboxRunBusy" role="status">数据沙箱正在准备、运行或收尾。</p>
               <div v-if="hasPreparedExperimentScenario" class="experiment-start-lock">
                 已准备实验场景，请清除实验标记后再启动普通仿真。
               </div>
@@ -231,36 +227,23 @@
 
           <div class="vehicle-floating-info-body">
             <VehicleImpactDetails :vehicle="floatingVehicleImpactDisplay" :weather="monitorWeather" />
-            <div class="vehicle-floating-status-row">
-              <span class="vehicle-floating-status-dot" :style="{ backgroundColor: floatingVehicleLiveStatus.color }"></span>
-              <span>{{ floatingVehicleLiveStatus.text }}</span>
-              <span v-if="floatingVehicleInfo.loading" class="vehicle-floating-loading">Loading...</span>
-            </div>
-
-            <div v-if="floatingVehicleDisplayInfo.actionDescription" class="vehicle-floating-line">
-              <strong>Action:</strong> {{ floatingVehicleDisplayInfo.actionDescription }}
-            </div>
-
-            <div class="vehicle-floating-section">
-              <div class="vehicle-floating-section-title">Task</div>
-              <div class="vehicle-floating-grid">
-                <span>Assignment</span>
-                <strong>{{ floatingVehicleDisplayAssignment.assignmentId || '-' }}</strong>
-                <span>Driver</span>
-                <strong>{{ floatingVehicleDriverText }}</strong>
-                <span>Route</span>
-                <strong>{{ floatingVehicleDisplayAssignment.routeName || floatingVehicleDisplayInfo.currentAssignment || '-' }}</strong>
-                <span>From</span>
-                <strong>{{ floatingVehicleDisplayAssignment.startPOIName || floatingVehicleDisplayInfo.startPOI || '-' }}</strong>
-                <span>To</span>
-                <strong>{{ floatingVehicleDisplayAssignment.endPOIName || floatingVehicleDisplayInfo.endPOI || '-' }}</strong>
-                <span>Goods</span>
-                <strong>{{ floatingVehicleDisplayAssignment.goodsName || floatingVehicleDisplayInfo.goodsInfo || '-' }}</strong>
-                <span>Quantity</span>
-                <strong>{{ floatingVehicleDisplayAssignment.quantity || floatingVehicleDisplayInfo.quantity || 0 }}</strong>
-              </div>
-            </div>
-
+            <VehicleWorkspaceDetail
+                :status="floatingVehicleLiveStatus" :loading="floatingVehicleInfo.loading"
+                :action="floatingVehicleDisplayInfo.actionDescription"
+                :task="[
+                  { label: 'Assignment', value: floatingVehicleDisplayAssignment.assignmentId || '-' },
+                  { label: 'Driver', value: floatingVehicleDriverText },
+                  { label: 'Route', value: floatingVehicleDisplayAssignment.routeName || floatingVehicleDisplayInfo.currentAssignment || '-' },
+                  { label: 'From', value: floatingVehicleDisplayAssignment.startPOIName || floatingVehicleDisplayInfo.startPOI || '-' },
+                  { label: 'To', value: floatingVehicleDisplayAssignment.endPOIName || floatingVehicleDisplayInfo.endPOI || '-' },
+                  { label: 'Goods', value: floatingVehicleDisplayAssignment.goodsName || floatingVehicleDisplayInfo.goodsInfo || '-' },
+                  { label: 'Quantity', value: floatingVehicleDisplayAssignment.quantity || floatingVehicleDisplayInfo.quantity || 0 }
+                ]"
+                :load="[
+                  { current: formatNumber(floatingVehicleDisplayInfo.currentLoad), limit: formatNumber(floatingVehicleDisplayInfo.maxLoadCapacity), unit: 't', percent: floatingVehicleLoadPercent },
+                  { current: formatNumber(floatingVehicleDisplayInfo.currentVolume), limit: formatNumber(floatingVehicleDisplayInfo.maxVolumeCapacity), unit: 'm³', percent: floatingVehicleVolumePercent }
+                ]"
+            >
             <div
                 v-if="floatingVehicleVrpRows.length > 0"
                 class="vehicle-floating-section vehicle-floating-vrp"
@@ -286,24 +269,7 @@
                 </div>
               </div>
             </div>
-
-            <div class="vehicle-floating-section">
-              <div class="vehicle-floating-section-title">Load</div>
-              <div class="vehicle-floating-metric-row">
-                <span>{{ formatNumber(floatingVehicleDisplayInfo.currentLoad) }} / {{ formatNumber(floatingVehicleDisplayInfo.maxLoadCapacity) }} t</span>
-                <strong>{{ floatingVehicleLoadPercent.toFixed(1) }}%</strong>
-              </div>
-              <div class="vehicle-floating-progress">
-                <div class="vehicle-floating-progress-fill load" :style="{ width: `${floatingVehicleLoadPercent}%` }"></div>
-              </div>
-              <div class="vehicle-floating-metric-row">
-                <span>{{ formatNumber(floatingVehicleDisplayInfo.currentVolume) }} / {{ formatNumber(floatingVehicleDisplayInfo.maxVolumeCapacity) }} m³</span>
-                <strong>{{ floatingVehicleVolumePercent.toFixed(1) }}%</strong>
-              </div>
-              <div class="vehicle-floating-progress">
-                <div class="vehicle-floating-progress-fill volume" :style="{ width: `${floatingVehicleVolumePercent}%` }"></div>
-              </div>
-            </div>
+            </VehicleWorkspaceDetail>
 
             <div v-if="floatingVehicleInfo.vehicleDetail" class="vehicle-floating-section">
               <div class="vehicle-floating-section-title">Vehicle</div>
@@ -737,7 +703,7 @@
             <ElButton
               type="primary"
               :loading="experimentRun.loading"
-              :disabled="!canStartExperimentVisualRun"
+              :disabled="sandboxRunBusy || !canStartExperimentVisualRun"
               @click="startExperimentVisualRun"
             >
               开始实验运行
@@ -1124,8 +1090,9 @@
 <script setup>
 import { ref, reactive, computed, watch, onMounted, onUnmounted, markRaw , nextTick} from "vue";
 import ModeNavigationButton from './ModeNavigationButton.vue';
-import { beginNavigationOperation, setLocalOrdinaryNavigation, clearLocalOrdinaryNavigation } from '../navigation/modeNavigation';
+import { beginNavigationOperation, navigationState, setLocalOrdinaryNavigation, clearLocalOrdinaryNavigation } from '../navigation/modeNavigation';
 import VehicleImpactDetails from './VehicleImpactDetails.vue';
+import VehicleWorkspaceDetail from './VehicleWorkspaceDetail.vue';
 import { useRouter } from 'vue-router';
 import { useVehicleArrivalMonitor } from '@/composables/useVehicleArrivalMonitor';
 import { poiManagerApi } from "../api/poiManagerApi";
@@ -1136,6 +1103,7 @@ import { temporaryDisplaySettings } from '../utils/temporaryDisplaySettings';
 import request from "../utils/request";
 // Phase 6C：新增独立评价视图，不向地图动画管理器注入任何评价状态。
 import EvaluationDashboard from './EvaluationDashboard.vue';
+import SimulationWorkspaceHeader from './SimulationWorkspaceHeader.vue';
 import EvaluationOverviewPanel from './EvaluationOverviewPanel.vue';
 import SimulationDataLeftPanel from './simulation-data/SimulationDataLeftPanel.vue';
 import SimulationDataRightPanel from './simulation-data/SimulationDataRightPanel.vue';
@@ -1156,6 +1124,7 @@ import testIcon from '../../public/icons/test.png';
 import { assignmentPollingMode, createWeatherRouteCache } from '../utils/weatherRouteCache';
 import { assignmentRenderIdentity, createAssignmentRecoveryTracker, reconcileAssignmentRenderOwner, removeVehicleRenderRegistration } from '../utils/assignmentRenderOwnership';
 import { VEHICLE_STATUS_PRESENTATIONS, vehicleStatusPresentation } from '../utils/vehicleStatusPresentation';
+import { createVehicleIcon } from '../utils/vehicleMapMarker';
 import timberYardIcon from '../../public/icons/timber-yard.png';
 import sawmillIcon from '../../public/icons/sawmill.png';
 import boardFactoryIcon from '../../public/icons/board-factory.png';
@@ -1166,7 +1135,6 @@ import furnitureFactoryIcon from '../../public/icons/furniture-factory.png';
 import tireManufacturingPlant from '../../public/icons/tire-manufacturing-plant.png';
 import autoAssemblyPlant from '../../public/icons/auto-assembly-plant.png';
 import {
-  ElHeader,
   ElAside,
   ElMain,
   ElContainer,
@@ -3502,6 +3470,7 @@ watch(resetInProgress, resetting => {
   if (resetting) simulationSessionRecords.value = createSessionRecords(simulationSessionRecords.value.epoch + 1);
 }, { flush: 'sync' });
 const simulationControlBusy = ref(false);
+const sandboxRunBusy = computed(() => navigationState.confirmed && navigationState.reason === 'SANDBOX_BUSY');
 watch(() => [isSimulationRunning.value, isExperimentRunActive.value, resetInProgress.value,
   simulationControlBusy.value, experimentRun.loading, experimentPrep.loading], () => {
   setLocalOrdinaryNavigation({ running: isSimulationRunning.value, comparison: isExperimentRunActive.value,
@@ -6274,112 +6243,6 @@ const clearFrontendSimulationVisuals = () => {
   stats.anomalyRate = 0;
 };
 
-// Create vehicle icons with status-aware styling.
-const createVehicleIcon = (size = 32, status = 'IDLE', color = null, meta = {}) => {
-  const el = document.createElement('div');
-  if (meta.vehicleId !== undefined && meta.vehicleId !== null) el.dataset.vehicleId = String(meta.vehicleId);
-  el.style.width = `${size}px`;
-  el.style.height = `${size}px`;
-  el.style.borderRadius = '50%';
-  el.style.display = 'flex';
-  el.style.alignItems = 'center';
-  el.style.justifyContent = 'center';
-  el.style.boxShadow = '0 2px 8px rgba(0,0,0,0.3)';
-  el.style.border = '2px solid white';
-  el.style.position = 'relative';
-
-  // 状态颜色映射
-  // 设置背景颜色
-  const bgColor = color || vehicleStatusPresentation(status).color || '#ff7f50';
-  el.style.background = bgColor;
-  el.style.color = '#fff';
-
-  // 根据状态生成不同的SVG图标
-  let svgContent = '';
-  const iconSize = Math.round(size * 0.6);
-
-  switch (status) {
-    case 'ORDER_DRIVING':
-      // 空车图标（灰色或蓝色）
-      svgContent = `
-        <svg width="${iconSize}" height="${iconSize}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="1" y="6" width="15" height="6" rx="1"></rect>
-          <path d="M16 6h4l2 3v3h-6"></path>
-          <circle cx="5.5" cy="16.5" r="1.5"></circle>
-          <circle cx="18.5" cy="16.5" r="1.5"></circle>
-        </svg>`;
-      break;
-
-    case 'TRANSPORT_DRIVING':
-      // 载货车图标（显示货物）
-      svgContent = `
-        <svg width="${iconSize}" height="${iconSize}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="1" y="6" width="15" height="6" rx="1"></rect>
-          <path d="M16 6h4l2 3v3h-6"></path>
-          <circle cx="5.5" cy="16.5" r="1.5"></circle>
-          <circle cx="18.5" cy="16.5" r="1.5"></circle>
-          <rect x="4" y="4" width="8" height="2" rx="0.5" fill="#ffeb3b"></rect>
-        </svg>`;
-      break;
-
-    case 'LOADING':
-      // 装载中图标（带加载动画效果）
-      svgContent = `
-        <svg width="${iconSize}" height="${iconSize}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="1" y="6" width="15" height="6" rx="1"></rect>
-          <path d="M16 6h4l2 3v3h-6"></path>
-          <circle cx="5.5" cy="16.5" r="1.5"></circle>
-          <circle cx="18.5" cy="16.5" r="1.5"></circle>
-          <path d="M8 10v-4" stroke-dasharray="2,2"></path>
-        </svg>`;
-      break;
-
-    case 'UNLOADING':
-      // 卸货中图标
-      svgContent = `
-        <svg width="${iconSize}" height="${iconSize}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="1" y="6" width="15" height="6" rx="1"></rect>
-          <path d="M16 6h4l2 3v3h-6"></path>
-          <circle cx="5.5" cy="16.5" r="1.5"></circle>
-          <circle cx="18.5" cy="16.5" r="1.5"></circle>
-          <path d="M12 10v4" stroke-dasharray="2,2"></path>
-        </svg>`;
-      break;
-
-    default:
-      // 默认车辆图标
-      svgContent = `
-        <svg width="${iconSize}" height="${iconSize}" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
-          <path d="M3 13v-6h11v6H3zm13 0h3l2 3v3h-3a2 2 0 0 1-2-2v-4zM6 18a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zm10 0a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z"/>
-        </svg>`;
-  }
-
-  el.innerHTML = svgContent;
-
-  if (meta?.vrp && Number(meta.carriedCount) > 0) {
-    const badge = document.createElement('span');
-    badge.textContent = String(Math.min(99, Number(meta.carriedCount)));
-    badge.style.position = 'absolute';
-    badge.style.top = '-7px';
-    badge.style.right = '-7px';
-    badge.style.minWidth = '16px';
-    badge.style.height = '16px';
-    badge.style.padding = '0 4px';
-    badge.style.borderRadius = '999px';
-    badge.style.background = '#111827';
-    badge.style.border = '2px solid #fff';
-    badge.style.color = '#fff';
-    badge.style.fontSize = '10px';
-    badge.style.lineHeight = '14px';
-    badge.style.fontWeight = '700';
-    badge.style.textAlign = 'center';
-    badge.style.boxSizing = 'border-box';
-    el.appendChild(badge);
-  }
-
-  return el;
-};
-
 // 清除特定Assignment的路线
 const clearRouteByAssignmentId = (assignmentId, vehicleId = null) => {
   const routeData = activeRoutes.value.get(assignmentId);
@@ -8293,33 +8156,6 @@ onUnmounted(() => {
   overflow: hidden; /* 防止整个页面滚动 */
 }
 
-.header-navbar {
-  background-color: #fff;
-  border-bottom: 1px solid #e6e6e6;
-  display: flex;
-  align-items: center;
-  padding: 0 20px;
-  height: 60px;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
-  flex-shrink: 0; /* 防止header被压缩 */
-}
-
-.navbar-content {
-  display: flex;
-  justify-content: flex-start;
-  align-items: center;
-  gap: 10px;
-  padding-left: 20px;
-  width: 100%;
-}
-
-.navbar-left {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  flex-shrink: 0;
-}
-
 .workspace-view-control {
   display: flex;
   align-items: center;
@@ -8330,24 +8166,6 @@ onUnmounted(() => {
   color: #909399;
   font-size: 11px;
   white-space: nowrap;
-}
-
-.navbar-title {
-  margin: 0;
-  color: #303133;
-  font-size: 20px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.navbar-title:hover {
-  color: #409eff;
-}
-
-.navbar-menu {
-  display: flex;
-  gap: 10px;
-  min-width: 0;
 }
 
 .map-workspace {
@@ -9299,16 +9117,7 @@ onUnmounted(() => {
 .data-drawer-backdrop { position: fixed; inset: 60px 0 0; z-index: 3100; background: rgba(22, 36, 52, .28); }
 .data-drawer-close { position: absolute; top: 12px; right: 12px; z-index: 2; background: #fff; }
 .side-panel--data.data-aside--drawer :deep(.data-left-panel) { padding-top: 48px; }
-.page-container--data .navbar-menu { flex: 1; overflow-x: auto; white-space: nowrap; scrollbar-width: thin; }
-.page-container--data .navbar-menu > * { flex-shrink: 0; }
-.page-container--data .navbar-content { min-width: 0; padding-left: 0; }
-@media (max-width: 900px) {
-  .page-container--data .header-navbar { padding: 0 8px; }
-  .page-container--data .navbar-left { gap: 8px; }
-  .page-container--data .navbar-title { max-width: 125px; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .page-container--data .workspace-view-hint { display: none; }
-}
-@media (max-width: 480px) { .page-container--data .navbar-title { max-width: 65px; } }
+@media (max-width: 900px) { .page-container--data .workspace-view-hint { display: none; } }
 
 .monitor-panel {
   padding: 0;

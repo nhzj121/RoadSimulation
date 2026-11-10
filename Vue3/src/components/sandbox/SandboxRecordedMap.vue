@@ -1,7 +1,10 @@
 <template>
   <section class="recorded-map">
-    <p>虚线仅表示记录的运输端点关系，不是实际道路路线。行驶／未知位置车辆不绘制推算定位点，可从下方车辆列表查看。</p>
-    <p>灰点为POI，绿“车”为停靠车辆，橙色为选中车辆及其运输段；悬停标记可查看名称。全部POI模式不展开常驻文字标签。</p>
+    <p v-if="replayFrame">蓝线为冻结的高德道路路线。车辆颜色与图形表示当前展示状态，橙色描边表示选中。</p>
+    <template v-else>
+      <p>虚线仅表示记录的运输端点关系，不是实际道路路线。行驶／未知位置车辆不绘制推算定位点，可从下方车辆列表查看。</p>
+      <p>灰点为 POI，车辆图标表示停靠车辆的记录状态，橙色描边和虚线标出选中车辆及其运输段。</p>
+    </template>
     <el-alert v-if="mapError" :title="mapError" type="warning" :closable="false" />
     <p v-if="loading">正在加载底图；已记录的车辆详情和评价仍可查看。</p>
     <el-button v-if="mapError" :disabled="loading" @click="reload">重新加载底图</el-button>
@@ -14,12 +17,30 @@ import {ref,inject,onMounted,onBeforeUnmount,watch} from 'vue'
 import type {SandboxMapSnapshot,RecordedPoi} from '../../types/sandbox-map'
 import {recordedMapFactoryKey,drawRecordedMap} from '../../sandbox/recordedMapRenderer'
 import type {RecordedMapPort} from '../../sandbox/recordedMapRenderer'
-const props=defineProps<{snapshot:SandboxMapSnapshot;pois:RecordedPoi[];selectedVehicle:number|null}>()
+import type {ReplayRoad} from '../../sandbox/roadReplayGeometry'
+import type {ReplayVehicle} from '../../sandbox/roadReplayTimeline'
+const props=defineProps<{snapshot:SandboxMapSnapshot;pois:RecordedPoi[];selectedVehicle:number|null;
+  replayFrame?:ReplayVehicle[]|null;replayRoads?:ReadonlyMap<number,ReplayRoad>}>()
 const emit=defineEmits<{(e:'select-vehicle',id:number):void}>()
 const factory=inject(recordedMapFactoryKey,null),element=ref<HTMLElement|null>(null),mapError=ref(''),ready=ref(false),loading=ref(false)
 let port:RecordedMapPort|undefined,disposed=false,generation=0
 function release(value:RecordedMapPort|undefined){try{value?.destroy()}catch{/* Cleanup failure cannot start business work or conceal a loader error. */}}
-function render(initial=false){if(port&&!disposed){const active=port,current=generation;try{mapError.value='';drawRecordedMap(active,props.snapshot,props.pois,props.selectedVehicle,id=>{if(!disposed&&port===active&&generation===current)emit('select-vehicle',id)},initial);ready.value=true}catch{mapError.value='本轮地图未完整绘制，隐藏不完整画面；该轮记录详情仍可查看，不改变后台实验。';ready.value=false;try{active.clear()}catch{}}}}
+function render(initial=false){
+  if(!port||disposed)return
+  const active=port,current=generation
+  const select=(id:number)=>{if(!disposed&&port===active&&generation===current)emit('select-vehicle',id)}
+  try{
+    mapError.value=''
+    if(props.replayFrame && props.replayRoads && active.replay){
+      active.replay(props.replayFrame,props.replayRoads,props.pois,props.selectedVehicle,select)
+      if(initial)active.fit()
+    }else drawRecordedMap(active,props.snapshot,props.pois,props.selectedVehicle,select,initial)
+    ready.value=true
+  }catch{
+    mapError.value='地图未完整绘制；记录详情仍可查看。';ready.value=false
+    try{active.clear()}catch{}
+  }
+}
 function fit(){try{port?.fit()}catch{mapError.value='底图定位失败；不完整画面已隐藏，记录详情不受影响。';ready.value=false}}
 async function reload(){
   if(disposed||loading.value)return
@@ -31,7 +52,7 @@ async function reload(){
   finally{if(!disposed&&current===generation)loading.value=false}
 }
 onMounted(reload)
-watch(()=>[props.snapshot,props.pois,props.selectedVehicle],()=>render())
+watch(()=>[props.snapshot,props.pois,props.selectedVehicle,props.replayFrame,props.replayRoads],()=>render())
 onBeforeUnmount(()=>{disposed=true;generation++;ready.value=false;loading.value=false;const previous=port;port=undefined;release(previous)})
 </script>
 <style scoped>.map-canvas{height:480px;min-height:320px;border:1px solid #cbd5e1;border-radius:8px;background:#eef3f8}.recorded-map p{color:#526274;font-size:13px}</style>

@@ -157,7 +157,7 @@ export function buildComparisonChartViewModel(
     unit: metric.unit,
     axisUnit: chartAxisUnit(metric.unit),
     items,
-    comparable: items.every(item => item.chartValue !== null)
+    comparable: !metric.incompatibilityReason && items.every(item => item.chartValue !== null)
   };
 }
 

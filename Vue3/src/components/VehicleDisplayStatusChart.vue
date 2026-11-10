@@ -3,7 +3,7 @@
     <p class="vehicle-display-status__source">前端地图展示口径 · 仅此图使用可见车辆；其余车辆评价指标仍使用后端快照。</p>
     <nav class="vehicle-display-status__modes" aria-label="车辆状态统计模式">
       <button type="button" :aria-pressed="mode === 'current'" @click="mode = 'current'">当前状态</button>
-      <button type="button" :aria-pressed="mode === 'activity'" @click="mode = 'activity'">最近5分钟活动</button>
+      <button v-if="!recorded" type="button" :aria-pressed="mode === 'activity'" @click="mode = 'activity'">最近5分钟活动</button>
     </nav>
     <EvaluationDomainChart :model="selectedChart" :visible="visible" compact show-zero-legend
       :center-label="mode === 'current' ? '当前可见车辆' : '状态进入次数'" />
@@ -23,6 +23,7 @@ const props = withDefaults(defineProps<{
   visibleVehicles?: VisibleVehicleDisplay[];
   activityChart?: DomainChartModel;
   visible?: boolean;
+  recorded?: boolean;
 }>(), { visibleVehicles: () => [], visible: true });
 const mode = ref<'current' | 'activity'>('current');
 const emptyActivity = createVehicleActivityWindow().chart(0);
