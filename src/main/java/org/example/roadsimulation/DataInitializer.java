@@ -57,6 +57,8 @@ import java.util.stream.Collectors;
 public class DataInitializer implements CommandLineRunner {
     @Autowired(required = false)
     private org.example.roadsimulation.sandbox.run.SandboxRunRuntimeContext sandboxRunRuntimeContext;
+    @Autowired(required = false)
+    private TransportLegMetricProvider executionMetricProvider;
     @Autowired
     private org.example.roadsimulation.service.WeatherEnvironmentService weatherEnvironmentService;
 
@@ -2810,27 +2812,39 @@ public class DataInitializer implements CommandLineRunner {
 
         try {
             double mileageWithoutThings = 0.0;
+            long drivingSeconds = 0;
             POI firstPickup = pickupPois.get(0);
+            boolean frozenMetrics = executionMetricProvider != null && executionMetricProvider.metricsActive();
 
-            // 1. 获取空车前往起点的距离 (使用高德API，带休眠防限流)
-            try {
-                Thread.sleep(500);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
+            if (frozenMetrics) {
+                POI from = vehicle.getCurrentPOI();
+                var metric = executionMetricProvider.metric(from == null ? null : from.getId(),
+                        from == null ? vehicle.getCurrentLongitude() : from.getLongitude(),
+                        from == null ? vehicle.getCurrentLatitude() : from.getLatitude(),
+                        firstPickup.getId(), firstPickup.getLongitude(), firstPickup.getLatitude());
+                mileageWithoutThings = metric.distanceMeters() / 1000.0;
+                drivingSeconds = metric.drivingSeconds();
+            } else {
+                // 1. 获取空车前往起点的距离 (使用高德API，带休眠防限流)
+                try {
+                    Thread.sleep(500);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
 
-            if (vehicle.getCurrentPOI() != null) {
-                if (shouldAbortSimulationWork()) {
-                    return;
+                if (vehicle.getCurrentPOI() != null) {
+                    if (shouldAbortSimulationWork()) {
+                        return;
+                    }
+                    GaodeRouteResponse response_2 = routePlanningService.planDrivingRouteByPois(vehicle.getCurrentPOI().getId(), firstPickup.getId(), "0");
+                    if (response_2 != null && response_2.getData() != null && response_2.getData().getTotalDistance() != null) {
+                        mileageWithoutThings = response_2.getData().getTotalDistance() / 1000.0;
+                    } else {
+                        mileageWithoutThings = calculateHaversineDistance(vehicle.getCurrentPOI().getLatitude(), vehicle.getCurrentPOI().getLongitude(), firstPickup.getLatitude(), firstPickup.getLongitude());
+                    }
+                } else if (vehicle.getCurrentLatitude() != null && vehicle.getCurrentLongitude() != null) {
+                    mileageWithoutThings = calculateHaversineDistance(vehicle.getCurrentLatitude(), vehicle.getCurrentLongitude(), firstPickup.getLatitude(), firstPickup.getLongitude());
                 }
-                GaodeRouteResponse response_2 = routePlanningService.planDrivingRouteByPois(vehicle.getCurrentPOI().getId(), firstPickup.getId(), "0");
-                if (response_2 != null && response_2.getData() != null && response_2.getData().getTotalDistance() != null) {
-                    mileageWithoutThings = response_2.getData().getTotalDistance() / 1000.0;
-                } else {
-                    mileageWithoutThings = calculateHaversineDistance(vehicle.getCurrentPOI().getLatitude(), vehicle.getCurrentPOI().getLongitude(), firstPickup.getLatitude(), firstPickup.getLongitude());
-                }
-            } else if (vehicle.getCurrentLatitude() != null && vehicle.getCurrentLongitude() != null) {
-                mileageWithoutThings = calculateHaversineDistance(vehicle.getCurrentLatitude(), vehicle.getCurrentLongitude(), firstPickup.getLatitude(), firstPickup.getLongitude());
             }
 
             // 2. 获取多点路线的真实载重和里程 (逐段物理拆解法)
@@ -2848,8 +2862,15 @@ public class DataInitializer implements CommandLineRunner {
                 POI p1 = fullRoutePois.get(i);
                 POI p2 = fullRoutePois.get(i + 1);
 
-                // 为防止多节点并发API把高德限流打爆，多点段间距离使用 直线*1.2 近似替代
-                double segDist = calculateHaversineDistance(p1.getLatitude(), p1.getLongitude(), p2.getLatitude(), p2.getLongitude()) * 1.2;
+                double segDist;
+                if (frozenMetrics) {
+                    var metric = executionMetricProvider.metric(p1.getId(), p1.getLongitude(), p1.getLatitude(),
+                            p2.getId(), p2.getLongitude(), p2.getLatitude());
+                    segDist = metric.distanceMeters() / 1000.0;
+                    drivingSeconds = Math.addExact(drivingSeconds, metric.drivingSeconds());
+                } else {
+                    segDist = calculateHaversineDistance(p1.getLatitude(), p1.getLongitude(), p2.getLatitude(), p2.getLongitude()) * 1.2;
+                }
                 mileage += segDist;
 
                 // 物理累加：驶入该路段前的车厢总重 × 该路段里程
@@ -2860,7 +2881,7 @@ public class DataInitializer implements CommandLineRunner {
             // 3. 计算各项基础指标
             double theoryCapacity = vehicle.getMaxLoadCapacity() * mileage;
             double waitingTime = (currentLoopCount - vehicle.getLoopCount()) * 0.5;
-            double transportTime = (mileage + mileageWithoutThings) / 20.0;
+            double transportTime = frozenMetrics ? drivingSeconds / 3600.0 : (mileage + mileageWithoutThings) / 20.0;
 
             double theoryRealityCapacity = theoryCapacity - realityCapacity;
             double waitingTransportTime = transportTime > 0 ? waitingTime / transportTime : 0.0;

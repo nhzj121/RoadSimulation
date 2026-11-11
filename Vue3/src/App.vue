@@ -16,7 +16,7 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(timer) })
 
 <template>
   <div :class="{ 'sandbox-shell': route.path === '/sandbox' || route.path.startsWith('/sandbox/') }">
-    <SandboxNavigationBar v-if="route.path === '/sandbox' || route.path.startsWith('/sandbox/')" />
+    <SandboxNavigationBar v-if="route.name !== 'SandboxMap' && (route.path === '/sandbox' || route.path.startsWith('/sandbox/'))" />
     <router-view />
   </div>
 

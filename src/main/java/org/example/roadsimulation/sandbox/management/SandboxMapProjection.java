@@ -51,7 +51,7 @@ public final class SandboxMapProjection {
         var assignmentData=result.putArray("assignments");
         for(var row:assignments.values()) {
             reference(row,"vehicle_id",vehicles); reference(row,"origin_poi_id",pois); reference(row,"dest_poi_id",pois);
-            assignmentData.add(pick(row,"id vehicle_id origin_poi_id dest_poi_id status current_leg_index current_action_index is_processing_assignment processing_status processing_chain_id"));
+            assignmentData.add(pick(row,"id vehicle_id driver_id origin_poi_id dest_poi_id status current_leg_index current_action_index is_processing_assignment processing_status processing_chain_id"));
         }
         var legData=result.putArray("legs");
         for(var row:legs.values()) {
@@ -84,6 +84,29 @@ public final class SandboxMapProjection {
         result.set("drivingProgress",projectWithoutId(database,"driving_progress","phase_key vehicle_id assignment_id leg_index driving_status phase_start last_settled_time initial_work_seconds remaining_work_seconds affected_seconds lost_work_seconds model_completed_time observed_completed_time",vehicles,assignments));
         var weather=result.putArray("weather");
         for(var row:textRows(database,"weather_run","id").values()) weather.add(pick(row,"id started_at ended_at frozen_scenario_json frozen_event_configuration_json"));
+        return result;
+    }
+    JsonNode replayAssignments(JsonNode database) {
+        return replayRows(database,"assignment","id vehicle_id status start_time end_time");
+    }
+    ObjectNode replayFacts(JsonNode database, ObjectNode map) {
+        var result=json.createObjectNode();
+        for (String field : List.of("vehicles","legs","assignments","nodes","cargo")) result.set(field,map.get(field));
+        result.set("services",replayRows(database,"node_service_episode",
+                "id vehicle_id assignment_id assignment_node_id leg_sequence_index poi_id action_type arrived_at service_started_at service_completed_at status"));
+        result.set("events",replayRows(database,"transport_random_event",
+                "id vehicle_id assignment_id event_type status start_time resolved_time original_leg_index recovery_outcome replacement_outcome"));
+        result.set("handoffs",replayRows(database,"vehicle_replacement_attempt",
+                "id event_id assignment_id original_vehicle_id replacement_vehicle_id handoff_time status"));
+        result.set("fragments",replayRows(database,"transport_execution_segment",
+                "id assignment_id leg_id loop_index fragment_index vehicle_id driver_id from_sim_time to_sim_time distance_meters"));
+        return result;
+    }
+    private JsonNode replayRows(JsonNode database,String table,String fields) {
+        // Optional in older records. Preserve the difference between missing and an empty table.
+        if(!database.has(table)) return NullNode.instance;
+        var result=json.createArrayNode();
+        for(var row:rows(database,table).values()) result.add(pick(row,fields));
         return result;
     }
     private ArrayNode projectWithoutId(JsonNode database,String table,String fields,Map<Long,JsonNode> vehicles,Map<Long,JsonNode> assignments) {

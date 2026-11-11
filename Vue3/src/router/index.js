@@ -1,15 +1,15 @@
 // router/index.js
 import { createRouter, createWebHistory } from 'vue-router'
-import MapContainer from '@/components/MapContainer.vue'
 import POIManager from '@/components/POIManager.vue'
 import ProcessingChainManager from '@/components/ProcessingChainManager.vue'
 import { ElMessage } from 'element-plus'
 import { createModeNavigationGuard } from '../navigation/modeNavigation'
 
+const simulationWorkspace = () => import('@/views/SimulationWorkspace.vue')
 const routes = [
     { path: '/sandbox/demos', name: 'SandboxDemos', component: () => import('@/views/SandboxDemos.vue') },
     { path: '/sandbox/comparison', name: 'SandboxComparison', component: () => import('@/views/SandboxComparison.vue') },
-    { path: '/sandbox/executions/:id/map', name: 'SandboxMap', component: () => import('@/views/SandboxMap.vue') },
+    { path: '/sandbox/executions/:id/map', name: 'SandboxMap', component: simulationWorkspace, props: { sandbox: true } },
     { path: '/sandbox/executions/:id/results', name: 'SandboxResults', component: () => import('@/views/SandboxResults.vue') },
     { path: '/sandbox/tasks', name: 'SandboxTasks', component: () => import('@/views/SandboxTasks.vue') },
     { path: '/sandbox/jobs/:id', name: 'SandboxJobProgress', component: () => import('@/views/SandboxTasks.vue') },
@@ -21,7 +21,7 @@ const routes = [
     {
         path: '/',
         name: 'MapContainer',
-        component: MapContainer
+        component: simulationWorkspace
     },
     {
         path: '/poi-manager',

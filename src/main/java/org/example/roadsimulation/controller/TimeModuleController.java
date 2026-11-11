@@ -37,8 +37,7 @@ public class TimeModuleController {
      */
     @PostMapping("/start")
     public Map<String, Object> startSimulation() {
-        gaodeRoutePlanningQueueService.resume();
-        simulationMainLoop.start();
+        simulationMainLoop.start(gaodeRoutePlanningQueueService::resume);
         return createResponse("模拟已启动");
     }
 
@@ -47,8 +46,8 @@ public class TimeModuleController {
      */
     @PostMapping("/pause")
     public Map<String, Object> pauseSimulation() {
-        simulationMainLoop.stop();
         gaodeRoutePlanningQueueService.pauseAndCancelPending();
+        simulationMainLoop.stop();
         return createResponse("模拟已暂停");
     }
 
@@ -58,8 +57,7 @@ public class TimeModuleController {
      */
     @PostMapping("/resume")
     public Map<String, Object> resumeSimulation() {
-        gaodeRoutePlanningQueueService.resume();
-        simulationMainLoop.start();
+        simulationMainLoop.start(gaodeRoutePlanningQueueService::resume);
         return createResponse("模拟已恢复");
     }
 

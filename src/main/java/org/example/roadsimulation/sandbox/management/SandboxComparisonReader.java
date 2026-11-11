@@ -16,6 +16,9 @@ public final class SandboxComparisonReader {
         if (Objects.equals(leftId, rightId)) throw new SandboxWorkspaceException("INVALID_ARGUMENT", "Different executions required");
         return reader.snapshot(c -> {
             var left = reader.context(c, leftId); var right = reader.context(c, rightId);
+            if (org.example.roadsimulation.sandbox.optimization.SphericalComparisonRun.MODE.equals(left.manifest().path("executionMode").asText())
+                    || org.example.roadsimulation.sandbox.optimization.SphericalComparisonRun.MODE.equals(right.manifest().path("executionMode").asText()))
+                throw new SandboxWorkspaceException("SPHERICAL_COMPARISON_NOT_SUPPORTED", "Use the frozen spherical comparison report");
             if ("GLOBAL_PLAN".equals(left.manifest().path("executionMode").asText())
                     || "GLOBAL_PLAN".equals(right.manifest().path("executionMode").asText()))
                 throw new SandboxWorkspaceException("PLAN_COMPARISON_NOT_SUPPORTED", "Use the plan execution artifacts; source dispatch labels are not effective strategies");

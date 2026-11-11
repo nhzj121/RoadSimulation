@@ -308,7 +308,7 @@ public class TransportMetricsService {
     }
 
     private RouteMetric calculateRouteMetric(RoutePoint from, RoutePoint to, boolean allowFallback) {
-        if (executionMetricProvider != null && executionMetricProvider.active()) {
+        if (executionMetricProvider != null && executionMetricProvider.metricsActive()) {
             if (from == null || to == null) throw new IllegalStateException("PLAN_PATH_ENDPOINT_MISSING");
             var metric = executionMetricProvider.metric(from.poi == null ? null : from.poi.getId(),
                     from.poi == null ? decimal(from.lon) : from.poi.getLongitude(),

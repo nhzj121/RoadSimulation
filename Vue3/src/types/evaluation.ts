@@ -109,6 +109,9 @@ export interface EvaluationMetricComparison {
   displayName: string;
   category: EvaluationMetricCategory;
   unit: string;
+  leftUnit?: string;
+  rightUnit?: string;
+  incompatibilityReason?: string;
   leftStatus: EvaluationMetricValueStatus;
   leftValue: number | null;
   rightStatus: EvaluationMetricValueStatus;

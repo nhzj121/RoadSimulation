@@ -47,6 +47,7 @@ import org.example.roadsimulation.repository.POIRepository;
 import org.example.roadsimulation.repository.ShipmentItemRepository;
 import org.example.roadsimulation.repository.ShipmentRepository;
 import org.example.roadsimulation.repository.VehicleRepository;
+import org.example.roadsimulation.sandbox.management.OrdinaryRunAdmission;
 import org.example.roadsimulation.service.CostBaselineNormalizationService;
 import org.example.roadsimulation.service.CostBaselineNormalizationService.ExperimentRunNormalizationResult;
 import org.example.roadsimulation.service.DispatchComparisonExperimentService;
@@ -58,6 +59,7 @@ import org.example.roadsimulation.service.TransportProgressService;
 import org.example.roadsimulation.service.VehicleInitializationService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -79,6 +81,8 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
 
+import static org.example.roadsimulation.sandbox.management.OrdinaryRunAdmission.Owner.COMPARISON;
+
 @Service
 public class DispatchComparisonExperimentServiceImpl implements DispatchComparisonExperimentService {
 
@@ -93,6 +97,8 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
 
     private final SimulationContext simulationContext;
     private final SimulationModeGuard simulationModeGuard;
+    @Autowired(required = false)
+    private OrdinaryRunAdmission ordinaryRunAdmission;
     private final SimulationRuntimeConfig simulationRuntimeConfig;
     private final VehicleRepository vehicleRepository;
     private final POIRepository poiRepository;
@@ -266,6 +272,7 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
     @Override
     public DispatchComparisonVisualRunStatusDTO startVisualRun() {
         visualRunLock.lock();
+        boolean reserved = false;
         try {
             if (currentScenario == null || currentScenario.getExperimentId() == null) {
                 throw new IllegalStateException("dispatch comparison scenario is not prepared");
@@ -275,6 +282,10 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
             }
             if (isVisualRunActive()) {
                 throw new IllegalStateException("dispatch comparison experiment is already active");
+            }
+            if (ordinaryRunAdmission != null) {
+                ordinaryRunAdmission.acquire(COMPARISON);
+                reserved = true;
             }
 
             DispatchComparisonExperimentRun run = transactionTemplate.execute(status -> {
@@ -295,6 +306,8 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
             prepareStrategyRun(run, DispatchStrategy.ORIGINAL);
             return getVisualRunStatus();
         } finally {
+            if (reserved && !simulationModeGuard.isDispatchComparisonExperimentActive())
+                ordinaryRunAdmission.release(COMPARISON);
             visualRunLock.unlock();
         }
     }
@@ -328,6 +341,7 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
         visualRunLock.lock();
         try {
             DispatchComparisonExperimentRun run = activeRunOrThrow();
+            if (ordinaryRunAdmission != null) ordinaryRunAdmission.requireOwnership(COMPARISON);
             if (run.getStatus() == RunStatus.PAUSED_ORIGINAL) {
                 run.setStatus(RunStatus.RUNNING_ORIGINAL);
             } else if (run.getStatus() == RunStatus.PAUSED_HEURISTIC) {
@@ -488,6 +502,7 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
             if (run == null || !isRunningStatus(run.getStatus())) {
                 return;
             }
+            if (ordinaryRunAdmission != null) ordinaryRunAdmission.requireOwnership(COMPARISON);
             runOneExperimentLoop(run);
         } catch (Exception ex) {
             DispatchComparisonExperimentRun run = activeRunOrLatest();
@@ -649,6 +664,7 @@ public class DispatchComparisonExperimentServiceImpl implements DispatchComparis
         // Phase 6B：实验结束后关闭活动 run，但保留最后快照；下一次新运行会主动清除陈旧 latest。
         evaluationSnapshotService.endCurrentRunPreservingLatest();
         simulationModeGuard.clearDispatchComparisonExperimentActive();
+        if (ordinaryRunAdmission != null) ordinaryRunAdmission.release(COMPARISON);
     }
 
     private void cleanupRuntimeDataForExperiment() {

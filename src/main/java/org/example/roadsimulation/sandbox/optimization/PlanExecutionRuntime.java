@@ -14,15 +14,35 @@ import java.util.*;
 public class PlanExecutionRuntime implements TransportLegMetricProvider {
     private PlanExecutionState state;
     private GlobalPlanValidator.Validation validation;
+    private SphericalPathModel paths;
+    private String comparisonFingerprint;
+    private boolean comparisonPathFailed;
     private Map<String,SphericalPathModel.Endpoint> endpoints;
     public synchronized void install(PlanExecutionTask task,SandboxBaselinePackageV1.Data data) {
-        if(state!=null) throw new IllegalStateException("A plan runtime may be installed only once");
+        if(paths!=null) throw new IllegalStateException("An execution path model may be installed only once");
         var checked=new GlobalPlanValidator().validate(task,data);
         if(task.compiledProblem().paths().configuration().speedKph().compareTo(new BigDecimal("40"))!=0)
             throw new IllegalArgumentException("G2 v1 requires explicit 40 km/h");
-        validation=checked; endpoints=new TreeMap<>();
-        task.compiledProblem().paths().endpoints().forEach(e -> endpoints.put(e.key(),e)); state=new PlanExecutionState(task);
+        validation=checked;
+        installPaths(task.compiledProblem().paths());
+        state=new PlanExecutionState(task);
     }
+    public synchronized void installComparison(SphericalComparisonRun comparison) {
+        if (paths != null) throw new IllegalStateException("An execution path model may be installed only once");
+        installPaths(comparison.paths());
+        comparisonFingerprint = comparison.fingerprint();
+    }
+    private void installPaths(SphericalPathModel model) {
+        paths = model;
+        endpoints = new TreeMap<>();
+        paths.endpoints().forEach(endpoint -> endpoints.put(endpoint.key(), endpoint));
+    }
+    public synchronized String comparisonFingerprint() { return comparisonFingerprint; }
+    public synchronized void requireComparisonPathsHealthy() {
+        if (comparisonFingerprint == null || comparisonPathFailed)
+            throw new IllegalStateException("SPHERICAL_COMPARISON_PATH_FAILED");
+    }
+    @Override public synchronized boolean metricsActive() { return paths != null; }
     public synchronized boolean active() { return state!=null; }
     public synchronized PlanExecutionState state() { if(state==null) throw new IllegalStateException("No plan installed"); return state; }
     public GlobalPlanValidator.Validation validation() { state(); return validation; }
@@ -41,10 +61,16 @@ public class PlanExecutionRuntime implements TransportLegMetricProvider {
     public void handoff(long assignment,long original,long spare,int loop,LocalDateTime at) {
         if(active()) state.handoff(assignment,original,spare,loop,at);
     }
-    public Metric metric(Long fromPoi,BigDecimal fromLon,BigDecimal fromLat,Long toPoi,BigDecimal toLon,BigDecimal toLat) {
-        state(); var from=endpoint(fromPoi,fromLon,fromLat); var to=endpoint(toPoi,toLon,toLat);
-        var leg=state.task().compiledProblem().paths().between(from.key(),to.key());
-        return new Metric(leg.distanceMeters().doubleValue(),leg.drivingSeconds());
+    public synchronized Metric metric(Long fromPoi,BigDecimal fromLon,BigDecimal fromLat,Long toPoi,BigDecimal toLon,BigDecimal toLat) {
+        if (paths == null) throw new IllegalStateException("No execution path model installed");
+        try {
+            var from=endpoint(fromPoi,fromLon,fromLat); var to=endpoint(toPoi,toLon,toLat);
+            var leg=paths.between(from.key(),to.key());
+            return new Metric(leg.distanceMeters().doubleValue(),leg.drivingSeconds());
+        } catch (RuntimeException failure) {
+            if (comparisonFingerprint != null) comparisonPathFailed = true;
+            throw failure;
+        }
     }
     private SphericalPathModel.Endpoint endpoint(Long poi,BigDecimal lon,BigDecimal lat) {
         if(lon==null || lat==null) throw new IllegalStateException("PLAN_PATH_COORDINATE_MISSING");
@@ -54,6 +80,8 @@ public class PlanExecutionRuntime implements TransportLegMetricProvider {
                 throw new IllegalStateException("PLAN_PATH_COORDINATE_MISMATCH");
             return known;
         }
+        if (poi != null && comparisonFingerprint != null)
+            throw new IllegalStateException("PLAN_PATH_ENDPOINT_MISSING");
         return endpoints.values().stream().filter(e -> e.longitude().compareTo(lon)==0 && e.latitude().compareTo(lat)==0).findFirst()
                 .orElseThrow(() -> new IllegalStateException("PLAN_PATH_ENDPOINT_MISSING"));
     }

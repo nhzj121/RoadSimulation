@@ -132,8 +132,8 @@ public class SimulationController {
 
     @PostMapping("/stop")
     public ApiResponse<String> stopSimulation() {
-        simulationMainLoop.stop();
         gaodeRoutePlanningQueueService.pauseAndCancelPending();
+        simulationMainLoop.stop();
         return ApiResponse.success("simulation stopped");
     }
 

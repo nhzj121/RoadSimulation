@@ -9,7 +9,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.Map;
 
 /** Never return raw SQL/connection exceptions or credentials to the client. */
-@RestControllerAdvice(assignableTypes = SandboxManagementController.class)
+@RestControllerAdvice(assignableTypes = {SandboxManagementController.class, SandboxRoadReplayRoutes.class})
 @Order(Ordered.HIGHEST_PRECEDENCE)
 public class SandboxManagementErrorAdvice {
     @ExceptionHandler(Exception.class) public ResponseEntity<?> failure(Exception failure) {

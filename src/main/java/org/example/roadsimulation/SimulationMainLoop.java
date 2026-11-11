@@ -12,6 +12,7 @@ import org.example.roadsimulation.evaluation.EvaluationSnapshotService;
 import org.example.roadsimulation.repository.AssignmentRepository;
 import org.example.roadsimulation.repository.ShipmentItemRepository;
 import org.example.roadsimulation.repository.VehicleRepository;
+import org.example.roadsimulation.sandbox.management.OrdinaryRunAdmission;
 import org.example.roadsimulation.service.CostBaselineNormalizationService;
 import org.example.roadsimulation.service.DemandGenerationCoordinator;
 import org.example.roadsimulation.service.GetCostService;
@@ -30,6 +31,8 @@ import org.springframework.stereotype.Component;
 import java.time.LocalDateTime;
 import java.util.concurrent.locks.ReentrantLock;
 
+import static org.example.roadsimulation.sandbox.management.OrdinaryRunAdmission.Owner.SIMULATION;
+
 /**
  * 仿真主循环 - 控制中心
  */
@@ -40,6 +43,8 @@ public class SimulationMainLoop {
     private Thread controlledTickOwner;
     @Autowired(required = false)
     private org.example.roadsimulation.sandbox.optimization.PlanExecutionCoordinator planExecution;
+    @Autowired(required = false)
+    private OrdinaryRunAdmission ordinaryRunAdmission;
 
     private final DataInitializer dataInitializer;
     private final StateUpdateService stateUpdateService;
@@ -127,6 +132,16 @@ public class SimulationMainLoop {
         try {
             if (shouldAbortLoop()) {
                 return;
+            }
+            if (ordinaryRunAdmission != null && !isControlledTick()) {
+                try {
+                    ordinaryRunAdmission.requireOwnership(SIMULATION);
+                } catch (IllegalStateException lost) {
+                    simulationContext.setRunning(false);
+                    ordinaryRunAdmission.release(SIMULATION);
+                    System.err.println(lost.getMessage());
+                    return;
+                }
             }
 
             // Phase 1：主循环只从 SimulationContext 获取本轮窗口；前端动画速度不参与业务时间计算。
@@ -296,6 +311,14 @@ public class SimulationMainLoop {
     }
 
     public void start() {
+        startOrdinary(() -> {});
+    }
+
+    public void start(Runnable configureBeforeStart) {
+        startOrdinary(configureBeforeStart);
+    }
+
+    private void publishOrdinaryStart() {
         if(weatherEnvironmentService!=null&&weatherEnvironmentService.runId()==null)
             weatherEnvironmentService.start(null,null);
         // R1：仿真上下文生成唯一 runId，评价模块不得再建立平行标识。
@@ -325,15 +348,29 @@ public class SimulationMainLoop {
 
     public void startWithWeather(Long scenarioId,String externalExperimentId,
             org.example.roadsimulation.dto.TransportEventOptions eventOptions,Runnable configureBeforeStart) {
-        lifecycleLock.lock();
-        try {
-            if (simulationContext.isResetting()) throw new IllegalStateException("Simulation reset in progress");
+        startOrdinary(() -> {
             if(eventOptions==null)weatherEnvironmentService.start(scenarioId, externalExperimentId);
             else weatherEnvironmentService.start(scenarioId,externalExperimentId,
                     weatherEnvironmentService.resolveEventOptions(eventOptions));
             // Publish dispatch configuration before the scheduler can observe running=true.
             configureBeforeStart.run();
-            start();
+        });
+    }
+
+    private void startOrdinary(Runnable configure) {
+        lifecycleLock.lock();
+        try {
+            if (simulationContext.isResetting()) throw new IllegalStateException("Simulation reset in progress");
+            if (simulationModeGuard != null && simulationModeGuard.isDispatchComparisonExperimentActive())
+                throw new IllegalStateException("dispatch comparison experiment is active");
+            if (ordinaryRunAdmission != null) ordinaryRunAdmission.acquire(SIMULATION);
+            try {
+                configure.run();
+                publishOrdinaryStart();
+            } finally {
+                if (!simulationContext.isRunning() && ordinaryRunAdmission != null)
+                    ordinaryRunAdmission.release(SIMULATION);
+            }
         } finally {
             lifecycleLock.unlock();
         }
@@ -341,36 +378,64 @@ public class SimulationMainLoop {
 
     public void stop() {
         simulationContext.setRunning(false);
-        System.out.println("仿真主循环已停止");
+        lifecycleLock.lock();
+        try {
+            simulationContext.setRunning(false);
+            if (!simulationContext.isResetting() && ordinaryRunAdmission != null)
+                ordinaryRunAdmission.release(SIMULATION);
+            System.out.println("仿真主循环已停止");
+        } finally {
+            lifecycleLock.unlock();
+        }
     }
 
     public void stopForReset() {
-        simulationContext.beginReset();
-        System.out.println("仿真主循环正在为重置停止");
+        lifecycleLock.lock();
+        try {
+            if (ordinaryRunAdmission != null) ordinaryRunAdmission.acquire(SIMULATION);
+            simulationContext.beginReset();
+            System.out.println("仿真主循环正在为重置停止");
+        } finally {
+            lifecycleLock.unlock();
+        }
     }
 
     public void completeResetLifecycle() {
-        simulationContext.finishReset();
+        lifecycleLock.lock();
+        try {
+            simulationContext.finishReset();
+            if (!simulationContext.isRunning() && ordinaryRunAdmission != null)
+                ordinaryRunAdmission.release(SIMULATION);
+        } finally {
+            lifecycleLock.unlock();
+        }
     }
 
     public void step() {
-        if (simulationContext.isRunning()) {
-            System.out.println("请先停止仿真再进行单步执行");
-            return;
+        lifecycleLock.lock();
+        try {
+            if (simulationContext.isRunning()) {
+                System.out.println("请先停止仿真再进行单步执行");
+                return;
+            }
+            startOrdinary(() -> {});
+            try {
+                executeMainLoop();
+            } finally {
+                stop();
+            }
+        } finally {
+            lifecycleLock.unlock();
         }
-        if(weatherEnvironmentService!=null&&weatherEnvironmentService.runId()==null)
-            weatherEnvironmentService.start(null,null);
-        // Phase 6B：未调用 start 的单步执行也必须建立普通评价运行。
-        String runId = simulationContext.beginRunIfAbsent();
-        evaluationSnapshotService.beginRegularRunIfAbsent(runId);
-        simulationContext.setRunning(true);
-        executeMainLoop();
-        simulationContext.setRunning(false);
     }
 
     public void reset() {
         stopForReset();
-        awaitLoopIdleAndResetContext();
+        try {
+            awaitLoopIdleAndResetContext();
+        } finally {
+            completeResetLifecycle();
+        }
     }
 
     public void awaitLoopIdleAndResetContext() {
