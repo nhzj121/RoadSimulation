@@ -33,8 +33,8 @@
             <el-button @click="roadReplay.reset">返回逐轮地图</el-button>
             <label class="road-time">展示时间 <el-slider :min="0" :max="roadDuration" :step="0.1"
               :model-value="roadSeconds" @input="roadReplay.seek(Number($event))" /></label>
-            <label>播放倍速 <select v-model.number="roadSpeed"><option :value="1">1×</option><option :value="4">4×</option><option :value="16">16×</option><option :value="60">60×</option></select></label>
-            <span>{{ roadSeconds.toFixed(1) }} / {{ roadDuration.toFixed(1) }} 秒 · {{ roadTerminal && roadSeconds>=roadDuration?'到达展示终点':roadWaiting?'等待下一段完整记录':'道路动画' }}</span>
+            <label>播放倍速 <select v-model.number="roadSpeed"><option :value="1">1×</option><option :value="10">10×</option><option :value="100">100×</option><option :value="200">200×</option></select></label>
+            <span>仿真时间 {{ roadSimTime }} · {{ roadSeconds.toFixed(1) }} / {{ roadDuration.toFixed(1) }} 仿真秒 · {{ roadTerminal && roadSeconds>=roadDuration?'到达展示终点':roadWaiting?'等待下一段完整记录':'道路动画' }}</span>
             <span v-if="roadTerminal && roadSeconds<roadDuration">后台执行已结束，动画继续播放已记录过程</span>
             <span v-if="roadTimeline.missingRoads.length">道路不可用 {{ roadTimeline.missingRoads.length }} 段</span>
             <span v-if="roadTimeline.disconnectedRoads.length">路线接续缺口 {{ roadTimeline.disconnectedRoads.length }} 处</span>
@@ -47,12 +47,13 @@
     </aside>
     <template v-if="snapshot && !inspection && !blocked">
         <section class="sandbox-map-surface" aria-label="地图工作区">
-          <h2>第{{ snapshot.loopIndex+1 }}轮结束状态 · {{ snapshot.simTime }}</h2>
+          <h2 v-if="roadTimeline">道路回放 · {{ roadSimTime }}</h2>
+          <h2 v-else>第{{ snapshot.loopIndex+1 }}轮结束状态 · {{ snapshot.simTime }}</h2>
           <p>loopIndex={{ snapshot.loopIndex }}；{{ snapshot.integrityScope }}；完整账本 {{ snapshot.ledgerIntegrity }}。</p>
           <el-checkbox v-model="showAllPois">显示全部场景POI（{{ context?.pois.length || 0 }}个）</el-checkbox>
           <p>当前显示{{ visiblePois.length }}个POI；停靠位置为关联POI，不是GPS轨迹。</p>
           <div class="sandbox-map-layer">
-            <SandboxRecordedMap :key="executionId" :snapshot="snapshot" :pois="visiblePois" :selected-vehicle="selectedVehicleId"
+            <SandboxRecordedMap :key="executionId" :snapshot="filteredSnapshot!" :pois="visiblePois" :selected-vehicle="selectedVehicleId"
               :replay-frame="roadFrame" :replay-roads="roadRoutes" @select-vehicle="selectedVehicleId=$event" />
             <section v-if="workspaceVehicle" class="sandbox-vehicle-popup" aria-label="车辆详情">
               <header><strong>{{ workspaceVehicle.title }}</strong><button type="button" aria-label="关闭车辆详情" @click="selectedVehicleId=null">×</button></header>
@@ -66,13 +67,14 @@
             :visible-vehicles="displayedMarkers" @open-full="emit('open-evaluation')" />
           <template v-if="roadFrame">
             <h2>道路回放车辆状态</h2>
-            <p>{{ roadCounts }}。下方记录详情与评价对应第 {{ snapshot.loopIndex+1 }} 轮。</p>
+            <p>{{ roadCounts || '当前时刻没有已分配运输任务的车辆' }}</p>
             <p v-if="roadSelected">车辆 {{ roadSelected.licensePlate || roadSelected.id }} · {{ roadSelected.currentStatus || '未记录' }} · 展示载重 {{ value(roadSelected.currentLoad) }} 吨</p>
           </template>
           <h2>车辆状态与详情</h2>
-          <p>行驶中或位置未知的车辆仍保留在列表，不伪造地图点位。</p>
-          <div class="vehicle-list"><button v-for="v in roadFrame ?? snapshot.projection.vehicles" :key="v.id" :class="{selected:v.id===selectedVehicleId}" @click="selectedVehicleId=v.id">{{ v.licensePlate || `车辆${v.id}` }} · {{ vehicleStatusPresentation(v.currentStatus).text }} · {{ positionLabel(v.positionSource) }}</button></div>
-          <article v-if="selectedVehicle && details">
+          <p>只显示已分配运输任务的车辆。没有可用位置的车辆仅显示在列表中。</p>
+          <p v-if="!visibleVehicles.length">当前没有已分配运输任务的车辆。</p>
+          <div class="vehicle-list"><button v-for="v in visibleVehicles" :key="v.id" :class="{selected:v.id===selectedVehicleId}" @click="selectedVehicleId=v.id">{{ v.licensePlate || `车辆${v.id}` }} · {{ vehicleStatusPresentation(v.currentStatus).text }} · {{ positionLabel(v.positionSource) }}</button></div>
+          <article v-if="!roadFrame && selectedVehicle && details">
             <h3>车辆{{ selectedVehicle.id }} · {{ selectedVehicle.licensePlate }}</h3>
             <p>状态 {{ selectedVehicle.currentStatus || '未知' }}；位置 {{ positionLabel(selectedVehicle.positionSource) }}；关联POI {{ selectedVehicle.currentPoiId ?? '未记录' }}（不一定是行驶中的当前位置）。</p>
             <p>记录载重 {{ value(selectedVehicle.currentLoad) }} 吨；记录容积 {{ value(selectedVehicle.currentVolumn) }} m³。</p>
@@ -80,8 +82,7 @@
             <ul><li v-for="leg in details.legs" :key="leg.id">任务{{ leg.assignmentId }} · 段{{ leg.sequenceIndex }} · POI {{ leg.fromPoiId ?? '未知端点' }} → {{ leg.toPoiId ?? '未知端点' }} · {{ leg.progressStatus || '未知' }} · 已执行{{ value(leg.executedDistanceMeters) }} / {{ value(leg.distanceMeters) }}米</li></ul>
             <details><summary>同轮任务、货物、事件和驾驶进度记录</summary><pre>{{ JSON.stringify(details,null,2) }}</pre></details>
           </article>
-          <details><summary>同轮全部事件与冻结天气配置</summary><pre>{{ JSON.stringify({events:snapshot.projection.events,weather:snapshot.projection.weather},null,2) }}</pre></details>
-          <SandboxEvaluationMetrics v-if="view === 'operation'" :snapshot="snapshot.evaluation" />
+          <details><summary>{{ roadFrame ? `所选第 ${snapshot.loopIndex+1} 轮的事件与冻结天气配置` : '同轮全部事件与冻结天气配置' }}</summary><pre>{{ JSON.stringify({events:snapshot.projection.events,weather:snapshot.projection.weather},null,2) }}</pre></details>
         </aside>
         <SimulationDataBottomPanel v-if="view === 'data'" class="sandbox-map-bottom" :state="recordedSession"
           :feed-state="evaluationFeed" :trend-snapshots="evaluationTrend" />
@@ -94,14 +95,13 @@
 import {computed,defineAsyncComponent,ref,shallowRef,watch,onMounted,onBeforeUnmount,provide} from 'vue'
 import {useRoute} from 'vue-router'
 import {sandboxApi} from '../api/sandbox'
-import {createRecordedMapController,involvedPois,vehicleDetails} from '../sandbox/recordedMap'
+import {createRecordedMapController,vehicleDetails} from '../sandbox/recordedMap'
 import {createRecordedPlayback} from '../sandbox/recordedPlayback'
 import {createRoadReplayPlayback} from '../sandbox/roadReplayPlayback'
 import {resultLabel} from '../sandbox/results'
 import {recordedMapFactoryKey} from '../sandbox/recordedMapRenderer'
 import {createRecordedAmapFactory} from '../sandbox/recordedAmap'
 import SandboxRecordedMap from '../components/sandbox/SandboxRecordedMap.vue'
-import SandboxEvaluationMetrics from '../components/sandbox/SandboxEvaluationMetrics.vue'
 import SimulationDataLeftPanel from '../components/simulation-data/SimulationDataLeftPanel.vue'
 import SimulationDataRightPanel from '../components/simulation-data/SimulationDataRightPanel.vue'
 import SimulationDataBottomPanel from '../components/simulation-data/SimulationDataBottomPanel.vue'
@@ -109,6 +109,7 @@ import VehicleWorkspaceDetail from '../components/VehicleWorkspaceDetail.vue'
 import { presentSandboxWorkspaceVehicle } from '../sandbox/workspaceVehicleDetail'
 import { vehicleStatusPresentation } from '../utils/vehicleStatusPresentation'
 import { createSandboxWorkspaceEvaluationSource, readSandboxEvaluationRange } from '../sandbox/workspaceEvaluation'
+import { assignedMapSnapshot } from '../sandbox/replayAssignments'
 import { createSessionRecords } from '../utils/simulationSessionRecords'
 import type { SimulationEvaluationFeedState } from '../composables/useSimulationEvaluationFeed'
 import type { EvaluationSnapshot } from '../types/evaluation'
@@ -123,9 +124,10 @@ provide(recordedMapFactoryKey,createRecordedAmapFactory())
 const {executionId,summary,context,snapshot,stale,loading,selecting,following,error,blocked,inspection}=model
 const playback=createRecordedPlayback(model),{playing,waiting,intervalMs}=playback
 const roadReplay=createRoadReplayPlayback(sandboxApi)
-const {frame:roadFrame,roads:roadRoutes,timeline:roadTimeline,seconds:roadSeconds,duration:roadDuration,
+const {frame:roadFrame,visibleRoads:roadRoutes,timeline:roadTimeline,seconds:roadSeconds,duration:roadDuration,
   speed:roadSpeed,playing:roadPlaying,preparing:roadPreparing,progress:roadProgress,error:roadError,
   active:roadActive,terminal:roadTerminal,waiting:roadWaiting}=roadReplay
+const roadSimTime=computed(()=>roadTimeline.value?.simTimeAt(roadSeconds.value).replace('T',' ')??'')
 const requestedLoop=ref(1),selectedVehicleId=ref<number|null>(null),showAllPois=ref(false)
 const roadSelected=computed(()=>roadFrame.value?.find(vehicle=>vehicle.id===selectedVehicleId.value))
 const roadCounts=computed(()=>{
@@ -137,11 +139,28 @@ const roadCounts=computed(()=>{
   return [...counts].map(([status,count])=>`${status} ${count} 辆`).join(' · ')
 })
 const recorded=computed(()=>summary.value?.progress.recordedLoops||0)
-const selectedVehicle=computed(()=>snapshot.value?.projection.vehicles.find(v=>v.id===selectedVehicleId.value)||null)
+const filteredSnapshot=computed(()=>snapshot.value?assignedMapSnapshot(snapshot.value):null)
+const visibleVehicles=computed<ReadonlyArray<RecordedVehicle<RecordedPositionSource|'GAODE_REPLAY'>>>(()=>
+  roadFrame.value??filteredSnapshot.value?.projection.vehicles??[])
+const selectedVehicle=computed(()=>filteredSnapshot.value?.projection.vehicles.find(v=>v.id===selectedVehicleId.value)||null)
 const details=computed(()=>snapshot.value&&selectedVehicle.value?vehicleDetails(snapshot.value,selectedVehicle.value):null)
 const workspaceVehicle=computed(()=>snapshot.value&&selectedVehicleId.value!==null
   ?presentSandboxWorkspaceVehicle(snapshot.value,selectedVehicleId.value,roadFrame.value,roadReplay.replayRecord.value):null)
-const visiblePois=computed(()=>snapshot.value?(showAllPois.value?(context.value?.pois||[]):involvedPois(snapshot.value)):[])
+const visiblePoiKeys=computed(()=>{
+  const selected=filteredSnapshot.value
+  if(!selected||showAllPois.value)return ''
+  const ids=new Set(visibleVehicles.value.filter(vehicle=>vehicle.positionSource==='POI_LINK').map(vehicle=>vehicle.currentPoiId))
+  const legs=roadFrame.value
+    ? (roadReplay.replayRecord.value?.facts.legs??[]).filter(leg=>roadRoutes.value.has(leg.id))
+    : selected.projection.legs
+  for(const leg of legs){ids.add(leg.fromPoiId);ids.add(leg.toPoiId)}
+  return [...ids].filter((id):id is number=>id!==null).sort((a,b)=>a-b).join(',')
+})
+const visiblePois=computed(()=>{
+  if(showAllPois.value)return context.value?.pois??[]
+  const ids=new Set(visiblePoiKeys.value.split(',').filter(Boolean).map(Number))
+  return filteredSnapshot.value?.projection.pois.filter(poi=>ids.has(poi.id))??[]
+})
 const evaluationSource=computed(()=>createSandboxWorkspaceEvaluationSource(sandboxApi,executionId.value))
 const evaluationFeed=computed<SimulationEvaluationFeedState>(()=>({
   snapshot:snapshot.value?.evaluation??null, initialLoading:loading.value&&!snapshot.value,
@@ -170,11 +189,10 @@ watch([snapshot,()=>props.view],async ([selected,view],_,onCleanup)=>{
 })
 const displayedMarkers=shallowRef<VisibleVehicleDisplay[]>([])
 let markerStatusKey=''
-watch([snapshot,roadFrame],([selected,frame])=>{
-  const candidates:ReadonlyArray<RecordedVehicle<RecordedPositionSource|'GAODE_REPLAY'>>=frame??selected?.projection.vehicles??[]
+watch(visibleVehicles,candidates=>{
   const vehicles=candidates.filter(vehicle=>vehicle.position
-    && (frame!==null||vehicle.positionSource==='POI_LINK'))
-  const key=JSON.stringify([selected?.executionId,vehicles.map(vehicle=>[vehicle.id,vehicle.currentStatus])])
+    && (roadFrame.value!==null||vehicle.positionSource==='POI_LINK'))
+  const key=JSON.stringify([executionId.value,vehicles.map(vehicle=>[vehicle.id,vehicle.currentStatus])])
   if(key===markerStatusKey)return
   markerStatusKey=key
   displayedMarkers.value=vehicles.map(vehicle=>({id:vehicle.id,status:vehicle.currentStatus??undefined}))
@@ -210,7 +228,10 @@ async function step(delta:number){playback.pause();roadReplay.reset();if(snapsho
 async function latest(){playback.pause();roadReplay.reset();await model.latest()}
 function positionLabel(source:string){return source==='GAODE_REPLAY'?'高德道路回放':source==='POI_LINK'?'关联POI停靠':source==='IN_TRANSIT'?'运输中（无精确坐标）':'位置未知'}
 function value(v:unknown){return v===null||v===undefined?'未记录':String(v)}
-watch(snapshot,s=>{if(s){requestedLoop.value=s.loopIndex+1;if(selectedVehicleId.value!==null&&!s.projection.vehicles.some(v=>v.id===selectedVehicleId.value))selectedVehicleId.value=null}})
+watch(snapshot,s=>{if(s)requestedLoop.value=s.loopIndex+1})
+watch(visibleVehicles,vehicles=>{
+  if(selectedVehicleId.value!==null&&!vehicles.some(v=>v.id===selectedVehicleId.value))selectedVehicleId.value=null
+})
 watch([summary,stale,blocked,inspection],([next,isStale,isBlocked,needsInspection])=>{
   if(isBlocked||needsInspection){playback.pause();roadReplay.reset();return}
   if(isStale){playback.pause();return}

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.example.roadsimulation.sandbox.baseline.SandboxBaselinePackageV1;
 import org.example.roadsimulation.sandbox.optimization.PlanExecutionAuthentication;
 import org.example.roadsimulation.sandbox.optimization.PlanExecutionTask;
+import org.example.roadsimulation.sandbox.optimization.SphericalComparisonRun;
 import org.example.roadsimulation.sandbox.run.SandboxRunSpecificationRevisionV2;
 import org.example.roadsimulation.sandbox.run.SandboxRunSpecificationStore;
 import org.example.roadsimulation.sandbox.scenario.definition.SandboxScenarioStore;
@@ -29,6 +30,7 @@ public final class SandboxExecutionLease implements AutoCloseable {
     private final String jobId;
     private final SandboxBaselinePackageV1.Data preparedPlanData;
     private final String preparedPlanFingerprint;
+    private final SphericalComparisonRun comparison;
     private final String executionId = UUID.randomUUID().toString();
     private boolean created;
     private String planTaskFingerprint;
@@ -39,7 +41,8 @@ public final class SandboxExecutionLease implements AutoCloseable {
     private SandboxExecutionLease(Connection connection, SandboxWorkspaceSafety safety,
                                   SandboxRunPreparationReport preparation,
                                   SandboxRunSpecificationRevisionV2 revision, JsonNode baselinePackage, String jobId,
-                                  SandboxBaselinePackageV1.Data preparedPlanData, String preparedPlanFingerprint) {
+                                  SandboxBaselinePackageV1.Data preparedPlanData, String preparedPlanFingerprint,
+                                  SphericalComparisonRun comparison) {
         this.connection = connection;
         this.safety = safety;
         this.preparation = preparation;
@@ -48,28 +51,36 @@ public final class SandboxExecutionLease implements AutoCloseable {
         this.jobId = jobId;
         this.preparedPlanData = preparedPlanData;
         this.preparedPlanFingerprint = preparedPlanFingerprint;
+        this.comparison = comparison;
     }
 
     public static SandboxExecutionLease acquire(String url, String user, String password,
             Resource baseline, String key, int revisionNumber, ObjectMapper json) {
-        return acquire(url, user, password, baseline, key, revisionNumber, json, null, null);
+        return acquire(url, user, password, baseline, key, revisionNumber, json, null, null, null);
     }
 
     /** A management worker prepares and executes under one lock/connection, without a handoff gap. */
     public static SandboxExecutionLease prepareAndAcquire(String url, String user, String password,
             Resource baseline, String key, int revisionNumber, ObjectMapper json, String jobId) {
         if (jobId == null) throw new SandboxWorkspaceException("MISSING_JOB", "Worker requires a reserved job");
-        return acquire(url, user, password, baseline, key, revisionNumber, json, jobId, null);
+        return acquire(url, user, password, baseline, key, revisionNumber, json, jobId, null, null);
     }
 
     /** Plan worker authenticates the plan before changing the workspace and keeps the preparation lock. */
     public static SandboxExecutionLease prepareAndAcquirePlan(String url, String user, String password,
             Resource baseline, PlanExecutionTask task, ObjectMapper json) {
-        return acquire(url, user, password, baseline, task.runSpecKey(), task.runSpecRevision(), json, null, task);
+        return acquire(url, user, password, baseline, task.runSpecKey(), task.runSpecRevision(), json, null, task, null);
+    }
+
+    public static SandboxExecutionLease prepareAndAcquireComparison(String url, String user, String password,
+            Resource baseline, String key, int revisionNumber, SphericalComparisonRun comparison, ObjectMapper json) {
+        return acquire(url, user, password, baseline, key, revisionNumber, json, null, null,
+                java.util.Objects.requireNonNull(comparison));
     }
 
     private static SandboxExecutionLease acquire(String url, String user, String password,
-            Resource baseline, String key, int revisionNumber, ObjectMapper json, String jobId, PlanExecutionTask task) {
+            Resource baseline, String key, int revisionNumber, ObjectMapper json, String jobId, PlanExecutionTask task,
+            SphericalComparisonRun comparison) {
         Connection connection = null;
         var safety = new SandboxWorkspaceSafety();
         boolean locked = false;
@@ -97,14 +108,15 @@ public final class SandboxExecutionLease implements AutoCloseable {
             SandboxRunSpecificationRevisionV2 published;
             SandboxRunPreparationReport prepared;
             SandboxBaselinePackageV1.Data authenticated = null;
-            if (task != null) {
+            if (task != null || comparison != null) {
                 try (var input = baseline.getInputStream()) {
                     baseline = new org.springframework.core.io.ByteArrayResource(input.readAllBytes());
                 }
                 published = runStore.loadRevisionV2(key, revisionNumber);
                 var ref = published.specification().scenario();
                 var scene = new SandboxScenarioStore(url, user, password, json).loadRevision(ref.scenarioKey(), ref.revision());
-                authenticated = PlanExecutionAuthentication.verify(task, baseline, scene, published);
+                if (task != null) authenticated = PlanExecutionAuthentication.verify(task, baseline, scene, published);
+                else comparison.verify(baseline, scene, published, json);
                 prepared = preparer.prepareWithHeldLock(connection, baseline, key, revisionNumber, null);
             } else {
                 if (jobId != null) preparer.prepareWithHeldLock(connection, baseline, key, revisionNumber, jobId);
@@ -118,7 +130,7 @@ public final class SandboxExecutionLease implements AutoCloseable {
             }
             try (var input = baseline.getInputStream()) {
                 return new SandboxExecutionLease(connection, safety, prepared, published, json.readTree(input), jobId,
-                        authenticated, task == null ? null : task.fingerprint());
+                        authenticated, task == null ? null : task.fingerprint(), comparison);
             }
         } catch (Exception failure) {
             if (connection != null) {
@@ -182,7 +194,7 @@ public final class SandboxExecutionLease implements AutoCloseable {
 
     public void createPlan(ObjectMapper json, org.example.roadsimulation.sandbox.optimization.PlanExecutionTask task) {
         java.util.Objects.requireNonNull(task);
-        if (!revision.runSpecKey().equals(task.runSpecKey()) || revision.revision() != task.runSpecRevision()
+        if (comparison != null || !revision.runSpecKey().equals(task.runSpecKey()) || revision.revision() != task.runSpecRevision()
                 || !preparation.runSpecificationSha256().equals(task.compiledProblem().sourceRunSha256()))
             throw new IllegalArgumentException("Plan execution lease identity mismatch");
         create(json, task);
@@ -192,6 +204,10 @@ public final class SandboxExecutionLease implements AutoCloseable {
         boolean active=plan!=null&&plan.active();
         if ((planTaskFingerprint!=null)!=active || (active&&!planTaskFingerprint.equals(plan.state().task().fingerprint())))
             throw new SandboxWorkspaceException("PLAN_EXECUTION_IDENTITY_MISMATCH", "Installed plan must match the authenticated execution manifest");
+        String expected = comparison == null ? null : comparison.fingerprint();
+        if (!java.util.Objects.equals(expected, plan == null ? null : plan.comparisonFingerprint()))
+            throw new SandboxWorkspaceException("COMPARISON_EXECUTION_IDENTITY_MISMATCH",
+                    "Installed spherical comparison must match the authenticated execution manifest");
     }
 
     private void create(ObjectMapper json, org.example.roadsimulation.sandbox.optimization.PlanExecutionTask task) {
@@ -226,6 +242,11 @@ public final class SandboxExecutionLease implements AutoCloseable {
                 manifestNode.put("executionMode", "GLOBAL_PLAN");
                 manifestNode.set("planExecutionTask", json.valueToTree(task));
                 manifestNode.put("planExecutionTaskSha256", task.fingerprint());
+            } else if (comparison != null) {
+                manifestNode.put("artifactVersion", "sandbox-execution-manifest/v4");
+                manifestNode.put("executionMode", SphericalComparisonRun.MODE);
+                manifestNode.set("sphericalComparison", json.valueToTree(comparison));
+                manifestNode.put("sphericalComparisonSha256", comparison.fingerprint());
             }
             var canonical = new LexicographicJsonSha256(json);
             String manifest = new String(canonical.canonicalBytes(manifestNode), java.nio.charset.StandardCharsets.UTF_8);

@@ -6,5 +6,6 @@ import java.math.BigDecimal;
 public interface TransportLegMetricProvider {
     record Metric(double distanceMeters,long drivingSeconds) {}
     boolean active();
+    default boolean metricsActive() { return active(); }
     Metric metric(Long fromPoi,BigDecimal fromLon,BigDecimal fromLat,Long toPoi,BigDecimal toLon,BigDecimal toLat);
 }

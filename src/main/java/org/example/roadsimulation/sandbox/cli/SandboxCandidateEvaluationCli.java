@@ -40,13 +40,24 @@ public final class SandboxCandidateEvaluationCli {
         var request = OptimizationJson.read(Files.readString(Path.of(options.get("request"))), SandboxCandidateEvaluator.Request.class);
         var output = Path.of(options.get("output-dir"));
         var evaluator = SandboxCandidateEvaluator.open(settings, request.runSpecKey(), request.runSpecRevision(),
-                request.baselineResource(), output, request.timeoutSeconds());
+                request.baselineResource(), output, request.timeoutSeconds(), request.artifactVersion());
         evaluator.evaluateBaseline(request.cacheMode());
         for (var candidate : request.candidates()) evaluator.evaluateCandidate(candidate, request.cacheMode());
         var result = evaluator.report(request.preference());
         boolean interrupted = Thread.interrupted();
         try {
             Files.writeString(output.resolve("evaluation.json"), OptimizationJson.write(result), StandardOpenOption.CREATE_NEW);
+            if (SandboxCandidateEvaluator.THROUGHPUT_VERSION.equals(request.artifactVersion())
+                    && result.scoring().selection().score() != null) {
+                var selected = result.scoring().selection().selectedPlanFingerprint();
+                var selectedId = result.baselineAttempt().planFingerprint().equals(selected)
+                        ? result.baselineAttempt().executionId()
+                        : result.candidates().stream().filter(attempt -> attempt.status() == SandboxCandidateEvaluator.Status.SCORED_INPUT
+                                && attempt.planFingerprint().equals(selected)).findFirst().orElseThrow().executionId();
+                Files.writeString(output.resolve("fulfillment.json"),
+                        OptimizationJson.write(evaluator.fulfillment(result.baselineAttempt().executionId(), selectedId)),
+                        StandardOpenOption.CREATE_NEW);
+            }
         } finally {
             if (interrupted) Thread.currentThread().interrupt();
         }

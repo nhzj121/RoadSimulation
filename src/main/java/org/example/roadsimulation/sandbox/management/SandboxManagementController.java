@@ -63,6 +63,12 @@ public class SandboxManagementController {
     @GetMapping("/executions/{id}/map-context") public Object mapContext(@PathVariable String id) { return service.mapContext(id); }
     @GetMapping("/executions/{id}/ticks/{index}/map") public Object mapSnapshot(@PathVariable String id,@PathVariable int index) { return service.mapSnapshot(id,index); }
     @GetMapping("/executions/{id}/ticks/{index}/replay") public Object replayTick(@PathVariable String id,@PathVariable int index) { return service.replayTick(id,index); }
+    @GetMapping("/executions/{id}/road-replay/assignments")
+    public Object replayAssignments(@PathVariable String id, @RequestParam int fromLoopIndex,
+                                    @RequestParam int toLoopIndex, @RequestParam(defaultValue="0") int offset,
+                                    @RequestParam(defaultValue="50") int limit) {
+        return service.replayAssignments(id,fromLoopIndex,toLoopIndex,offset,limit);
+    }
     @GetMapping("/executions/{id}/ticks/{index}/service-activity") public Object serviceActivity(@PathVariable String id,@PathVariable int index,@RequestParam(defaultValue="10") int windowLoops) { return service.serviceActivity(id,index,windowLoops); }
     @GetMapping("/executions/{id}/ticks/{index}/vehicle-states") public Object vehicleStates(@PathVariable String id,@PathVariable int index,@RequestParam(defaultValue="false") boolean includeWindow) { return service.vehicleStates(id,index,includeWindow); }
     @GetMapping("/executions/{id}/evaluations") public Object evaluations(@PathVariable String id, @RequestParam(defaultValue="0") int offset, @RequestParam(defaultValue="50") int limit,

@@ -86,6 +86,9 @@ public final class SandboxMapProjection {
         for(var row:textRows(database,"weather_run","id").values()) weather.add(pick(row,"id started_at ended_at frozen_scenario_json frozen_event_configuration_json"));
         return result;
     }
+    JsonNode replayAssignments(JsonNode database) {
+        return replayRows(database,"assignment","id vehicle_id status start_time end_time");
+    }
     ObjectNode replayFacts(JsonNode database, ObjectNode map) {
         var result=json.createObjectNode();
         for (String field : List.of("vehicles","legs","assignments","nodes","cargo")) result.set(field,map.get(field));

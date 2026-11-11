@@ -53,6 +53,37 @@ public final class SandboxExecutionStore {
         return verificationReport(result);
     }
 
+    /** Discovery only. A matching ID is authenticated by export before its facts are used. */
+    public List<String> findHeuristicComparisons(String commonInputFingerprint, String profileId) {
+        var safety = new SandboxWorkspaceSafety();
+        if (!SandboxWorkspaceSafety.DATABASE_NAME.equals(safety.databaseName(url))) {
+            throw new SandboxWorkspaceException("UNSAFE_DATABASE", "Execution history requires the sandbox database");
+        }
+        try (var connection = DriverManager.getConnection(url, user, password)) {
+            safety.requireSafeTarget(url, connection);
+            connection.setReadOnly(true);
+            try (var statement = connection.prepareStatement("""
+                    SELECT execution_id FROM sandbox_execution
+                    WHERE execution_status='COMPLETED' AND completed_loops=requested_loops
+                      AND JSON_UNQUOTE(JSON_EXTRACT(IF(JSON_VALID(manifest_json),manifest_json,'{}'),'$.executionMode'))=?
+                      AND JSON_UNQUOTE(JSON_EXTRACT(IF(JSON_VALID(manifest_json),manifest_json,'{}'),'$.sphericalComparison.commonInputFingerprint'))=?
+                      AND JSON_UNQUOTE(JSON_EXTRACT(IF(JSON_VALID(manifest_json),manifest_json,'{}'),'$.runRevision.algorithmProfile.profileId'))=?
+                    ORDER BY finished_at DESC, execution_id
+                    """)) {
+                statement.setString(1, org.example.roadsimulation.sandbox.optimization.SphericalComparisonRun.MODE);
+                statement.setString(2, commonInputFingerprint);
+                statement.setString(3, profileId);
+                try (var rows = statement.executeQuery()) {
+                    var result = new ArrayList<String>();
+                    while (rows.next()) result.add(rows.getString(1));
+                    return List.copyOf(result);
+                }
+            }
+        } catch (SQLException failure) {
+            throw new SandboxWorkspaceException("EXECUTION_HISTORY_READ_FAILED", "Cannot find compatible HEURISTIC executions", failure);
+        }
+    }
+
     /** Used by inspected closure under the caller's authenticated lock and transaction. */
     public Map<String, Object> verify(Connection connection, String executionId) throws Exception {
         new SandboxWorkspaceSafety().requirePreparationLockHeld(connection);
@@ -79,9 +110,9 @@ public final class SandboxExecutionStore {
                 if (!rows.next()) throw new SandboxWorkspaceException("EXECUTION_NOT_FOUND", "No execution with the requested ID");
                 String manifestText = rows.getString("manifest_json");
                 manifest = artifactJson.readTree(manifestText); previous = rows.getString("manifest_sha256");
-                verifyPlanManifest(manifest);
                 if (previous == null) throw new SandboxWorkspaceException("EXECUTION_UNJOURNALED", "Legacy v5 execution has no permanent tick journal");
                 require(previous.equals(SandboxExecutionJson.hashManifestText(manifestText)), "Manifest fingerprint mismatch");
+                verifyExecutionMode(manifest);
                 requested = rows.getInt("requested_loops"); completed = rows.getInt("completed_loops"); status = rows.getString("execution_status");
                 require(manifest.path("runRevision").path("specification").path("simulationClock").path("totalLoops").asInt() == requested,
                         "Requested horizon differs from manifest");
@@ -122,6 +153,13 @@ public final class SandboxExecutionStore {
                                 "Plan tick belongs to a different task");
                         require(manifest.path("planExecutionTask").path("compiledProblem").path("dependencies").path("catalogFingerprint").asText()
                                 .equals(planFacts.path("mapping").path("catalogFingerprint").asText()), "Plan mapping catalog mismatch");
+                    } else if (org.example.roadsimulation.sandbox.optimization.SphericalComparisonRun.MODE
+                            .equals(manifest.path("executionMode").asText())) {
+                        var runtime = facts.path("runtime");
+                        require(manifest.path("sphericalComparisonSha256").asText().equals(runtime.path("sphericalComparisonSha256").asText())
+                                && runtime.path("comparisonMapRequests").isIntegralNumber()
+                                && runtime.path("comparisonMapRequests").intValue() == 0,
+                                "Tick does not certify the frozen spherical comparison");
                     }
                     String factsHash = canonical.hash(facts), businessHash = canonical.hash(business), evaluationHash = canonical.hash(evaluation);
                     require(factsHash.equals(rows.getString("facts_sha256")) && businessHash.equals(rows.getString("business_facts_sha256"))
@@ -173,7 +211,29 @@ public final class SandboxExecutionStore {
         if (!condition) throw new SandboxWorkspaceException("EXECUTION_RECORD_CORRUPT", message);
     }
 
-    private void verifyPlanManifest(JsonNode manifest) {
+    private void verifyExecutionMode(JsonNode manifest) {
+        String version = manifest.path("artifactVersion").asText();
+        String mode = manifest.path("executionMode").asText();
+        var comparisonMode = org.example.roadsimulation.sandbox.optimization.SphericalComparisonRun.MODE;
+        boolean spherical = "sandbox-execution-manifest/v4".equals(version);
+        require(spherical == comparisonMode.equals(mode), "Spherical comparison mode/version mismatch");
+        if (spherical) {
+            try {
+                var comparison = json.treeToValue(manifest.path("sphericalComparison"),
+                        org.example.roadsimulation.sandbox.optimization.SphericalComparisonRun.class);
+                require(comparison.fingerprint().equals(manifest.path("sphericalComparisonSha256").asText()),
+                        "Spherical comparison fingerprint mismatch");
+                var baseline = new org.springframework.core.io.ByteArrayResource(json.writeValueAsBytes(manifest.path("baselinePackage")));
+                var scene = json.treeToValue(manifest.path("scenarioRevision"),
+                        org.example.roadsimulation.sandbox.scenario.definition.SandboxScenarioRevisionV1.class);
+                var run = json.treeToValue(manifest.path("runRevision"),
+                        org.example.roadsimulation.sandbox.run.SandboxRunSpecificationRevisionV2.class);
+                comparison.verify(baseline, scene, run, json);
+            } catch (Exception failure) {
+                throw new SandboxWorkspaceException("EXECUTION_RECORD_CORRUPT", "Cannot authenticate spherical comparison", failure);
+            }
+            return;
+        }
         boolean plan="sandbox-execution-manifest/v3".equals(manifest.path("artifactVersion").asText());
         require(plan=="GLOBAL_PLAN".equals(manifest.path("executionMode").asText()),"Plan mode/version mismatch");
         if(!plan)return;

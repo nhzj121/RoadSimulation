@@ -76,6 +76,10 @@ export function makeAmapPort(amap:any,element:HTMLElement):RecordedMapPort {
         for(const [id,marker] of replayPoiMarkers)if(!ids.has(id)){removeOverlay(marker);replayPoiMarkers.delete(id)}
         for(const poi of pois)if(!replayPoiMarkers.has(poi.id))replayPoiMarkers.set(poi.id,addPoi(poi))
       }
+      const vehicleIds=new Set(vehicles.map(vehicle=>vehicle.id))
+      for(const [id,entry] of replayMarkers)if(!vehicleIds.has(id)){
+        removeOverlay(entry.marker);replayMarkers.delete(id)
+      }
       for(const vehicle of vehicles){
         const existing=replayMarkers.get(vehicle.id)
         if(!vehicle.position){

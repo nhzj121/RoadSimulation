@@ -13,6 +13,7 @@ import static org.example.roadsimulation.sandbox.optimization.SandboxCandidateEv
 /** Bounded, serial search. Only G3 evidence with a complete G0 score enters the population. */
 public final class GlobalPlanSearch {
     public static final String VERSION = "sandbox-global-plan-search/v1";
+    public static final String THROUGHPUT_VERSION = "sandbox-global-plan-search/v2";
     private static final int POPULATION_SIZE = 4;
     private static final List<Kind> FIRST = List.of(Kind.MOVE, Kind.SWAP, Kind.DEPARTURE);
     private static final List<Kind> LATER = List.of(Kind.MERGE, Kind.SPLIT, Kind.REINSERT, Kind.CROSSOVER,
@@ -28,20 +29,23 @@ public final class GlobalPlanSearch {
     public record Request(String artifactVersion, String runSpecKey, int runSpecRevision, String baselineResource,
                           PreferenceProfile preference, long searchSeed, Budget budget, Long timeoutSeconds) {
         public Request {
-            ContractChecks.version(artifactVersion, VERSION);
+            if (!THROUGHPUT_VERSION.equals(artifactVersion)) ContractChecks.version(artifactVersion, VERSION);
             ContractChecks.text(runSpecKey, "runSpecKey");
             ContractChecks.text(baselineResource, "baselineResource");
             if (runSpecRevision <= 0 || (timeoutSeconds != null && timeoutSeconds <= 0))
                 throw new IllegalArgumentException("Invalid run revision or timeout");
-            Objects.requireNonNull(preference).validate(ObjectiveRegistry.standard());
+            Objects.requireNonNull(preference).validate(SandboxCandidateEvaluator.objectives(evaluationVersion(artifactVersion)));
             Objects.requireNonNull(budget);
+            if (THROUGHPUT_VERSION.equals(artifactVersion) && budget.maxEvaluations() > 16)
+                throw new IllegalArgumentException("Throughput calibration allows at most 16 evaluations");
         }
     }
 
     public enum Outcome { IMPROVED, BASELINE_RETAINED, NO_VALID_BASELINE, NO_DEMAND }
     public enum Stop {
         EVALUATION_BUDGET, GENERATION_BUDGET, NO_VALID_BASELINE, NO_DEMAND, WORKSPACE_BUSY,
-        EXECUTION_FAILED, TIMEOUT, INTERRUPTED, INVALID_LEDGER, WORKER_FAILED, EVALUATION_IO_FAILED
+        EXECUTION_FAILED, TIMEOUT, INTERRUPTED, INVALID_LEDGER, WORKER_FAILED, EVALUATION_IO_FAILED,
+        INVALID_HEURISTIC_SEED
     }
     public record Best(GlobalPlan plan, String planFingerprint, String executionId, CandidateAssessment assessment,
                        ScoreBreakdown score) {}
@@ -61,6 +65,7 @@ public final class GlobalPlanSearch {
         SandboxCandidateEvaluator.Attempt baseline() throws IOException;
         SandboxCandidateEvaluator.Attempt candidate(GlobalPlan plan) throws IOException;
         int launched();
+        default FulfillmentComparison.Side delivery(String executionId) { return null; }
     }
 
     @FunctionalInterface
@@ -77,9 +82,38 @@ public final class GlobalPlanSearch {
     private GlobalPlanSearch() {}
 
     public static Result execute(SandboxManagementSettings settings, Request request, Path output) throws IOException {
+        return execute(settings, request, output, null);
+    }
+
+    static Result execute(SandboxManagementSettings settings, Request request, Path output,
+                          DeliveryRetreatLimits limits) throws IOException {
+        return execute(settings, request, output, limits, null);
+    }
+
+    public static Result executeWithHeuristicSeed(SandboxManagementSettings settings, Request request, Path output,
+                                                  DeliveryRetreatLimits limits, Path cache) throws IOException {
+        Objects.requireNonNull(limits, "HEURISTIC seeding requires explicit delivery retreat limits");
+        Objects.requireNonNull(cache, "HEURISTIC seed cache directory is required");
+        if (request.budget().maxEvaluations() < 2)
+            throw new IllegalArgumentException("Budget must cover both the greedy baseline and the HEURISTIC seed");
+        return execute(settings, request, output, limits, cache);
+    }
+
+    private static Result execute(SandboxManagementSettings settings, Request request, Path output,
+                                  DeliveryRetreatLimits limits, Path seedCache) throws IOException {
+        if (limits != null && !THROUGHPUT_VERSION.equals(request.artifactVersion()))
+            throw new IllegalArgumentException("Delivery retreat limits require throughput scoring");
         long start = System.nanoTime();
         var session = SandboxCandidateEvaluator.open(settings, request.runSpecKey(), request.runSpecRevision(),
-                request.baselineResource(), output, request.timeoutSeconds());
+                request.baselineResource(), output, request.timeoutSeconds(), evaluationVersion(request.artifactVersion()));
+        var baselinePlan = session.baseline().plan();
+        GlobalPlan heuristicSeed = null;
+        if (seedCache != null && !session.problem().catalog().tasks().isEmpty()) {
+            var acquired = session.acquireHeuristicSeed(seedCache);
+            boolean duplicate = baselinePlan.equals(acquired.seed().plan());
+            write(output.resolve("heuristic-seed.json"), Map.of("acquisition", acquired, "duplicateOfGreedy", duplicate));
+            if (!duplicate) heuristicSeed = acquired.seed().plan();
+        }
         var evaluation = new Evaluation() {
             public SandboxCandidateEvaluator.Attempt baseline() throws IOException {
                 return session.evaluateBaseline(SandboxCandidateEvaluator.CacheMode.USE);
@@ -88,22 +122,50 @@ public final class GlobalPlanSearch {
                 return session.evaluateCandidate(plan, SandboxCandidateEvaluator.CacheMode.USE);
             }
             public int launched() { return session.launchedWorkers(); }
+            public FulfillmentComparison.Side delivery(String executionId) {
+                return session.delivery(executionId);
+            }
         };
         var operators = new PlanSearchOperators(session.problem(), session.fleetData());
         int[] index = {0};
-        var result = search(request, session.simulationRootSeed(), session.baseline().plan(), evaluation, operators::propose,
-                best -> write(output.resolve("best-" + index[0]++ + ".json"), best), start);
+        var result = search(request, session.simulationRootSeed(), baselinePlan, evaluation, operators::propose,
+                best -> write(output.resolve("best-" + index[0]++ + ".json"), best), start, limits, heuristicSeed);
         write(output.resolve("search.json"), result);
-        // G3 records every evaluation and also supplies its own deterministic tie ordering for comparison reports.
         if (result.steps().stream().noneMatch(step -> Stop.EVALUATION_IO_FAILED.name().equals(step.status())))
-            write(output.resolve("evaluation.json"), session.report(request.preference()));
+            write(output.resolve("evaluation.json"), limits == null ? session.report(request.preference())
+                    : session.report(request.preference(), result));
+        if (THROUGHPUT_VERSION.equals(request.artifactVersion()) && result.selected() != null)
+            write(output.resolve("fulfillment.json"), session.fulfillment(result.baseline().executionId(),
+                    result.selected().executionId()));
         return result;
+    }
+
+    private static String evaluationVersion(String searchVersion) {
+        return THROUGHPUT_VERSION.equals(searchVersion) ? SandboxCandidateEvaluator.THROUGHPUT_VERSION
+                : SandboxCandidateEvaluator.VERSION;
     }
 
     static Result search(Request request, String simulationSeed, GlobalPlan baselinePlan, Evaluation evaluation,
                          Proposer proposer, Checkpoint checkpoint, long start) throws IOException {
-        var run = new SearchRun(request, simulationSeed, baselinePlan, evaluation, proposer, checkpoint, start);
-        return run.run();
+        return search(request, simulationSeed, baselinePlan, evaluation, proposer, checkpoint, start, null);
+    }
+
+    static Result search(Request request, String simulationSeed, GlobalPlan baselinePlan, Evaluation evaluation,
+                         Proposer proposer, Checkpoint checkpoint, long start, DeliveryRetreatLimits limits) throws IOException {
+        return search(request, simulationSeed, baselinePlan, evaluation, proposer, checkpoint, start, limits, null);
+    }
+
+    static Result search(Request request, String simulationSeed, GlobalPlan baselinePlan, Evaluation evaluation,
+                         Proposer proposer, Checkpoint checkpoint, long start, DeliveryRetreatLimits limits,
+                         GlobalPlan heuristicSeed) throws IOException {
+        if (heuristicSeed != null) {
+            if (request.budget().maxEvaluations() < 2)
+                throw new IllegalArgumentException("Budget must cover both the greedy baseline and the HEURISTIC seed");
+            if (!heuristicSeed.problem().equals(baselinePlan.problem()) || heuristicSeed.equals(baselinePlan))
+                throw new IllegalArgumentException("HEURISTIC seed must be a distinct plan for the same frozen problem");
+        }
+        return new SearchRun(request, simulationSeed, baselinePlan, evaluation, proposer, checkpoint, start, limits)
+                .run(heuristicSeed);
     }
 
     private static final class SearchRun {
@@ -115,7 +177,8 @@ public final class GlobalPlanSearch {
         private final Checkpoint checkpoint;
         private final long start;
         private final SplittableRandom random;
-        private final ObjectiveRegistry registry = ObjectiveRegistry.standard();
+        private final ObjectiveRegistry registry;
+        private final DeliveryRetreatLimits limits;
         private final PreferenceScorer scorer = new PreferenceScorer();
         private final Set<String> seen = new HashSet<>();
         private final List<Step> steps = new ArrayList<>();
@@ -125,7 +188,7 @@ public final class GlobalPlanSearch {
         private int generations, proposals;
 
         SearchRun(Request request, String simulationSeed, GlobalPlan baselinePlan, Evaluation evaluation,
-                  Proposer proposer, Checkpoint checkpoint, long start) {
+                  Proposer proposer, Checkpoint checkpoint, long start, DeliveryRetreatLimits limits) {
             this.request = request;
             this.simulationSeed = simulationSeed;
             this.baselinePlan = baselinePlan;
@@ -133,10 +196,12 @@ public final class GlobalPlanSearch {
             this.proposer = proposer;
             this.checkpoint = checkpoint;
             this.start = start;
+            this.limits = limits;
+            registry = SandboxCandidateEvaluator.objectives(evaluationVersion(request.artifactVersion()));
             random = new SplittableRandom(request.searchSeed());
         }
 
-        Result run() throws IOException {
+        Result run(GlobalPlan heuristicSeed) throws IOException {
             String fingerprint = baselinePlan.fingerprint();
             SandboxCandidateEvaluator.Attempt evidence;
             try {
@@ -153,6 +218,11 @@ public final class GlobalPlanSearch {
                 var stop = fatal(evidence.status());
                 return result(Outcome.NO_VALID_BASELINE, stop == null ? Stop.NO_VALID_BASELINE : stop);
             }
+            if (limits != null && evaluation.delivery(evidence.executionId()) == null) {
+                steps.add(step(0, 0, "BASELINE", null, null, fingerprint, Status.OBJECTIVES_UNAVAILABLE.name(),
+                        List.of("DELIVERY_EVIDENCE_MISSING"), evidence.executionId(), null, false));
+                return result(Outcome.NO_VALID_BASELINE, Stop.NO_VALID_BASELINE);
+            }
             var baselineAssessment = assessment(baselinePlan, evidence);
             var values = new TreeMap<String, BigDecimal>();
             registry.definitions().forEach(d -> values.put(d.metricId(), baselineAssessment.metrics().get(d.metricId()).value()));
@@ -166,6 +236,13 @@ public final class GlobalPlanSearch {
             steps.add(step(0, 0, "BASELINE", null, null, fingerprint, evidence.status().name(), evidence.diagnostics(),
                     evidence.executionId(), best.score.total(), true));
 
+            if (heuristicSeed != null) {
+                var stop = evaluatePlan(0, 1, "HEURISTIC_SEED", null, null,
+                        new PlanSearchOperators.Proposal(heuristicSeed, List.of()), population);
+                if (stop != null) return done(stop);
+                if (!Status.SCORED_INPUT.name().equals(steps.get(steps.size() - 1).status()))
+                    return done(Stop.INVALID_HEURISTIC_SEED);
+            }
             var budget = request.budget();
             for (int generation = 1; generation <= budget.maxGenerations() && evaluation.launched() < budget.maxEvaluations(); generation++) {
                 if (Thread.currentThread().isInterrupted()) return done(Stop.INTERRUPTED);
@@ -205,14 +282,18 @@ public final class GlobalPlanSearch {
 
         private Stop evaluate(int generation, int number, Kind kind, Individual parent, Individual donor,
                               PlanSearchOperators.Proposal proposal, List<Individual> children) throws IOException {
-            String parentId = parent.best.planFingerprint;
-            String donorId = donor == null ? null : donor.best.planFingerprint;
+            return evaluatePlan(generation, number, kind.name(), parent.best.planFingerprint,
+                    donor == null ? null : donor.best.planFingerprint, proposal, children);
+        }
+
+        private Stop evaluatePlan(int generation, int number, String operator, String parentId, String donorId,
+                                  PlanSearchOperators.Proposal proposal, List<Individual> children) throws IOException {
             var plan = proposal.plan();
             String child = plan == null ? null : plan.fingerprint();
             if (child == null || !seen.add(child)) {
                 var reasons = new ArrayList<>(proposal.rejections());
                 if (child != null) reasons.add("PLAN_FINGERPRINT_SEEN");
-                steps.add(step(generation, number, kind.name(), parentId, donorId, child,
+                steps.add(step(generation, number, operator, parentId, donorId, child,
                         child == null ? "REJECTED" : "DUPLICATE", reasons, null, null, false));
                 return null;
             }
@@ -220,7 +301,7 @@ public final class GlobalPlanSearch {
             try {
                 evidence = evaluation.candidate(plan);
             } catch (IOException failure) {
-                steps.add(step(generation, number, kind.name(), parentId, donorId, child, Stop.EVALUATION_IO_FAILED.name(),
+                steps.add(step(generation, number, operator, parentId, donorId, child, Stop.EVALUATION_IO_FAILED.name(),
                         List.of("EVALUATION_IO_FAILED"), null, null, false));
                 return Stop.EVALUATION_IO_FAILED;
             }
@@ -232,13 +313,16 @@ public final class GlobalPlanSearch {
                 var individual = individual(plan, evidence);
                 children.add(individual);
                 total = individual.best.score.total();
-                improved = total.compareTo(best.score.total()) < 0;
+                var retreatIssues = limits == null ? List.<String>of()
+                        : limits.issues(evaluation.delivery(baseline.executionId()), evaluation.delivery(evidence.executionId()));
+                reasons.addAll(retreatIssues);
+                improved = retreatIssues.isEmpty() && total.compareTo(best.score.total()) < 0;
                 if (improved) {
                     best = individual.best;
                     checkpoint.save(best);
                 }
             }
-            steps.add(step(generation, number, kind.name(), parentId, donorId, child, evidence.status().name(),
+            steps.add(step(generation, number, operator, parentId, donorId, child, evidence.status().name(),
                     reasons, evidence.executionId(), total, improved));
             return fatal(evidence.status());
         }
@@ -262,7 +346,7 @@ public final class GlobalPlanSearch {
         }
 
         private Result result(Outcome outcome, Stop stop) {
-            return new Result(VERSION, baselinePlan.problem().problemFingerprint(), simulationSeed, request.searchSeed(),
+            return new Result(request.artifactVersion(), baselinePlan.problem().problemFingerprint(), simulationSeed, request.searchSeed(),
                     request.preference().fingerprint(), request.budget(), outcome, stop,
                     stop != Stop.EVALUATION_BUDGET && stop != Stop.GENERATION_BUDGET
                             && stop != Stop.NO_VALID_BASELINE && stop != Stop.NO_DEMAND,

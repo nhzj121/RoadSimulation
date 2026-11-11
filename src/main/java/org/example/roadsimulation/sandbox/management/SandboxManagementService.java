@@ -183,6 +183,9 @@ public final class SandboxManagementService {
     public JsonNode mapContext(String id) { return new SandboxMapReader(results).context(id); }
     public JsonNode mapSnapshot(String id,int index) { return new SandboxMapReader(results).snapshot(id,index); }
     public JsonNode replayTick(String id,int index) { return new SandboxMapReader(results).replayTick(id,index); }
+    public JsonNode replayAssignments(String id,int from,int to,int offset,int limit) {
+        return new SandboxMapReader(results).replayAssignments(id,from,to,offset,limit);
+    }
     public JsonNode serviceActivity(String id,int index,int windowLoops) { return new SandboxServiceActivityReader(results).read(id,index,windowLoops); }
     public JsonNode vehicleStates(String id,int index) { return new SandboxVehicleStateReader(results).read(id,index); }
     public JsonNode vehicleStates(String id,int index,boolean includeWindow) { return new SandboxVehicleStateReader(results).read(id,index,includeWindow); }

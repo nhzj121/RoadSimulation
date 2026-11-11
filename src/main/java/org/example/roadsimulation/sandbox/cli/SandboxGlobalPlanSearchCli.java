@@ -1,6 +1,7 @@
 package org.example.roadsimulation.sandbox.cli;
 
 import org.example.roadsimulation.sandbox.management.SandboxManagementSettings;
+import org.example.roadsimulation.sandbox.optimization.DeliveryRetreatLimits;
 import org.example.roadsimulation.sandbox.optimization.GlobalPlanSearch;
 import org.example.roadsimulation.sandbox.optimization.OptimizationJson;
 import org.example.roadsimulation.sandbox.workspace.SandboxWorkspaceException;
@@ -32,12 +33,19 @@ public final class SandboxGlobalPlanSearchCli {
             int separator = arg.indexOf('=');
             if (!arg.startsWith("--") || separator < 3) throw new IllegalArgumentException("Expected --name=value");
             String key = arg.substring(2, separator);
-            if (!Set.of("request", "output-dir").contains(key) || options.putIfAbsent(key, arg.substring(separator + 1)) != null)
+            if (!Set.of("request", "output-dir", "heuristic-seed-cache", "delivery-retreat-limits").contains(key)
+                    || options.putIfAbsent(key, arg.substring(separator + 1)) != null)
                 throw new IllegalArgumentException("Unknown or duplicate option");
         }
-        if (options.size() != 2 || options.values().stream().anyMatch(String::isBlank))
+        if (!options.containsKey("request") || !options.containsKey("output-dir") || options.values().stream().anyMatch(String::isBlank))
             throw new IllegalArgumentException("Both --request and --output-dir are required");
+        boolean seeded = options.containsKey("heuristic-seed-cache");
+        if (seeded != options.containsKey("delivery-retreat-limits"))
+            throw new IllegalArgumentException("--heuristic-seed-cache and --delivery-retreat-limits must be provided together");
         var request = OptimizationJson.read(Files.readString(Path.of(options.get("request"))), GlobalPlanSearch.Request.class);
-        return GlobalPlanSearch.execute(settings, request, Path.of(options.get("output-dir")));
+        var output = Path.of(options.get("output-dir"));
+        if (!seeded) return GlobalPlanSearch.execute(settings, request, output);
+        var limits = OptimizationJson.read(Files.readString(Path.of(options.get("delivery-retreat-limits"))), DeliveryRetreatLimits.class);
+        return GlobalPlanSearch.executeWithHeuristicSeed(settings, request, output, limits, Path.of(options.get("heuristic-seed-cache")));
     }
 }
