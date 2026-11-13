@@ -45,7 +45,12 @@ public final class SandboxRunCompiler {
             SandboxScenarioRevisionV1 scenarioRevision,
             CompiledSandboxScenario scenario
     ) {
-        SandboxRunSpecificationV1 normalized = normalizeAndValidate(source);
+        return compile(source, scenarioRevision, scenario, false);
+    }
+
+    CompiledSandboxRunSpecification compile(SandboxRunSpecificationV1 source,
+            SandboxScenarioRevisionV1 scenarioRevision, CompiledSandboxScenario scenario, boolean v2) {
+        SandboxRunSpecificationV1 normalized = normalizeAndValidate(source, v2);
         validateScenarioReference(normalized.scenario(), scenarioRevision, scenario);
         require(scenario.effectiveData().data().processingChains().stream()
                         .anyMatch(chain -> "ACTIVE".equals(chain.status())),
@@ -64,7 +69,7 @@ public final class SandboxRunCompiler {
                 "sandbox-" + specHash.substring(0, 16));
     }
 
-    private SandboxRunSpecificationV1 normalizeAndValidate(SandboxRunSpecificationV1 source) {
+    private SandboxRunSpecificationV1 normalizeAndValidate(SandboxRunSpecificationV1 source, boolean v2) {
         require(source != null, "MISSING_RUN_SPEC", "Run specification is required");
         require(SandboxRunSpecificationV1.ARTIFACT_VERSION.equals(source.artifactVersion()),
                 "UNSUPPORTED_RUN_SPEC_VERSION", "Unsupported run specification artifactVersion");
@@ -99,8 +104,9 @@ public final class SandboxRunCompiler {
                 "STARTUP_PREGENERATION_FORBIDDEN", "Startup pre-generation must be disabled");
 
         String strategy = upper(source.dispatch().strategy(), "dispatch.strategy");
-        require(Set.of("ORIGINAL", "HEURISTIC").contains(strategy),
-                "UNSUPPORTED_DISPATCH_STRATEGY", "Dispatch strategy must be ORIGINAL or HEURISTIC");
+        require(Set.of("ORIGINAL", "HEURISTIC").contains(strategy)
+                        || (v2 && "GLOBAL_OPTIMIZATION".equals(strategy)),
+                "UNSUPPORTED_DISPATCH_STRATEGY", "Unsupported dispatch strategy for this specification version");
         require(source.dispatch().dispatchIntervalLoops() == DISPATCH_INTERVAL_LOOPS,
                 "UNSUPPORTED_DISPATCH_INTERVAL", "Dispatch interval must be 3 loops");
 

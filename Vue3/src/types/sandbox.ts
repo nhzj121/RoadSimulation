@@ -60,7 +60,7 @@ export interface SandboxRunDefinition {
   scenario: {scenarioKey: string; revision: number; scenarioDefinitionSha256: string; effectiveScenarioDataSha256: string}
   simulationClock: {startLocalDateTime: string; tickDurationSeconds: number; totalLoops: number}
   demand: {mode: string; generationIntervalLoops: number; startupPreGenerationEnabled: boolean}
-  dispatch: {strategy: 'ORIGINAL' | 'HEURISTIC'; dispatchIntervalLoops: number; algorithmProfileId: string}
+  dispatch: {strategy: 'ORIGINAL' | 'HEURISTIC' | 'GLOBAL_OPTIMIZATION'; dispatchIntervalLoops: number; algorithmProfileId: string}
   random: {protocolId: string; rootSeed: string}
   vehicleInitialization: {defaultPolicy: string; eligiblePoiTypes: string[]; coordinateAuthority: string}
   driverBehavior: {enabled: boolean; transitionPolicy: string; idleToRejecting: number; idleToMaintenance: number; rejectingToIdle: number; maintenanceToIdle: number; seedPolicy: string}

@@ -8,7 +8,7 @@ export function taskLabel(status: string) {
     CANCELLED: '已取消（保留完整前缀）', FAILED: '失败（保留已记录前缀）', INTERRUPTED: '异常中断，需人工检查', ABORTED: '已显式异常收尾'} as Record<string, string>)[status] || `未知状态：${status}`
 }
 export function canCancelTask(view: SandboxJobView | null, stale: boolean) {
-  return !!view && !stale && !view.attentionRequired && view.actions.canCancel && ['ACCEPTED', 'RUNNING'].includes(view.status)
+  return !!view && !stale && !view.attentionRequired && view.actions.canCancel && ['ACCEPTED', 'PREPARING', 'RUNNING'].includes(view.status)
 }
 export function parsePendingStart(raw: string | null): SandboxStartRequest | null {
   if (!raw) return null

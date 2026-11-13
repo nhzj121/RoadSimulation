@@ -9,6 +9,11 @@ public final class SandboxAlgorithmProfiles {
     public static final String HEURISTIC_V1 = "heuristic-multi-order-ga/v1";
 
     public SandboxAlgorithmProfile resolve(String strategy, String profileId) {
+        if (org.example.roadsimulation.sandbox.optimization.SandboxOptimizationProfile.STRATEGY.equals(strategy)) {
+            var global = org.example.roadsimulation.sandbox.optimization.SandboxOptimizationProfile.identity();
+            if (profileId == null || global.profileId().equals(profileId)) return global;
+            throw new SandboxRunException("ALGORITHM_PROFILE_STRATEGY_MISMATCH", "Invalid global optimization profile");
+        }
         SandboxAlgorithmProfile profile = switch (profileId == null ? "" : profileId) {
             case ORIGINAL_V1 -> original();
             case HEURISTIC_V1 -> heuristic();

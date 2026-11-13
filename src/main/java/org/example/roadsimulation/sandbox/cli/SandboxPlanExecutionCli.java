@@ -53,6 +53,7 @@ public final class SandboxPlanExecutionCli {
             long starting = System.nanoTime();
             long startupNanos, tickNanos;
             PlanExecutionSummary summary;
+            boolean cancelled;
             Map<String,Object> properties = Map.of("sandbox.baseline-resource", baselineLocation,
                     "sandbox.g3-offline", offline);
             try (var context = SandboxControlledApplication.open(url,user,password,properties)) {
@@ -62,19 +63,20 @@ public final class SandboxPlanExecutionCli {
                 var facts = context.getBean(SandboxRuntimeFactCollector.class);
                 long tickStart = System.nanoTime();
                 startupNanos = tickStart - starting;
-                context.getBean(SandboxControlledRunExecutor.class).execute(lease,(tick,evaluation) -> {
+                cancelled = context.getBean(SandboxControlledRunExecutor.class).execute(lease,(tick,evaluation) -> {
                     long writeStart = System.nanoTime();
                     lease.recordTick(tick,evaluation,facts.capture(),json);
                     writeNanos[0] += System.nanoTime() - writeStart;
                     completed[0]++;
-                });
+                }).cancelled();
                 tickNanos = System.nanoTime() - tickStart - writeNanos[0];
                 if (offline) context.getBean(OfflinePlanMaps.class).requireUnused();
                 summary = PlanExecutionSummary.from(lease.executionId(),completed[0],runtime.state());
             }
             long verifying = System.nanoTime();
             new SandboxExecutionStore(url,user,password,json).verify(lease.executionId());
-            lease.finish(completed[0],null);
+            if (cancelled) lease.finishCancelled(completed[0]);
+            else lease.finish(completed[0],null);
             return new Run(summary,startupNanos,tickNanos,writeNanos[0],System.nanoTime()-verifying,0);
         } catch (Exception failure) {
             try { lease.finish(completed[0],failure); }

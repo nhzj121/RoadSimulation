@@ -1,6 +1,7 @@
 package org.example.roadsimulation.sandbox.management;
 
 import org.example.roadsimulation.sandbox.workspace.*;
+import org.example.roadsimulation.sandbox.optimization.SandboxOptimizationProfile;
 import java.sql.*;
 import java.util.*;
 
@@ -16,7 +17,7 @@ public final class SandboxManagementJobStore {
             safety.requireSafeTarget(settings.url(), connection);
             try (var statement = connection.createStatement(); var rows = statement.executeQuery(
                     "SELECT control_schema_version FROM sandbox_workspace_marker WHERE marker_id=1")) {
-                if (!rows.next() || !Set.of("sandbox-control-schema/v8", "sandbox-control-schema/v9").contains(rows.getString(1)))
+                if (!rows.next() || !Set.of("sandbox-control-schema/v8", "sandbox-control-schema/v9", "sandbox-control-schema/v10").contains(rows.getString(1)))
                     throw new SandboxWorkspaceException("CONTROL_SCHEMA_NOT_READY", "Administrator must provision control schema v8");
             }
             return connection;
@@ -70,12 +71,24 @@ public final class SandboxManagementJobStore {
                 }
                 safety.requireNoUnfinishedExecution(connection);
                 requireNoUnboundExecution(connection);
-                try (var query = connection.prepareStatement("SELECT artifact_version FROM sandbox_run_spec_revision WHERE run_spec_key=? AND revision_no=? AND archived=b'0'")) {
+                boolean optimization;
+                boolean upgraded = SandboxOptimizationJobStore.available(connection);
+                String publicInput = upgraded
+                        ? " AND NOT EXISTS (SELECT 1 FROM sandbox_run_spec f WHERE f.run_spec_key=r.run_spec_key AND f.internal_input=TRUE)"
+                        : "";
+                try (var query = connection.prepareStatement("SELECT artifact_version,algorithm_profile_id,revision_json FROM sandbox_run_spec_revision r WHERE run_spec_key=? AND revision_no=? AND archived=b'0'" + publicInput)) {
                     query.setString(1, key); query.setInt(2, revision);
                     try (var rows = query.executeQuery()) {
                         if (!rows.next()) throw new SandboxWorkspaceException("RUN_SPEC_REVISION_NOT_FOUND", "Publish the requested revision first");
                         if (!"sandbox-run-specification-revision/v2".equals(rows.getString(1)))
                             throw new SandboxWorkspaceException("UNSUPPORTED_RUN_SPEC_VERSION", "Management executes v2 revisions only");
+                        optimization = SandboxOptimizationProfile.ID.equals(rows.getString(2));
+                        if (optimization) {
+                            require(upgraded, "OPTIMIZATION_CONTROL_SCHEMA_NOT_READY");
+                            var snapshot = org.example.roadsimulation.sandbox.optimization.OptimizationJson.read(
+                                    rows.getString(3), org.example.roadsimulation.sandbox.run.SandboxRunSpecificationRevisionV2.class);
+                            require(SandboxOptimizationProfile.identity().equals(snapshot.algorithmProfile()), "OPTIMIZATION_PROFILE_CHANGED");
+                        }
                     }
                 }
                 String id = UUID.randomUUID().toString();
@@ -89,6 +102,7 @@ public final class SandboxManagementJobStore {
                         if (requestId != null) insert.setString(4, requestId);
                         insert.executeUpdate();
                     }
+                    if (optimization) SandboxOptimizationJobStore.create(connection, id);
                     try (var update = connection.prepareStatement("UPDATE sandbox_workspace_marker SET active_job_id=? WHERE marker_id=1 AND active_job_id IS NULL")) {
                         update.setString(1, id); require(update.executeUpdate() == 1, "WORKSPACE_BUSY");
                     }
@@ -114,7 +128,7 @@ public final class SandboxManagementJobStore {
     }
     private void requireRequestSchema(Connection connection) throws SQLException {
         try (var statement = connection.createStatement(); var rows = statement.executeQuery("SELECT control_schema_version FROM sandbox_workspace_marker WHERE marker_id=1")) {
-            require(rows.next() && "sandbox-control-schema/v9".equals(rows.getString(1)), "START_CONTROL_SCHEMA_NOT_READY");
+            require(rows.next() && Set.of("sandbox-control-schema/v9", "sandbox-control-schema/v10").contains(rows.getString(1)), "START_CONTROL_SCHEMA_NOT_READY");
         }
     }
 
@@ -149,7 +163,9 @@ public final class SandboxManagementJobStore {
                 if ("CANCELLED".equals(status)) {
                     connection.commit(); return Map.of("jobId", id, "status", status);
                 }
-                require(Set.of("ACCEPTED", "RUNNING", "CANCEL_REQUESTED").contains(status), "CANCEL_NOT_ALLOWED");
+                require(Set.of("ACCEPTED", "RUNNING", "CANCEL_REQUESTED").contains(status)
+                        || ("PREPARING".equals(status) && SandboxOptimizationJobStore.isOptimization(connection, id)),
+                        "CANCEL_NOT_ALLOWED");
                 safety.requireManagementJobOwner(connection, id);
                 if (!"CANCEL_REQUESTED".equals(status)) {
                     try (var update = connection.prepareStatement("UPDATE sandbox_management_job SET cancel_requested_at=CURRENT_TIMESTAMP(6),updated_at=CURRENT_TIMESTAMP(6),job_status=? WHERE job_id=?")) {
@@ -160,6 +176,7 @@ public final class SandboxManagementJobStore {
                         try (var update = connection.prepareStatement("UPDATE sandbox_management_job SET finished_at=CURRENT_TIMESTAMP(6),failure_code='USER_CANCELLED' WHERE job_id=?")) {
                             update.setString(1, id); update.executeUpdate();
                         }
+                        SandboxOptimizationJobStore.recordStopIfManaged(connection, id, "USER_CANCELLED");
                         releaseReservation(connection, id);
                     }
                 }
@@ -213,6 +230,7 @@ public final class SandboxManagementJobStore {
                         try (var rows = query.executeQuery()) { require(rows.next() && rows.getString(1) == null, "JOB_REQUIRES_INSPECTION"); }
                     }
                     requireNoUnboundExecution(connection);
+                    SandboxOptimizationJobStore.recordStopIfManaged(connection, id, errorCode);
                     terminal(connection, id, "FAILED", errorCode, true); connection.commit();
                 } catch (Exception failure) { connection.rollback(); throw failure; }
             } finally { safety.releasePreparationLock(connection); }
@@ -221,8 +239,17 @@ public final class SandboxManagementJobStore {
 
     /** Unexpected process exit is not a completed/failed simulation. Keep the reservation and facts. */
     public void interrupted(String id) {
-        try (var connection = open(); var update = connection.prepareStatement("UPDATE sandbox_management_job SET job_status='INTERRUPTED',failure_code='WORKER_EXITED',finished_at=CURRENT_TIMESTAMP(6),updated_at=CURRENT_TIMESTAMP(6) WHERE job_id=? AND job_status IN('ACCEPTED','PREPARING','RUNNING','CANCEL_REQUESTED','FINALIZING')")) {
-            update.setString(1, id); update.executeUpdate();
+        interrupted(id, "WORKER_EXITED");
+    }
+
+    void interrupted(String id, String code) {
+        try (var connection = open()) {
+            connection.setAutoCommit(false);
+            try (var update = connection.prepareStatement("UPDATE sandbox_management_job SET job_status='INTERRUPTED',failure_code=?,finished_at=CURRENT_TIMESTAMP(6),updated_at=CURRENT_TIMESTAMP(6) WHERE job_id=? AND job_status IN('ACCEPTED','PREPARING','RUNNING','CANCEL_REQUESTED','FINALIZING')")) {
+                update.setString(1, code); update.setString(2, id);
+                if (update.executeUpdate() == 1) SandboxOptimizationJobStore.recordStopIfManaged(connection, id, code);
+                connection.commit();
+            } catch (Exception failure) { connection.rollback(); throw failure; }
         } catch (SQLException failure) { throw databaseFailure(failure); }
     }
 
@@ -242,6 +269,7 @@ public final class SandboxManagementJobStore {
             try (var rows = query.executeQuery()) {
                 if (!rows.next()) throw new SandboxWorkspaceException("JOB_NOT_FOUND", "Unknown sandbox job");
                 Map<String, Object> result = row(rows);
+                result.put("optimization", SandboxOptimizationJobStore.isOptimization(connection, id));
                 result.remove("closure_report_json"); // Audit report is not a polling payload.
                 boolean active = Set.of("ACCEPTED", "PREPARING", "RUNNING", "CANCEL_REQUESTED", "FINALIZING", "INTERRUPTED").contains(rows.getString("job_status"));
                 long pid = rows.getLong("worker_pid"); String started = rows.getString("worker_started_at");

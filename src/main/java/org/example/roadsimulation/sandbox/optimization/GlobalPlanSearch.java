@@ -1,6 +1,8 @@
 package org.example.roadsimulation.sandbox.optimization;
 
 import org.example.roadsimulation.sandbox.management.SandboxManagementSettings;
+import org.example.roadsimulation.sandbox.management.SandboxOptimizationJobStore;
+import org.example.roadsimulation.sandbox.workspace.SandboxWorkspaceException;
 
 import java.io.IOException;
 import java.math.BigDecimal;
@@ -64,12 +66,17 @@ public final class GlobalPlanSearch {
     interface Evaluation {
         SandboxCandidateEvaluator.Attempt baseline() throws IOException;
         SandboxCandidateEvaluator.Attempt candidate(GlobalPlan plan) throws IOException;
+        default SandboxCandidateEvaluator.Attempt seed(GlobalPlan plan) throws IOException { return candidate(plan); }
         int launched();
         default FulfillmentComparison.Side delivery(String executionId) { return null; }
     }
 
     @FunctionalInterface
-    interface Checkpoint { void save(Best best) throws IOException; }
+    interface Checkpoint {
+        void save(Best best) throws IOException;
+        default void prepared(Best best) throws IOException {}
+        default void requireActive() throws IOException {}
+    }
 
     @FunctionalInterface
     interface Proposer {
@@ -106,6 +113,54 @@ public final class GlobalPlanSearch {
         long start = System.nanoTime();
         var session = SandboxCandidateEvaluator.open(settings, request.runSpecKey(), request.runSpecRevision(),
                 request.baselineResource(), output, request.timeoutSeconds(), evaluationVersion(request.artifactVersion()));
+        return execute(request, output, limits, seedCache, start, session, null);
+    }
+
+    public static Stop executeManaged(SandboxManagementSettings settings, String key, int revision, Path output,
+                                      Path seedCache, SandboxOptimizationJobStore job) throws IOException, java.sql.SQLException {
+        long start = System.nanoTime();
+        String baseline = "classpath:sandbox/baseline/baseline-v1.json";
+        var session = SandboxCandidateEvaluator.openManaged(settings, key, revision, baseline, output, job);
+        job.freezeProblem(session.problem().problem().problemFingerprint());
+        if (session.problem().catalog().tasks().isEmpty()) return Stop.NO_DEMAND;
+        var request = new Request(THROUGHPUT_VERSION, key, revision, baseline,
+                SandboxOptimizationProfile.preferenceFor(session.problem().catalog()),
+                SandboxOptimizationProfile.SEARCH_SEED, SandboxOptimizationProfile.BUDGET,
+                session.workerTimeoutSeconds());
+        return execute(request, output, SandboxOptimizationProfile.LIMITS, seedCache, start, session, job).stop();
+    }
+
+    private static Result execute(Request request, Path output, DeliveryRetreatLimits limits, Path seedCache, long start,
+                                  SandboxCandidateEvaluator session, SandboxOptimizationJobStore job) throws IOException {
+        var checkpoint = new Checkpoint() {
+            private int index;
+            private boolean prepared;
+
+            public void save(Best best) throws IOException {
+                if (prepared) archive(best, false);
+                write(output.resolve("best-" + index++ + ".json"), best);
+            }
+
+            public void prepared(Best best) throws IOException {
+                archive(best, true);
+                prepared = true;
+            }
+
+            public void requireActive() throws IOException {
+                if (job == null) return;
+                try {
+                    if (job.cancelled()) throw cancelled();
+                } catch (java.sql.SQLException failure) { throw new IOException("Cannot check optimization cancellation", failure); }
+            }
+
+            private void archive(Best best, boolean initial) throws IOException {
+                if (job == null) return;
+                try {
+                    if (!job.checkpoint(best.executionId(), initial)) throw cancelled();
+                } catch (java.sql.SQLException failure) { throw new IOException("Cannot archive optimization result", failure); }
+            }
+        };
+        checkpoint.requireActive();
         var baselinePlan = session.baseline().plan();
         GlobalPlan heuristicSeed = null;
         if (seedCache != null && !session.problem().catalog().tasks().isEmpty()) {
@@ -113,6 +168,7 @@ public final class GlobalPlanSearch {
             boolean duplicate = baselinePlan.equals(acquired.seed().plan());
             write(output.resolve("heuristic-seed.json"), Map.of("acquisition", acquired, "duplicateOfGreedy", duplicate));
             if (!duplicate) heuristicSeed = acquired.seed().plan();
+            checkpoint.requireActive();
         }
         var evaluation = new Evaluation() {
             public SandboxCandidateEvaluator.Attempt baseline() throws IOException {
@@ -121,15 +177,17 @@ public final class GlobalPlanSearch {
             public SandboxCandidateEvaluator.Attempt candidate(GlobalPlan plan) throws IOException {
                 return session.evaluateCandidate(plan, SandboxCandidateEvaluator.CacheMode.USE);
             }
+            public SandboxCandidateEvaluator.Attempt seed(GlobalPlan plan) throws IOException {
+                return session.evaluateCandidate(plan, SandboxCandidateEvaluator.CacheMode.USE, "HEURISTIC_SEED");
+            }
             public int launched() { return session.launchedWorkers(); }
             public FulfillmentComparison.Side delivery(String executionId) {
                 return session.delivery(executionId);
             }
         };
         var operators = new PlanSearchOperators(session.problem(), session.fleetData());
-        int[] index = {0};
         var result = search(request, session.simulationRootSeed(), baselinePlan, evaluation, operators::propose,
-                best -> write(output.resolve("best-" + index[0]++ + ".json"), best), start, limits, heuristicSeed);
+                checkpoint, start, limits, heuristicSeed);
         write(output.resolve("search.json"), result);
         if (result.steps().stream().noneMatch(step -> Stop.EVALUATION_IO_FAILED.name().equals(step.status())))
             write(output.resolve("evaluation.json"), limits == null ? session.report(request.preference())
@@ -138,6 +196,10 @@ public final class GlobalPlanSearch {
             write(output.resolve("fulfillment.json"), session.fulfillment(result.baseline().executionId(),
                     result.selected().executionId()));
         return result;
+    }
+
+    private static SandboxWorkspaceException cancelled() {
+        return new SandboxWorkspaceException("USER_CANCELLED", "Optimization cancelled");
     }
 
     private static String evaluationVersion(String searchVersion) {
@@ -243,8 +305,10 @@ public final class GlobalPlanSearch {
                 if (!Status.SCORED_INPUT.name().equals(steps.get(steps.size() - 1).status()))
                     return done(Stop.INVALID_HEURISTIC_SEED);
             }
+            checkpoint.prepared(best);
             var budget = request.budget();
             for (int generation = 1; generation <= budget.maxGenerations() && evaluation.launched() < budget.maxEvaluations(); generation++) {
+                checkpoint.requireActive();
                 if (Thread.currentThread().isInterrupted()) return done(Stop.INTERRUPTED);
                 generations = generation;
                 var stop = generation(generation);
@@ -297,9 +361,10 @@ public final class GlobalPlanSearch {
                         child == null ? "REJECTED" : "DUPLICATE", reasons, null, null, false));
                 return null;
             }
+            checkpoint.requireActive();
             SandboxCandidateEvaluator.Attempt evidence;
             try {
-                evidence = evaluation.candidate(plan);
+                evidence = "HEURISTIC_SEED".equals(operator) ? evaluation.seed(plan) : evaluation.candidate(plan);
             } catch (IOException failure) {
                 steps.add(step(generation, number, operator, parentId, donorId, child, Stop.EVALUATION_IO_FAILED.name(),
                         List.of("EVALUATION_IO_FAILED"), null, null, false));

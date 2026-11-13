@@ -44,7 +44,10 @@ public final class OrdinaryRunAdmission implements AutoCloseable {
         try {
             pending = connections.open();
             safety.acquirePreparationLock(pending);
-            if (management.navigationObservation().busy())
+            var observation = management.navigationObservation();
+            if (observation.inspectionRequired())
+                throw new AdmissionDenied("上一次沙箱任务已中断，待检查收尾");
+            if (observation.busy())
                 throw new SandboxWorkspaceException("WORKSPACE_BUSY", "Sandbox execution has not released admission");
             connection = pending;
             owner = candidate;

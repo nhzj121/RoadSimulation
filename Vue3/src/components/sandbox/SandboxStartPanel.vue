@@ -21,7 +21,7 @@
         </div>
         <p class="confirmation-hint">实际故障维修/救援/换车时间由breakdownPolicy决定，不等同于通用故障持续时间字段。</p>
         <details><summary>实际故障策略</summary><pre>{{ confirmedRevision.specification.events.breakdownPolicy }}</pre></details>
-        <p class="confirmation-warning">将重建vehicle_scheduler_sandbox业务表。普通仿真数据不变。准备和核验收尾期间不能取消；运行中只能在完整轮次边界安全取消。关闭页面不停止后台任务。</p>
+        <p class="confirmation-warning">将重建vehicle_scheduler_sandbox业务表。普通仿真数据不变。<template v-if="confirmedRevision.specification.dispatch.strategy === 'GLOBAL_OPTIMIZATION'">准备或搜索时可请求取消。正在执行的仿真会在完整轮次边界停止。</template><template v-else>准备和核验收尾期间不能取消。运行中只能在完整轮次边界安全取消。</template>关闭页面不停止后台任务。</p>
       </template>
       <template #footer><el-button @click="confirmation = false">返回</el-button><el-button type="primary" :disabled="busy || !enabled || ordinaryBusy" @click="confirmStart">确认准备并运行</el-button></template>
     </el-dialog>
@@ -53,14 +53,23 @@ async function submitPending() {
   } catch (value) { failure(value) } finally { busy.value = false; releaseNavigation() }
 }
 async function openConfirmation() {
-  if (!props.enabled || !props.revision || pending.value || busy.value || ordinaryBusy.value) return
+  const revision = props.revision
+  if (!props.enabled || !revision || pending.value || busy.value || ordinaryBusy.value) return
   busy.value = true; error.value = ''
   try {
     const workspace = await sandboxApi.workspace()
-    if (workspace.control_schema_version !== 'sandbox-control-schema/v9') throw new Error('启动需要管理员先升级沙箱控制结构到v9')
+    if (!props.enabled || props.revision !== revision) return
+    const schemaVersion = workspace.control_schema_version
+    const globalOptimization = revision.specification.dispatch.strategy === 'GLOBAL_OPTIMIZATION'
+    if (globalOptimization && schemaVersion !== 'sandbox-control-schema/v10') {
+      throw new Error('全局多目标优化需要沙箱控制结构 v10')
+    }
+    if (schemaVersion !== 'sandbox-control-schema/v9' && schemaVersion !== 'sandbox-control-schema/v10') {
+      throw new Error('启动需要沙箱控制结构 v9 或 v10')
+    }
     // active_execution_id also identifies the LAST terminal execution; it is not a busy flag.
     if (workspace.active_job_id || workspace.workspace_state === 'EXECUTION_RUNNING') throw new Error('沙箱工作库忙；请查看现有任务，不排队')
-    confirmedRevision.value = JSON.parse(JSON.stringify(props.revision)); confirmation.value = true
+    confirmedRevision.value = JSON.parse(JSON.stringify(revision)); confirmation.value = true
   } catch (value) { failure(value) } finally { busy.value = false }
 }
 async function confirmStart() {

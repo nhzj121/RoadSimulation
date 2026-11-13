@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import org.example.roadsimulation.sandbox.execution.*;
 import org.example.roadsimulation.sandbox.execution.bootstrap.SandboxControlledApplication;
 import org.example.roadsimulation.sandbox.workspace.SandboxWorkspaceException;
+import org.example.roadsimulation.sandbox.optimization.GlobalPlanSearch;
+import java.nio.file.Path;
 import java.util.Map;
 
 /** Dedicated JVM entry. Receives only a job UUID; credentials never appear in process arguments. */
@@ -35,6 +37,7 @@ public final class SandboxManagementWorker {
         try {
             jobs.claim(jobId); claimed = true;
             var job = jobs.get(jobId);
+            if (Boolean.TRUE.equals(job.get("optimization"))) return runOptimization(jobId, job, settings, jobs);
             try (var lease = SandboxExecutionLease.prepareAndAcquire(settings.url(), settings.user(), settings.password(),
                     settings.baseline(), job.get("run_spec_key").toString(), ((Number) job.get("run_spec_revision")).intValue(), json, jobId)) {
                 lease.create(json);
@@ -67,6 +70,36 @@ public final class SandboxManagementWorker {
             return 2;
         }
     }
+    private static int runOptimization(String id, Map<String, Object> job, SandboxManagementSettings settings,
+                                       SandboxManagementJobStore jobs) {
+        var optimization = new SandboxOptimizationJobStore(settings, id);
+        String status = "FAILED";
+        String reason;
+        try {
+            Path artifacts = Path.of("target", "sandbox-jobs").toAbsolutePath().normalize();
+            java.nio.file.Files.createDirectories(artifacts);
+            var stop = GlobalPlanSearch.executeManaged(settings, job.get("run_spec_key").toString(),
+                    ((Number) job.get("run_spec_revision")).intValue(), artifacts.resolve(id),
+                    artifacts.resolve("heuristic-seed-cache"), optimization);
+            reason = stop.name();
+            status = switch (stop) {
+                case EVALUATION_BUDGET, GENERATION_BUDGET, NO_DEMAND -> "SUCCEEDED";
+                default -> "FAILED";
+            };
+        } catch (Exception failure) {
+            reason = errorCode(failure);
+            System.err.println("sandbox-optimization-error[" + reason + "]");
+        }
+        try {
+            optimization.finish(status, reason);
+            return 0;
+        } catch (Exception unsafe) {
+            try { jobs.interrupted(id, "TIMEOUT".equals(reason) ? reason : "WORKER_EXITED"); } catch (Exception ignored) {}
+            System.err.println("sandbox-optimization-close[" + errorCode(unsafe) + "]");
+            return 2;
+        }
+    }
+
     private static String errorCode(Exception failure) {
         return failure instanceof SandboxWorkspaceException workspace ? workspace.errorCode() : "WORKER_FAILED";
     }

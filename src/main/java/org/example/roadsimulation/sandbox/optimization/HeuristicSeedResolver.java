@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.example.roadsimulation.sandbox.cli.SandboxSphericalComparisonWorker;
 import org.example.roadsimulation.sandbox.execution.SandboxExecutionStore;
 import org.example.roadsimulation.sandbox.management.SandboxManagementSettings;
+import org.example.roadsimulation.sandbox.management.SandboxOptimizationJobStore;
 import org.example.roadsimulation.sandbox.run.SandboxAlgorithmProfile;
 import org.example.roadsimulation.sandbox.run.SandboxAlgorithmProfiles;
 import org.example.roadsimulation.sandbox.run.SandboxRunSpecificationRevisionV2;
@@ -55,8 +56,12 @@ final class HeuristicSeedResolver {
     enum Origin { CACHE, LEDGER, RUN }
     record Acquisition(Origin origin, Seed seed) {}
 
+    private final SandboxOptimizationJobStore job;
+
     HeuristicSeedResolver(SandboxManagementSettings settings, ObjectMapper json,
-                          SandboxRunSpecificationRevisionV2 reference, PlanExecutionAuthentication.FrozenProblem frozen) {
+                          SandboxRunSpecificationRevisionV2 reference, PlanExecutionAuthentication.FrozenProblem frozen,
+                          SandboxOptimizationJobStore job) {
+        this.job = job;
         this.settings = settings;
         this.json = json;
         this.reference = reference;
@@ -160,10 +165,15 @@ final class HeuristicSeedResolver {
         var revision = heuristicRevision(baseline);
         var comparison = new SphericalComparisonRun(SphericalComparisonRun.VERSION, commonInput, frozen.problem().paths(), build);
         var work = new SandboxSphericalComparisonWorker.Work(revision.runSpecKey(), revision.revision(),
-                comparison, EvaluationBuildIdentity.fileSha256(baseline));
+                comparison, EvaluationBuildIdentity.fileSha256(baseline),
+                job == null ? null : new SandboxOptimizationJobStore.Child(job.jobId(), "HEURISTIC_SOURCE"));
         try {
             var receipt = SandboxSphericalComparisonWorker.launch(settings, work, baseline, directory, timeoutSeconds);
-            return fromVerifiedExport(history.export(receipt.executionId()));
+            var seed = fromVerifiedExport(history.export(receipt.executionId()));
+            if (job != null) job.verified(receipt.executionId(), seed.sourceManifestSha256(), seed.sourceLastTickSha256());
+            return seed;
+        } catch (java.sql.SQLException failure) {
+            throw new IOException("Cannot record verified seed source", failure);
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
             throw new InterruptedIOException("HEURISTIC seed acquisition interrupted");
@@ -193,7 +203,8 @@ final class HeuristicSeedResolver {
             if (!"RUN_SPEC_REVISION_NOT_FOUND".equals(missing.errorCode())) throw missing;
         }
         try {
-            runs.saveDraftV2(baselineResource, draft, -1);
+            if (job == null) runs.saveDraftV2(baselineResource, draft, -1);
+            else runs.saveInternalDraftV2(baselineResource, draft);
         } catch (SandboxWorkspaceException concurrent) {
             if (!"DRAFT_CONFLICT".equals(concurrent.errorCode())) throw concurrent;
         }

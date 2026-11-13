@@ -29,23 +29,30 @@ public class SimulationNavigationController {
         var management = sandbox.getIfAvailable();
         boolean sandboxBusy = false;
         String workspace = null;
+        boolean sandboxInspectionRequired = false;
+        String sandboxInspectionJobId = null;
         try {
             if (management != null) {
                 var observation = management.navigationObservation();
                 sandboxBusy = observation.busy(); workspace = observation.workspaceState();
+                sandboxInspectionRequired = observation.inspectionRequired();
+                sandboxInspectionJobId = observation.interruptedJobId();
             }
         } catch (RuntimeException failure) {
             // Never forward SQL, JDBC settings, credentials or exception text.
             return ResponseEntity.status(503).body(new NavigationState("mode-navigation-state/v1", false,
-                    false, "NAVIGATION_STATE_UNCONFIRMED", running, busy, comparison, true, null, null));
+                    false, "NAVIGATION_STATE_UNCONFIRMED", running, busy, comparison, true, null, null, false, null));
         }
         String reason = comparison ? "COMPARISON_ACTIVE" : busy ? "ORDINARY_TRANSITION_BUSY"
-                : running ? "ORDINARY_RUNNING" : sandboxBusy ? "SANDBOX_BUSY" : null;
+                : running ? "ORDINARY_RUNNING" : sandboxInspectionRequired ? "SANDBOX_INSPECTION_REQUIRED"
+                : sandboxBusy ? "SANDBOX_BUSY" : null;
         return ResponseEntity.ok(new NavigationState("mode-navigation-state/v1", true, reason == null,
-                reason, running, busy, comparison, management != null, sandboxBusy, workspace));
+                reason, running, busy, comparison, management != null, sandboxBusy, workspace,
+                sandboxInspectionRequired, sandboxInspectionJobId));
     }
 
     public record NavigationState(String artifactVersion, boolean confirmed, boolean canSwitch,
             String reason, boolean ordinaryRunning, boolean ordinaryBusy, boolean comparisonActive,
-            boolean sandboxManagementEnabled, Boolean sandboxBusy, String sandboxWorkspaceState) {}
+            boolean sandboxManagementEnabled, Boolean sandboxBusy, String sandboxWorkspaceState,
+            boolean sandboxInspectionRequired, String sandboxInspectionJobId) {}
 }

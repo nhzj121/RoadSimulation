@@ -343,7 +343,8 @@ public class SimulationController {
         }
 
         try {
-            return DispatchStrategy.valueOf(strategy.trim().toUpperCase());
+            var parsed = DispatchStrategy.valueOf(strategy.trim().toUpperCase());
+            return parsed == DispatchStrategy.GLOBAL_OPTIMIZATION ? DispatchStrategy.ORIGINAL : parsed;
         } catch (IllegalArgumentException ignored) {
             return DispatchStrategy.ORIGINAL;
         }

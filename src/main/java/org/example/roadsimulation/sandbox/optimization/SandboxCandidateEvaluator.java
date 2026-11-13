@@ -86,6 +86,7 @@ public final class SandboxCandidateEvaluator {
     private Attempt baselineAttempt;
     private boolean stopped;
     private int launchedWorkers;
+    private final SandboxOptimizationJobStore job;
 
     public static SandboxCandidateEvaluator open(SandboxManagementSettings settings, String runKey, int revision,
             String baselineResource, Path output, Long timeoutSeconds) throws IOException {
@@ -94,16 +95,23 @@ public final class SandboxCandidateEvaluator {
 
     public static SandboxCandidateEvaluator open(SandboxManagementSettings settings, String runKey, int revision,
             String baselineResource, Path output, Long timeoutSeconds, String version) throws IOException {
-        return new SandboxCandidateEvaluator(settings, runKey, revision, baselineResource, output, timeoutSeconds, version);
+        return new SandboxCandidateEvaluator(settings, runKey, revision, baselineResource, output, timeoutSeconds, version, null);
+    }
+
+    static SandboxCandidateEvaluator openManaged(SandboxManagementSettings settings, String runKey, int revision,
+            String baselineResource, Path output, SandboxOptimizationJobStore job) throws IOException {
+        return new SandboxCandidateEvaluator(settings, runKey, revision, baselineResource, output, null,
+                THROUGHPUT_VERSION, Objects.requireNonNull(job));
     }
 
     private SandboxCandidateEvaluator(SandboxManagementSettings settings, String runKey, int revision,
-            String baselineResource, Path output, Long timeoutSeconds, String version) throws IOException {
+            String baselineResource, Path output, Long timeoutSeconds, String version,
+            SandboxOptimizationJobStore job) throws IOException {
         this.settings = Objects.requireNonNull(settings);
         this.runKey = ContractChecks.text(runKey, "runSpecKey");
         if (revision <= 0) throw new IllegalArgumentException("Invalid run revision");
         this.revision = revision;
-        this.timeoutSeconds = checkTimeout(timeoutSeconds);
+        this.job = job;
         this.registry = objectives(version);
         this.version = version;
         this.output = Files.createDirectory(output.toAbsolutePath().normalize());
@@ -118,6 +126,8 @@ public final class SandboxCandidateEvaluator {
         baselineSourceFingerprint = EvaluationBuildIdentity.fileSha256(baselineFile);
         published = new SandboxRunSpecificationStore(settings.url(), settings.user(), settings.password(), json)
                 .loadRevisionV2(runKey, revision);
+        this.timeoutSeconds = job == null ? checkTimeout(timeoutSeconds)
+                : SandboxOptimizationProfile.workerTimeoutSeconds(published.specification().simulationClock().totalLoops());
         simulationRootSeed = published.specification().random().rootSeed();
         var ref = published.specification().scenario();
         var scene = new SandboxScenarioStore(settings.url(), settings.user(), settings.password(), json)
@@ -128,6 +138,8 @@ public final class SandboxCandidateEvaluator {
         build = EvaluationBuildIdentity.capture(SandboxEvaluationWorker.class);
     }
 
+    Long workerTimeoutSeconds() { return timeoutSeconds; }
+
     public CompiledOptimizationProblem problem() { return frozen.problem(); }
     public GreedyBaseline.Result baseline() { return baseline; }
     SandboxBaselinePackageV1.Data fleetData() { return frozen.data(); }
@@ -135,7 +147,7 @@ public final class SandboxCandidateEvaluator {
     synchronized int launchedWorkers() { return launchedWorkers; }
 
     HeuristicSeedResolver.Acquisition acquireHeuristicSeed(Path cache) throws IOException {
-        return new HeuristicSeedResolver(settings, json, published, frozen)
+        return new HeuristicSeedResolver(settings, json, published, frozen, job)
                 .acquire(cache, baselineFile, output, timeoutSeconds == null ? 300 : timeoutSeconds);
     }
 
@@ -154,23 +166,27 @@ public final class SandboxCandidateEvaluator {
     synchronized Attempt replayPlan(GlobalPlan plan) throws IOException {
         if (launchedWorkers != 0 || baselineAttempt != null || !candidates.isEmpty())
             throw new IllegalStateException("Replay requires a fresh evaluation session");
-        return evaluate(0, plan, CacheMode.BYPASS);
+        return evaluate(0, plan, CacheMode.BYPASS, "BASELINE");
     }
 
     public synchronized Attempt evaluateBaseline(CacheMode mode) throws IOException {
         Objects.requireNonNull(mode);
-        if (baselineAttempt == null) baselineAttempt = evaluate(0, baseline.plan(), mode);
+        if (baselineAttempt == null) baselineAttempt = evaluate(0, baseline.plan(), mode, "BASELINE");
         return baselineAttempt;
     }
 
     public synchronized Attempt evaluateCandidate(GlobalPlan plan, CacheMode mode) throws IOException {
+        return evaluateCandidate(plan, mode, "CANDIDATE");
+    }
+
+    synchronized Attempt evaluateCandidate(GlobalPlan plan, CacheMode mode, String kind) throws IOException {
         Objects.requireNonNull(plan);
         Objects.requireNonNull(mode);
         if (baselineAttempt == null) throw new IllegalStateException("Evaluate the baseline first");
         int index = candidates.size() + 1;
         var result = stopped || baselineAttempt.status != Status.SCORED_INPUT
                 ? failure(index, plan.fingerprint(), null, Status.SKIPPED, null, "COMPARISON_NOT_AVAILABLE", 0)
-                : evaluate(index, plan, mode);
+                : evaluate(index, plan, mode, kind);
         candidates.add(result);
         return result;
     }
@@ -222,7 +238,7 @@ public final class SandboxCandidateEvaluator {
         return scores;
     }
 
-    private Attempt evaluate(int index, GlobalPlan plan, CacheMode mode) throws IOException {
+    private Attempt evaluate(int index, GlobalPlan plan, CacheMode mode, String kind) throws IOException {
         long started = System.nanoTime();
         String fingerprint = plan.fingerprint();
         PlanExecutionTask task;
@@ -240,8 +256,9 @@ public final class SandboxCandidateEvaluator {
                     cached.evidence, emptyTiming(System.nanoTime()-started), List.of());
         }
         Path directory = Files.createDirectory(output.resolve("attempt-" + index));
-        write(directory.resolve("work.json"), new SandboxEvaluationWorker.Work(task, build, baselineSourceFingerprint));
-        Attempt result = execute(index, task, key, directory, started);
+        write(directory.resolve("work.json"), new SandboxEvaluationWorker.Work(task, build, baselineSourceFingerprint,
+                job == null ? null : new SandboxOptimizationJobStore.Child(job.jobId(), kind)));
+        Attempt result = execute(index, task, key, directory, started, kind);
         if (result.status == Status.SCORED_INPUT && cached != null
                 && !cached.evidence.assessment.equals(result.evidence.assessment)) {
             stopped = true;
@@ -259,7 +276,7 @@ public final class SandboxCandidateEvaluator {
         return result;
     }
 
-    private Attempt execute(int index, PlanExecutionTask task, String key, Path directory, long started) throws IOException {
+    private Attempt execute(int index, PlanExecutionTask task, String key, Path directory, long started, String kind) throws IOException {
         String fingerprint = task.plan().fingerprint();
         var main = SandboxEvaluationWorker.class;
         var command = new ArrayList<>(SandboxWorkerLauncher.javaCommand(Path.of(System.getProperty("java.home")),
@@ -298,6 +315,11 @@ public final class SandboxCandidateEvaluator {
         } catch (IOException | IllegalArgumentException failure) {
             return stop(index, fingerprint, key, directory, Status.WORKER_FAILED, "MISSING_OR_INVALID_WORKER_RECEIPT", started);
         }
+        if (job != null) {
+            try {
+                if (job.cancelled()) return stop(index, fingerprint, key, directory, Status.INTERRUPTED, "USER_CANCELLED", started);
+            } catch (java.sql.SQLException failure) { throw new IOException("Cannot check cancellation", failure); }
+        }
         if (child.exitValue() != 0 || receipt.run() == null || receipt.errorCode() != null) {
             String code = Objects.toString(receipt.errorCode(), "WORKER_NONZERO_EXIT");
             Status status = switch (code) {
@@ -318,6 +340,10 @@ public final class SandboxCandidateEvaluator {
             evidence = evidence(task, export, run.summary(), run.mapRequests(), json);
         } catch (SandboxWorkspaceException | IllegalArgumentException failure) {
             return stop(index, fingerprint, key, directory, Status.INVALID_LEDGER, "EXECUTION_EVIDENCE_INVALID", started);
+        }
+        if (job != null) {
+            try { job.verified(evidence.executionId(), export.path("manifestSha256").asText(), export.path("lastTickSha256").asText()); }
+            catch (java.sql.SQLException failure) { throw new IOException("Cannot record verified evaluation", failure); }
         }
         long verification = run.verificationNanos() + System.nanoTime()-verifying;
         Path artifact = directory.resolve("execution.json");

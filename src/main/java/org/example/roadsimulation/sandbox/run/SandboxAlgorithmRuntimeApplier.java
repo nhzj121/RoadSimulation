@@ -25,10 +25,10 @@ public final class SandboxAlgorithmRuntimeApplier {
         if ("ORIGINAL".equals(runtimeContext.dispatch().strategy())) {
             SandboxAlgorithmRuntimeConfiguration.applyOriginal(
                     runtimeContext.algorithmProfile(), originalPolicy);
-        } else if (!"HEURISTIC".equals(runtimeContext.dispatch().strategy())) {
+        } else if (!java.util.Set.of("HEURISTIC", "GLOBAL_OPTIMIZATION").contains(runtimeContext.dispatch().strategy())) {
             throw new SandboxRunException(
                     "UNSUPPORTED_DISPATCH_STRATEGY",
-                    "Sandbox runtime supports only ORIGINAL or HEURISTIC dispatch");
+                    "Unsupported sandbox dispatch strategy");
         }
     }
 }

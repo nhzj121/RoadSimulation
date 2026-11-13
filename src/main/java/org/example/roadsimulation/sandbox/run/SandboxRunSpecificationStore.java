@@ -35,10 +35,12 @@ public final class SandboxRunSpecificationStore {
     public static final String LIFECYCLE_CONTROL_SCHEMA_VERSION = "sandbox-control-schema/v8";
     public static final String START_REQUEST_CONTROL_SCHEMA_VERSION = "sandbox-control-schema/v9";
 
+    public static final String OPTIMIZATION_CONTROL_SCHEMA_VERSION = "sandbox-control-schema/v10";
+
     public static boolean supportsV2ControlSchema(String version) {
         return version != null && java.util.Set.of(V2_CONTROL_SCHEMA_VERSION, EXECUTION_CONTROL_SCHEMA_VERSION,
                 JOURNAL_CONTROL_SCHEMA_VERSION, MANAGEMENT_CONTROL_SCHEMA_VERSION, LIFECYCLE_CONTROL_SCHEMA_VERSION,
-                START_REQUEST_CONTROL_SCHEMA_VERSION).contains(version);
+                START_REQUEST_CONTROL_SCHEMA_VERSION, OPTIMIZATION_CONTROL_SCHEMA_VERSION).contains(version);
     }
 
     private final String jdbcUrl;
@@ -368,7 +370,18 @@ public final class SandboxRunSpecificationStore {
         if(specification==null || specification.scenario()==null)throw new SandboxRunException("MISSING_SCENARIO_REFERENCE","scenario is required");
         var scenarioRevision=scenarioStore.loadRevision(specification.scenario().scenarioKey(),specification.scenario().revision());
         var scenario=scenarioCompiler.compile(baseline,scenarioRevision.definition());
-        return new SandboxRunCompilerV2(objectMapper).compile(specification,scenarioRevision,scenario);
+        var compiled = new SandboxRunCompilerV2(objectMapper).compile(specification,scenarioRevision,scenario);
+        if ("GLOBAL_OPTIMIZATION".equals(compiled.normalizedSpecification().dispatch().strategy())) {
+            try {
+                new org.example.roadsimulation.sandbox.optimization.OptimizationProblemCompiler().compile(
+                        baseline, scenarioRevision, scenario, compiled,
+                        org.example.roadsimulation.sandbox.optimization.SandboxOptimizationProfile.paths(),
+                        org.example.roadsimulation.evaluation.EvaluationMetricCatalog.CONTRACT_VERSION);
+            } catch (IllegalArgumentException invalid) {
+                throw new SandboxRunException("INCOMPATIBLE_GLOBAL_OPTIMIZATION", invalid.getMessage(), invalid);
+            }
+        }
+        return compiled;
     }
 
     public CompiledSandboxRunSpecificationV2 saveDraftV2(Resource baseline,Resource specification) {
@@ -386,6 +399,24 @@ public final class SandboxRunSpecificationStore {
             }
             return compiled;
         } catch(SQLException ex) { throw new SandboxWorkspaceException("RUN_SPEC_DRAFT_SAVE_FAILED","Cannot save v2 draft",ex); }
+    }
+
+    public void saveInternalDraftV2(Resource baseline, Resource specification) {
+        var spec = compileV2(baseline, specification).normalizedSpecification();
+        try (var connection = openConnection()) {
+            configure(connection); safety.requireSafeTarget(jdbcUrl, connection); requireV2ControlSchema(connection);
+            try (var statement = connection.prepareStatement("""
+                    INSERT INTO sandbox_run_spec(run_spec_key,display_name,description,draft_json,draft_updated_at,row_version,archived,internal_input)
+                    VALUES(?,?,?,?,CURRENT_TIMESTAMP(6),0,b'0',TRUE)
+                    """)) {
+                statement.setString(1, spec.runSpecKey()); statement.setString(2, spec.displayName());
+                statement.setString(3, spec.description()); statement.setString(4, json(spec)); statement.executeUpdate();
+            }
+        } catch (java.sql.SQLIntegrityConstraintViolationException conflict) {
+            throw new SandboxWorkspaceException("DRAFT_CONFLICT", "Internal seed draft already exists", conflict);
+        } catch (SQLException failure) {
+            throw new SandboxWorkspaceException("RUN_SPEC_DRAFT_SAVE_FAILED", "Cannot save seed draft", failure);
+        }
     }
 
     public SandboxRunSpecificationRevisionV2 publishV2(Resource baselineResource,String key) {

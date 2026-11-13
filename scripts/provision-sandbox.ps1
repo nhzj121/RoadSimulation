@@ -194,6 +194,8 @@ $lifecycleSchemaPath = Join-Path $PSScriptRoot '..\src\main\resources\sandbox\sc
 $sql += "`n" + (Get-Content -LiteralPath $lifecycleSchemaPath -Raw)
 $startRequestSchemaPath = Join-Path $PSScriptRoot '..\src\main\resources\sandbox\schema\sandbox-control-schema-v9.sql'
 $sql += "`n" + (Get-Content -LiteralPath $startRequestSchemaPath -Raw)
+$optimizationSchemaPath = Join-Path $PSScriptRoot '..\src\main\resources\sandbox\schema\sandbox-control-schema-v10.sql'
+$sql += "`n" + (Get-Content -LiteralPath $optimizationSchemaPath -Raw)
 $sql += "`nSELECT RELEASE_LOCK('roadsimulation:sandbox:prepare');"
 
 $oldAdminPassword = $env:MYSQL_PWD

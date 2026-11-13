@@ -164,7 +164,7 @@
           <el-form-item label="已绑定场景版本"><span>{{ run.scenario.scenarioKey }} / Revision {{ run.scenario.revision }}</span></el-form-item>
           <el-form-item label="顶层种子（整数文本）"><el-input v-model="run.random.rootSeed" placeholder="例如20260927；不要使用浮点数" /></el-form-item>
           <el-form-item label="固定仿真轮次"><el-input-number v-model="run.simulationClock.totalLoops" :min="1" :max="17520" /></el-form-item>
-          <el-form-item label="调度策略"><el-select v-model="run.dispatch.strategy" @change="changeStrategy"><el-option label="原有VRP（ORIGINAL）" value="ORIGINAL" /><el-option label="现有启发式（HEURISTIC）" value="HEURISTIC" /></el-select></el-form-item>
+          <el-form-item label="调度策略"><el-select v-model="run.dispatch.strategy" @change="changeStrategy"><el-option label="原有VRP（ORIGINAL）" value="ORIGINAL" /><el-option label="现有启发式（HEURISTIC）" value="HEURISTIC" /><el-option label="全局多目标优化" value="GLOBAL_OPTIMIZATION" /></el-select></el-form-item>
           <el-form-item label="司机随机行为"><el-switch v-model="run.driverBehavior.enabled" /></el-form-item>
           </div>
           </section>
@@ -424,7 +424,14 @@ async function publishRun() {
   await action(async () => { publishedRun.value = await sandboxApi.publishRun(run.value!.runSpecKey, runVersion.value, runPreview.value!.runSpecificationSha256) }, 'run')
 }
 function restoreRunLocal() { if (runSavedDefinition.value) run.value = cloneDefinition(runSavedDefinition.value) }
-function changeStrategy() { if (run.value) run.value.dispatch.algorithmProfileId = run.value.dispatch.strategy === 'ORIGINAL' ? 'original-vrp/v1' : 'heuristic-multi-order-ga/v1' }
+function changeStrategy() {
+  if (!run.value) return
+  run.value.dispatch.algorithmProfileId = {
+    ORIGINAL: 'original-vrp/v1',
+    HEURISTIC: 'heuristic-multi-order-ga/v1',
+    GLOBAL_OPTIMIZATION: 'global-multi-objective/v1',
+  }[run.value.dispatch.strategy]
+}
 function changeWeather(mode: 'SEEDED_GENERATION' | 'EXPLICIT_TIMELINE') { if (run.value) setWeatherMode(run.value, mode) }
 function eventEnabledChanged() { if (run.value && !run.value.events.enabled) run.value.events.autoEnabled = false }
 function addWeatherSlice() { if (run.value) { const slices = run.value.weather.timeSlices; const start = slices.length ? slices[slices.length - 1].endMinute : 0; slices.push({startMinute: start, endMinute: start + 60, weatherType: 'SUNNY', speedFactor: 1}) } }
