@@ -6,10 +6,11 @@
     <div class="start-actions">
     <el-button v-if="pending" :disabled="busy" @click="resolvePending">核对启动请求</el-button>
     <el-button v-if="pending && confirmedAbsent" :disabled="busy || ordinaryBusy" @click="retrySameRequest">使用同一请求标识重新提交</el-button>
-    <el-button type="primary" :disabled="!enabled || !revision || busy || !!pending || storageBlocked || ordinaryBusy" @click="openConfirmation">准备并运行</el-button>
+    <el-button type="primary" :disabled="!enabled || !revision || pausedDispatch || busy || !!pending || storageBlocked || ordinaryBusy" @click="openConfirmation">准备并运行</el-button>
     <router-link to="/sandbox/tasks">查看沙箱任务与进度</router-link>
     </div>
-    <p v-if="!enabled" class="disabled-hint">有未保存/未发布修改、绑定失效或后台不可用。请完成发布，或明确加载已发布版本后再运行。</p>
+    <p v-if="pausedDispatch" class="disabled-hint" role="status">{{ pausedDispatchMessage }}</p>
+    <p v-else-if="!enabled" class="disabled-hint">有未保存/未发布修改、绑定失效或后台不可用。请完成发布，或明确加载已发布版本后再运行。</p>
     <p v-if="ordinaryBusy" class="disabled-hint" role="status">{{ navigationMessage(navigationState.reason) }}</p>
     <el-dialog v-model="confirmation" title="确认准备并运行" width="650px" class="sandbox-start-dialog">
       <template v-if="confirmedRevision">
@@ -23,7 +24,7 @@
         <details><summary>实际故障策略</summary><pre>{{ confirmedRevision.specification.events.breakdownPolicy }}</pre></details>
         <p class="confirmation-warning">将重建vehicle_scheduler_sandbox业务表。普通仿真数据不变。<template v-if="confirmedRevision.specification.dispatch.strategy === 'GLOBAL_OPTIMIZATION'">准备或搜索时可请求取消。正在执行的仿真会在完整轮次边界停止。</template><template v-else>准备和核验收尾期间不能取消。运行中只能在完整轮次边界安全取消。</template>关闭页面不停止后台任务。</p>
       </template>
-      <template #footer><el-button @click="confirmation = false">返回</el-button><el-button type="primary" :disabled="busy || !enabled || ordinaryBusy" @click="confirmStart">确认准备并运行</el-button></template>
+      <template #footer><el-button @click="confirmation = false">返回</el-button><el-button type="primary" :disabled="busy || !enabled || pausedDispatch || ordinaryBusy" @click="confirmStart">确认准备并运行</el-button></template>
     </el-dialog>
   </section>
 </template>
@@ -33,11 +34,12 @@ import { useRouter } from 'vue-router'
 import type { SandboxRunRevision, SandboxStartRequest } from '../../types/sandbox'
 import { sandboxApi, SandboxApiError } from '../../api/sandbox'
 import { pendingStartKey, parsePendingStart } from '../../sandbox/execution'
-import { dispatchLabel } from '../../sandbox/authoring'
+import { dispatchLabel, isPausedDispatchProfile, pausedDispatchMessage } from '../../sandbox/authoring'
 import { beginNavigationOperation, navigationMessage, navigationState } from '../../navigation/modeNavigation'
 const props = defineProps<{revision: SandboxRunRevision | null; enabled: boolean}>()
 const router = useRouter(), busy = ref(false), error = ref(''), pending = ref<SandboxStartRequest | null>(null)
 const confirmation = ref(false), confirmedRevision = ref<SandboxRunRevision | null>(null), confirmedAbsent = ref(false), storageBlocked = ref(false)
+const pausedDispatch = computed(() => isPausedDispatchProfile(props.revision?.specification.dispatch.algorithmProfileId))
 const ordinaryBusy = computed(() => navigationState.confirmed
   && ['ORDINARY_RUNNING', 'ORDINARY_TRANSITION_BUSY', 'COMPARISON_ACTIVE'].includes(navigationState.reason))
 function failure(value: unknown) { error.value = value instanceof SandboxApiError ? `${value.code}：启动状态未确认。请核对请求或任务，不自动重试。` : (value as Error).message }
@@ -51,11 +53,16 @@ async function submitPending() {
     if (receipt.clientRequestId !== request.clientRequestId || receipt.runSpecKey !== request.runSpecKey || receipt.revision !== request.revision) throw new Error('启动回执与请求不匹配，需人工核对')
     localStorage.removeItem(pendingStartKey); pending.value = null; confirmation.value = false
     await router.push(`/sandbox/jobs/${receipt.jobId}`)
-  } catch (value) { failure(value) } finally { busy.value = false; releaseNavigation() }
+  } catch (value) {
+    if (value instanceof SandboxApiError && value.code === 'OPTIMIZATION_PROFILE_PAUSED') {
+      localStorage.removeItem(pendingStartKey); pending.value = null; confirmation.value = false
+      error.value = pausedDispatchMessage
+    } else failure(value)
+  } finally { busy.value = false; releaseNavigation() }
 }
 async function openConfirmation() {
   const revision = props.revision
-  if (!props.enabled || !revision || pending.value || busy.value || ordinaryBusy.value) return
+  if (!props.enabled || !revision || pausedDispatch.value || pending.value || busy.value || ordinaryBusy.value) return
   busy.value = true; error.value = ''
   try {
     const workspace = await sandboxApi.workspace()
@@ -74,7 +81,8 @@ async function openConfirmation() {
   } catch (value) { failure(value) } finally { busy.value = false }
 }
 async function confirmStart() {
-  if (!props.enabled || !confirmedRevision.value || pending.value || busy.value || ordinaryBusy.value) return
+  if (!props.enabled || !confirmedRevision.value || pausedDispatch.value || pending.value || busy.value || ordinaryBusy.value
+      || isPausedDispatchProfile(confirmedRevision.value.specification.dispatch.algorithmProfileId)) return
   try {
     const request = {clientRequestId: crypto.randomUUID(), runSpecKey: confirmedRevision.value.runSpecKey, revision: confirmedRevision.value.revision}
     // Persist BEFORE the write: reload or response loss must retain the SAME identity.

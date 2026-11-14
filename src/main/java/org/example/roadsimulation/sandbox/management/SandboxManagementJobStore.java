@@ -83,6 +83,8 @@ public final class SandboxManagementJobStore {
                         if (!"sandbox-run-specification-revision/v2".equals(rows.getString(1)))
                             throw new SandboxWorkspaceException("UNSUPPORTED_RUN_SPEC_VERSION", "Management executes v2 revisions only");
                         String profileId = rows.getString(2);
+                        if (SandboxOptimizationProfile.ID.equals(profileId))
+                            throw new SandboxWorkspaceException("OPTIMIZATION_PROFILE_PAUSED", "This optimization profile is paused for new managed jobs");
                         if (SandboxOptimizationProfile.supports(profileId)) {
                             require(upgraded, "OPTIMIZATION_CONTROL_SCHEMA_NOT_READY");
                             var snapshot = org.example.roadsimulation.sandbox.optimization.OptimizationJson.read(

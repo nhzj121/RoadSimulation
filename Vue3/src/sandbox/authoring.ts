@@ -1,14 +1,20 @@
 import type { SandboxRunDefinition, SandboxSelection } from '../types/sandbox'
 
-export const dispatchOptions = [
+const pausedProfileId = 'global-multi-objective/v1'
+
+const dispatchProfiles = [
   { strategy: 'ORIGINAL', profileId: 'original-vrp/v1', label: '原有VRP（ORIGINAL）' },
   { strategy: 'HEURISTIC', profileId: 'heuristic-multi-order-ga/v1', label: '现有启发式（HEURISTIC）' },
-  { strategy: 'GLOBAL_OPTIMIZATION', profileId: 'global-multi-objective/v1', label: '全局多目标优化（当前版）' },
+  { strategy: 'GLOBAL_OPTIMIZATION', profileId: pausedProfileId, label: '全局多目标优化（当前版）' },
   { strategy: 'GLOBAL_OPTIMIZATION', profileId: 'global-multi-objective-cargo-reinsert/v1', label: '全局多目标优化（货物级重插）' },
 ] as const
 
+export const pausedDispatchMessage = '全局多目标优化（当前版）已暂停，请选择其他调度策略并发布新版本。'
+export const isPausedDispatchProfile = (profileId?: string) => profileId === pausedProfileId
+export const dispatchOptions = dispatchProfiles.filter(option => !isPausedDispatchProfile(option.profileId))
+
 export function dispatchLabel(dispatch: SandboxRunDefinition['dispatch']): string {
-  return dispatchOptions.find(option => option.strategy === dispatch.strategy
+  return dispatchProfiles.find(option => option.strategy === dispatch.strategy
     && option.profileId === dispatch.algorithmProfileId)?.label ?? dispatch.strategy
 }
 
