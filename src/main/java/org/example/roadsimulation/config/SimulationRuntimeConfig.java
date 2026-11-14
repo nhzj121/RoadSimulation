@@ -26,6 +26,8 @@ public class SimulationRuntimeConfig {
 
     public void setDispatchStrategy(DispatchStrategy dispatchStrategy) {
         DispatchStrategy normalized = dispatchStrategy == null ? DispatchStrategy.ORIGINAL : dispatchStrategy;
+        if (normalized == DispatchStrategy.GLOBAL_OPTIMIZATION && !sandboxFrozen)
+            throw new IllegalArgumentException("Global optimization requires a published sandbox specification");
         requireMutableOrEqual("dispatch strategy", this.dispatchStrategy, normalized);
         this.dispatchStrategy = normalized;
     }

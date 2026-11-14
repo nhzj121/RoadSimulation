@@ -1,14 +1,21 @@
 package org.example.roadsimulation.sandbox.run;
 
+import org.example.roadsimulation.sandbox.optimization.SandboxOptimizationProfile;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/** Registry of the only algorithm profiles accepted by run-specification v1. */
+/** Algorithm profiles accepted by the sandbox run compilers. */
 public final class SandboxAlgorithmProfiles {
     public static final String ORIGINAL_V1 = "original-vrp/v1";
     public static final String HEURISTIC_V1 = "heuristic-multi-order-ga/v1";
 
     public SandboxAlgorithmProfile resolve(String strategy, String profileId) {
+        if (SandboxOptimizationProfile.STRATEGY.equals(strategy)) {
+            if (profileId == null) return SandboxOptimizationProfile.identity();
+            if (SandboxOptimizationProfile.supports(profileId))
+                return SandboxOptimizationProfile.identity(profileId);
+            throw new SandboxRunException("ALGORITHM_PROFILE_STRATEGY_MISMATCH", "Invalid global optimization profile");
+        }
         SandboxAlgorithmProfile profile = switch (profileId == null ? "" : profileId) {
             case ORIGINAL_V1 -> original();
             case HEURISTIC_V1 -> heuristic();

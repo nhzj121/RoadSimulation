@@ -41,7 +41,13 @@ public final class SandboxBusinessFactCapture {
                 "sandbox_execution", "sandbox_execution_tick"));
         try (var statement = connection.createStatement(); var rows = statement.executeQuery(
                 "SELECT control_schema_version FROM sandbox_workspace_marker WHERE marker_id=1")) {
-            if (rows.next() && java.util.Set.of("sandbox-control-schema/v7", "sandbox-control-schema/v8", "sandbox-control-schema/v9").contains(rows.getString(1))) expectedTables.add("sandbox_management_job");
+            if (rows.next()) {
+                String version = rows.getString(1);
+                if (Set.of("sandbox-control-schema/v7", "sandbox-control-schema/v8", "sandbox-control-schema/v9",
+                        "sandbox-control-schema/v10").contains(version)) expectedTables.add("sandbox_management_job");
+                if ("sandbox-control-schema/v10".equals(version))
+                    expectedTables.addAll(Set.of("sandbox_optimization_job", "sandbox_optimization_attempt"));
+            }
         }
         try (var statement = connection.createStatement(); var rows = statement.executeQuery(
                 "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_TYPE='BASE TABLE'")) {

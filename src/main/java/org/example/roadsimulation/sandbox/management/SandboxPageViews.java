@@ -24,7 +24,9 @@ public final class SandboxPageViews {
     public static JobView job(Map<String, Object> row) {
         String status = text(row, "job_status");
         boolean attention = Boolean.TRUE.equals(row.get("attentionRequired"));
-        boolean cancel = !attention && Set.of("ACCEPTED", "RUNNING").contains(status);
+        boolean optimization = Boolean.TRUE.equals(row.get("optimization"));
+        boolean cancel = !attention && (Set.of("ACCEPTED", "RUNNING").contains(status)
+                || (optimization && "PREPARING".equals(status)));
         String reason = cancel ? null : attention ? "INSPECTION_REQUIRED"
                 : "CANCEL_REQUESTED".equals(status) ? "REQUEST_ALREADY_ACCEPTED"
                 : Set.of("PREPARING", "FINALIZING").contains(status) ? "PHASE_NOT_CANCELLABLE"
@@ -37,7 +39,7 @@ public final class SandboxPageViews {
                     case "INTERRUPTED" -> "ATTENTION_REQUIRED"; default -> "TERMINAL";
                 }, text(row, "execution_id"), text(row, "workerObservation"), attention,
                 row.get("cancel_requested_at") != null,
-                progress(row), new Actions(cancel, reason, false, false),
+                optimization ? new Progress(null, null, null) : progress(row), new Actions(cancel, reason, false, false),
                 text(row, "failure_code"), text(row, "failure_phase"));
     }
 

@@ -3,6 +3,7 @@ package org.example.roadsimulation.sandbox.cli;
 import com.fasterxml.jackson.databind.*;
 import org.example.roadsimulation.sandbox.execution.SandboxExecutionLease;
 import org.example.roadsimulation.sandbox.management.SandboxManagementSettings;
+import org.example.roadsimulation.sandbox.management.SandboxOptimizationJobStore;
 import org.example.roadsimulation.sandbox.optimization.*;
 import org.example.roadsimulation.sandbox.workspace.SandboxWorkspaceException;
 import org.springframework.core.io.FileSystemResource;
@@ -14,7 +15,12 @@ import java.nio.file.*;
 public final class SandboxEvaluationWorker {
     private SandboxEvaluationWorker() {}
 
-    public record Work(PlanExecutionTask task, EvaluationBuildIdentity build, String baselineSourceFingerprint) {}
+    public record Work(PlanExecutionTask task, EvaluationBuildIdentity build, String baselineSourceFingerprint,
+                       SandboxOptimizationJobStore.Child child) {
+        public Work(PlanExecutionTask task, EvaluationBuildIdentity build, String baselineSourceFingerprint) {
+            this(task, build, baselineSourceFingerprint, null);
+        }
+    }
     public record Receipt(String errorCode, long jvmStartupNanos, long preparationNanos, SandboxPlanExecutionCli.Run run) {}
 
     public static void main(String[] args) {
@@ -37,11 +43,11 @@ public final class SandboxEvaluationWorker {
                 long started = System.nanoTime();
                 Receipt receipt;
                 try (var lease = SandboxExecutionLease.prepareAndAcquirePlan(settings.url(), settings.user(),
-                        settings.password(), new FileSystemResource(baseline), work.task(), json)) {
+                        settings.password(), new FileSystemResource(baseline), work.task(), json, work.child())) {
                     long prepared = System.nanoTime() - started;
                     var run = SandboxPlanExecutionCli.run(lease, work.task(), lease.preparedPlanData(work.task()),
                             settings.url(), settings.user(), settings.password(), baseline.toUri().toString(), json,
-                            true, id -> recordExecution(directory, id));
+                            true, work.child() != null, id -> recordExecution(directory, id));
                     receipt = new Receipt(null, jvmStartupNanos, prepared, run);
                 }
                 write(directory.resolve("receipt.json"), receipt);

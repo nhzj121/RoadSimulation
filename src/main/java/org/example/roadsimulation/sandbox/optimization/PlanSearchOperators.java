@@ -13,7 +13,9 @@ final class PlanSearchOperators {
     record Proposal(GlobalPlan plan, List<String> rejections) {
         Proposal { rejections = List.copyOf(rejections); }
     }
-    private record Placement(long vehicle, int index, BigDecimal delta) {}
+    record Placement(long vehicle, int index, BigDecimal delta) {}
+    record MoveOption(String type, Placement position, int loadIndex, int unloadIndex, List<GlobalPlan.TaskKey> tasks,
+                      GlobalPlan.Trip trip) {}
 
     private final CompiledOptimizationProblem problem;
     private final SandboxBaselinePackageV1.Data data;
@@ -193,6 +195,92 @@ final class PlanSearchOperators {
                 .thenComparing(key -> pickupMeters(queues, key), Comparator.reverseOrder())
                 .thenComparing(Comparator.naturalOrder()));
         return keys.isEmpty() ? null : preferred(keys, random);
+    }
+
+    TripKey moveSource(GlobalPlan plan, PlanExecutionSummary summary, SplittableRandom random) {
+        return chooseTrip(queues(plan), summary, key -> vehicles.size() > 1, random);
+    }
+
+    List<MoveOption> wholeMoves(GlobalPlan parent, TripKey source) {
+        var queues = queues(parent);
+        var trip = at(queues, source);
+        var keys = loads(trip).stream().map(GlobalPlan.Node::task).toList();
+        return placements(queues, trip, source.logicalVehicleId()).stream()
+                .map(p -> new MoveOption("WHOLE_TRIP", p, -1, -1, keys, trip)).toList();
+    }
+
+    void advanceMoveRandom(GlobalPlan parent, TripKey source, SplittableRandom random) {
+        var options = wholeMoves(parent, source);
+        if (!options.isEmpty()) preferred(options, random);
+    }
+
+    List<MoveOption> cargoMoves(GlobalPlan parent, TripKey source, GlobalPlan.TaskKey task) {
+        var original = queues(parent);
+        var trip = at(original, source);
+        var cargo = filterTrip(trip, task::equals);
+        removeFromTrip(original, source, List.of(task));
+        var options = new ArrayList<MoveOption>();
+        BigDecimal loadedDistance = distance(poi(firstPoi(cargo)), poi(lastPoi(cargo)));
+        for (var position : placements(original, cargo, -1)) {
+            var withLoadedLeg = new Placement(position.vehicle(), position.index(), position.delta().add(loadedDistance));
+            options.add(new MoveOption("STANDALONE", withLoadedLeg, 0, 1, List.of(task), cargo));
+        }
+        vehicles.forEach((vehicle, specification) -> {
+            var queue = original.getOrDefault(vehicle, List.of());
+            for (int index = 0; index < queue.size(); index++) {
+                var target = queue.get(index);
+                var nodes = target.nodes();
+                var origin = tail(vehicle, queue, index);
+                BigDecimal before = routeDistance(origin, nodes);
+                String next = index + 1 < queue.size() ? poi(firstPoi(queue.get(index + 1))) : null;
+                for (int load = 0; load <= nodes.size(); load++) {
+                    for (int unload = load + 1; unload <= nodes.size() + 1; unload++) {
+                        var merged = new ArrayList<>(nodes);
+                        merged.add(load, cargo.nodes().get(0));
+                        merged.add(unload, cargo.nodes().get(1));
+                        BigDecimal delta = routeDistance(origin, merged).subtract(before);
+                        if (next != null) delta = delta.add(distance(poi(merged.get(merged.size() - 1).poiId()), next))
+                                .subtract(distance(poi(lastPoi(target)), next));
+                        options.add(new MoveOption("INSERT_NODES", new Placement(vehicle, index, delta), load, unload,
+                                List.of(task), new GlobalPlan.Trip(target.notBeforeLoop(), merged)));
+                    }
+                }
+            }
+        });
+        options.sort(Comparator.comparing((MoveOption option) -> option.position().delta())
+                .thenComparingLong(option -> option.position().vehicle())
+                .thenComparingInt(option -> option.position().index())
+                .thenComparing(MoveOption::type)
+                .thenComparingInt(MoveOption::loadIndex).thenComparingInt(MoveOption::unloadIndex));
+        return options;
+    }
+
+    Proposal applyMove(GlobalPlan parent, TripKey source, MoveOption move) {
+        var queues = queues(parent);
+        removeFromTrip(queues, source, move.tasks());
+        if (move.type().equals("INSERT_NODES"))
+            queues.get(move.position().vehicle()).set(move.position().index(), move.trip());
+        else insert(queues, move.position(), move.trip());
+        var rejections = new ArrayList<String>();
+        return new Proposal(checked(parent, queues, parent.deferredTasks(), rejections), rejections);
+    }
+
+    private static void removeFromTrip(TreeMap<Long, List<GlobalPlan.Trip>> queues, TripKey source,
+                                       List<GlobalPlan.TaskKey> tasks) {
+        var queue = queues.get(source.logicalVehicleId());
+        var remaining = filterTrip(queue.get(source.tripIndex()), key -> !tasks.contains(key));
+        if (remaining == null) queue.remove(source.tripIndex());
+        else queue.set(source.tripIndex(), remaining);
+    }
+
+    private BigDecimal routeDistance(String origin, List<GlobalPlan.Node> nodes) {
+        BigDecimal total = BigDecimal.ZERO;
+        for (var node : nodes) {
+            String next = poi(node.poiId());
+            total = total.add(distance(origin, next));
+            origin = next;
+        }
+        return total;
     }
 
     private List<Placement> placements(TreeMap<Long, List<GlobalPlan.Trip>> queues, GlobalPlan.Trip trip, long excluded) {

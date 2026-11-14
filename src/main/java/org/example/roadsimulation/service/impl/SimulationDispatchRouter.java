@@ -30,6 +30,8 @@ public class SimulationDispatchRouter {
     public void dispatch() {
         if (planExecution != null && planExecution.active()) { planExecution.dispatch(); return; }
         DispatchStrategy strategy = runtimeConfig.getDispatchStrategy();
+        if (strategy == DispatchStrategy.GLOBAL_OPTIMIZATION)
+            throw new IllegalStateException("Global optimization requires an installed plan");
         log.info("[Dispatch] Current strategy: {}", strategy);
 
         if (DispatchStrategy.HEURISTIC.equals(strategy)) {

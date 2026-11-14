@@ -31,7 +31,7 @@ public final class SandboxRunCompilerV2 {
         require(source.weather()!=null && source.events()!=null,"MISSING_WEATHER_OR_EVENTS","weather and events are required");
         // This private validation view is never persisted. The environment placeholder is
         // not applied, not hashed, and not an automatic conversion of any published v1 input.
-        var checked=common.compile(commonValidationView(source),revision,scenario);
+        var checked=common.compile(commonValidationView(source),revision,scenario,true);
         var normalizedCommon=checked.normalizedSpecification();
         long seconds;
         try { seconds=Math.multiplyExact(source.simulationClock().tickDurationSeconds(),source.simulationClock().totalLoops()); }

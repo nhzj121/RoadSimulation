@@ -45,7 +45,8 @@ public final class SandboxWorkspacePreparer {
             SandboxWorkspaceSafety.RUN_SPEC_TABLE,
             SandboxWorkspaceSafety.RUN_SPEC_REVISION_TABLE,
             SandboxWorkspaceSafety.RUN_VEHICLE_INITIAL_STATE_TABLE,
-            "sandbox_execution", "sandbox_execution_tick", "sandbox_management_job"
+            "sandbox_execution", "sandbox_execution_tick", "sandbox_management_job",
+            "sandbox_optimization_job", "sandbox_optimization_attempt"
     );
 
     private final String jdbcUrl;

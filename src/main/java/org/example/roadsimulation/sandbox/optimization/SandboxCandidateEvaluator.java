@@ -7,6 +7,7 @@ import org.example.roadsimulation.sandbox.baseline.SandboxBaselinePackageV1;
 import org.example.roadsimulation.sandbox.cli.SandboxEvaluationWorker;
 import org.example.roadsimulation.sandbox.execution.SandboxExecutionStore;
 import org.example.roadsimulation.sandbox.management.*;
+import org.example.roadsimulation.sandbox.run.SandboxAlgorithmProfile;
 import org.example.roadsimulation.sandbox.run.SandboxRunSpecificationRevisionV2;
 import org.example.roadsimulation.sandbox.run.SandboxRunSpecificationStore;
 import org.example.roadsimulation.sandbox.scenario.definition.SandboxScenarioStore;
@@ -86,6 +87,7 @@ public final class SandboxCandidateEvaluator {
     private Attempt baselineAttempt;
     private boolean stopped;
     private int launchedWorkers;
+    private final SandboxOptimizationJobStore job;
 
     public static SandboxCandidateEvaluator open(SandboxManagementSettings settings, String runKey, int revision,
             String baselineResource, Path output, Long timeoutSeconds) throws IOException {
@@ -94,16 +96,23 @@ public final class SandboxCandidateEvaluator {
 
     public static SandboxCandidateEvaluator open(SandboxManagementSettings settings, String runKey, int revision,
             String baselineResource, Path output, Long timeoutSeconds, String version) throws IOException {
-        return new SandboxCandidateEvaluator(settings, runKey, revision, baselineResource, output, timeoutSeconds, version);
+        return new SandboxCandidateEvaluator(settings, runKey, revision, baselineResource, output, timeoutSeconds, version, null);
+    }
+
+    static SandboxCandidateEvaluator openManaged(SandboxManagementSettings settings, String runKey, int revision,
+            String baselineResource, Path output, SandboxOptimizationJobStore job) throws IOException {
+        return new SandboxCandidateEvaluator(settings, runKey, revision, baselineResource, output, null,
+                THROUGHPUT_VERSION, Objects.requireNonNull(job));
     }
 
     private SandboxCandidateEvaluator(SandboxManagementSettings settings, String runKey, int revision,
-            String baselineResource, Path output, Long timeoutSeconds, String version) throws IOException {
+            String baselineResource, Path output, Long timeoutSeconds, String version,
+            SandboxOptimizationJobStore job) throws IOException {
         this.settings = Objects.requireNonNull(settings);
         this.runKey = ContractChecks.text(runKey, "runSpecKey");
         if (revision <= 0) throw new IllegalArgumentException("Invalid run revision");
         this.revision = revision;
-        this.timeoutSeconds = checkTimeout(timeoutSeconds);
+        this.job = job;
         this.registry = objectives(version);
         this.version = version;
         this.output = Files.createDirectory(output.toAbsolutePath().normalize());
@@ -118,6 +127,8 @@ public final class SandboxCandidateEvaluator {
         baselineSourceFingerprint = EvaluationBuildIdentity.fileSha256(baselineFile);
         published = new SandboxRunSpecificationStore(settings.url(), settings.user(), settings.password(), json)
                 .loadRevisionV2(runKey, revision);
+        this.timeoutSeconds = job == null ? checkTimeout(timeoutSeconds)
+                : SandboxOptimizationProfile.workerTimeoutSeconds(published.specification().simulationClock().totalLoops());
         simulationRootSeed = published.specification().random().rootSeed();
         var ref = published.specification().scenario();
         var scene = new SandboxScenarioStore(settings.url(), settings.user(), settings.password(), json)
@@ -128,6 +139,10 @@ public final class SandboxCandidateEvaluator {
         build = EvaluationBuildIdentity.capture(SandboxEvaluationWorker.class);
     }
 
+    Long workerTimeoutSeconds() { return timeoutSeconds; }
+
+    SandboxAlgorithmProfile publishedProfile() { return published.algorithmProfile(); }
+
     public CompiledOptimizationProblem problem() { return frozen.problem(); }
     public GreedyBaseline.Result baseline() { return baseline; }
     SandboxBaselinePackageV1.Data fleetData() { return frozen.data(); }
@@ -135,7 +150,7 @@ public final class SandboxCandidateEvaluator {
     synchronized int launchedWorkers() { return launchedWorkers; }
 
     HeuristicSeedResolver.Acquisition acquireHeuristicSeed(Path cache) throws IOException {
-        return new HeuristicSeedResolver(settings, json, published, frozen)
+        return new HeuristicSeedResolver(settings, json, published, frozen, job)
                 .acquire(cache, baselineFile, output, timeoutSeconds == null ? 300 : timeoutSeconds);
     }
 
@@ -154,23 +169,27 @@ public final class SandboxCandidateEvaluator {
     synchronized Attempt replayPlan(GlobalPlan plan) throws IOException {
         if (launchedWorkers != 0 || baselineAttempt != null || !candidates.isEmpty())
             throw new IllegalStateException("Replay requires a fresh evaluation session");
-        return evaluate(0, plan, CacheMode.BYPASS);
+        return evaluate(0, plan, CacheMode.BYPASS, "BASELINE");
     }
 
     public synchronized Attempt evaluateBaseline(CacheMode mode) throws IOException {
         Objects.requireNonNull(mode);
-        if (baselineAttempt == null) baselineAttempt = evaluate(0, baseline.plan(), mode);
+        if (baselineAttempt == null) baselineAttempt = evaluate(0, baseline.plan(), mode, "BASELINE");
         return baselineAttempt;
     }
 
     public synchronized Attempt evaluateCandidate(GlobalPlan plan, CacheMode mode) throws IOException {
+        return evaluateCandidate(plan, mode, "CANDIDATE");
+    }
+
+    synchronized Attempt evaluateCandidate(GlobalPlan plan, CacheMode mode, String kind) throws IOException {
         Objects.requireNonNull(plan);
         Objects.requireNonNull(mode);
         if (baselineAttempt == null) throw new IllegalStateException("Evaluate the baseline first");
         int index = candidates.size() + 1;
         var result = stopped || baselineAttempt.status != Status.SCORED_INPUT
                 ? failure(index, plan.fingerprint(), null, Status.SKIPPED, null, "COMPARISON_NOT_AVAILABLE", 0)
-                : evaluate(index, plan, mode);
+                : evaluate(index, plan, mode, kind);
         candidates.add(result);
         return result;
     }
@@ -222,7 +241,7 @@ public final class SandboxCandidateEvaluator {
         return scores;
     }
 
-    private Attempt evaluate(int index, GlobalPlan plan, CacheMode mode) throws IOException {
+    private Attempt evaluate(int index, GlobalPlan plan, CacheMode mode, String kind) throws IOException {
         long started = System.nanoTime();
         String fingerprint = plan.fingerprint();
         PlanExecutionTask task;
@@ -240,8 +259,9 @@ public final class SandboxCandidateEvaluator {
                     cached.evidence, emptyTiming(System.nanoTime()-started), List.of());
         }
         Path directory = Files.createDirectory(output.resolve("attempt-" + index));
-        write(directory.resolve("work.json"), new SandboxEvaluationWorker.Work(task, build, baselineSourceFingerprint));
-        Attempt result = execute(index, task, key, directory, started);
+        write(directory.resolve("work.json"), new SandboxEvaluationWorker.Work(task, build, baselineSourceFingerprint,
+                job == null ? null : new SandboxOptimizationJobStore.Child(job.jobId(), kind)));
+        Attempt result = execute(index, task, key, directory, started, kind);
         if (result.status == Status.SCORED_INPUT && cached != null
                 && !cached.evidence.assessment.equals(result.evidence.assessment)) {
             stopped = true;
@@ -259,7 +279,7 @@ public final class SandboxCandidateEvaluator {
         return result;
     }
 
-    private Attempt execute(int index, PlanExecutionTask task, String key, Path directory, long started) throws IOException {
+    private Attempt execute(int index, PlanExecutionTask task, String key, Path directory, long started, String kind) throws IOException {
         String fingerprint = task.plan().fingerprint();
         var main = SandboxEvaluationWorker.class;
         var command = new ArrayList<>(SandboxWorkerLauncher.javaCommand(Path.of(System.getProperty("java.home")),
@@ -298,6 +318,11 @@ public final class SandboxCandidateEvaluator {
         } catch (IOException | IllegalArgumentException failure) {
             return stop(index, fingerprint, key, directory, Status.WORKER_FAILED, "MISSING_OR_INVALID_WORKER_RECEIPT", started);
         }
+        if (job != null) {
+            try {
+                if (job.cancelled()) return stop(index, fingerprint, key, directory, Status.INTERRUPTED, "USER_CANCELLED", started);
+            } catch (java.sql.SQLException failure) { throw new IOException("Cannot check cancellation", failure); }
+        }
         if (child.exitValue() != 0 || receipt.run() == null || receipt.errorCode() != null) {
             String code = Objects.toString(receipt.errorCode(), "WORKER_NONZERO_EXIT");
             Status status = switch (code) {
@@ -310,62 +335,94 @@ public final class SandboxCandidateEvaluator {
         var run = receipt.run();
         long verifying = System.nanoTime();
         Evidence evidence;
-        JsonNode export;
+        JsonNode export = null;
+        JsonNode metadata;
+        JsonNode finalFacts;
         try {
             String executionId = readExecutionId(directory);
             if (executionId == null) throw new IllegalArgumentException("Missing execution ID");
-            export = new SandboxExecutionStore(settings.url(), settings.user(), settings.password(), json).export(executionId);
-            evidence = evidence(task, export, run.summary(), run.mapRequests(), json);
+            var store = new SandboxExecutionStore(settings.url(), settings.user(), settings.password(), json);
+            if (job != null) {
+                var journal = store.verifyJournal(executionId);
+                evidence = evidenceFromVerifiedJournal(task, journal, run.summary(), run.mapRequests(), json);
+                metadata = journal.metadata();
+                finalFacts = journal.lastTick().facts();
+            } else {
+                export = store.export(executionId);
+                evidence = evidence(task, export, run.summary(), run.mapRequests(), json);
+                metadata = export;
+                finalFacts = export.path("ticks").get(task.plan().problem().totalLoops() - 1).path("facts");
+            }
         } catch (SandboxWorkspaceException | IllegalArgumentException failure) {
             return stop(index, fingerprint, key, directory, Status.INVALID_LEDGER, "EXECUTION_EVIDENCE_INVALID", started);
         }
-        long verification = run.verificationNanos() + System.nanoTime()-verifying;
-        Path artifact = directory.resolve("execution.json");
-        write(artifact, export);
+        FulfillmentComparison.Facts delivery = null;
         if (THROUGHPUT_VERSION.equals(version)) {
             try {
-                fulfillment.put(evidence.executionId(), FulfillmentComparison.facts(task, export, evidence.assessment(), json));
+                delivery = FulfillmentComparison.factsFromFinalTick(task, evidence.executionId(), metadata.path("manifest"),
+                        finalFacts, evidence.assessment(), json);
             } catch (IllegalArgumentException failure) {
                 return stop(index, fingerprint, key, directory, Status.INVALID_LEDGER, "FULFILLMENT_EVIDENCE_INVALID", started);
             }
         }
+        if (job != null) {
+            try { job.verified(evidence.executionId(), evidence.manifestSha256(), evidence.lastTickSha256()); }
+            catch (java.sql.SQLException failure) { throw new IOException("Cannot record verified evaluation", failure); }
+        }
+        long verification = run.verificationNanos() + System.nanoTime()-verifying;
+        long artifactBytes = 0;
+        if (export != null) {
+            Path artifact = directory.resolve("execution.json");
+            try (var output = Files.newOutputStream(artifact, StandardOpenOption.CREATE_NEW)) {
+                OptimizationJson.write(output, export);
+            }
+            artifactBytes = Files.size(artifact);
+        }
+        if (delivery != null) fulfillment.put(evidence.executionId(), delivery);
         var issues = new PreferenceScorer().eligibilityIssues(problem().problem(), registry, evidence.assessment);
         var status = issues.isEmpty() ? Status.SCORED_INPUT : Status.OBJECTIVES_UNAVAILABLE;
         if (index == 0 && confirmedNoDemand(evidence.assessment)) status = Status.NO_DEMAND;
         var timing = new Timing(receipt.preparationNanos(), receipt.jvmStartupNanos(), run.startupNanos(), run.tickNanos(), run.ledgerWriteNanos(),
-                verification, System.nanoTime()-started, Files.size(artifact));
+                verification, System.nanoTime()-started, artifactBytes);
         return new Attempt(index, fingerprint, key, status, false, evidence.executionId, evidence, timing, issues);
     }
 
     /** Called only with the output of the authenticated, snapshot-consistent ledger export. */
     static Evidence evidence(PlanExecutionTask task, JsonNode export, PlanExecutionSummary summary,
                              int mapRequests, ObjectMapper json) {
-        var problem = task.plan().problem();
-        String id = export.path("executionId").asText();
         var ticks = export.path("ticks");
         var assessment = assessmentFromVerifiedExport(task, export, json);
+        return evidence(task, export, ticks.get(ticks.size() - 1).path("facts"), assessment, summary, mapRequests, json);
+    }
+
+    static Evidence evidenceFromVerifiedJournal(PlanExecutionTask task, SandboxExecutionStore.VerifiedJournal journal,
+                                                PlanExecutionSummary summary, int mapRequests, ObjectMapper json) {
+        var last = journal.lastTick();
+        if (last == null) throw new IllegalArgumentException("Missing completed evaluation");
+        var assessment = assessment(task, journal.metadata(), journal.recordedLoops(),
+                journal.failedAssignments(), last.evaluation(), json);
+        return evidence(task, journal.metadata(), last.facts(), assessment, summary, mapRequests, json);
+    }
+
+    private static Evidence evidence(PlanExecutionTask task, JsonNode metadata, JsonNode lastFacts,
+                                     CandidateAssessment assessment, PlanExecutionSummary summary,
+                                     int mapRequests, ObjectMapper json) {
+        var problem = task.plan().problem();
+        String id = metadata.path("executionId").asText();
         if (!summary.executionId().equals(id) || !summary.state().taskFingerprint().equals(task.fingerprint())
                 || summary.requestedLoops() != problem.totalLoops() || summary.completedLoops() != problem.totalLoops()
                 || mapRequests != 0)
             throw new IllegalArgumentException("Execution identity or horizon mismatch");
-        var last = ticks.get(ticks.size() - 1);
-        var ledgerState = json.convertValue(last.path("facts").path("runtime").path("planExecution").path("state"),
+        var ledgerState = json.convertValue(lastFacts.path("runtime").path("planExecution").path("state"),
                 PlanExecutionState.Snapshot.class);
         if (!summary.state().equals(ledgerState)) throw new IllegalArgumentException("Summary state differs from ledger");
-        return new Evidence(id, ContractChecks.hash(export.path("manifestSha256").asText(), "manifest hash"),
-                ContractChecks.hash(export.path("lastTickSha256").asText(), "last tick hash"), assessment, summary, mapRequests);
+        return new Evidence(id, ContractChecks.hash(metadata.path("manifestSha256").asText(), "manifest hash"),
+                ContractChecks.hash(metadata.path("lastTickSha256").asText(), "last tick hash"), assessment, summary, mapRequests);
     }
 
     static CandidateAssessment assessmentFromVerifiedExport(PlanExecutionTask task, JsonNode export, ObjectMapper json) {
-        var problem = task.plan().problem();
-        var manifest = export.path("manifest");
         var ticks = export.path("ticks");
-        if (!"VERIFIED".equals(export.path("integrity").asText()) || !"COMPLETED".equals(export.path("status").asText())
-                || !"GLOBAL_PLAN".equals(manifest.path("executionMode").asText())
-                || !task.fingerprint().equals(manifest.path("planExecutionTaskSha256").asText())
-                || export.path("requestedLoops").asInt() != problem.totalLoops()
-                || export.path("completedLoops").asInt() != problem.totalLoops()
-                || !ticks.isArray() || ticks.size() != problem.totalLoops())
+        if (!ticks.isArray() || ticks.isEmpty())
             throw new IllegalArgumentException("Execution identity or horizon mismatch");
         int failures = 0;
         for (var tick : ticks) {
@@ -374,9 +431,23 @@ public final class SandboxCandidateEvaluator {
                 throw new IllegalArgumentException("Missing or invalid transport failure count");
             failures = Math.addExact(failures, count.intValue());
         }
-        var snapshot = json.convertValue(ticks.get(ticks.size() - 1).path("evaluation"), EvaluationSnapshot.class);
+        return assessment(task, export, ticks.size(), failures, ticks.get(ticks.size() - 1).path("evaluation"), json);
+    }
+
+    private static CandidateAssessment assessment(PlanExecutionTask task, JsonNode metadata, int recorded,
+                                                  int failures, JsonNode evaluation, ObjectMapper json) {
+        var problem = task.plan().problem();
+        var manifest = metadata.path("manifest");
+        if (!"VERIFIED".equals(metadata.path("integrity").asText()) || !"COMPLETED".equals(metadata.path("status").asText())
+                || !"GLOBAL_PLAN".equals(manifest.path("executionMode").asText())
+                || !task.fingerprint().equals(manifest.path("planExecutionTaskSha256").asText())
+                || metadata.path("requestedLoops").asInt() != problem.totalLoops()
+                || metadata.path("completedLoops").asInt() != problem.totalLoops()
+                || recorded != problem.totalLoops())
+            throw new IllegalArgumentException("Execution identity or horizon mismatch");
+        var snapshot = json.convertValue(evaluation, EvaluationSnapshot.class);
         var assessment = EvaluationMetricAdapter.fromSnapshot(problem, task.plan().fingerprint(), true,
-                CandidateAssessment.ExecutionStatus.COMPLETED, ticks.size(), failures, snapshot);
+                CandidateAssessment.ExecutionStatus.COMPLETED, recorded, failures, snapshot);
         var audit = new TreeMap<>(assessment.auditData());
         audit.put("catalogTaskCount", BigDecimal.valueOf(task.compiledProblem().catalog().tasks().size()));
         assessment = new CandidateAssessment(assessment.problem(), assessment.planFingerprint(), true, assessment.completion(),

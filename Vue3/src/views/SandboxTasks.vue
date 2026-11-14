@@ -14,13 +14,16 @@
         <el-progress :percentage="Math.round(Math.min(100, view.progress.percent || 0) * 100) / 100" />
         <p>已完整记录 {{ view.progress.recordedLoops }} / {{ view.progress.requestedLoops }} 轮。达到100%不等于核验收尾完成。</p>
       </template>
-      <p v-else>准备阶段暂无已落库轮次进度；不估算准备百分比。</p>
+      <p v-else>当前暂无任务轮次进度。</p>
       <el-alert v-if="view.attentionRequired || view.status === 'INTERRUPTED'" :title="`需要人工检查：${view.failureCode || view.workerObservation}。任务编号：${view.jobId}。请使用内部inspect-job/close-abnormal-job流程；页面不提供强制解锁。`" type="warning" :closable="false" />
-      <p v-if="view.failureCode">原因：{{ view.failureCode }}；阶段：{{ view.failurePhase || view.phase }}</p>
+      <p v-if="view.failureCode === 'TIMEOUT'" role="status">
+        单次执行超时。{{ view.executionId ? '可查看超时前已验账的最佳方案。' : '暂无可用优化结果。' }}
+      </p>
+      <p v-else-if="view.failureCode">原因：{{ view.failureCode }}；阶段：{{ view.failurePhase || view.phase }}</p>
       <el-button type="warning" :disabled="!canCancel || cancelling" @click="requestCancel">请求安全取消</el-button>
       <p v-if="view.cancellationRequested && !terminalStatuses.has(view.status)">取消请求已记录。等待完整轮次边界及核验；业务或收尾失败仍可能得到FAILED，不保证最终CANCELLED。</p>
-      <p v-if="view.status === 'CANCELLED'">取消已完成；保留完整轮次前缀，没有强制终止正在执行的业务。</p>
-      <p v-if="view.status === 'SUCCEEDED'">全部轮次正常收尾；结果及逐轮地图按执行编号独立保存。</p>
+      <p v-if="view.status === 'CANCELLED'">取消已完成，已提交的仿真记录保留。</p>
+      <p v-if="view.status === 'SUCCEEDED'">任务已完成。结果及逐轮地图按执行编号独立保存。</p>
       <router-link v-if="view.executionId && !view.attentionRequired && view.status !== 'INTERRUPTED'" :to="`/sandbox/executions/${view.executionId}/results`">查看结果</router-link>
     </section>
     <h2>任务列表</h2><p v-if="activeId">工作库当前占位：<router-link :to="`/sandbox/jobs/${activeId}`">{{ activeId }}</router-link></p>
@@ -66,7 +69,7 @@ async function refresh() {
 async function requestCancel() {
   if (!canCancel.value || !view.value || cancelling.value) return
   const id = view.value.jobId
-  try { await ElMessageBox.confirm('仅请求在完整轮次边界停止；当前算法或高德请求不会被强制打断。准备/收尾期间不能取消。确认？', '安全取消', {type: 'warning'}) } catch { return }
+  try { await ElMessageBox.confirm('请求取消任务。正在执行的仿真会在完整轮次边界停止。', '安全取消', {type: 'warning', confirmButtonText: '确认取消'}) } catch { return }
   if (id !== jobId.value || !canCancel.value) return
   cancelling.value = true
   try { const result = await sandboxApi.cancelJob(id); operationNotice.value = `${taskLabel(result.status)}。以后台后续状态为准。` }

@@ -304,7 +304,7 @@ public final class SandboxScenarioStore {
                 SELECT control_schema_version FROM sandbox_workspace_marker
                 WHERE marker_id=1 AND workspace_kind='ROAD_SIMULATION_SANDBOX'
                 """)) {
-            if (!rows.next() || !Set.of(CONTROL_SCHEMA_VERSION, RUN_CONTROL_SCHEMA_VERSION, "sandbox-control-schema/v4", "sandbox-control-schema/v5", "sandbox-control-schema/v6", "sandbox-control-schema/v7", "sandbox-control-schema/v8", "sandbox-control-schema/v9")
+            if (!rows.next() || !Set.of(CONTROL_SCHEMA_VERSION, RUN_CONTROL_SCHEMA_VERSION, "sandbox-control-schema/v4", "sandbox-control-schema/v5", "sandbox-control-schema/v6", "sandbox-control-schema/v7", "sandbox-control-schema/v8", "sandbox-control-schema/v9", "sandbox-control-schema/v10")
                     .contains(rows.getString(1))) {
                 throw new SandboxWorkspaceException(
                         "CONTROL_SCHEMA_NOT_READY", "Run the phase-two sandbox provisioning upgrade first");

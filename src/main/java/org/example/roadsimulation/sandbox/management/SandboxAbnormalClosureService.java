@@ -46,9 +46,11 @@ public final class SandboxAbnormalClosureService {
                     require(confirmedFingerprint.equals(report.get("inspectionSha256")), "STALE_INSPECTION");
                     require(Boolean.TRUE.equals(report.get("eligibleForClosure")), "ABNORMAL_CLOSURE_NOT_SAFE");
                     @SuppressWarnings("unchecked") var job = (Map<String, Object>) report.get("job");
-                    String executionId = (String) job.get("execution_id");
+                    boolean optimization = Boolean.TRUE.equals(report.get("optimization"));
+                    String executionId = optimization ? (String) report.get("activeChildExecutionId")
+                            : (String) job.get("execution_id");
                     String terminal = "ABORTED";
-                    String code = "INSPECTED_WORKER_EXIT";
+                    String code = "TIMEOUT".equals(job.get("failure_code")) ? "TIMEOUT" : "INSPECTED_WORKER_EXIT";
                     String workspace = "FAILED";
                     String failurePhase = "INTERRUPTION";
                     if (executionId != null) {
@@ -72,6 +74,17 @@ public final class SandboxAbnormalClosureService {
                         update.setString(1, terminal); update.setString(2, code);
                         update.setString(3, json.writeValueAsString(report)); update.setString(4, id); update.executeUpdate();
                     }
+                    if (optimization) {
+                        SandboxOptimizationJobStore.update(connection,
+                                "UPDATE sandbox_optimization_job SET stop_reason=? WHERE job_id=?", code, id);
+                        SandboxOptimizationJobStore.update(connection, """
+                                UPDATE sandbox_management_job SET execution_id=
+                                  (SELECT best_execution_id FROM sandbox_optimization_job WHERE job_id=?)
+                                WHERE job_id=?
+                                """, id, id);
+                        if (executionId != null) SandboxOptimizationJobStore.recordChildEnd(connection,
+                                new SandboxOptimizationJobStore.Child(id, "CANDIDATE"), executionId);
+                    }
                     try (var update = connection.prepareStatement("UPDATE sandbox_workspace_marker SET workspace_state=?,active_job_id=NULL,failure_code=?,failure_message=NULL,failure_phase=? WHERE marker_id=1 AND active_job_id=?")) {
                         update.setString(1, workspace); update.setString(2, code);
                         update.setString(3, failurePhase); update.setString(4, id);
@@ -93,7 +106,7 @@ public final class SandboxAbnormalClosureService {
     private Map<String, Object> inspect(Connection connection, String id) {
         try {
             safety.requirePreparationLockHeld(connection);
-            var job = one(connection, "SELECT job_id,run_spec_key,run_spec_revision,job_status,execution_id,worker_pid,worker_started_at,updated_at FROM sandbox_management_job WHERE job_id=? FOR UPDATE", id);
+            var job = one(connection, "SELECT job_id,run_spec_key,run_spec_revision,job_status,execution_id,worker_pid,worker_started_at,updated_at,failure_code FROM sandbox_management_job WHERE job_id=? FOR UPDATE", id);
             var marker = one(connection, "SELECT workspace_state,baseline_id,run_spec_key,run_spec_revision,active_job_id,active_execution_id,prepared_run_facts_sha256 FROM sandbox_workspace_marker WHERE marker_id=1 FOR UPDATE");
             List<String> blockers = new ArrayList<>();
             if (!id.equals(marker.get("active_job_id"))) blockers.add("NOT_RESERVATION_OWNER");
@@ -103,12 +116,18 @@ public final class SandboxAbnormalClosureService {
             Map<String, Object> report = new LinkedHashMap<>();
             report.put("artifactVersion", "sandbox-abnormal-inspection/v1"); report.put("job", job);
             report.put("workspace", marker); report.put("workerObservation", observation);
-            String executionId = (String) job.get("execution_id");
+            boolean optimization = SandboxOptimizationJobStore.isOptimization(connection, id);
+            String executionId = optimization ? SandboxOptimizationJobStore.unfinishedChild(connection, id)
+                    : (String) job.get("execution_id");
+            if (optimization) {
+                report.put("optimization", true);
+                report.put("activeChildExecutionId", executionId);
+            }
             if (executionId != null) {
                 var execution = one(connection, "SELECT execution_id,run_spec_key,run_spec_revision,baseline_id,prepared_run_facts_sha256,execution_status,completed_loops,failure_code,failure_phase FROM sandbox_execution WHERE execution_id=? FOR UPDATE", executionId);
                 report.put("execution", execution);
-                if (!Objects.equals(job.get("run_spec_key"), execution.get("run_spec_key"))
-                        || !Objects.equals(job.get("run_spec_revision"), execution.get("run_spec_revision"))
+                if ((!optimization && (!Objects.equals(job.get("run_spec_key"), execution.get("run_spec_key"))
+                        || !Objects.equals(job.get("run_spec_revision"), execution.get("run_spec_revision"))))
                         || !Objects.equals(marker.get("run_spec_key"), execution.get("run_spec_key"))
                         || !Objects.equals(marker.get("run_spec_revision"), execution.get("run_spec_revision"))
                         || !Objects.equals(marker.get("baseline_id"), execution.get("baseline_id"))

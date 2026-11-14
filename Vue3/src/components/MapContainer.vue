@@ -95,7 +95,13 @@
                 <ElButton type="primary" :disabled="simulationControlBusy || resetInProgress || isExperimentRunActive" @click="pauseSimulation">⏸ 暂停</ElButton>
                 <ElButton :loading="resetInProgress" :disabled="sandboxRunBusy || simulationControlBusy || resetInProgress || isExperimentRunActive" @click="resetSimulation">↻ 重置</ElButton>
               </div>
-              <p v-if="sandboxRunBusy" role="status">数据沙箱正在准备、运行或收尾。</p>
+              <p v-if="sandboxRunBusy" role="status">
+                <template v-if="navigationState.sandboxInspectionRequired">
+                  上一次沙箱任务已中断，待检查收尾。
+                  <router-link :to="navigationState.sandboxInspectionJobId ? `/sandbox/jobs/${navigationState.sandboxInspectionJobId}` : '/sandbox/tasks'">查看沙箱任务</router-link>
+                </template>
+                <template v-else>数据沙箱正在准备、运行或收尾。</template>
+              </p>
               <div v-if="hasPreparedExperimentScenario" class="experiment-start-lock">
                 已准备实验场景，请清除实验标记后再启动普通仿真。
               </div>
@@ -3470,7 +3476,7 @@ watch(resetInProgress, resetting => {
   if (resetting) simulationSessionRecords.value = createSessionRecords(simulationSessionRecords.value.epoch + 1);
 }, { flush: 'sync' });
 const simulationControlBusy = ref(false);
-const sandboxRunBusy = computed(() => navigationState.confirmed && navigationState.reason === 'SANDBOX_BUSY');
+const sandboxRunBusy = computed(() => navigationState.confirmed && navigationState.sandboxBusy);
 watch(() => [isSimulationRunning.value, isExperimentRunActive.value, resetInProgress.value,
   simulationControlBusy.value, experimentRun.loading, experimentPrep.loading], () => {
   setLocalOrdinaryNavigation({ running: isSimulationRunning.value, comparison: isExperimentRunActive.value,

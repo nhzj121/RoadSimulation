@@ -12,6 +12,7 @@ import org.example.roadsimulation.sandbox.workspace.*;
 import org.springframework.core.io.Resource;
 
 import java.sql.*;
+import org.example.roadsimulation.sandbox.management.SandboxOptimizationJobStore;
 import java.util.Map;
 import java.util.UUID;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -28,6 +29,7 @@ public final class SandboxExecutionLease implements AutoCloseable {
     private final SandboxRunSpecificationRevisionV2 revision;
     private final JsonNode baselinePackage;
     private final String jobId;
+    private final SandboxOptimizationJobStore.Child optimizationChild;
     private final SandboxBaselinePackageV1.Data preparedPlanData;
     private final String preparedPlanFingerprint;
     private final SphericalComparisonRun comparison;
@@ -42,13 +44,14 @@ public final class SandboxExecutionLease implements AutoCloseable {
                                   SandboxRunPreparationReport preparation,
                                   SandboxRunSpecificationRevisionV2 revision, JsonNode baselinePackage, String jobId,
                                   SandboxBaselinePackageV1.Data preparedPlanData, String preparedPlanFingerprint,
-                                  SphericalComparisonRun comparison) {
+                                  SphericalComparisonRun comparison, SandboxOptimizationJobStore.Child optimizationChild) {
         this.connection = connection;
         this.safety = safety;
         this.preparation = preparation;
         this.revision = revision;
         this.baselinePackage = baselinePackage.deepCopy();
         this.jobId = jobId;
+        this.optimizationChild = optimizationChild;
         this.preparedPlanData = preparedPlanData;
         this.preparedPlanFingerprint = preparedPlanFingerprint;
         this.comparison = comparison;
@@ -56,31 +59,43 @@ public final class SandboxExecutionLease implements AutoCloseable {
 
     public static SandboxExecutionLease acquire(String url, String user, String password,
             Resource baseline, String key, int revisionNumber, ObjectMapper json) {
-        return acquire(url, user, password, baseline, key, revisionNumber, json, null, null, null);
+        return acquire(url, user, password, baseline, key, revisionNumber, json, null, null, null, null);
     }
 
     /** A management worker prepares and executes under one lock/connection, without a handoff gap. */
     public static SandboxExecutionLease prepareAndAcquire(String url, String user, String password,
             Resource baseline, String key, int revisionNumber, ObjectMapper json, String jobId) {
         if (jobId == null) throw new SandboxWorkspaceException("MISSING_JOB", "Worker requires a reserved job");
-        return acquire(url, user, password, baseline, key, revisionNumber, json, jobId, null, null);
+        return acquire(url, user, password, baseline, key, revisionNumber, json, jobId, null, null, null);
     }
 
     /** Plan worker authenticates the plan before changing the workspace and keeps the preparation lock. */
     public static SandboxExecutionLease prepareAndAcquirePlan(String url, String user, String password,
             Resource baseline, PlanExecutionTask task, ObjectMapper json) {
-        return acquire(url, user, password, baseline, task.runSpecKey(), task.runSpecRevision(), json, null, task, null);
+        return prepareAndAcquirePlan(url, user, password, baseline, task, json, null);
+    }
+
+    public static SandboxExecutionLease prepareAndAcquirePlan(String url, String user, String password,
+            Resource baseline, PlanExecutionTask task, ObjectMapper json, SandboxOptimizationJobStore.Child child) {
+        return acquire(url, user, password, baseline, task.runSpecKey(), task.runSpecRevision(), json,
+                child == null ? null : child.jobId(), task, null, child);
     }
 
     public static SandboxExecutionLease prepareAndAcquireComparison(String url, String user, String password,
             Resource baseline, String key, int revisionNumber, SphericalComparisonRun comparison, ObjectMapper json) {
-        return acquire(url, user, password, baseline, key, revisionNumber, json, null, null,
-                java.util.Objects.requireNonNull(comparison));
+        return prepareAndAcquireComparison(url, user, password, baseline, key, revisionNumber, comparison, json, null);
+    }
+
+    public static SandboxExecutionLease prepareAndAcquireComparison(String url, String user, String password,
+            Resource baseline, String key, int revisionNumber, SphericalComparisonRun comparison, ObjectMapper json,
+            SandboxOptimizationJobStore.Child child) {
+        return acquire(url, user, password, baseline, key, revisionNumber, json, child == null ? null : child.jobId(),
+                null, java.util.Objects.requireNonNull(comparison), child);
     }
 
     private static SandboxExecutionLease acquire(String url, String user, String password,
             Resource baseline, String key, int revisionNumber, ObjectMapper json, String jobId, PlanExecutionTask task,
-            SphericalComparisonRun comparison) {
+            SphericalComparisonRun comparison, SandboxOptimizationJobStore.Child optimizationChild) {
         Connection connection = null;
         var safety = new SandboxWorkspaceSafety();
         boolean locked = false;
@@ -93,12 +108,14 @@ public final class SandboxExecutionLease implements AutoCloseable {
             safety.acquirePreparationLock(connection);
             locked = true;
             safety.requireManagementJobOwner(connection, jobId);
+            if (optimizationChild != null) SandboxOptimizationJobStore.requireChildStart(connection, optimizationChild, key, revisionNumber);
             try (var statement = connection.createStatement(); var rows = statement.executeQuery(
                     "SELECT control_schema_version FROM sandbox_workspace_marker WHERE marker_id=1")) {
                 if (!rows.next() || !java.util.Set.of(SandboxRunSpecificationStore.JOURNAL_CONTROL_SCHEMA_VERSION,
                         SandboxRunSpecificationStore.MANAGEMENT_CONTROL_SCHEMA_VERSION,
                         SandboxRunSpecificationStore.LIFECYCLE_CONTROL_SCHEMA_VERSION,
-                        SandboxRunSpecificationStore.START_REQUEST_CONTROL_SCHEMA_VERSION).contains(rows.getString(1))) {
+                        SandboxRunSpecificationStore.START_REQUEST_CONTROL_SCHEMA_VERSION,
+                        SandboxRunSpecificationStore.OPTIMIZATION_CONTROL_SCHEMA_VERSION).contains(rows.getString(1))) {
                     throw new SandboxWorkspaceException("EXECUTION_CONTROL_SCHEMA_NOT_READY",
                             "Provision the additive sandbox-control-schema/v6 upgrade before execution");
                 }
@@ -117,11 +134,13 @@ public final class SandboxExecutionLease implements AutoCloseable {
                 var scene = new SandboxScenarioStore(url, user, password, json).loadRevision(ref.scenarioKey(), ref.revision());
                 if (task != null) authenticated = PlanExecutionAuthentication.verify(task, baseline, scene, published);
                 else comparison.verify(baseline, scene, published, json);
-                prepared = preparer.prepareWithHeldLock(connection, baseline, key, revisionNumber, null);
+                prepared = preparer.prepareWithHeldLock(connection, baseline, key, revisionNumber, jobId);
             } else {
+                published = runStore.loadRevisionV2(key, revisionNumber);
+                if ("GLOBAL_OPTIMIZATION".equals(published.specification().dispatch().strategy()))
+                    throw new SandboxWorkspaceException("GLOBAL_PLAN_REQUIRED", "Use a managed optimization or plan execution");
                 if (jobId != null) preparer.prepareWithHeldLock(connection, baseline, key, revisionNumber, jobId);
                 prepared = preparer.verify(baseline);
-                published = runStore.loadRevisionV2(key, revisionNumber);
             }
             if (!key.equals(prepared.runSpecKey()) || revisionNumber != prepared.runSpecRevision()
                     || !"sandbox-run-specification/v2".equals(prepared.artifactVersion())) {
@@ -130,7 +149,7 @@ public final class SandboxExecutionLease implements AutoCloseable {
             }
             try (var input = baseline.getInputStream()) {
                 return new SandboxExecutionLease(connection, safety, prepared, published, json.readTree(input), jobId,
-                        authenticated, task == null ? null : task.fingerprint(), comparison);
+                        authenticated, task == null ? null : task.fingerprint(), comparison, optimizationChild);
             }
         } catch (Exception failure) {
             if (connection != null) {
@@ -265,7 +284,9 @@ public final class SandboxExecutionLease implements AutoCloseable {
                     insert.setString(9, canonical.hash(manifestNode));
                     insert.executeUpdate();
                 }
-                if (jobId != null) {
+                if (optimizationChild != null) {
+                    SandboxOptimizationJobStore.bind(connection, optimizationChild, executionId, canonical.hash(manifestNode));
+                } else if (jobId != null) {
                     safety.requireManagementJobOwner(connection, jobId);
                     try (var bind = connection.prepareStatement("UPDATE sandbox_management_job SET execution_id=?,updated_at=CURRENT_TIMESTAMP(6) WHERE job_id=? AND job_status='PREPARING' AND execution_id IS NULL")) {
                         bind.setString(1, executionId); bind.setString(2, jobId);
@@ -364,7 +385,7 @@ public final class SandboxExecutionLease implements AutoCloseable {
                 update.setString(1, executionId);
                 if (update.executeUpdate() != 1) throw new SQLException("Execution record is not CREATED");
             }
-            if (jobId != null) {
+            if (jobId != null && optimizationChild == null) {
                 safety.requireManagementJobOwner(connection, jobId);
                 try (var update = connection.prepareStatement("UPDATE sandbox_management_job SET job_status='RUNNING',updated_at=CURRENT_TIMESTAMP(6) WHERE job_id=? AND job_status='PREPARING' AND execution_id=?")) {
                     update.setString(1, jobId); update.setString(2, executionId);
@@ -383,6 +404,11 @@ public final class SandboxExecutionLease implements AutoCloseable {
             return false;
         }
         boolean[] cancelled = {false};
+        if (optimizationChild != null) {
+            transact(() -> cancelled[0] = SandboxOptimizationJobStore.stopChild(connection, optimizationChild));
+            if (horizonReached || cancelled[0]) beginFinalization();
+            return cancelled[0];
+        }
         transact(() -> {
             safety.requireManagementJobOwner(connection, jobId);
             try (var query = connection.prepareStatement("SELECT j.job_status,e.completed_loops,e.requested_loops FROM sandbox_management_job j JOIN sandbox_execution e ON e.execution_id=j.execution_id WHERE j.job_id=? AND j.execution_id=? FOR UPDATE")) {
@@ -418,7 +444,7 @@ public final class SandboxExecutionLease implements AutoCloseable {
     /** Business failure wins over cancellation; close acceptance before failure finalization. */
     public void beginFailureFinalization() {
         requireHeld();
-        if (jobId == null) return;
+        if (jobId == null || optimizationChild != null) return;
         transact(() -> {
             safety.requireManagementJobOwner(connection, jobId);
             try (var update = connection.prepareStatement("UPDATE sandbox_management_job SET job_status='FINALIZING',updated_at=CURRENT_TIMESTAMP(6) WHERE job_id=? AND execution_id=? AND job_status IN('PREPARING','RUNNING','CANCEL_REQUESTED','FINALIZING')")) {
@@ -472,7 +498,9 @@ public final class SandboxExecutionLease implements AutoCloseable {
                 update.setString(3, code); update.setString(4, message); update.setString(5, phase); update.setString(6, executionId);
                 if (update.executeUpdate() != 1) throw new SQLException("Execution marker missing");
             }
-            if (jobId != null) {
+            if (optimizationChild != null) {
+                SandboxOptimizationJobStore.recordChildEnd(connection, optimizationChild, executionId);
+            } else if (jobId != null) {
                 org.example.roadsimulation.sandbox.management.SandboxManagementJobStore.finishWithLease(
                         connection, jobId, executionId, cancelled ? "CANCELLED" : success ? "SUCCEEDED" : "FAILED", code);
             }

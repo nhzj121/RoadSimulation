@@ -1,5 +1,17 @@
 import type { SandboxRunDefinition, SandboxSelection } from '../types/sandbox'
 
+export const dispatchOptions = [
+  { strategy: 'ORIGINAL', profileId: 'original-vrp/v1', label: '原有VRP（ORIGINAL）' },
+  { strategy: 'HEURISTIC', profileId: 'heuristic-multi-order-ga/v1', label: '现有启发式（HEURISTIC）' },
+  { strategy: 'GLOBAL_OPTIMIZATION', profileId: 'global-multi-objective/v1', label: '全局多目标优化（当前版）' },
+  { strategy: 'GLOBAL_OPTIMIZATION', profileId: 'global-multi-objective-cargo-reinsert/v1', label: '全局多目标优化（货物级重插）' },
+] as const
+
+export function dispatchLabel(dispatch: SandboxRunDefinition['dispatch']): string {
+  return dispatchOptions.find(option => option.strategy === dispatch.strategy
+    && option.profileId === dispatch.algorithmProfileId)?.label ?? dispatch.strategy
+}
+
 export const cloneDefinition = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 export const draftIdentity = (value: unknown): string => JSON.stringify(value)
 export function parseIds(text: string): number[] {

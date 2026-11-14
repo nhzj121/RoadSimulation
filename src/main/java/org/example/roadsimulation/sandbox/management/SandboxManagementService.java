@@ -73,11 +73,19 @@ public final class SandboxManagementService {
     /** One read-only statement, no full ledger reads, locks, process mutation or source DataSource. */
     public NavigationObservation navigationObservation() {
         var row = one("""
-                SELECT m.workspace_state,
+                SELECT m.workspace_state,m.active_job_id,
+                  COALESCE(
+                    (SELECT j.job_id FROM sandbox_management_job j
+                     WHERE j.job_id=m.active_job_id AND j.job_status='INTERRUPTED'),
+                    (SELECT j.job_id FROM sandbox_management_job j WHERE j.job_status='INTERRUPTED'
+                     ORDER BY j.updated_at DESC,j.job_id LIMIT 1)
+                  ) AS interrupted_job_id,
                   (SELECT COUNT(*) FROM sandbox_management_job j
                    WHERE j.job_status IN ('ACCEPTED','PREPARING','RUNNING','CANCEL_REQUESTED','FINALIZING','INTERRUPTED')) AS unfinished_jobs,
                   (SELECT COUNT(*) FROM sandbox_execution e
-                   WHERE e.execution_status IN ('CREATED','RUNNING','INTERRUPTED')) AS unfinished_executions
+                   WHERE e.execution_status IN ('CREATED','RUNNING')) AS running_executions,
+                  (SELECT COUNT(*) FROM sandbox_execution e
+                   WHERE e.execution_status='INTERRUPTED' AND e.finished_at IS NULL) AS unclosed_interruptions
                 FROM sandbox_workspace_marker m WHERE m.marker_id=1
                 """);
         String state = Objects.toString(row.get("workspace_state"), "");
@@ -85,15 +93,23 @@ public final class SandboxManagementService {
                 .anyMatch(value -> value.name().equals(state));
         if (!known) throw new SandboxWorkspaceException("NAVIGATION_STATE_UNCONFIRMED", "Workspace state is unknown");
         boolean preparing = Set.of("PREPARING", "SCENARIO_PREPARING", "RUN_SPEC_PREPARING", "EXECUTION_RUNNING").contains(state);
-        boolean unfinished = ((Number) row.get("unfinished_jobs")).longValue() > 0
-                || ((Number) row.get("unfinished_executions")).longValue() > 0;
-        return new NavigationObservation(preparing || unfinished, state);
+        String interruptedJob = Objects.toString(row.get("interrupted_job_id"), null);
+        boolean inspectionRequired = interruptedJob != null || ((Number) row.get("unclosed_interruptions")).longValue() > 0;
+        boolean unfinished = row.get("active_job_id") != null || ((Number) row.get("unfinished_jobs")).longValue() > 0
+                || ((Number) row.get("running_executions")).longValue() > 0;
+        return new NavigationObservation(preparing || unfinished || inspectionRequired, state, inspectionRequired, interruptedJob);
     }
-    public record NavigationObservation(boolean busy, String workspaceState) {}
+    public record NavigationObservation(boolean busy, String workspaceState, boolean inspectionRequired, String interruptedJobId) {
+        public NavigationObservation(boolean busy, String workspaceState) {
+            this(busy, workspaceState, false, null);
+        }
+    }
 
     public Map<String, Object> families(String kind, int offset, int limit) {
         String prefix = prefix(kind); String key = kind.equals("scenarios") ? "scenario_key" : "run_spec_key";
-        return pageQuery("SELECT " + key + ",display_name,description,row_version,archived,draft_updated_at FROM " + prefix + " ORDER BY " + key + " LIMIT ? OFFSET ?", offset, limit);
+        boolean upgraded = "sandbox-control-schema/v10".equals(workspace().get("control_schema_version"));
+        String visible = "runs".equals(kind) && upgraded ? " WHERE internal_input=FALSE" : "";
+        return pageQuery("SELECT " + key + ",display_name,description,row_version,archived,draft_updated_at FROM " + prefix + visible + " ORDER BY " + key + " LIMIT ? OFFSET ?", offset, limit);
     }
     public JsonNode draft(String kind, String key) {
         SandboxManagementJobStore.key(key); String column = kind.equals("scenarios") ? "scenario_key" : "run_spec_key";
