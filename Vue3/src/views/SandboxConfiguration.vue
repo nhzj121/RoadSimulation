@@ -165,7 +165,7 @@
           <el-form-item label="顶层种子（整数文本）"><el-input v-model="run.random.rootSeed" placeholder="例如20260927；不要使用浮点数" /></el-form-item>
           <el-form-item label="固定仿真轮次"><el-input-number v-model="run.simulationClock.totalLoops" :min="1" :max="17520" /></el-form-item>
           <el-form-item label="调度策略">
-            <el-select v-model="selectedDispatchProfile">
+            <el-select v-model="selectedDispatchProfile" :placeholder="pausedDispatch ? '全局多目标优化（当前版）已暂停' : '请选择调度策略'">
               <el-option v-for="option in dispatchOptions" :key="option.profileId" :label="option.label" :value="option.profileId" />
             </el-select>
           </el-form-item>
@@ -251,7 +251,7 @@ import { ElMessageBox } from 'element-plus'
 import SandboxSelectionEditor from '../components/sandbox/SandboxSelectionEditor.vue'
 import SandboxStartPanel from '../components/sandbox/SandboxStartPanel.vue'
 import { sandboxApi, SandboxApiError } from '../api/sandbox'
-import { cloneDefinition, dispatchOptions, draftIdentity, errorHints, setWeatherMode, validateSeed } from '../sandbox/authoring'
+import { cloneDefinition, dispatchOptions, draftIdentity, errorHints, isPausedDispatchProfile, setWeatherMode, validateSeed } from '../sandbox/authoring'
 import type { SandboxScenarioDefinition, SandboxScenarioPreview, SandboxScenarioRevision, SandboxRunDefinition, SandboxRunPreview, SandboxRunRevision, SandboxCatalogItem } from '../types/sandbox'
 
 // Installed ElementPlus sets number-input aria-disabled only on mount. Synchronize it
@@ -264,8 +264,10 @@ const vNumberAccessibility = {mounted: syncNumberAccessibility, updated: syncNum
 const connected = ref(false), busy = ref(false), error = ref(''), baselineId = ref(''), workspace = ref<Record<string, unknown> | null>(null), tab = ref('scenario')
 const scenario = ref<SandboxScenarioDefinition | null>(null), baseTemplate = ref<SandboxScenarioDefinition | null>(null)
 const run = ref<SandboxRunDefinition | null>(null)
+const pausedDispatch = computed(() => isPausedDispatchProfile(run.value?.dispatch.algorithmProfileId))
 const selectedDispatchProfile = computed({
-  get: () => run.value?.dispatch.algorithmProfileId || dispatchOptions.find(option => option.strategy === run.value?.dispatch.strategy)?.profileId,
+  get: () => pausedDispatch.value ? undefined : run.value?.dispatch.algorithmProfileId
+    || dispatchOptions.find(option => option.strategy === run.value?.dispatch.strategy)?.profileId,
   set: (profileId: string | undefined) => {
     const option = dispatchOptions.find(entry => entry.profileId === profileId)
     if (run.value && option) run.value.dispatch = {

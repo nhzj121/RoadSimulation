@@ -88,6 +88,7 @@ public final class FormalSandboxComparison {
     public void calibrate(Request request, Path output, Path completedSearch) throws IOException {
         if (request.historicalEvidence() == null)
             throw new IllegalArgumentException("Calibration requires G5 historical execution IDs");
+        if (completedSearch == null) GlobalPlanSearch.requireLegacyCliEnabled();
         output = Files.createDirectory(output.toAbsolutePath().normalize());
         Path baseline = freezeBaseline(request, output);
         var frozen = preflight(baseline);
@@ -124,6 +125,7 @@ public final class FormalSandboxComparison {
     public void compare(Request request, Path output) throws Exception {
         if (request.approvedLimits() == null)
             throw new IllegalArgumentException("Formal comparison requires both approved delivery retreat limits");
+        GlobalPlanSearch.requireLegacyCliEnabled();
         output = Files.createDirectory(output.toAbsolutePath().normalize());
         try {
             comparePrepared(request, output);

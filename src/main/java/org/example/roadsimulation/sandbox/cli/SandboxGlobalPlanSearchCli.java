@@ -23,6 +23,7 @@ public final class SandboxGlobalPlanSearchCli {
         } catch (Exception failure) {
             String code = failure instanceof SandboxWorkspaceException workspace ? workspace.errorCode() : "SEARCH_REQUEST_FAILED";
             System.err.println("sandbox-global-plan-search[" + code + "]");
+            if ("LEGACY_GA_CLI_DISABLED".equals(code)) System.err.println(failure.getMessage());
             System.exit(2);
         }
     }

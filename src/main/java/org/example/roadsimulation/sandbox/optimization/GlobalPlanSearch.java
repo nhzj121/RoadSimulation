@@ -88,6 +88,13 @@ public final class GlobalPlanSearch {
 
     private GlobalPlanSearch() {}
 
+    static void requireLegacyCliEnabled() {
+        if (!Boolean.parseBoolean(System.getenv("SANDBOX_LEGACY_GA_CLI_ENABLED"))) {
+            throw new SandboxWorkspaceException("LEGACY_GA_CLI_DISABLED",
+                    "Set SANDBOX_LEGACY_GA_CLI_ENABLED=true to run the legacy search from the CLI");
+        }
+    }
+
     public static Result execute(SandboxManagementSettings settings, Request request, Path output) throws IOException {
         return execute(settings, request, output, null);
     }
@@ -108,6 +115,7 @@ public final class GlobalPlanSearch {
 
     private static Result execute(SandboxManagementSettings settings, Request request, Path output,
                                   DeliveryRetreatLimits limits, Path seedCache) throws IOException {
+        requireLegacyCliEnabled();
         if (limits != null && !THROUGHPUT_VERSION.equals(request.artifactVersion()))
             throw new IllegalArgumentException("Delivery retreat limits require throughput scoring");
         long start = System.nanoTime();
