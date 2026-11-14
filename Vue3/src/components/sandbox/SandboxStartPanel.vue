@@ -16,7 +16,7 @@
         <div class="confirmation-facts">
         <p>运行规格：{{ confirmedRevision.runSpecKey }} / Revision {{ confirmedRevision.revision }}</p>
         <p>场景：{{ confirmedRevision.specification.scenario.scenarioKey }} / Revision {{ confirmedRevision.specification.scenario.revision }}</p>
-        <p>根种子：{{ confirmedRevision.specification.random.rootSeed }}；轮次：{{ confirmedRevision.specification.simulationClock.totalLoops }}；调度：{{ confirmedRevision.specification.dispatch.strategy }}</p>
+        <p>根种子：{{ confirmedRevision.specification.random.rootSeed }}；轮次：{{ confirmedRevision.specification.simulationClock.totalLoops }}；调度：{{ dispatchLabel(confirmedRevision.specification.dispatch) }}</p>
         <p>天气：{{ confirmedRevision.specification.weather.sourceMode }}；自动事件：{{ confirmedRevision.specification.events.enabled && confirmedRevision.specification.events.autoEnabled ? '启用' : '关闭' }}</p>
         </div>
         <p class="confirmation-hint">实际故障维修/救援/换车时间由breakdownPolicy决定，不等同于通用故障持续时间字段。</p>
@@ -33,6 +33,7 @@ import { useRouter } from 'vue-router'
 import type { SandboxRunRevision, SandboxStartRequest } from '../../types/sandbox'
 import { sandboxApi, SandboxApiError } from '../../api/sandbox'
 import { pendingStartKey, parsePendingStart } from '../../sandbox/execution'
+import { dispatchLabel } from '../../sandbox/authoring'
 import { beginNavigationOperation, navigationMessage, navigationState } from '../../navigation/modeNavigation'
 const props = defineProps<{revision: SandboxRunRevision | null; enabled: boolean}>()
 const router = useRouter(), busy = ref(false), error = ref(''), pending = ref<SandboxStartRequest | null>(null)

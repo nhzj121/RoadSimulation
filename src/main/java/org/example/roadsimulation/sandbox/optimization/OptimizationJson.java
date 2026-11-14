@@ -4,6 +4,8 @@ import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.databind.*;
 import com.fasterxml.jackson.databind.node.*;
 import org.example.roadsimulation.sandbox.baseline.LexicographicJsonSha256;
+import java.io.IOException;
+import java.io.OutputStream;
 
 /** Optimization-only codec. Existing run, baseline and execution protocols are unchanged. */
 public final class OptimizationJson {
@@ -23,6 +25,10 @@ public final class OptimizationJson {
     public static String write(Object value) {
         try { return JSON.writeValueAsString(value); }
         catch (Exception e) { throw new IllegalArgumentException("Cannot serialize optimization contract", e); }
+    }
+
+    public static void write(OutputStream output, Object value) throws IOException {
+        JSON.writeValue(output, value);
     }
 
     public static <T> T read(String value, Class<T> type) {

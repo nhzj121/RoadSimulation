@@ -1,6 +1,5 @@
 package org.example.roadsimulation.sandbox.management;
 
-import org.example.roadsimulation.sandbox.optimization.SandboxOptimizationProfile;
 import org.example.roadsimulation.sandbox.workspace.SandboxWorkspaceException;
 import org.example.roadsimulation.sandbox.workspace.SandboxWorkspaceSafety;
 
@@ -41,9 +40,9 @@ public final class SandboxOptimizationJobStore {
                 "SELECT job_id FROM sandbox_optimization_job WHERE job_id=?", id));
     }
 
-    static void create(Connection connection, String id) throws SQLException {
+    static void create(Connection connection, String id, String configurationFingerprint) throws SQLException {
         update(connection, "INSERT INTO sandbox_optimization_job(job_id,configuration_sha256) VALUES(?,?)",
-                id, SandboxOptimizationProfile.identity().parameters().get("configurationSha256"));
+                id, configurationFingerprint);
     }
 
     static void recordStopIfManaged(Connection connection, String id, String reason) throws SQLException {
@@ -57,10 +56,12 @@ public final class SandboxOptimizationJobStore {
 
     public String jobId() { return jobId; }
 
-    public void freezeProblem(String fingerprint) throws SQLException {
+    public void freezeProblem(String fingerprint, String configurationFingerprint) throws SQLException {
         try (var connection = jobs.open()) {
-            update(connection, "UPDATE sandbox_optimization_job SET problem_sha256=? WHERE job_id=?",
-                    fingerprint, jobId);
+            require(jobId.equals(value(connection,
+                    "SELECT job_id FROM sandbox_optimization_job WHERE job_id=? AND configuration_sha256=?",
+                    jobId, configurationFingerprint)), "OPTIMIZATION_PROFILE_CHANGED");
+            update(connection, "UPDATE sandbox_optimization_job SET problem_sha256=? WHERE job_id=?", fingerprint, jobId);
         }
     }
 
@@ -107,7 +108,7 @@ public final class SandboxOptimizationJobStore {
                 """, executionId, child.jobId(), executionId);
     }
 
-    /** The caller has verified the complete export and authenticated it against the evaluation request. */
+    /** The caller has verified the complete journal and authenticated it against the evaluation request. */
     public void verified(String executionId, String manifestHash, String lastTickHash) throws SQLException {
         try (var connection = jobs.open()) {
             update(connection, """

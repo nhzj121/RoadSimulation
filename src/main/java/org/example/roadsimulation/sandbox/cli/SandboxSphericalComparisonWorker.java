@@ -81,7 +81,8 @@ public final class SandboxSphericalComparisonWorker {
                     new FileSystemResource(baseline), work.runSpecKey(), work.revision(), work.comparison(), json, work.child())) {
                 lease.create(json);
                 executionId = lease.executionId();
-                if (run(lease, work.comparison(), baseline, settings, json, directory)) error = "USER_CANCELLED";
+                if (run(lease, work.comparison(), baseline, settings, json, directory, work.child() != null))
+                    error = "USER_CANCELLED";
             }
         } catch (Exception failure) {
             error = failure instanceof SandboxWorkspaceException workspace ? workspace.errorCode() : "SPHERICAL_COMPARISON_FAILED";
@@ -93,7 +94,7 @@ public final class SandboxSphericalComparisonWorker {
     }
 
     private static boolean run(SandboxExecutionLease lease, SphericalComparisonRun comparison, Path baseline,
-                            SandboxManagementSettings settings, ObjectMapper json, Path directory) throws Exception {
+                            SandboxManagementSettings settings, ObjectMapper json, Path directory, boolean managed) throws Exception {
         int[] completed = {0};
         boolean cancelled;
         try {
@@ -114,7 +115,9 @@ public final class SandboxSphericalComparisonWorker {
                     completed[0]++;
                 }).cancelled();
             }
-            new SandboxExecutionStore(settings.url(), settings.user(), settings.password(), json).verify(lease.executionId());
+            // The managed seed resolver authenticates the journal while collecting its dispatch trace.
+            if (!managed || cancelled)
+                new SandboxExecutionStore(settings.url(), settings.user(), settings.password(), json).verify(lease.executionId());
             if (cancelled) lease.finishCancelled(completed[0]);
             else lease.finish(completed[0], null);
             return cancelled;

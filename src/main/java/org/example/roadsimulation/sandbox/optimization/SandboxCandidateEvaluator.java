@@ -7,6 +7,7 @@ import org.example.roadsimulation.sandbox.baseline.SandboxBaselinePackageV1;
 import org.example.roadsimulation.sandbox.cli.SandboxEvaluationWorker;
 import org.example.roadsimulation.sandbox.execution.SandboxExecutionStore;
 import org.example.roadsimulation.sandbox.management.*;
+import org.example.roadsimulation.sandbox.run.SandboxAlgorithmProfile;
 import org.example.roadsimulation.sandbox.run.SandboxRunSpecificationRevisionV2;
 import org.example.roadsimulation.sandbox.run.SandboxRunSpecificationStore;
 import org.example.roadsimulation.sandbox.scenario.definition.SandboxScenarioStore;
@@ -139,6 +140,8 @@ public final class SandboxCandidateEvaluator {
     }
 
     Long workerTimeoutSeconds() { return timeoutSeconds; }
+
+    SandboxAlgorithmProfile publishedProfile() { return published.algorithmProfile(); }
 
     public CompiledOptimizationProblem problem() { return frozen.problem(); }
     public GreedyBaseline.Result baseline() { return baseline; }
@@ -332,66 +335,94 @@ public final class SandboxCandidateEvaluator {
         var run = receipt.run();
         long verifying = System.nanoTime();
         Evidence evidence;
-        JsonNode export;
+        JsonNode export = null;
+        JsonNode metadata;
+        JsonNode finalFacts;
         try {
             String executionId = readExecutionId(directory);
             if (executionId == null) throw new IllegalArgumentException("Missing execution ID");
-            export = new SandboxExecutionStore(settings.url(), settings.user(), settings.password(), json).export(executionId);
-            evidence = evidence(task, export, run.summary(), run.mapRequests(), json);
+            var store = new SandboxExecutionStore(settings.url(), settings.user(), settings.password(), json);
+            if (job != null) {
+                var journal = store.verifyJournal(executionId);
+                evidence = evidenceFromVerifiedJournal(task, journal, run.summary(), run.mapRequests(), json);
+                metadata = journal.metadata();
+                finalFacts = journal.lastTick().facts();
+            } else {
+                export = store.export(executionId);
+                evidence = evidence(task, export, run.summary(), run.mapRequests(), json);
+                metadata = export;
+                finalFacts = export.path("ticks").get(task.plan().problem().totalLoops() - 1).path("facts");
+            }
         } catch (SandboxWorkspaceException | IllegalArgumentException failure) {
             return stop(index, fingerprint, key, directory, Status.INVALID_LEDGER, "EXECUTION_EVIDENCE_INVALID", started);
         }
-        if (job != null) {
-            try { job.verified(evidence.executionId(), export.path("manifestSha256").asText(), export.path("lastTickSha256").asText()); }
-            catch (java.sql.SQLException failure) { throw new IOException("Cannot record verified evaluation", failure); }
-        }
-        long verification = run.verificationNanos() + System.nanoTime()-verifying;
-        Path artifact = directory.resolve("execution.json");
-        write(artifact, export);
+        FulfillmentComparison.Facts delivery = null;
         if (THROUGHPUT_VERSION.equals(version)) {
             try {
-                fulfillment.put(evidence.executionId(), FulfillmentComparison.facts(task, export, evidence.assessment(), json));
+                delivery = FulfillmentComparison.factsFromFinalTick(task, evidence.executionId(), metadata.path("manifest"),
+                        finalFacts, evidence.assessment(), json);
             } catch (IllegalArgumentException failure) {
                 return stop(index, fingerprint, key, directory, Status.INVALID_LEDGER, "FULFILLMENT_EVIDENCE_INVALID", started);
             }
         }
+        if (job != null) {
+            try { job.verified(evidence.executionId(), evidence.manifestSha256(), evidence.lastTickSha256()); }
+            catch (java.sql.SQLException failure) { throw new IOException("Cannot record verified evaluation", failure); }
+        }
+        long verification = run.verificationNanos() + System.nanoTime()-verifying;
+        long artifactBytes = 0;
+        if (export != null) {
+            Path artifact = directory.resolve("execution.json");
+            try (var output = Files.newOutputStream(artifact, StandardOpenOption.CREATE_NEW)) {
+                OptimizationJson.write(output, export);
+            }
+            artifactBytes = Files.size(artifact);
+        }
+        if (delivery != null) fulfillment.put(evidence.executionId(), delivery);
         var issues = new PreferenceScorer().eligibilityIssues(problem().problem(), registry, evidence.assessment);
         var status = issues.isEmpty() ? Status.SCORED_INPUT : Status.OBJECTIVES_UNAVAILABLE;
         if (index == 0 && confirmedNoDemand(evidence.assessment)) status = Status.NO_DEMAND;
         var timing = new Timing(receipt.preparationNanos(), receipt.jvmStartupNanos(), run.startupNanos(), run.tickNanos(), run.ledgerWriteNanos(),
-                verification, System.nanoTime()-started, Files.size(artifact));
+                verification, System.nanoTime()-started, artifactBytes);
         return new Attempt(index, fingerprint, key, status, false, evidence.executionId, evidence, timing, issues);
     }
 
     /** Called only with the output of the authenticated, snapshot-consistent ledger export. */
     static Evidence evidence(PlanExecutionTask task, JsonNode export, PlanExecutionSummary summary,
                              int mapRequests, ObjectMapper json) {
-        var problem = task.plan().problem();
-        String id = export.path("executionId").asText();
         var ticks = export.path("ticks");
         var assessment = assessmentFromVerifiedExport(task, export, json);
+        return evidence(task, export, ticks.get(ticks.size() - 1).path("facts"), assessment, summary, mapRequests, json);
+    }
+
+    static Evidence evidenceFromVerifiedJournal(PlanExecutionTask task, SandboxExecutionStore.VerifiedJournal journal,
+                                                PlanExecutionSummary summary, int mapRequests, ObjectMapper json) {
+        var last = journal.lastTick();
+        if (last == null) throw new IllegalArgumentException("Missing completed evaluation");
+        var assessment = assessment(task, journal.metadata(), journal.recordedLoops(),
+                journal.failedAssignments(), last.evaluation(), json);
+        return evidence(task, journal.metadata(), last.facts(), assessment, summary, mapRequests, json);
+    }
+
+    private static Evidence evidence(PlanExecutionTask task, JsonNode metadata, JsonNode lastFacts,
+                                     CandidateAssessment assessment, PlanExecutionSummary summary,
+                                     int mapRequests, ObjectMapper json) {
+        var problem = task.plan().problem();
+        String id = metadata.path("executionId").asText();
         if (!summary.executionId().equals(id) || !summary.state().taskFingerprint().equals(task.fingerprint())
                 || summary.requestedLoops() != problem.totalLoops() || summary.completedLoops() != problem.totalLoops()
                 || mapRequests != 0)
             throw new IllegalArgumentException("Execution identity or horizon mismatch");
-        var last = ticks.get(ticks.size() - 1);
-        var ledgerState = json.convertValue(last.path("facts").path("runtime").path("planExecution").path("state"),
+        var ledgerState = json.convertValue(lastFacts.path("runtime").path("planExecution").path("state"),
                 PlanExecutionState.Snapshot.class);
         if (!summary.state().equals(ledgerState)) throw new IllegalArgumentException("Summary state differs from ledger");
-        return new Evidence(id, ContractChecks.hash(export.path("manifestSha256").asText(), "manifest hash"),
-                ContractChecks.hash(export.path("lastTickSha256").asText(), "last tick hash"), assessment, summary, mapRequests);
+        return new Evidence(id, ContractChecks.hash(metadata.path("manifestSha256").asText(), "manifest hash"),
+                ContractChecks.hash(metadata.path("lastTickSha256").asText(), "last tick hash"), assessment, summary, mapRequests);
     }
 
     static CandidateAssessment assessmentFromVerifiedExport(PlanExecutionTask task, JsonNode export, ObjectMapper json) {
-        var problem = task.plan().problem();
-        var manifest = export.path("manifest");
         var ticks = export.path("ticks");
-        if (!"VERIFIED".equals(export.path("integrity").asText()) || !"COMPLETED".equals(export.path("status").asText())
-                || !"GLOBAL_PLAN".equals(manifest.path("executionMode").asText())
-                || !task.fingerprint().equals(manifest.path("planExecutionTaskSha256").asText())
-                || export.path("requestedLoops").asInt() != problem.totalLoops()
-                || export.path("completedLoops").asInt() != problem.totalLoops()
-                || !ticks.isArray() || ticks.size() != problem.totalLoops())
+        if (!ticks.isArray() || ticks.isEmpty())
             throw new IllegalArgumentException("Execution identity or horizon mismatch");
         int failures = 0;
         for (var tick : ticks) {
@@ -400,9 +431,23 @@ public final class SandboxCandidateEvaluator {
                 throw new IllegalArgumentException("Missing or invalid transport failure count");
             failures = Math.addExact(failures, count.intValue());
         }
-        var snapshot = json.convertValue(ticks.get(ticks.size() - 1).path("evaluation"), EvaluationSnapshot.class);
+        return assessment(task, export, ticks.size(), failures, ticks.get(ticks.size() - 1).path("evaluation"), json);
+    }
+
+    private static CandidateAssessment assessment(PlanExecutionTask task, JsonNode metadata, int recorded,
+                                                  int failures, JsonNode evaluation, ObjectMapper json) {
+        var problem = task.plan().problem();
+        var manifest = metadata.path("manifest");
+        if (!"VERIFIED".equals(metadata.path("integrity").asText()) || !"COMPLETED".equals(metadata.path("status").asText())
+                || !"GLOBAL_PLAN".equals(manifest.path("executionMode").asText())
+                || !task.fingerprint().equals(manifest.path("planExecutionTaskSha256").asText())
+                || metadata.path("requestedLoops").asInt() != problem.totalLoops()
+                || metadata.path("completedLoops").asInt() != problem.totalLoops()
+                || recorded != problem.totalLoops())
+            throw new IllegalArgumentException("Execution identity or horizon mismatch");
+        var snapshot = json.convertValue(evaluation, EvaluationSnapshot.class);
         var assessment = EvaluationMetricAdapter.fromSnapshot(problem, task.plan().fingerprint(), true,
-                CandidateAssessment.ExecutionStatus.COMPLETED, ticks.size(), failures, snapshot);
+                CandidateAssessment.ExecutionStatus.COMPLETED, recorded, failures, snapshot);
         var audit = new TreeMap<>(assessment.auditData());
         audit.put("catalogTaskCount", BigDecimal.valueOf(task.compiledProblem().catalog().tasks().size()));
         assessment = new CandidateAssessment(assessment.problem(), assessment.planFingerprint(), true, assessment.completion(),

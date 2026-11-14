@@ -164,7 +164,11 @@
           <el-form-item label="已绑定场景版本"><span>{{ run.scenario.scenarioKey }} / Revision {{ run.scenario.revision }}</span></el-form-item>
           <el-form-item label="顶层种子（整数文本）"><el-input v-model="run.random.rootSeed" placeholder="例如20260927；不要使用浮点数" /></el-form-item>
           <el-form-item label="固定仿真轮次"><el-input-number v-model="run.simulationClock.totalLoops" :min="1" :max="17520" /></el-form-item>
-          <el-form-item label="调度策略"><el-select v-model="run.dispatch.strategy" @change="changeStrategy"><el-option label="原有VRP（ORIGINAL）" value="ORIGINAL" /><el-option label="现有启发式（HEURISTIC）" value="HEURISTIC" /><el-option label="全局多目标优化" value="GLOBAL_OPTIMIZATION" /></el-select></el-form-item>
+          <el-form-item label="调度策略">
+            <el-select v-model="selectedDispatchProfile">
+              <el-option v-for="option in dispatchOptions" :key="option.profileId" :label="option.label" :value="option.profileId" />
+            </el-select>
+          </el-form-item>
           <el-form-item label="司机随机行为"><el-switch v-model="run.driverBehavior.enabled" /></el-form-item>
           </div>
           </section>
@@ -247,7 +251,7 @@ import { ElMessageBox } from 'element-plus'
 import SandboxSelectionEditor from '../components/sandbox/SandboxSelectionEditor.vue'
 import SandboxStartPanel from '../components/sandbox/SandboxStartPanel.vue'
 import { sandboxApi, SandboxApiError } from '../api/sandbox'
-import { cloneDefinition, draftIdentity, errorHints, setWeatherMode, validateSeed } from '../sandbox/authoring'
+import { cloneDefinition, dispatchOptions, draftIdentity, errorHints, setWeatherMode, validateSeed } from '../sandbox/authoring'
 import type { SandboxScenarioDefinition, SandboxScenarioPreview, SandboxScenarioRevision, SandboxRunDefinition, SandboxRunPreview, SandboxRunRevision, SandboxCatalogItem } from '../types/sandbox'
 
 // Installed ElementPlus sets number-input aria-disabled only on mount. Synchronize it
@@ -260,6 +264,15 @@ const vNumberAccessibility = {mounted: syncNumberAccessibility, updated: syncNum
 const connected = ref(false), busy = ref(false), error = ref(''), baselineId = ref(''), workspace = ref<Record<string, unknown> | null>(null), tab = ref('scenario')
 const scenario = ref<SandboxScenarioDefinition | null>(null), baseTemplate = ref<SandboxScenarioDefinition | null>(null)
 const run = ref<SandboxRunDefinition | null>(null)
+const selectedDispatchProfile = computed({
+  get: () => run.value?.dispatch.algorithmProfileId || dispatchOptions.find(option => option.strategy === run.value?.dispatch.strategy)?.profileId,
+  set: (profileId: string | undefined) => {
+    const option = dispatchOptions.find(entry => entry.profileId === profileId)
+    if (run.value && option) run.value.dispatch = {
+      ...run.value.dispatch, strategy: option.strategy, algorithmProfileId: option.profileId,
+    }
+  },
+})
 const scenarioPreview = ref<SandboxScenarioPreview | null>(null), runPreview = ref<SandboxRunPreview | null>(null)
 const scenarioPreviewIdentity = ref(''), runPreviewIdentity = ref(''), scenarioSavedIdentity = ref(''), runSavedIdentity = ref('')
 const scenarioSavedDefinition = ref<SandboxScenarioDefinition | null>(null), runSavedDefinition = ref<SandboxRunDefinition | null>(null)
@@ -424,14 +437,6 @@ async function publishRun() {
   await action(async () => { publishedRun.value = await sandboxApi.publishRun(run.value!.runSpecKey, runVersion.value, runPreview.value!.runSpecificationSha256) }, 'run')
 }
 function restoreRunLocal() { if (runSavedDefinition.value) run.value = cloneDefinition(runSavedDefinition.value) }
-function changeStrategy() {
-  if (!run.value) return
-  run.value.dispatch.algorithmProfileId = {
-    ORIGINAL: 'original-vrp/v1',
-    HEURISTIC: 'heuristic-multi-order-ga/v1',
-    GLOBAL_OPTIMIZATION: 'global-multi-objective/v1',
-  }[run.value.dispatch.strategy]
-}
 function changeWeather(mode: 'SEEDED_GENERATION' | 'EXPLICIT_TIMELINE') { if (run.value) setWeatherMode(run.value, mode) }
 function eventEnabledChanged() { if (run.value && !run.value.events.enabled) run.value.events.autoEnabled = false }
 function addWeatherSlice() { if (run.value) { const slices = run.value.weather.timeSlices; const start = slices.length ? slices[slices.length - 1].endMinute : 0; slices.push({startMinute: start, endMinute: start + 60, weatherType: 'SUNNY', speedFactor: 1}) } }

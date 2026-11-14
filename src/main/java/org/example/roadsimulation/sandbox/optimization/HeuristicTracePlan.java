@@ -24,10 +24,14 @@ final class HeuristicTracePlan {
     private HeuristicTracePlan() {}
 
     static Conversion convert(CompiledOptimizationProblem problem, JsonNode export, ProductionTaskMapper.Mapping mapping) {
-        var ticks = export.path("ticks");
+        return convert(problem, export.path("manifest"), export.path("ticks"), mapping);
+    }
+
+    static Conversion convert(CompiledOptimizationProblem problem, JsonNode manifest, JsonNode ticks,
+                              ProductionTaskMapper.Mapping mapping) {
         if (!ticks.isArray() || ticks.size() != problem.problem().totalLoops())
             throw new IllegalArgumentException("Incomplete source tick sequence");
-        if (!rows(export.path("manifest").path("initialDatabaseFacts"), "assignment").isEmpty())
+        if (!rows(manifest.path("initialDatabaseFacts"), "assignment").isEmpty())
             throw new IllegalArgumentException("Source already had assignments before the first tick");
 
         var keys = itemKeys(mapping);

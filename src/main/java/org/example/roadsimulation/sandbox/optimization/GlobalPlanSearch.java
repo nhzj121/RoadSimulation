@@ -113,7 +113,7 @@ public final class GlobalPlanSearch {
         long start = System.nanoTime();
         var session = SandboxCandidateEvaluator.open(settings, request.runSpecKey(), request.runSpecRevision(),
                 request.baselineResource(), output, request.timeoutSeconds(), evaluationVersion(request.artifactVersion()));
-        return execute(request, output, limits, seedCache, start, session, null);
+        return execute(request, output, limits, seedCache, start, session, null, false);
     }
 
     public static Stop executeManaged(SandboxManagementSettings settings, String key, int revision, Path output,
@@ -121,17 +121,24 @@ public final class GlobalPlanSearch {
         long start = System.nanoTime();
         String baseline = "classpath:sandbox/baseline/baseline-v1.json";
         var session = SandboxCandidateEvaluator.openManaged(settings, key, revision, baseline, output, job);
-        job.freezeProblem(session.problem().problem().problemFingerprint());
+        var profile = session.publishedProfile();
+        if (!SandboxOptimizationProfile.supports(profile.profileId())
+                || !SandboxOptimizationProfile.identity(profile.profileId()).equals(profile))
+            throw new SandboxWorkspaceException("OPTIMIZATION_PROFILE_CHANGED", "Published optimization profile differs");
+        job.freezeProblem(session.problem().problem().problemFingerprint(),
+                profile.parameters().get("configurationSha256").toString());
+        write(output.resolve("algorithm-profile.json"), profile);
         if (session.problem().catalog().tasks().isEmpty()) return Stop.NO_DEMAND;
         var request = new Request(THROUGHPUT_VERSION, key, revision, baseline,
                 SandboxOptimizationProfile.preferenceFor(session.problem().catalog()),
                 SandboxOptimizationProfile.SEARCH_SEED, SandboxOptimizationProfile.BUDGET,
                 session.workerTimeoutSeconds());
-        return execute(request, output, SandboxOptimizationProfile.LIMITS, seedCache, start, session, job).stop();
+        boolean cargoReinsert = SandboxOptimizationProfile.CARGO_REINSERT_ID.equals(profile.profileId());
+        return execute(request, output, SandboxOptimizationProfile.LIMITS, seedCache, start, session, job, cargoReinsert).stop();
     }
 
     private static Result execute(Request request, Path output, DeliveryRetreatLimits limits, Path seedCache, long start,
-                                  SandboxCandidateEvaluator session, SandboxOptimizationJobStore job) throws IOException {
+                                  SandboxCandidateEvaluator session, SandboxOptimizationJobStore job, boolean cargoReinsert) throws IOException {
         var checkpoint = new Checkpoint() {
             private int index;
             private boolean prepared;
@@ -186,8 +193,20 @@ public final class GlobalPlanSearch {
             }
         };
         var operators = new PlanSearchOperators(session.problem(), session.fleetData());
-        var result = search(request, session.simulationRootSeed(), baselinePlan, evaluation, operators::propose,
+        var moves = new ArrayList<Map<String, Object>>();
+        Proposer proposer = operators::propose;
+        if (cargoReinsert) {
+            proposer = new TimedMoveRanking(session, request.preference(), operators).proposer(true, trace -> {
+                var ranking = trace.ranking();
+                ranking.placements().stream().filter(placement -> Integer.valueOf(1).equals(placement.timeRank()))
+                        .findFirst().ifPresent(selected -> moves.add(Map.of("parent", trace.parent(), "source", trace.source(),
+                                "child", selected.fingerprint(), "move", selected.option().type(),
+                                "considered", ranking.placements().size(), "truncated", ranking.truncated())));
+            });
+        }
+        var result = search(request, session.simulationRootSeed(), baselinePlan, evaluation, proposer,
                 checkpoint, start, limits, heuristicSeed);
+        if (cargoReinsert) write(output.resolve("timed-moves.json"), moves);
         write(output.resolve("search.json"), result);
         if (result.steps().stream().noneMatch(step -> Stop.EVALUATION_IO_FAILED.name().equals(step.status())))
             write(output.resolve("evaluation.json"), limits == null ? session.report(request.preference())

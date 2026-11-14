@@ -82,7 +82,7 @@ final class HeuristicSeedResolver {
             for (String id : history.findHeuristicComparisons(commonInput, PROFILE_ID)) {
                 Seed seed;
                 try {
-                    seed = fromVerifiedExport(history.export(id));
+                    seed = fromVerifiedJournal(id);
                 } catch (SandboxWorkspaceException failure) {
                     if (!Set.of("EXECUTION_NOT_FOUND", "EXECUTION_RECORD_CORRUPT").contains(failure.errorCode())) throw failure;
                     continue;
@@ -133,14 +133,31 @@ final class HeuristicSeedResolver {
         throw new SandboxWorkspaceException("HEURISTIC_SEED_BUSY", "Another search is resolving this HEURISTIC seed");
     }
 
-    Seed fromVerifiedExport(JsonNode export) {
+    private Seed fromVerifiedJournal(String id) {
+        var trace = json.createArrayNode();
+        var journal = history.verifyJournal(id, tick -> {
+            var row = trace.addObject();
+            row.set("tick", json.valueToTree(tick.tick()));
+            var database = row.putObject("facts").putObject("database");
+            var facts = tick.facts().path("database");
+            for (var table : List.of("assignment", "assignment_nodes", "shipment_item")) {
+                database.set(table, facts.path(table));
+            }
+        });
+        if (journal.lastTick() != null) {
+            ((com.fasterxml.jackson.databind.node.ObjectNode) trace.get(trace.size() - 1).path("facts"))
+                    .set("database", journal.lastTick().facts().path("database"));
+        }
+        return fromVerifiedTrace(journal.metadata(), trace);
+    }
+
+    private Seed fromVerifiedTrace(JsonNode metadata, JsonNode ticks) {
         var problem = frozen.problem();
-        var manifest = export.path("manifest");
-        var ticks = export.path("ticks");
+        var manifest = metadata.path("manifest");
         int loops = problem.problem().totalLoops();
-        if (!"VERIFIED".equals(export.path("integrity").asText()) || !"COMPLETED".equals(export.path("status").asText())
+        if (!"VERIFIED".equals(metadata.path("integrity").asText()) || !"COMPLETED".equals(metadata.path("status").asText())
                 || !SphericalComparisonRun.MODE.equals(manifest.path("executionMode").asText())
-                || export.path("completedLoops").asInt(-1) != loops || !ticks.isArray() || ticks.size() != loops)
+                || metadata.path("completedLoops").asInt(-1) != loops || !ticks.isArray() || ticks.size() != loops)
             throw new IllegalArgumentException("HEURISTIC seed needs a verified complete spherical execution");
         var source = json.convertValue(manifest.path("sphericalComparison"), SphericalComparisonRun.class);
         var sourceProfile = json.convertValue(manifest.path("runRevision").path("algorithmProfile"), SandboxAlgorithmProfile.class);
@@ -150,10 +167,10 @@ final class HeuristicSeedResolver {
         var lastDatabase = ticks.get(loops - 1).path("facts").path("database");
         var mapping = SphericalComparisonEvidence.mapping(problem.catalog(), lastDatabase,
                 manifest.path("preparation").path("deterministicSimulationRunId").asText());
-        var plan = HeuristicTracePlan.convert(problem, export, mapping).plan();
+        var plan = HeuristicTracePlan.convert(problem, manifest, ticks, mapping).plan();
         validate(plan);
-        return new Seed(VERSION, cacheKey, export.path("executionId").asText(), export.path("manifestSha256").asText(),
-                export.path("lastTickSha256").asText(), plan.fingerprint(), plan);
+        return new Seed(VERSION, cacheKey, metadata.path("executionId").asText(), metadata.path("manifestSha256").asText(),
+                metadata.path("lastTickSha256").asText(), plan.fingerprint(), plan);
     }
 
     private void validate(GlobalPlan plan) {
@@ -169,7 +186,7 @@ final class HeuristicSeedResolver {
                 job == null ? null : new SandboxOptimizationJobStore.Child(job.jobId(), "HEURISTIC_SOURCE"));
         try {
             var receipt = SandboxSphericalComparisonWorker.launch(settings, work, baseline, directory, timeoutSeconds);
-            var seed = fromVerifiedExport(history.export(receipt.executionId()));
+            var seed = fromVerifiedJournal(receipt.executionId());
             if (job != null) job.verified(receipt.executionId(), seed.sourceManifestSha256(), seed.sourceLastTickSha256());
             return seed;
         } catch (java.sql.SQLException failure) {

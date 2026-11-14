@@ -47,7 +47,7 @@ public final class SandboxEvaluationWorker {
                     long prepared = System.nanoTime() - started;
                     var run = SandboxPlanExecutionCli.run(lease, work.task(), lease.preparedPlanData(work.task()),
                             settings.url(), settings.user(), settings.password(), baseline.toUri().toString(), json,
-                            true, id -> recordExecution(directory, id));
+                            true, work.child() != null, id -> recordExecution(directory, id));
                     receipt = new Receipt(null, jvmStartupNanos, prepared, run);
                 }
                 write(directory.resolve("receipt.json"), receipt);

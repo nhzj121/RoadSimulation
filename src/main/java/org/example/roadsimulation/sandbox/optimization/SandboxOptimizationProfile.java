@@ -9,6 +9,7 @@ import java.util.TreeMap;
 public final class SandboxOptimizationProfile {
     public static final String STRATEGY = "GLOBAL_OPTIMIZATION";
     public static final String ID = "global-multi-objective/v1";
+    public static final String CARGO_REINSERT_ID = "global-multi-objective-cargo-reinsert/v1";
     public static final long SEARCH_SEED = 20261109L;
     // Keep the v1 fingerprint compatible with published revisions. The worker deadline is an operational policy.
     private static final long V1_PROFILE_TIMEOUT_SECONDS = 300;
@@ -24,17 +25,31 @@ public final class SandboxOptimizationProfile {
     }
 
     public static SandboxAlgorithmProfile identity() {
-        String hash = OptimizationJson.fingerprint(Map.of(
+        return identity(ID);
+    }
+
+    public static boolean supports(String profileId) {
+        return ID.equals(profileId) || CARGO_REINSERT_ID.equals(profileId);
+    }
+
+    public static SandboxAlgorithmProfile identity(String profileId) {
+        if (!supports(profileId)) throw new IllegalArgumentException("Unknown optimization profile: " + profileId);
+        var configuration = new TreeMap<String, Object>(Map.of(
                 "search", GlobalPlanSearch.THROUGHPUT_VERSION, "budget", BUDGET, "searchSeed", SEARCH_SEED,
                 "timeout", V1_PROFILE_TIMEOUT_SECONDS, "limits", LIMITS, "path", paths(), "decoder", PlanExecutionTask.DECODER,
                 "repair", PlanExecutionTask.REPAIR, "seedStrategy", HeuristicSeedResolver.VERSION,
                 "preference", preference(BigDecimal.ONE)));
-        return new SandboxAlgorithmProfile(ID, STRATEGY, Map.of("configurationSha256", hash));
+        if (CARGO_REINSERT_ID.equals(profileId)) {
+            configuration.put("moveOperator", "timed-cargo-reinsert/v1");
+            configuration.put("cargoPlacementLimit", TimedMoveRanking.CARGO_LIMIT);
+        }
+        return new SandboxAlgorithmProfile(profileId, STRATEGY,
+                Map.of("configurationSha256", OptimizationJson.fingerprint(configuration)));
     }
 
     public static long workerTimeoutSeconds(int totalLoops) {
         if (totalLoops <= 0) throw new IllegalArgumentException("Simulation horizon must be positive");
-        return Math.max(500L, 4L * totalLoops);
+        return Math.max(1200L, 500L + 10L * totalLoops);
     }
 
     public static PreferenceProfile preferenceFor(ProductionTaskCatalog catalog) {

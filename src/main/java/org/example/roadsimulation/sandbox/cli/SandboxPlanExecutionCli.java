@@ -38,13 +38,14 @@ public final class SandboxPlanExecutionCli {
             var reference=lease.revision().specification().scenario();
             var scene=new SandboxScenarioStore(url,user,password,json).loadRevision(reference.scenarioKey(),reference.revision());
             var data=PlanExecutionAuthentication.verify(task,baseline,scene,lease.revision());
-            return run(lease,task,data,url,user,password,baselineLocation,json,false, id -> {}).summary();
+            return run(lease,task,data,url,user,password,baselineLocation,json,false,false, id -> {}).summary();
         }
     }
 
     static Run run(SandboxExecutionLease lease, PlanExecutionTask task,
             org.example.roadsimulation.sandbox.baseline.SandboxBaselinePackageV1.Data data, String url, String user,
-            String password, String baselineLocation, ObjectMapper json, boolean offline, Consumer<String> onCreated) throws Exception {
+            String password, String baselineLocation, ObjectMapper json, boolean offline, boolean managed,
+            Consumer<String> onCreated) throws Exception {
         lease.createPlan(json,task);
         int[] completed={0};
         long[] writeNanos={0};
@@ -73,11 +74,16 @@ public final class SandboxPlanExecutionCli {
                 if (offline) context.getBean(OfflinePlanMaps.class).requireUnused();
                 summary = PlanExecutionSummary.from(lease.executionId(),completed[0],runtime.state());
             }
-            long verifying = System.nanoTime();
-            new SandboxExecutionStore(url,user,password,json).verify(lease.executionId());
+            // Managed evaluation verifies the completed journal in the parent before scoring.
+            long verificationNanos = 0;
+            if (!managed || cancelled) {
+                long verifying = System.nanoTime();
+                new SandboxExecutionStore(url,user,password,json).verify(lease.executionId());
+                verificationNanos = System.nanoTime() - verifying;
+            }
             if (cancelled) lease.finishCancelled(completed[0]);
             else lease.finish(completed[0],null);
-            return new Run(summary,startupNanos,tickNanos,writeNanos[0],System.nanoTime()-verifying,0);
+            return new Run(summary,startupNanos,tickNanos,writeNanos[0],verificationNanos,0);
         } catch (Exception failure) {
             try { lease.finish(completed[0],failure); }
             catch (Exception close) { failure.addSuppressed(close); }

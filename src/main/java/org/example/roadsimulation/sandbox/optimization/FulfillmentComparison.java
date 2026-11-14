@@ -34,18 +34,23 @@ public final class FulfillmentComparison {
     private FulfillmentComparison() {}
 
     static Facts facts(PlanExecutionTask task, JsonNode export, CandidateAssessment assessment, ObjectMapper json) {
-        var catalog = task.compiledProblem().catalog();
         var last = export.path("ticks").get(task.plan().problem().totalLoops() - 1).path("facts");
+        return factsFromFinalTick(task, export.path("executionId").asText(), export.path("manifest"), last, assessment, json);
+    }
+
+    static Facts factsFromFinalTick(PlanExecutionTask task, String executionId, JsonNode manifest, JsonNode last,
+                                    CandidateAssessment assessment, ObjectMapper json) {
+        var catalog = task.compiledProblem().catalog();
         var rawMapping = last.path("runtime").path("planExecution").path("mapping");
         if (!rawMapping.isObject()) throw new IllegalArgumentException("Missing fulfillment task mapping");
         var mapping = json.convertValue(rawMapping, ProductionTaskMapper.Mapping.class);
         if (!catalog.fingerprint().equals(mapping.catalogFingerprint())
-                || !mapping.runId().equals(export.path("manifest").path("preparation").path("deterministicSimulationRunId").asText())
+                || !mapping.runId().equals(manifest.path("preparation").path("deterministicSimulationRunId").asText())
                 || !task.plan().fingerprint().equals(assessment.planFingerprint())
                 || !task.plan().problem().equals(assessment.problem()))
             throw new IllegalArgumentException("Fulfillment mapping identity mismatch");
 
-        return facts(catalog, export, assessment.problem().problemFingerprint(), mapping,
+        return factsFromFinalTick(catalog, executionId, last, assessment.problem().problemFingerprint(), mapping,
                 assessment.auditData(), assessment.metrics().get("unmetDemandRatio"));
     }
 
@@ -53,6 +58,12 @@ public final class FulfillmentComparison {
                        ProductionTaskMapper.Mapping mapping, Map<String, BigDecimal> audit,
                        CandidateAssessment.MetricReading operational) {
         var last = export.path("ticks").get(export.path("ticks").size() - 1).path("facts");
+        return factsFromFinalTick(catalog, export.path("executionId").asText(), last, problemFingerprint, mapping, audit, operational);
+    }
+
+    private static Facts factsFromFinalTick(ProductionTaskCatalog catalog, String executionId, JsonNode last, String problemFingerprint,
+                                           ProductionTaskMapper.Mapping mapping, Map<String, BigDecimal> audit,
+                                           CandidateAssessment.MetricReading operational) {
         var items = new HashMap<Long, JsonNode>();
         var rawItems = last.path("database").path("shipment_item");
         if (!rawItems.isArray()) throw new IllegalArgumentException("Missing shipment item facts");
@@ -78,7 +89,7 @@ public final class FulfillmentComparison {
         if (!items.isEmpty()) throw new IllegalArgumentException("Shipment item lacks a stable task binding");
         requireMatchingAudit(audit.get("cargoRequiredTonnes"), weight(released, tasks));
         requireMatchingAudit(audit.get("cargoDeliveredTonnes"), weight(delivered, tasks));
-        return new Facts(export.path("executionId").asText(), problemFingerprint,
+        return new Facts(executionId, problemFingerprint,
                 catalog.fingerprint(), released, delivered, operational == null ? null : operational.value());
     }
 

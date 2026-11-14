@@ -71,7 +71,7 @@ public final class SandboxManagementJobStore {
                 }
                 safety.requireNoUnfinishedExecution(connection);
                 requireNoUnboundExecution(connection);
-                boolean optimization;
+                String optimizationFingerprint = null;
                 boolean upgraded = SandboxOptimizationJobStore.available(connection);
                 String publicInput = upgraded
                         ? " AND NOT EXISTS (SELECT 1 FROM sandbox_run_spec f WHERE f.run_spec_key=r.run_spec_key AND f.internal_input=TRUE)"
@@ -82,12 +82,17 @@ public final class SandboxManagementJobStore {
                         if (!rows.next()) throw new SandboxWorkspaceException("RUN_SPEC_REVISION_NOT_FOUND", "Publish the requested revision first");
                         if (!"sandbox-run-specification-revision/v2".equals(rows.getString(1)))
                             throw new SandboxWorkspaceException("UNSUPPORTED_RUN_SPEC_VERSION", "Management executes v2 revisions only");
-                        optimization = SandboxOptimizationProfile.ID.equals(rows.getString(2));
-                        if (optimization) {
+                        String profileId = rows.getString(2);
+                        if (SandboxOptimizationProfile.supports(profileId)) {
                             require(upgraded, "OPTIMIZATION_CONTROL_SCHEMA_NOT_READY");
                             var snapshot = org.example.roadsimulation.sandbox.optimization.OptimizationJson.read(
                                     rows.getString(3), org.example.roadsimulation.sandbox.run.SandboxRunSpecificationRevisionV2.class);
-                            require(SandboxOptimizationProfile.identity().equals(snapshot.algorithmProfile()), "OPTIMIZATION_PROFILE_CHANGED");
+                            var profile = SandboxOptimizationProfile.identity(profileId);
+                            require(profile.equals(snapshot.algorithmProfile())
+                                    && profile.strategy().equals(snapshot.specification().dispatch().strategy())
+                                    && profileId.equals(snapshot.specification().dispatch().algorithmProfileId()),
+                                    "OPTIMIZATION_PROFILE_CHANGED");
+                            optimizationFingerprint = profile.parameters().get("configurationSha256").toString();
                         }
                     }
                 }
@@ -102,7 +107,8 @@ public final class SandboxManagementJobStore {
                         if (requestId != null) insert.setString(4, requestId);
                         insert.executeUpdate();
                     }
-                    if (optimization) SandboxOptimizationJobStore.create(connection, id);
+                    if (optimizationFingerprint != null)
+                        SandboxOptimizationJobStore.create(connection, id, optimizationFingerprint);
                     try (var update = connection.prepareStatement("UPDATE sandbox_workspace_marker SET active_job_id=? WHERE marker_id=1 AND active_job_id IS NULL")) {
                         update.setString(1, id); require(update.executeUpdate() == 1, "WORKSPACE_BUSY");
                     }
