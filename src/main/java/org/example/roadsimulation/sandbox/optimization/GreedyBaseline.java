@@ -21,7 +21,7 @@ public final class GreedyBaseline {
         String pickup() { return "POI:" + origin; }
         String delivery() { return "POI:" + destination; }
     }
-    private record Group(int generation, int depth, long origin, long destination) {}
+    private record Group(ProductionTaskCatalog.BatchKey batch, int depth, long origin, long destination) {}
     private static final class Queue {
         final SandboxBaselinePackageV1.Vehicle vehicle;
         final List<GlobalPlan.Trip> trips = new ArrayList<>();
@@ -128,7 +128,7 @@ public final class GreedyBaseline {
     }
 
     private static Group group(Ranked task) {
-        return new Group(task.key().generationLoop(), task.depth, task.origin, task.destination);
+        return new Group(task.key().batchKey(), task.depth, task.origin, task.destination);
     }
 
     private static boolean blocked(Ranked task, Map<ProductionTaskCatalog.StageKey, ProductionDependencies.Node> stages,
@@ -137,7 +137,7 @@ public final class GreedyBaseline {
     }
 
     private static ProductionTaskCatalog.StageKey producer(GlobalPlan.TaskKey task) {
-        return new ProductionTaskCatalog.StageKey(new ProductionTaskCatalog.BatchKey(task.generationLoop(), task.chainId()),
+        return new ProductionTaskCatalog.StageKey(task.batchKey(),
                 task.fromStageId());
     }
 

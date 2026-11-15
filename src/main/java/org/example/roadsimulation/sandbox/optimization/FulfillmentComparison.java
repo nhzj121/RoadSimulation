@@ -130,7 +130,7 @@ public final class FulfillmentComparison {
                              Set<ProductionTaskCatalog.StageKey> sinks) {
         var delivered = weight(facts.delivered, tasks);
         var terminal = facts.delivered.stream().filter(key -> sinks.contains(new ProductionTaskCatalog.StageKey(
-                        new ProductionTaskCatalog.BatchKey(key.generationLoop(), key.chainId()), key.toStageId())))
+                        key.batchKey(), key.toStageId())))
                 .map(key -> tasks.get(key).weightTonnes()).reduce(BigDecimal.ZERO, BigDecimal::add);
         var unmet = denominator.signum() == 0 ? null
                 : denominator.subtract(delivered).divide(denominator, PreferenceScorer.PRECISION);

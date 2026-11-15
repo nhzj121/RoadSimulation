@@ -19,7 +19,7 @@ import java.util.List;
                 @UniqueConstraint(name = "uk_production_plan_no", columnNames = "plan_no"),
                 @UniqueConstraint(
                         name = "uk_production_plan_generation",
-                        columnNames = {"simulation_run_id", "generation_round", "chain_id"}
+                        columnNames = {"simulation_run_id", "generation_round", "chain_id", "generation_batch_index"}
                 )
         },
         indexes = {
@@ -68,6 +68,9 @@ public class ProductionPlan {
     @Column(name = "generation_round")
     private Integer generationRound;
 
+    @Column(name = "generation_batch_index")
+    private Integer generationBatchIndex;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt = LocalDateTime.now();
 
@@ -103,6 +106,8 @@ public class ProductionPlan {
     public String getSimulationRunId() { return simulationRunId; }
     public void setSimulationRunId(String simulationRunId) { this.simulationRunId = simulationRunId; }
     public Integer getGenerationRound() { return generationRound; }
+    public Integer getGenerationBatchIndex() { return generationBatchIndex; }
+    public void setGenerationBatchIndex(Integer generationBatchIndex) { this.generationBatchIndex = generationBatchIndex; }
     public void setGenerationRound(Integer generationRound) { this.generationRound = generationRound; }
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
@@ -112,6 +117,11 @@ public class ProductionPlan {
     public void setNodes(List<ProductionPlanNode> nodes) { this.nodes = nodes; }
     public List<ProductionPlanFlow> getFlows() { return flows; }
     public void setFlows(List<ProductionPlanFlow> flows) { this.flows = flows; }
+
+    @PrePersist
+    public void initializeGenerationBatch() {
+        if (simulationRunId != null && generationRound != null && generationBatchIndex == null) generationBatchIndex = 0;
+    }
 
     @PreUpdate
     public void touchUpdate() {

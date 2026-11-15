@@ -72,6 +72,9 @@ public final class SandboxBusinessFactCapture {
                     for (int i = 1; i <= metadata.getColumnCount(); i++) {
                         String column = metadata.getColumnLabel(i);
                         Object value = rows.getObject(i);
+                        // Batch zero and manual plans retain the legacy journal shape.
+                        if ("production_plan".equals(table) && "generation_batch_index".equals(column)
+                                && (value == null || Integer.valueOf(0).equals(value))) continue;
                         if (value instanceof Timestamp time) value = time.toLocalDateTime().toString();
                         else if (value != null && (metadata.getColumnType(i) == Types.BIT || metadata.getColumnType(i) == Types.BOOLEAN)) value = rows.getBoolean(i);
                         else if (value instanceof byte[]) throw new SandboxWorkspaceException("UNSUPPORTED_FACT_TYPE", "Unexpected binary fact: " + table + "." + column);

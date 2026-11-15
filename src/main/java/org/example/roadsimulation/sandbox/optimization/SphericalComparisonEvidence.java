@@ -78,7 +78,11 @@ final class SphericalComparisonEvidence {
         batches.forEach((batchId, batch) -> {
             long planId = id(batch, "plan_id");
             var plan = requireRow(plans, planId);
-            var key = new BatchKey(plan.path("generation_round").asInt(-1), id(batch, "chain_id"));
+            var batchIndex = plan.path("generation_batch_index");
+            if (!batchIndex.isMissingNode() && !batchIndex.isNull()
+                    && (!batchIndex.isIntegralNumber() || !batchIndex.canConvertToInt()))
+                throw new IllegalArgumentException("Invalid generation batch index");
+            var key = new BatchKey(plan.path("generation_round").asInt(-1), id(batch, "chain_id"), batchIndex.asInt(0));
             var frozen = frozenBatches.get(key);
             if (!seenBatches.add(key) || !seenPlans.add(planId) || frozen == null
                     || !run.equals(plan.path("simulation_run_id").asText())

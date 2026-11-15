@@ -52,14 +52,16 @@ export interface SandboxScenarioPreview {
 }
 export interface SandboxScenarioRevision {
   scenarioKey: string; revision: number; definition: SandboxScenarioDefinition
+  resolvedSelection: SandboxScenarioPreview['resolvedSelection']
   fingerprints: {scenarioDefinitionSha256: string; effectiveScenarioDataSha256: string}
 }
+export interface SandboxChainDemandOverride {chainId: number; quantityMultiplier: number; batchesPerGeneration: number}
 export interface SandboxRunDefinition {
   artifactVersion: 'sandbox-run-specification/v2'
   runSpecKey: string; displayName: string | null; description: string | null
   scenario: {scenarioKey: string; revision: number; scenarioDefinitionSha256: string; effectiveScenarioDataSha256: string}
   simulationClock: {startLocalDateTime: string; tickDurationSeconds: number; totalLoops: number}
-  demand: {mode: string; generationIntervalLoops: number; startupPreGenerationEnabled: boolean}
+  demand: {mode: string; generationIntervalLoops: number; startupPreGenerationEnabled: boolean; chainOverrides?: SandboxChainDemandOverride[]}
   dispatch: {strategy: 'ORIGINAL' | 'HEURISTIC' | 'GLOBAL_OPTIMIZATION'; dispatchIntervalLoops: number; algorithmProfileId: string}
   random: {protocolId: string; rootSeed: string}
   vehicleInitialization: {defaultPolicy: string; eligiblePoiTypes: string[]; coordinateAuthority: string}

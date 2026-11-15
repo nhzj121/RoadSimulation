@@ -19,6 +19,10 @@
         <p>场景：{{ confirmedRevision.specification.scenario.scenarioKey }} / Revision {{ confirmedRevision.specification.scenario.revision }}</p>
         <p>根种子：{{ confirmedRevision.specification.random.rootSeed }}；轮次：{{ confirmedRevision.specification.simulationClock.totalLoops }}；调度：{{ dispatchLabel(confirmedRevision.specification.dispatch) }}</p>
         <p>天气：{{ confirmedRevision.specification.weather.sourceMode }}；自动事件：{{ confirmedRevision.specification.events.enabled && confirmedRevision.specification.events.autoEnabled ? '启用' : '关闭' }}</p>
+        <p>未设置覆盖的加工链采用 1 倍、1 批。</p>
+        <p v-for="row in confirmedRevision.specification.demand.chainOverrides" :key="row.chainId">
+          加工链 {{ row.chainId }} · 需求 {{ row.quantityMultiplier }} 倍 · 每个生成轮次 {{ row.batchesPerGeneration }} 批
+        </p>
         </div>
         <p class="confirmation-hint">实际故障维修/救援/换车时间由breakdownPolicy决定，不等同于通用故障持续时间字段。</p>
         <details><summary>实际故障策略</summary><pre>{{ confirmedRevision.specification.events.breakdownPolicy }}</pre></details>

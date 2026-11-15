@@ -4,6 +4,8 @@ import org.example.roadsimulation.entity.*;
 import org.example.roadsimulation.service.ProcessingChainGraphValidator;
 import org.example.roadsimulation.service.ProductionTransportLoadSplitter.LoadPart;
 import org.example.roadsimulation.sandbox.random.*;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.*;
 import java.util.function.*;
 
@@ -13,11 +15,36 @@ public final class ProductionRules {
     public static final String VERSION = "production-calculation/v1";
     public static final int MIN_FINAL_QUANTITY = 10;
     public static final int MAX_FINAL_QUANTITY = 34;
+    public static final Set<BigDecimal> QUANTITY_MULTIPLIERS =
+            Set.of("0.25", "0.33", "0.5", "0.67", "0.75", "1", "1.5", "2", "3").stream()
+                    .map(BigDecimal::new).collect(java.util.stream.Collectors.toUnmodifiableSet());
     private static final double EPSILON = 1e-9;
     private static final int NEAREST_CANDIDATE_COUNT = 5;
     private ProductionRules() {}
     public static int finalQuantity(IntUnaryOperator nextInt) {
         return nextInt.applyAsInt(MAX_FINAL_QUANTITY - MIN_FINAL_QUANTITY + 1) + MIN_FINAL_QUANTITY;
+    }
+    public record AutomaticDemand(int baseQuantity, int quantity, double weight) {}
+
+    public static AutomaticDemand automaticDemand(IntUnaryOperator nextInt, BigDecimal multiplier, double unitWeight) {
+        int baseQuantity = finalQuantity(nextInt);
+        int quantity = BigDecimal.valueOf(baseQuantity).multiply(multiplier)
+                .setScale(0, RoundingMode.HALF_UP).intValueExact();
+        double weight = round(quantity * unitWeight);
+        if (!Double.isFinite(unitWeight) || weight <= 0) throw new IllegalArgumentException("Invalid automatic demand weight");
+        return new AutomaticDemand(baseQuantity, quantity, weight);
+    }
+
+    public static Map<String, Object> batchRandomKey(int loop, long chainId, int batchIndex) {
+        var key = new HashMap<String, Object>(Map.of("loopIndex", loop, "processingChainId", chainId));
+        if (batchIndex != 0) key.put("generationBatchIndex", batchIndex);
+        return key;
+    }
+
+    private static Map<String, Object> stageRandomKey(int loop, long chainId, int batchIndex, String field, long stage) {
+        var key = batchRandomKey(loop, chainId, batchIndex);
+        key.put(field, stage);
+        return key;
     }
     public static double round(double value) { return Math.round(value * 1000.0) / 1000.0; }
     public static double completedOutput(double input, Double ratio) {
@@ -52,14 +79,19 @@ public final class ProductionRules {
             ProcessingStage sink, int loopIndex, long processingChainId,
             Function<ProcessingStage, List<POI>> candidates, ToDoubleBiFunction<POI,POI> distance,
             RandomSource random) {
+        return selectAutomatic(stages, edges, sink, loopIndex, processingChainId, 0, candidates, distance, random);
+    }
+
+    public static Map<ProcessingStage, POI> selectAutomatic(
+            List<ProcessingStage> stages, List<ProcessingChainGraphValidator.EdgeSpec> edges,
+            ProcessingStage sink, int loopIndex, long processingChainId, int batchIndex,
+            Function<ProcessingStage, List<POI>> candidates, ToDoubleBiFunction<POI,POI> distance,
+            RandomSource random) {
         Map<ProcessingStage, POI> selected = new IdentityHashMap<>();
         selected.put(sink, choose(random,
                 candidates.apply(sink),
                 SandboxRandomDomain.PRODUCTION_SINK_POI,
-                Map.of(
-                        "loopIndex", loopIndex,
-                        "processingChainId", processingChainId,
-                        "sinkStageId", requireStageId(sink))));
+                stageRandomKey(loopIndex, processingChainId, batchIndex, "sinkStageId", requireStageId(sink))));
 
         List<ProcessingStage> reverseOrder = new ArrayList<>(
                 ProcessingChainGraphValidator.topologicalOrder(stages, edges));
@@ -87,10 +119,7 @@ public final class ProductionRules {
             selected.put(stage, choose(random,
                     nearest,
                     SandboxRandomDomain.PRODUCTION_STAGE_POI,
-                    Map.of(
-                            "loopIndex", loopIndex,
-                            "processingChainId", processingChainId,
-                            "stageId", requireStageId(stage))));
+                    stageRandomKey(loopIndex, processingChainId, batchIndex, "stageId", requireStageId(stage))));
         }
         return selected;
     }

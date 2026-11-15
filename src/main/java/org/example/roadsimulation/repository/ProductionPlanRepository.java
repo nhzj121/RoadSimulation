@@ -14,11 +14,15 @@ public interface ProductionPlanRepository extends JpaRepository<ProductionPlan, 
     Optional<ProductionPlan> findByPlanNo(String planNo);
     boolean existsByChainId(Long chainId);
     boolean existsByPlanNo(String planNo);
+    @Query("SELECT p FROM ProductionPlan p WHERE p.simulationRunId = :runId AND p.generationRound = :round "
+            + "AND p.chain.id = :chainId AND p.generationBatchIndex = 0")
     Optional<ProductionPlan> findBySimulationRunIdAndGenerationRoundAndChainId(
-            String simulationRunId,
-            Integer generationRound,
-            Long chainId
+            @Param("runId") String simulationRunId,
+            @Param("round") Integer generationRound,
+            @Param("chainId") Long chainId
     );
+    Optional<ProductionPlan> findBySimulationRunIdAndGenerationRoundAndChainIdAndGenerationBatchIndex(
+            String simulationRunId, Integer generationRound, Long chainId, Integer generationBatchIndex);
 
     @Modifying
     @Query(value = "DELETE FROM production_plan WHERE simulation_run_id IS NOT NULL", nativeQuery = true)
