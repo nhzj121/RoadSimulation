@@ -17,7 +17,7 @@ public final class ProductionObservationAdapter {
         var plan = flow.getBatch().getPlan(); var shipment = flow.getShipment();
         if (shipment == null || plan.getGenerationRound() == null)
             throw new IllegalArgumentException("Automatic released flow evidence is required");
-        var key = new FlowKey(new BatchKey(plan.getGenerationRound(), flow.getBatch().getChain().getId()),
+        var key = new FlowKey(batchKey(plan),
                 flow.getFromExecution().getStage().getId(), flow.getToExecution().getStage().getId(), flow.getInputKey());
         var readings = items.stream().map(item -> {
             if (item.getShipment() == null || !shipment.getId().equals(item.getShipment().getId()))
@@ -28,5 +28,10 @@ public final class ProductionObservationAdapter {
         return new ObservedFlow(key, shipment.getId(), flow.getSku(), shipment.getOriginPOI().getId(),
                 shipment.getDestPOI().getId(), BigDecimal.valueOf(shipment.getTotalWeight()),
                 BigDecimal.valueOf(shipment.getTotalVolume()), readings);
+    }
+
+    static BatchKey batchKey(ProductionPlan plan) {
+        return new BatchKey(plan.getGenerationRound(), plan.getChain().getId(),
+                plan.getGenerationBatchIndex() == null ? 0 : plan.getGenerationBatchIndex());
     }
 }

@@ -61,7 +61,7 @@ public final class OptimizationProblemCompiler {
                 OptimizationJson.fingerprint(businessFacts(json.valueToTree(scenario.effectiveData().data()))),
                 OptimizationJson.fingerprint(executionPayload), evaluationContractVersion,
                 clock.startLocalDateTime(), clock.totalLoops(), clock.tickDurationSeconds());
-        var catalog = catalog(input, facts, spec.random().rootSeed());
+        var catalog = catalog(input, facts, spec.random().rootSeed(), spec.demand());
         var dependencies = ProductionDependencies.from(catalog);
         var endpoints = new ArrayList<SphericalPathModel.Endpoint>();
         facts.pois.forEach((id, p) -> endpoints.add(new SphericalPathModel.Endpoint("POI:" + id, p.getLongitude(), p.getLatitude())));
@@ -93,20 +93,24 @@ public final class OptimizationProblemCompiler {
         return node;
     }
 
-    private ProductionTaskCatalog catalog(OptimizationInputManifest input, ProductionFactsAdapter facts, String rootSeed) {
+    private ProductionTaskCatalog catalog(OptimizationInputManifest input, ProductionFactsAdapter facts, String rootSeed,
+            org.example.roadsimulation.sandbox.run.SandboxRunSpecificationV1.Demand demand) {
         var protocol = new SandboxRandomProtocol(json);
         var batches = new ArrayList<Batch>(); var flows = new ArrayList<Flow>(); var tasks = new ArrayList<Task>();
         for (int loop = 0; loop < input.totalLoops(); loop = Math.addExact(loop, 6)) {
             for (var chain : facts.chains) {
                 if (chain.getStatus() != ProcessingChain.ChainStatus.ACTIVE) continue;
-                compileBatch(loop, chain, facts, rootSeed, protocol, batches, flows, tasks);
+                var override = demand.forChain(chain.getId());
+                for (int batch = 0; batch < override.batchesPerGeneration().intValueExact(); batch++)
+                    compileBatch(loop, chain, facts, rootSeed, protocol, batches, flows, tasks, batch, override.quantityMultiplier());
             }
         }
         return new ProductionTaskCatalog(ProductionTaskCatalog.VERSION, input.fingerprint(), input.totalLoops(), batches, flows, tasks);
     }
 
     private void compileBatch(int loop, ProcessingChain chain, ProductionFactsAdapter facts, String rootSeed,
-            SandboxRandomProtocol protocol, List<Batch> batches, List<Flow> flows, List<Task> tasks) {
+            SandboxRandomProtocol protocol, List<Batch> batches, List<Flow> flows, List<Task> tasks,
+            int batchIndex, BigDecimal multiplier) {
         var stages = chain.getStages();
         var edges = ProcessingChainGraphValidator.normalizedEdges(stages, chain.getEdges());
         var order = ProcessingChainGraphValidator.topologicalOrder(stages, edges);
@@ -114,15 +118,16 @@ public final class OptimizationProblemCompiler {
         var sinkInputs = ProcessingChainGraphValidator.inputs(sink);
         if (sinkInputs.size() != 1) throw new IllegalArgumentException("Terminal stage requires one transported input");
         Goods finalGoods = requireGoods(facts, sinkInputs.get(0).sku());
-        int quantity = ProductionRules.finalQuantity(protocol.random(rootSeed, SandboxRandomDomain.PRODUCTION_FINAL_QUANTITY,
-                Map.of("loopIndex", loop, "processingChainId", chain.getId()))::nextInt);
-        double demand = ProductionRules.round(quantity * finalGoods.getWeightPerUnit());
+        var automatic = ProductionRules.automaticDemand(protocol.random(rootSeed, SandboxRandomDomain.PRODUCTION_FINAL_QUANTITY,
+                ProductionRules.batchRandomKey(loop, chain.getId(), batchIndex))::nextInt, multiplier, finalGoods.getWeightPerUnit());
+        int quantity = automatic.quantity();
+        double demand = automatic.weight();
         var calculation = ProductionRules.calculatePlan(stages, edges, order, sink, demand);
-        var selected = ProductionRules.selectAutomatic(stages, edges, sink, loop, chain.getId(),
+        var selected = ProductionRules.selectAutomatic(stages, edges, sink, loop, chain.getId(), batchIndex,
                 stage -> facts.pois.values().stream().filter(p -> p.getPoiType() == stage.getProcessingPOI().getPoiType())
                         .sorted(Comparator.comparing(POI::getId)).toList(), ProductionRules::distanceKm,
                 (domain, key) -> protocol.random(rootSeed, domain, key));
-        var batchKey = new BatchKey(loop, chain.getId());
+        var batchKey = new BatchKey(loop, chain.getId(), batchIndex);
         var actualFlowWeights = new IdentityHashMap<ProcessingChainGraphValidator.EdgeSpec, Double>();
         var stageFacts = new ArrayList<Stage>();
         for (var stage : order) {
@@ -150,11 +155,11 @@ public final class OptimizationProblemCompiler {
                 for (int i = 0; i < parts.size(); i++) {
                     var part = parts.get(i);
                     tasks.add(new Task(new GlobalPlan.TaskKey(loop, chain.getId(), stage.getId(), edge.toStage().getId(),
-                            edge.input().inputKey(), i), key, part.quantity(), decimal(part.weight()), decimal(part.volume())));
+                            edge.input().inputKey(), i, batchIndex), key, part.quantity(), decimal(part.weight()), decimal(part.volume())));
                 }
             }
         }
-        batches.add(new Batch(batchKey, quantity, decimal(demand), stageFacts));
+        batches.add(new Batch(batchKey, quantity, decimal(demand), stageFacts, automatic.baseQuantity()));
     }
     private static Goods requireGoods(ProductionFactsAdapter facts, String sku) {
         Goods item = facts.goods.get(sku);

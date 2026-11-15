@@ -32,14 +32,14 @@ public class PlanTaskObservationService {
         var actualBatches=new HashSet<BatchKey>();
         for(var plan:plans.findAll()) if(run.equals(plan.getSimulationRunId())) {
             if(plan.getGenerationRound()==null || plan.getStatus()!=ProductionPlan.PlanStatus.RELEASED
-                    ||!actualBatches.add(new BatchKey(plan.getGenerationRound(),plan.getChain().getId())))
+                    ||!actualBatches.add(ProductionObservationAdapter.batchKey(plan)))
                 throw new IllegalStateException("PLAN_BATCH_IDENTITY_MISMATCH");
         }
         if(!actualBatches.equals(expectedBatches)) throw new IllegalStateException("PLAN_BATCH_COVERAGE_MISMATCH");
         var expectedFlows=new HashSet<FlowKey>();var observed=new ArrayList<ProductionTaskMapper.ObservedFlow>();
         var structuralFlows=new HashSet<FlowKey>();
         for(var batch:batches.findAll()) if(run.equals(batch.getPlan().getSimulationRunId())) {
-            var batchKey=new BatchKey(batch.getPlan().getGenerationRound(),batch.getChain().getId());
+            var batchKey=ProductionObservationAdapter.batchKey(batch.getPlan());
             for(var flow:flows.findByBatchId(batch.getId())) {
                 var key=new FlowKey(batchKey,flow.getFromExecution().getStage().getId(),flow.getToExecution().getStage().getId(),flow.getInputKey());
                 if(!structuralFlows.add(key))throw new IllegalStateException("DUPLICATE_PLAN_FLOW");

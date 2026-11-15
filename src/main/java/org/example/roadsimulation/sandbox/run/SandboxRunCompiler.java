@@ -7,11 +7,14 @@ import org.example.roadsimulation.sandbox.scenario.definition.SandboxScenarioRev
 import org.springframework.core.io.Resource;
 
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.HashSet;
+import org.example.roadsimulation.service.production.ProductionRules;
 
 /** Validates and compiles a run specification against one published scenario revision. */
 public final class SandboxRunCompiler {
@@ -55,6 +58,12 @@ public final class SandboxRunCompiler {
         require(scenario.effectiveData().data().processingChains().stream()
                         .anyMatch(chain -> "ACTIVE".equals(chain.status())),
                 "PRODUCTION_ACTIVE_CHAIN_REQUIRED", "PRODUCTION requires at least one selected ACTIVE processing chain");
+        var activeChains = scenario.effectiveData().data().processingChains().stream()
+                .filter(chain -> "ACTIVE".equals(chain.status())).map(chain -> chain.id()).collect(java.util.stream.Collectors.toSet());
+        for (var row : source.demand().chainOverrides()) {
+            require(activeChains.contains(row.chainId()), "INVALID_CHAIN_DEMAND_OVERRIDE",
+                    "Demand override requires an active selected chain: " + row.chainId());
+        }
         SandboxAlgorithmProfile profile = profiles.resolve(
                 normalized.dispatch().strategy(), normalized.dispatch().algorithmProfileId());
         List<SandboxVehicleInitialState> states = initialStateGenerator.generate(
@@ -167,7 +176,8 @@ public final class SandboxRunCompiler {
                 nullableText(source.description()),
                 normalizeScenarioReference(source.scenario()),
                 clock,
-                new SandboxRunSpecificationV1.Demand(demandMode, PRODUCTION_INTERVAL_LOOPS, false),
+                new SandboxRunSpecificationV1.Demand(demandMode, PRODUCTION_INTERVAL_LOOPS, false,
+                        normalizeChainDemand(source.demand().chainOverrides(), v2)),
                 new SandboxRunSpecificationV1.Dispatch(
                         strategy, DISPATCH_INTERVAL_LOOPS,
                         text(source.dispatch().algorithmProfileId(), "dispatch.algorithmProfileId")),
@@ -237,6 +247,24 @@ public final class SandboxRunCompiler {
 
     private String nullableText(String value) {
         return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    private List<SandboxRunSpecificationV1.ChainDemandOverride> normalizeChainDemand(
+            List<SandboxRunSpecificationV1.ChainDemandOverride> rows, boolean v2) {
+        require(v2 || rows.isEmpty(), "INVALID_CHAIN_DEMAND_OVERRIDE", "Demand overrides require a v2 sandbox run");
+        var seen = new HashSet<Long>();
+        for (var row : rows) {
+            require(row.chainId() > 0 && seen.add(row.chainId()), "INVALID_CHAIN_DEMAND_OVERRIDE",
+                    "Duplicate or invalid demand override chain: " + row.chainId());
+            require(ProductionRules.QUANTITY_MULTIPLIERS.contains(row.quantityMultiplier()),
+                    "INVALID_CHAIN_DEMAND_OVERRIDE", "Unsupported quantity multiplier for chain " + row.chainId());
+            require(row.batchesPerGeneration().scale() <= 0 && row.batchesPerGeneration().compareTo(BigDecimal.ONE) >= 0
+                            && row.batchesPerGeneration().compareTo(BigDecimal.valueOf(3)) <= 0,
+                    "INVALID_CHAIN_DEMAND_OVERRIDE", "Batch count must be 1, 2 or 3 for chain " + row.chainId());
+        }
+        return rows.stream().filter(row -> !row.quantityMultiplier().equals(BigDecimal.ONE)
+                        || !row.batchesPerGeneration().equals(BigDecimal.ONE))
+                .sorted(Comparator.comparingLong(SandboxRunSpecificationV1.ChainDemandOverride::chainId)).toList();
     }
 
     private void require(boolean condition, String code, String message) {

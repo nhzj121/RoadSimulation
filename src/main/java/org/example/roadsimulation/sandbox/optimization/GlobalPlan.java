@@ -1,5 +1,6 @@
 package org.example.roadsimulation.sandbox.optimization;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import java.util.*;
 
 /** G0 validates structure only. Production dependencies, resources and capacities belong to G2. */
@@ -10,11 +11,19 @@ public record GlobalPlan(String artifactVersion, OptimizationProblemRef problem,
     private static final Comparator<TaskKey> TASK_ORDER = Comparator.comparing(OptimizationJson::write);
 
     public record TaskKey(int generationLoop, long chainId, long fromStageId, long toStageId,
-                          String inputKey, int partIndex) {
+                          String inputKey, int partIndex,
+                          @JsonInclude(JsonInclude.Include.NON_DEFAULT) int batchIndex) {
+        public TaskKey(int generationLoop, long chainId, long fromStageId, long toStageId, String inputKey, int partIndex) {
+            this(generationLoop, chainId, fromStageId, toStageId, inputKey, partIndex, 0);
+        }
         public TaskKey {
-            if (generationLoop < 0 || chainId <= 0 || fromStageId <= 0 || toStageId <= 0 || partIndex < 0)
+            if (generationLoop < 0 || chainId <= 0 || fromStageId <= 0 || toStageId <= 0 || partIndex < 0
+                    || batchIndex < 0 || batchIndex > 2)
                 throw new IllegalArgumentException("Invalid production task key");
             inputKey = ContractChecks.text(inputKey, "inputKey");
+        }
+        public ProductionTaskCatalog.BatchKey batchKey() {
+            return new ProductionTaskCatalog.BatchKey(generationLoop, chainId, batchIndex);
         }
     }
     public enum Action { LOAD, UNLOAD }

@@ -1,5 +1,6 @@
 package org.example.roadsimulation.sandbox.optimization;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import java.math.BigDecimal;
 import java.util.*;
 
@@ -7,8 +8,12 @@ import java.util.*;
 public record ProductionTaskCatalog(String artifactVersion, String inputFingerprint, int totalLoops,
                                     List<Batch> batches, List<Flow> flows, List<Task> tasks) {
     public static final String VERSION = "sandbox-production-task-catalog/v1";
-    public record BatchKey(int generationLoop, long chainId) {
-        public BatchKey { if (generationLoop < 0 || chainId <= 0) throw new IllegalArgumentException("Invalid batch key"); }
+    public record BatchKey(int generationLoop, long chainId, @JsonInclude(JsonInclude.Include.NON_DEFAULT) int batchIndex) {
+        public BatchKey(int generationLoop, long chainId) { this(generationLoop, chainId, 0); }
+        public BatchKey {
+            if (generationLoop < 0 || chainId <= 0 || batchIndex < 0 || batchIndex > 2)
+                throw new IllegalArgumentException("Invalid batch key");
+        }
     }
     public record StageKey(BatchKey batch, long stageId) {
         public StageKey { Objects.requireNonNull(batch); if (stageId <= 0) throw new IllegalArgumentException("Invalid stage"); }
@@ -35,15 +40,23 @@ public record ProductionTaskCatalog(String artifactVersion, String inputFingerpr
             transportOutput = ContractChecks.positive(transportOutput, "transportOutput");
         }
     }
-    public record Batch(BatchKey key, int finalQuantity, BigDecimal finalDemandWeight, List<Stage> stages) {
+    public record Batch(BatchKey key, int finalQuantity, BigDecimal finalDemandWeight, List<Stage> stages,
+                        @JsonInclude(JsonInclude.Include.NON_NULL) Integer baseQuantity) {
+        public Batch(BatchKey key, int finalQuantity, BigDecimal finalDemandWeight, List<Stage> stages) {
+            this(key, finalQuantity, finalDemandWeight, stages, null);
+        }
         public Batch {
             Objects.requireNonNull(key);
-            if (finalQuantity < 10 || finalQuantity > 34) throw new IllegalArgumentException("Invalid automatic quantity");
+            int drawn = baseQuantity == null ? finalQuantity : baseQuantity;
+            if (drawn < 10 || drawn > 34 || finalQuantity < 3 || finalQuantity > 102)
+                throw new IllegalArgumentException("Invalid automatic quantity");
+            if (drawn == finalQuantity) baseQuantity = null;
             finalDemandWeight = ContractChecks.positive(finalDemandWeight, "finalDemandWeight");
             stages = sorted(stages, "stages", Stage::key);
             if (stages.isEmpty() || stages.stream().anyMatch(s -> !key.equals(s.key.batch)))
                 throw new IllegalArgumentException("Invalid batch stages");
         }
+        public int sampledQuantity() { return baseQuantity == null ? finalQuantity : baseQuantity; }
     }
     public record Flow(FlowKey key, String sku, long originPoiId, long destinationPoiId,
                        BigDecimal plannedWeight, BigDecimal transportWeight, BigDecimal transportVolume) {
@@ -60,7 +73,7 @@ public record ProductionTaskCatalog(String artifactVersion, String inputFingerpr
         public Task {
             Objects.requireNonNull(key); Objects.requireNonNull(flow);
             if (!key.equals(new GlobalPlan.TaskKey(flow.batch.generationLoop, flow.batch.chainId,
-                    flow.fromStageId, flow.toStageId, flow.inputKey, key.partIndex())) || quantity <= 0)
+                    flow.fromStageId, flow.toStageId, flow.inputKey, key.partIndex(), flow.batch.batchIndex)) || quantity <= 0)
                 throw new IllegalArgumentException("Invalid task identity/quantity");
             weightTonnes = ContractChecks.positive(weightTonnes, "weightTonnes");
             volumeCubicMeters = ContractChecks.nonNegative(volumeCubicMeters, "volumeCubicMeters");

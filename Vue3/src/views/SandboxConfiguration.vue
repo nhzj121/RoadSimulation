@@ -173,6 +173,27 @@
           </div>
           </section>
           <section class="form-section sandbox-card">
+            <h2 class="sandbox-section-heading">生产需求</h2>
+            <p class="sandbox-caption">每 6 轮生成一次。未设置的加工链采用 1 倍、1 批。</p>
+            <p v-if="demandChainsError" role="alert">{{ demandChainsError }}</p>
+            <div v-for="chain in demandChains" :key="chain.id" class="override-row">
+              <span>{{ chain.chainName || chain.name || chain.id }}</span>
+              <el-select :model-value="demandOverride(chain.id)?.quantityMultiplier ?? 1"
+                :aria-label="`加工链 ${chain.id} 每批需求倍率`" @change="setChainDemand(chain.id, 'quantityMultiplier', $event)">
+                <el-option v-for="value in demandMultipliers" :key="value" :label="`${value} 倍`" :value="value" />
+              </el-select>
+              <el-select :model-value="demandOverride(chain.id)?.batchesPerGeneration ?? 1"
+                :aria-label="`加工链 ${chain.id} 每个生成轮次的批次数`" @change="setChainDemand(chain.id, 'batchesPerGeneration', $event)">
+                <el-option v-for="value in [1, 2, 3]" :key="value" :label="`${value} 批`" :value="value" />
+              </el-select>
+              <el-button v-if="demandOverride(chain.id)" @click="resetChainDemand(chain.id)">恢复默认</el-button>
+            </div>
+            <div v-for="row in invalidDemandOverrides" :key="row.chainId" class="override-row">
+              <span role="alert">加工链 {{ row.chainId }} 在绑定场景中不可用。</span>
+              <el-button @click="resetChainDemand(row.chainId)">删除覆盖</el-button>
+            </div>
+          </section>
+          <section class="form-section sandbox-card">
           <div class="section-heading"><span class="section-number">02</span><div><h3 class="sandbox-section-heading">天气配置</h3><p class="sandbox-caption">沿用受控随机天气或明确指定时间线，保留每类天气的权重和速度系数。</p></div></div>
           <el-form-item label="天气来源"><el-select :model-value="run.weather.sourceMode" @change="changeWeather"><el-option value="SEEDED_GENERATION" label="顶层种子派生天气" /><el-option value="EXPLICIT_TIMELINE" label="明确指定时间线" /></el-select></el-form-item>
           <template v-if="run.weather.sourceMode === 'SEEDED_GENERATION'">
@@ -230,6 +251,12 @@
         <p v-if="run" class="draft-status">{{ runSavedCurrent ? `已保存草稿，行版本${runVersion}` : runUsesPublished ? '已选用发布版本，未改动其内容' : '有未保存的本地修改或尚未保存' }}。绑定发布场景，不读取当前工作库作为新配置的基础。</p>
         <p v-if="runWriteLocked" class="locked-note">运行规格写操作已锁定，请先导出本地修改并重新加载服务端草稿。</p>
         <section v-if="runPreviewCurrent && runPreview" class="preview">
+          <p v-if="!runPreview.normalizedSpecification.demand.chainOverrides?.length">生产需求采用默认的 1 倍、1 批。</p>
+          <ul v-else>
+            <li v-for="row in runPreview.normalizedSpecification.demand.chainOverrides" :key="row.chainId">
+              加工链 {{ row.chainId }} · {{ row.quantityMultiplier }} 倍 · 每个生成轮次 {{ row.batchesPerGeneration }} 批
+            </li>
+          </ul>
           <h3>编译通过</h3><p>初态车辆 {{ runPreview.vehicleInitialStates.length }}，候选初始POI {{ runPreview.eligibleVehicleInitialPoiCount }}，天气段 {{ runPreview.weatherTimeline.length }}</p>
           <p class="fingerprint">规格：{{ runPreview.runSpecificationSha256 }}</p><p class="fingerprint">车辆初态：{{ runPreview.resolvedVehicleInitialStateSha256 }}</p>
           <p class="fingerprint">天气：{{ runPreview.weatherTimelineSha256 }}</p><p class="fingerprint">事件：{{ runPreview.eventConfigurationSha256 }}</p>
@@ -284,12 +311,60 @@ const runBindingStale = ref(false)
 const publishedScenario = ref<SandboxScenarioRevision | null>(null), publishedRun = ref<SandboxRunRevision | null>(null)
 const scenarioLoadKey = ref(''), runLoadKey = ref(''), scenarioLoadRevision = ref(1), runLoadRevision = ref(1)
 const chains = ref<SandboxCatalogItem[]>([]), vehicleTypes = ref<string[]>([]), modelTypes = ref<string[]>([]), poiTypes = ref<string[]>([]), categories = ref<string[]>([])
+const demandMultipliers = [0.25, 0.33, 0.5, 0.67, 0.75, 1, 1.5, 2, 3]
+const demandScenario = ref<SandboxScenarioRevision | null>(null)
+const demandChainsError = ref('')
+const demandBinding = computed(() => run.value && `${run.value.scenario.scenarioKey}@${run.value.scenario.revision}`)
+watch(demandBinding, async (binding, _, onCleanup) => {
+  demandScenario.value = null
+  demandChainsError.value = ''
+  if (!binding || !run.value) return
+  const {scenarioKey, revision} = run.value.scenario
+  let active = true
+  onCleanup(() => { active = false })
+  try {
+    const published = publishedScenario.value
+    const resolved = published?.scenarioKey === scenarioKey && published.revision === revision
+      ? published : await sandboxApi.scenarioRevision(scenarioKey, revision)
+    if (active) demandScenario.value = resolved
+  } catch (failure) {
+    if (active) demandChainsError.value = `无法读取场景的加工链：${(failure as Error).message}`
+  }
+})
+const demandChains = computed(() => {
+  const selected = new Set(demandScenario.value?.resolvedSelection?.processingChainIds ?? [])
+  return chains.value.filter(chain => chain.status === 'ACTIVE' && selected.has(chain.id))
+})
+const invalidDemandOverrides = computed(() => demandScenario.value
+  ? (run.value?.demand.chainOverrides ?? []).filter(row => !demandChains.value.some(chain => chain.id === row.chainId)) : [])
+function demandOverride(chainId: number) {
+  return run.value?.demand.chainOverrides?.find(row => row.chainId === chainId)
+}
+function resetChainDemand(chainId: number) {
+  if (!run.value) return
+  const rows = (run.value.demand.chainOverrides ?? []).filter(row => row.chainId !== chainId)
+  if (rows.length) run.value.demand.chainOverrides = rows
+  else delete run.value.demand.chainOverrides
+}
+function setChainDemand(chainId: number, field: 'quantityMultiplier' | 'batchesPerGeneration', value: number) {
+  if (!run.value) return
+  const previous = demandOverride(chainId)
+  const row = {chainId, quantityMultiplier: previous?.quantityMultiplier ?? 1,
+    batchesPerGeneration: previous?.batchesPerGeneration ?? 1, [field]: value}
+  if (row.quantityMultiplier === 1 && row.batchesPerGeneration === 1) {
+    resetChainDemand(chainId)
+  } else {
+    run.value.demand.chainOverrides = [...(run.value.demand.chainOverrides ?? []).filter(entry => entry.chainId !== chainId), row]
+      .sort((left, right) => left.chainId - right.chainId)
+  }
+}
 const selectionEpoch = ref(0), selectionErrors = ref<Record<string, boolean>>({})
 const weatherTypes = ['SUNNY', 'RAIN', 'SNOW', 'FOG'], eventTypes: Array<'congestion' | 'breakdown'> = ['congestion', 'breakdown']
 const importVisible = ref(false), importText = ref(''), importKind = ref<'scenario' | 'run'>('scenario')
 const familiesVisible = ref(false), familyKind = ref('scenarios'), families = ref<Array<Record<string, unknown>>>([]), familiesOffset = ref(0), familiesMore = ref(false)
 const canEdit = computed(() => connected.value && !busy.value && !Object.values(selectionErrors.value).some(Boolean))
-const canRunEdit = computed(() => connected.value && !busy.value && !runBindingStale.value)
+const canRunEdit = computed(() => connected.value && !busy.value && !runBindingStale.value
+  && (!run.value?.demand.chainOverrides?.length || !!demandScenario.value && !invalidDemandOverrides.value.length))
 const readonlyRunProtocol = computed(() => run.value ? {scenario: run.value.scenario, simulationClock: run.value.simulationClock,
   demand: run.value.demand, dispatch: run.value.dispatch, randomProtocol: run.value.random.protocolId,
   vehicleInitialization: run.value.vehicleInitialization, driverBehavior: run.value.driverBehavior, breakdownPolicy: run.value.events.breakdownPolicy} : null)

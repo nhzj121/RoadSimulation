@@ -1,5 +1,7 @@
 package org.example.roadsimulation.sandbox.run;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -61,8 +63,29 @@ public record SandboxRunSpecificationV1(
     public record Demand(
             String mode,
             int generationIntervalLoops,
-            boolean startupPreGenerationEnabled
-    ) {}
+            boolean startupPreGenerationEnabled,
+            @JsonInclude(JsonInclude.Include.NON_EMPTY) List<ChainDemandOverride> chainOverrides
+    ) {
+        public Demand {
+            chainOverrides = chainOverrides == null ? List.of() : List.copyOf(chainOverrides);
+        }
+
+        public Demand(String mode, int generationIntervalLoops, boolean startupPreGenerationEnabled) {
+            this(mode, generationIntervalLoops, startupPreGenerationEnabled, List.of());
+        }
+
+        public ChainDemandOverride forChain(long chainId) {
+            return chainOverrides.stream().filter(row -> row.chainId() == chainId).findFirst()
+                    .orElseGet(() -> new ChainDemandOverride(chainId, BigDecimal.ONE, BigDecimal.ONE));
+        }
+    }
+
+    public record ChainDemandOverride(long chainId, BigDecimal quantityMultiplier, BigDecimal batchesPerGeneration) {
+        public ChainDemandOverride {
+            quantityMultiplier = quantityMultiplier == null ? BigDecimal.ONE : quantityMultiplier.stripTrailingZeros();
+            batchesPerGeneration = batchesPerGeneration == null ? BigDecimal.ONE : batchesPerGeneration.stripTrailingZeros();
+        }
+    }
 
     public record Dispatch(
             String strategy,

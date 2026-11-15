@@ -27,11 +27,11 @@ public record ProductionDependencies(String artifactVersion, String catalogFinge
         var to = new HashMap<GlobalPlan.TaskKey, StageKey>();
         for (var node : stages) {
             for (var task : node.outbound) {
-                if (!node.stage.equals(new StageKey(new BatchKey(task.generationLoop(), task.chainId()), task.fromStageId()))
+                if (!node.stage.equals(new StageKey(task.batchKey(), task.fromStageId()))
                         || from.put(task, node.stage) != null) throw new IllegalArgumentException("Invalid outbound dependency");
             }
             for (var task : node.inbound) {
-                if (!node.stage.equals(new StageKey(new BatchKey(task.generationLoop(), task.chainId()), task.toStageId()))
+                if (!node.stage.equals(new StageKey(task.batchKey(), task.toStageId()))
                         || to.put(task, node.stage) != null) throw new IllegalArgumentException("Invalid inbound dependency");
             }
         }

@@ -12,6 +12,8 @@ public interface ProductionPlanningService {
             String simulationRunId,
             int generationRound
     );
+    ProductionPlanResponse createAutomaticPlan(CreateProductionPlanRequest request, String simulationRunId,
+                                                int generationRound, int batchIndex);
 
     ProductionPlanResponse getPlan(Long planId);
 

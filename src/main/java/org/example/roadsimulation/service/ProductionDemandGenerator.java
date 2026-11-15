@@ -17,21 +17,23 @@ import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Map;
+import java.util.Optional;
 import java.util.Random;
 import java.util.concurrent.ThreadLocalRandom;
 
 /**
- * Creates and releases one idempotent production plan for every active chain.
+ * Creates and releases the configured production batches for every active chain.
  */
 @Service
 public class ProductionDemandGenerator {
 
     static final int MIN_FINAL_QUANTITY = ProductionRules.MIN_FINAL_QUANTITY;
     static final int MAX_FINAL_QUANTITY = ProductionRules.MAX_FINAL_QUANTITY;
+    private static final String GENERATOR_ACTOR = "production-demand-generator";
     private static final Logger log = LoggerFactory.getLogger(ProductionDemandGenerator.class);
 
     private final ProcessingChainRepository chainRepository;
@@ -75,13 +77,18 @@ public class ProductionDemandGenerator {
                 .toList();
         List<String> failures = new ArrayList<>();
         for (ProcessingChain chain : activeChains) {
-            try {
-                generateForChain(simulationRunId, tick.loopIndex(), chain);
-            } catch (RuntimeException failure) {
-                failures.add(chain.getChainCode() + ": " + failure.getMessage());
-                log.error(
-                        "Automatic production demand failed: runId={}, round={}, chain={}",
-                        simulationRunId, tick.loopIndex(), chain.getChainCode(), failure);
+            var demand = sandboxRunRuntimeContext != null && sandboxRunRuntimeContext.isV2()
+                    ? sandboxRunRuntimeContext.revisionV2().specification().demand().forChain(chain.getId()) : null;
+            int batches = demand == null ? 1 : demand.batchesPerGeneration().intValueExact();
+            BigDecimal multiplier = demand == null ? BigDecimal.ONE : demand.quantityMultiplier();
+            for (int batch = 0; batch < batches; batch++) {
+                try {
+                    generateForChain(simulationRunId, tick.loopIndex(), chain, batch, multiplier);
+                } catch (RuntimeException failure) {
+                    failures.add(chain.getChainCode() + " batch " + batch + ": " + failure.getMessage());
+                    log.error("Automatic production demand failed: runId={}, round={}, chain={}, batch={}",
+                            simulationRunId, tick.loopIndex(), chain.getChainCode(), batch, failure);
+                }
             }
         }
         if (!failures.isEmpty()) {
@@ -89,10 +96,8 @@ public class ProductionDemandGenerator {
         }
     }
 
-    private void generateForChain(String runId, int round, ProcessingChain chain) {
-        ProductionPlan existing = planRepository
-                .findBySimulationRunIdAndGenerationRoundAndChainId(runId, round, chain.getId())
-                .orElse(null);
+    private void generateForChain(String runId, int round, ProcessingChain chain, int batch, BigDecimal multiplier) {
+        ProductionPlan existing = findBatch(runId, round, chain.getId(), batch).orElse(null);
         if (existing != null) {
             releaseIfCalculated(existing);
             return;
@@ -100,20 +105,18 @@ public class ProductionDemandGenerator {
 
         Goods finalGoods = catalogService.resolveFinalTransportedGoods(chain.getId());
         long planSeed;
-        int quantity;
+        double finalWeight;
         if (sandboxRunRuntimeContext != null) {
-            Map<String, Object> key = Map.of(
-                    "loopIndex", round,
-                    "processingChainId", chain.getId());
+            var key = ProductionRules.batchRandomKey(round, chain.getId(), batch);
             planSeed = sandboxRunRuntimeContext.deriveSeed(
                     SandboxRandomDomain.PRODUCTION_FINAL_QUANTITY, key);
-            quantity = ProductionRules.finalQuantity(
-                    bound -> sandboxRunRuntimeContext.random(SandboxRandomDomain.PRODUCTION_FINAL_QUANTITY, key).nextInt(bound));
+            finalWeight = ProductionRules.automaticDemand(
+                    sandboxRunRuntimeContext.random(SandboxRandomDomain.PRODUCTION_FINAL_QUANTITY, key)::nextInt,
+                    multiplier, finalGoods.getWeightPerUnit()).weight();
         } else {
             planSeed = derivedSeed(runtimeConfig.getDemandRandomSeed(), round, chain.getId());
-            quantity = ProductionRules.finalQuantity(new Random(planSeed)::nextInt);
+            finalWeight = roundWeight(ProductionRules.finalQuantity(new Random(planSeed)::nextInt) * finalGoods.getWeightPerUnit());
         }
-        double finalWeight = roundWeight(quantity * finalGoods.getWeightPerUnit());
         CreateProductionPlanRequest request = new CreateProductionPlanRequest(
                 chain.getId(),
                 finalWeight,
@@ -121,31 +124,43 @@ public class ProductionDemandGenerator {
                 null,
                 planSeed,
                 null,
-                "production-demand-generator"
+                GENERATOR_ACTOR
         );
 
+        ProductionPlanResponse plan;
         try {
-            ProductionPlanResponse plan = planningService.createAutomaticPlan(request, runId, round);
-            planningService.releasePlan(plan.id(), "production-demand-generator");
+            plan = batch == 0 ? planningService.createAutomaticPlan(request, runId, round)
+                    : planningService.createAutomaticPlan(request, runId, round, batch);
         } catch (DataIntegrityViolationException duplicate) {
-            ProductionPlan concurrent = planRepository
-                    .findBySimulationRunIdAndGenerationRoundAndChainId(
-                            runId, round, chain.getId())
-                    .orElse(null);
-            if (concurrent == null) {
-                throw duplicate;
-            }
-            releaseIfCalculated(concurrent);
+            releaseIfCalculated(findBatch(runId, round, chain.getId(), batch).orElseThrow(() -> duplicate));
+            return;
         }
+        releaseAutomaticPlan(plan.id());
+    }
+
+    private Optional<ProductionPlan> findBatch(String runId, int round, Long chainId, int batch) {
+        return batch == 0 ? planRepository.findBySimulationRunIdAndGenerationRoundAndChainId(runId, round, chainId)
+                : planRepository.findBySimulationRunIdAndGenerationRoundAndChainIdAndGenerationBatchIndex(runId, round, chainId, batch);
     }
 
     private void releaseIfCalculated(ProductionPlan plan) {
         if (plan.getStatus() == ProductionPlan.PlanStatus.CALCULATED) {
-            planningService.releasePlan(plan.getId(), "production-demand-generator");
+            releaseAutomaticPlan(plan.getId());
         } else if (plan.getStatus() != ProductionPlan.PlanStatus.RELEASED) {
             throw new IllegalStateException(
                     "自动计划处于不可发布状态: planId=" + plan.getId()
                             + ", status=" + plan.getStatus());
+        }
+    }
+
+    private void releaseAutomaticPlan(Long planId) {
+        try {
+            planningService.releasePlan(planId, GENERATOR_ACTOR);
+        } catch (IllegalStateException failure) {
+            // The conditional status update may have lost to another generator.
+            boolean released = planRepository.findById(planId)
+                    .filter(plan -> plan.getStatus() == ProductionPlan.PlanStatus.RELEASED).isPresent();
+            if (!released) throw failure;
         }
     }
 

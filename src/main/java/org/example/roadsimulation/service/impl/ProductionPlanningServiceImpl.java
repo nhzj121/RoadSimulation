@@ -85,7 +85,7 @@ public class ProductionPlanningServiceImpl implements ProductionPlanningService 
 
     @Override
     public ProductionPlanResponse createRandomPlan(CreateProductionPlanRequest request) {
-        return createPlan(request, null, null);
+        return createPlan(request, null, null, null);
     }
 
     @Override
@@ -94,19 +94,29 @@ public class ProductionPlanningServiceImpl implements ProductionPlanningService 
             String simulationRunId,
             int generationRound
     ) {
+        return createAutomaticPlan(request, simulationRunId, generationRound, 0);
+    }
+
+    @Override
+    public ProductionPlanResponse createAutomaticPlan(CreateProductionPlanRequest request, String simulationRunId,
+                                                       int generationRound, int batchIndex) {
         if (simulationRunId == null || simulationRunId.isBlank()) {
             throw new IllegalArgumentException("simulationRunId is required");
         }
         if (generationRound < 0) {
             throw new IllegalArgumentException("generationRound must not be negative");
         }
-        return createPlan(request, simulationRunId, generationRound);
+        if (batchIndex < 0 || batchIndex > 2 || (batchIndex > 0 && !poiSelector.isSandboxControlled())) {
+            throw new IllegalArgumentException("Invalid automatic production batch index");
+        }
+        return createPlan(request, simulationRunId, generationRound, batchIndex);
     }
 
     private ProductionPlanResponse createPlan(
             CreateProductionPlanRequest request,
             String simulationRunId,
-            Integer generationRound
+            Integer generationRound,
+            Integer batchIndex
     ) {
         if (request == null || request.chainId() == null) {
             throw new IllegalArgumentException("chainId is required");
@@ -141,6 +151,7 @@ public class ProductionPlanningServiceImpl implements ProductionPlanningService 
         plan.setRandomSeed(request.randomSeed());
         plan.setSimulationRunId(simulationRunId);
         plan.setGenerationRound(generationRound);
+        plan.setGenerationBatchIndex(batchIndex);
         plan.setStatus(ProductionPlan.PlanStatus.CALCULATED);
         plan.setUpdatedAt(LocalDateTime.now());
         ProductionPlan savedPlan = planRepository.save(plan);
@@ -149,7 +160,7 @@ public class ProductionPlanningServiceImpl implements ProductionPlanningService 
         Map<ProcessingStage, POI> selectedPois = generationRound != null
                 && poiSelector.isSandboxControlled()
                 ? poiSelector.selectAutomatic(
-                        stages, edges, sink, request.randomSeed(), generationRound, chain.getId())
+                        stages, edges, sink, request.randomSeed(), generationRound, chain.getId(), batchIndex)
                 : poiSelector.select(stages, edges, sink, request.randomSeed());
         List<ProductionPlanNode> nodes = createPlanNodes(
                 savedPlan, stages, edges, sink, calculation, selectedPois);

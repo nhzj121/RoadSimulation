@@ -87,6 +87,12 @@ public class ProductionPlanPoiSelector {
             int loopIndex,
             long processingChainId
     ) {
+        return selectAutomatic(stages, edges, sink, randomSeed, loopIndex, processingChainId, 0);
+    }
+
+    public Map<ProcessingStage, POI> selectAutomatic(
+            List<ProcessingStage> stages, List<ProcessingChainGraphValidator.EdgeSpec> edges, ProcessingStage sink,
+            Long randomSeed, int loopIndex, long processingChainId, int batchIndex) {
         if (sandboxRunRuntimeContext == null) {
             if (randomSeed == null) {
                 throw new IllegalArgumentException("automatic production plan requires a random seed");
@@ -94,7 +100,7 @@ public class ProductionPlanPoiSelector {
             return select(stages, edges, sink, randomSeed);
         }
         return ProductionRules.selectAutomatic(
-                stages, edges, sink, loopIndex, processingChainId, this::candidatePois,
+                stages, edges, sink, loopIndex, processingChainId, batchIndex, this::candidatePois,
                 this::distanceKm, sandboxRunRuntimeContext::random);
     }
 
