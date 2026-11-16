@@ -1,0 +1,48 @@
+{
+  "artifactVersion": "sandbox-scenario-definition/v1",
+  "scenarioKey": "demo-v1-full",
+  "displayName": "演示：全部合格车辆",
+  "description": "固定正式基线；演示包v1；载货容积保留原值，不作为匹配条件。",
+  "baseline": {
+    "baselineId": "roadsimulation-baseline-20260928-01",
+    "restorationPayloadSha256": "86fafc58374ae563c109273d70a4f788e6472fd665b8d0e38b561d25659371f4",
+    "simulationFactsSha256": "b8d94b330030287baaf050d65edce85ea4c3ed67ba60f3bec632c6fcc4e180ab",
+    "effectiveBaseDataSha256": "8f208b56e1350f26af46bc666c36c7bc1c65209d6b0c1b155bf9036e1d922922"
+  },
+  "selection": {
+    "vehicles": {
+      "mode": "ALL_ELIGIBLE",
+      "includeIds": [],
+      "excludeIds": [],
+      "minimumLoadCapacityTonnes": null,
+      "maximumLoadCapacityTonnes": null,
+      "minimumCargoVolumeCubicMeters": null,
+      "maximumCargoVolumeCubicMeters": null,
+      "vehicleTypes": [],
+      "modelTypes": []
+    },
+    "pois": {
+      "mode": "ALL_ELIGIBLE",
+      "includeIds": [],
+      "excludeIds": [],
+      "poiTypes": []
+    },
+    "goods": {
+      "mode": "ALL_ELIGIBLE",
+      "includeIds": [],
+      "excludeIds": [],
+      "categories": []
+    },
+    "processingChains": {
+      "mode": "ALL_ELIGIBLE",
+      "includeIds": [],
+      "excludeIds": []
+    }
+  },
+  "overrides": {
+    "stageOutputRatios": [],
+    "processingInputShares": [],
+    "initialInventories": [],
+    "vehicleInitialPois": []
+  }
+}

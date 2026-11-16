@@ -1,8 +1,6 @@
 /** Temporary presentation switches only. Never use these to gate simulation or API calls. */
 export const temporaryDisplaySettings = Object.freeze({
   hideRealtimeEvaluationErrors: true,
-  showWeatherControls: false,
-  showRandomEventControls: false,
 });
 
 /** Retain the diagnostic source; only select the cards rendered on screen. */
