@@ -1,0 +1,71 @@
+{
+  "artifactVersion": "sandbox-shared-config/v1",
+  "baseline": {
+    "baselineId": "roadsimulation-baseline-20260928-01",
+    "restorationPayloadSha256": "86fafc58374ae563c109273d70a4f788e6472fd665b8d0e38b561d25659371f4",
+    "simulationFactsSha256": "b8d94b330030287baaf050d65edce85ea4c3ed67ba60f3bec632c6fcc4e180ab",
+    "effectiveBaseDataSha256": "8f208b56e1350f26af46bc666c36c7bc1c65209d6b0c1b155bf9036e1d922922"
+  },
+  "scenarios": [
+    {
+      "key": "demo-v1-full",
+      "sourceRevision": 1,
+      "sha256": "2160007293e85b8cac83bf7e3a6d81c428d075135206999ae2ac7875cd45b949"
+    },
+    {
+      "key": "demo-v1-matched",
+      "sourceRevision": 1,
+      "sha256": "760359e91bb2289cdb701da22e0ff17fc5dbfbc1bd015b384edab95d09bfbc4c"
+    },
+    {
+      "key": "demo-v1-small",
+      "sourceRevision": 1,
+      "sha256": "ffa156a02947e84aacddc6ac372d9ebba38e3689962bb6e11fc9c0db4c896344"
+    }
+  ],
+  "runs": [
+    {
+      "key": "demo-v1-a-reference",
+      "sourceRevision": 1,
+      "sha256": "c1a1cff92e5fcf548496231557a698707ea3f1d933c3970fae3a434741a730f5"
+    },
+    {
+      "key": "demo-v1-a-reference-ga",
+      "sourceRevision": 4,
+      "sha256": "a6649a2d3f7b80728ea72fd81d3111a76e57d18f0bedcd31fe6c624f8c19bb4a"
+    },
+    {
+      "key": "demo-v1-a-reference-thing",
+      "sourceRevision": 1,
+      "changes": [
+        "events.autoEnabled"
+      ],
+      "sha256": "57f2a94a69226d3006da109c463974b415300f3a7ad5e511922f17f6aa76cdbb"
+    },
+    {
+      "key": "demo-v1-b-strategy",
+      "sourceRevision": 1,
+      "sha256": "878ef62a79bf5785f2da33dd6e1c4fba7744ea1cbdb5018adb6175dbd7a226c8"
+    },
+    {
+      "key": "demo-v1-c-rain",
+      "sourceRevision": 1,
+      "sha256": "7747699a5246d8e970490513bc31482c0cebca1ff2ed3962addc90b728c066b0"
+    },
+    {
+      "key": "demo-v1-d-small",
+      "sourceRevision": 1,
+      "sha256": "218bef479034191fa4daef15a1626ddbf6d401f430cdf828c7b808a25f240ba7"
+    },
+    {
+      "key": "demo-v1-e-matched",
+      "sourceRevision": 1,
+      "sha256": "f9abb0f7c5253ecd7e018a4a4a4e5e76494ed0bbdc322c04032718a6cd8cfcb5"
+    },
+    {
+      "key": "demo-v1-f-events",
+      "sourceRevision": 1,
+      "sha256": "230123c6f501ef55d2bdea351a27dcde1356b8ed3a5de94ac15d6c46eed73147"
+    }
+  ]
+}

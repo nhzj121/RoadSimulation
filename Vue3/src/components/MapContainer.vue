@@ -57,112 +57,122 @@
           @keydown="handleDataDrawerKeydown($event, 'left')">
         <!-- v-show 保留既有控制组件实例，切换数据视图不会销毁其内部状态。 -->
         <div v-show="!isDataWorkspace" class="side-panel-scroll">
+          <header class="operation-panel-heading">
+            <h2>{{ showOperationEnvironment ? '环境与事件' : '仿真控制' }}</h2>
+            <ElButton
+              type="primary"
+              plain
+              size="small"
+              aria-controls="operation-environment-panel"
+              :aria-expanded="showOperationEnvironment"
+              @click="showOperationEnvironment = !showOperationEnvironment"
+            >{{ showOperationEnvironment ? '← 返回仿真控制' : '环境与事件 →' }}</ElButton>
+          </header>
 
-          <div class="panel-section">
-            <ElCard shadow="never" class="box-card simulation-control">
-              <template #header>
-                <div class="card-header">
-                  <span>仿真控制</span>
+          <div v-show="!showOperationEnvironment" class="operation-panel-content">
+            <div class="panel-section">
+              <ElCard shadow="never" class="box-card simulation-control">
+                <div class="control-group">
+                  <span class="control-label">时间压缩:</span>
+                  <div class="speed-slider">
+                    <ElSlider
+                        v-model="speedFactor"
+                        :min="1"
+                        :max="200"
+                        :step="1"
+                        :marks="speedSliderMarks"
+                        :format-tooltip="formatSpeedTooltip"
+                        @change="onSpeedChange"
+                        size="small"
+                    />
+                  </div>
                 </div>
-              </template>
-              <div class="control-group">
-                <span class="control-label">时间压缩:</span>
-                <div class="speed-slider">
-                  <ElSlider
-                      v-model="speedFactor"
-                      :min="1"
-                      :max="200"
-                      :step="1"
-                      :marks="speedSliderMarks"
-                      :format-tooltip="formatSpeedTooltip"
-                      @change="onSpeedChange"
-                      size="small"
+                <div class="control-group">
+                  <span class="control-label">启发式:</span>
+                  <ElSwitch
+                      v-model="useHeuristicDispatch"
+                      :disabled="isSimulationRunning || isExperimentRunActive"
+                      active-text="启用"
+                      inactive-text="关闭"
+                      inline-prompt
                   />
                 </div>
-              </div>
-              <div class="control-group" style="margin-top: 15px;">
-                <span class="control-label">启发式:</span>
-                <ElSwitch
-                    v-model="useHeuristicDispatch"
-                    :disabled="isSimulationRunning || isExperimentRunActive"
-                    active-text="启用"
-                    inactive-text="关闭"
-                    inline-prompt
-                />
-              </div>
-              <div class="control-group" style="margin-top: 15px;">
-                <ElButton type="primary" :disabled="sandboxRunBusy || simulationControlBusy || resetInProgress || hasPreparedExperimentScenario || isExperimentRunActive" @click="startSimulation">▶ 开始</ElButton>
-                <ElButton type="primary" :disabled="simulationControlBusy || resetInProgress || isExperimentRunActive" @click="pauseSimulation">⏸ 暂停</ElButton>
-                <ElButton :loading="resetInProgress" :disabled="sandboxRunBusy || simulationControlBusy || resetInProgress || isExperimentRunActive" @click="resetSimulation">↻ 重置</ElButton>
-              </div>
-              <p v-if="sandboxRunBusy" role="status">
-                <template v-if="navigationState.sandboxInspectionRequired">
-                  上一次沙箱任务已中断，待检查收尾。
-                  <router-link :to="navigationState.sandboxInspectionJobId ? `/sandbox/jobs/${navigationState.sandboxInspectionJobId}` : '/sandbox/tasks'">查看沙箱任务</router-link>
+                <div class="operation-panel-actions" role="group" aria-label="仿真运行操作">
+                  <div class="operation-panel-buttons">
+                    <ElButton type="primary" :disabled="sandboxRunBusy || simulationControlBusy || resetInProgress || hasPreparedExperimentScenario || isExperimentRunActive" @click="startSimulation">▶ 开始</ElButton>
+                    <ElButton type="primary" :disabled="simulationControlBusy || resetInProgress || isExperimentRunActive" @click="pauseSimulation">⏸ 暂停</ElButton>
+                    <ElButton :loading="resetInProgress" :disabled="sandboxRunBusy || simulationControlBusy || resetInProgress || isExperimentRunActive" @click="resetSimulation">↻ 重置</ElButton>
+                  </div>
+                  <p v-if="sandboxRunBusy" role="status">
+                    <template v-if="navigationState.sandboxInspectionRequired">
+                      上一次沙箱任务已中断，待检查收尾。
+                      <router-link :to="navigationState.sandboxInspectionJobId ? `/sandbox/jobs/${navigationState.sandboxInspectionJobId}` : '/sandbox/tasks'">查看沙箱任务</router-link>
+                    </template>
+                    <template v-else>数据沙箱正在准备、运行或收尾。</template>
+                  </p>
+                  <div v-if="hasPreparedExperimentScenario" class="experiment-start-lock">
+                    已准备实验场景，请清除实验标记后再启动普通仿真。
+                  </div>
+                </div>
+                <div class="speed-display">当前速度: {{ formattedSpeed }}</div>
+              </ElCard>
+            </div>
+
+            <div class="panel-section">
+              <ElCard shadow="never" class="box-card shipment-control-card">
+                <template #header>
+                  <div class="card-header">
+                    <span>运单生成</span>
+                  </div>
                 </template>
-                <template v-else>数据沙箱正在准备、运行或收尾。</template>
-              </p>
-              <div v-if="hasPreparedExperimentScenario" class="experiment-start-lock">
-                已准备实验场景，请清除实验标记后再启动普通仿真。
-              </div>
-              <div class="speed-display" style="margin-top: 10px; font-size: 12px; color: #666;">
-                当前速度: {{ formattedSpeed }}
-              </div>
-            </ElCard>
-          </div>
 
-          <!-- Presentation only: keep WeatherPanel mounted for prepareStart()/refresh(). -->
-          <div v-show="temporaryDisplaySettings.showWeatherControls" class="panel-section">
-            <WeatherPanel ref="weatherPanel" :weather="monitorWeather" :disabled="resetInProgress || hasPreparedExperimentScenario || isExperimentRunActive" />
-          </div>
-
-          <div v-show="temporaryDisplaySettings.showRandomEventControls" class="panel-section">
-            <RandomEventPanel
-                :vehicles="eventEligibleVehicles"
-                :active-events="monitorActiveEvents"
-                :disabled="!isSimulationRunning || isExperimentRunActive"
-                @triggered="handleRandomEventTriggered"
-            />
-          </div>
-
-          <div class="panel-section">
-            <ElCard shadow="never" class="box-card shipment-control-card">
-              <template #header>
-                <div class="card-header">
-                  <span>运单生成</span>
+                <div class="shipment-control">
+                  <span class="control-label">生成数量:</span>
+                  <input type="number" class="custom-input" v-model.number="shipmentCount" min="1" />
+                  <ElButton type="primary" size="small" :disabled="isExperimentRunActive" @click="generateShipments">生成</ElButton>
                 </div>
-              </template>
 
-              <div class="shipment-control">
-                <span class="control-label">生成数量:</span>
-                <input type="number" class="custom-input" v-model.number="shipmentCount" min="1" />
-                <ElButton type="primary" size="small" :disabled="isExperimentRunActive" @click="generateShipments">生成</ElButton>
-              </div>
-
-              <div class="task-sidebar" v-if="shipments && shipments.length > 0">
-                <ul>
-                  <li v-for="shipment in shipments" :key="shipment.id">
-                    <span class="shipment-no">{{ shipment.refNo }}</span>
-                    <span class="shipment-status">{{ shipment.status }}</span>
-                  </li>
-                </ul>
-              </div>
-            </ElCard>
-          </div>
-
-          <div class="panel-section">
-            <ElCard shadow="never" class="box-card statistics-info">
-              <template #header>
-                <div class="card-header">
-                  <span>统计信息</span>
+                <div class="task-sidebar" v-if="shipments && shipments.length > 0">
+                  <ul>
+                    <li v-for="shipment in shipments" :key="shipment.id">
+                      <span class="shipment-no">{{ shipment.refNo }}</span>
+                      <span class="shipment-status">{{ shipment.status }}</span>
+                    </li>
+                  </ul>
                 </div>
-              </template>
-              <div class="stats-info">
-                <div><strong>运行车辆</strong><span>{{ vehicleMonitorDisplayVehicles.length }}</span></div>
-                <div><strong>运输任务</strong><span>{{ displayTaskCount }}</span></div>
-              </div>
-            </ElCard>
+              </ElCard>
+            </div>
+
+            <div class="panel-section">
+              <ElCard shadow="never" class="box-card statistics-info">
+                <template #header>
+                  <div class="card-header">
+                    <span>统计信息</span>
+                  </div>
+                </template>
+                <div class="stats-info">
+                  <div><strong>运行车辆</strong><span>{{ vehicleMonitorDisplayVehicles.length }}</span></div>
+                  <div><strong>运输任务</strong><span>{{ displayTaskCount }}</span></div>
+                </div>
+              </ElCard>
+            </div>
           </div>
+
+          <!-- 仿真启动和重置均使用天气面板实例。 -->
+          <div id="operation-environment-panel" v-show="showOperationEnvironment" class="operation-panel-content">
+            <div class="panel-section">
+              <WeatherPanel ref="weatherPanel" :weather="monitorWeather" :disabled="resetInProgress || hasPreparedExperimentScenario || isExperimentRunActive" />
+            </div>
+            <div class="panel-section">
+              <RandomEventPanel
+                  :vehicles="eventEligibleVehicles"
+                  :active-events="monitorActiveEvents"
+                  :disabled="!isSimulationRunning || isExperimentRunActive"
+                  @triggered="handleRandomEventTriggered"
+              />
+            </div>
+          </div>
+
         </div>
         <SimulationDataLeftPanel
             v-if="isDataWorkspace && activeMainView === 'map'"
@@ -1105,7 +1115,6 @@ import { poiManagerApi } from "../api/poiManagerApi";
 import { simulationController} from "@/api/simulationController";
 import RandomEventPanel from './RandomEventPanel.vue';
 import WeatherPanel from './WeatherPanel.vue';
-import { temporaryDisplaySettings } from '../utils/temporaryDisplaySettings';
 import request from "../utils/request";
 // Phase 6C：新增独立评价视图，不向地图动画管理器注入任何评价状态。
 import EvaluationDashboard from './EvaluationDashboard.vue';
@@ -1288,6 +1297,7 @@ const handleEvaluationRequestObservation = observation => {
   observeSimulationRequestSafely({ ...observation, source: 'evaluation' });
 };
 const isDataWorkspace = computed(() => mapWorkspaceMode.value === MAP_WORKSPACE_MODES.DATA);
+const showOperationEnvironment = ref(false);
 const leftWorkspaceWidth = computed(() => isDataWorkspace.value ? `${dataLayout.value.leftWidth}px` : '320px');
 const rightWorkspaceWidth = computed(() => isDataWorkspace.value ? `${dataLayout.value.rightWidth}px` : '340px');
 
@@ -8190,38 +8200,82 @@ onUnmounted(() => {
   height: calc(100vh - 60px); /* 减去header高度 */
 }
 
-/* 侧边栏滚动容器 - 修复遮挡 */
 .side-panel-scroll {
   flex: 1;
   display: flex;
   flex-direction: column;
-  padding: 12px 10px; /* 增加上下内边距 */
-  overflow-y: auto;
-  overflow-x: hidden; /* 防止水平滚动 */
-  height: 100%;
-  gap: 12px;
-  /* 自定义滚动条样式 */
-  scrollbar-width: thin;
-  scrollbar-color: #c1c1c1 #f5f5f5;
-  box-sizing: border-box; /* 确保padding包含在内 */
+  min-height: 0;
 }
 
-/* Webkit浏览器滚动条样式 */
-.side-panel-scroll::-webkit-scrollbar {
+.operation-panel-heading {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 12px;
+  background: #fff;
+  border-bottom: 1px solid var(--el-border-color-light);
+}
+
+.operation-panel-heading h2 {
+  margin: 0;
+  color: #24364b;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.operation-panel-actions {
+  display: grid;
+  gap: 8px;
+}
+
+.operation-panel-actions p {
+  margin: 0;
+  font-size: 13px;
+}
+
+.operation-panel-buttons {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.operation-panel-buttons :deep(.el-button) {
+  min-width: 0;
+  margin: 0;
+  padding-inline: 4px;
+}
+
+.operation-panel-content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 10px;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #c1c1c1 #f5f5f5;
+  box-sizing: border-box;
+}
+
+.operation-panel-content::-webkit-scrollbar {
   width: 6px;
 }
 
-.side-panel-scroll::-webkit-scrollbar-track {
+.operation-panel-content::-webkit-scrollbar-track {
   background: #f5f5f5;
   border-radius: 3px;
 }
 
-.side-panel-scroll::-webkit-scrollbar-thumb {
+.operation-panel-content::-webkit-scrollbar-thumb {
   background: #c1c1c1;
   border-radius: 3px;
 }
 
-.side-panel-scroll::-webkit-scrollbar-thumb:hover {
+.operation-panel-content::-webkit-scrollbar-thumb:hover {
   background: #a8a8a8;
 }
 
@@ -8309,21 +8363,6 @@ onUnmounted(() => {
   flex: 1;
   margin-left: 0;
   min-width: 0; /* 允许滑块压缩 */
-}
-
-/* 仿真按钮组调整 */
-.simulation-control .control-group:last-child {
-  display: flex;
-  justify-content: space-between; /* 均匀分布按钮 */
-  gap: 8px;
-  margin-top: 10px;
-}
-
-.simulation-control .control-group:last-child .el-button {
-  flex: 1; /* 按钮等宽分布 */
-  min-width: 0; /* 允许按钮压缩 */
-  padding: 8px 4px; /* 调整按钮内边距 */
-  font-size: 13px;
 }
 
 .speed-display {
@@ -8921,7 +8960,7 @@ onUnmounted(() => {
 }
 
 /* 平滑滚动 */
-.side-panel-scroll {
+.operation-panel-content {
   scroll-behavior: smooth;
 }
 
