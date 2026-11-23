@@ -105,6 +105,8 @@ public class SimulationDataCleanupService {
     private VehicleReplacementAttemptRepository vehicleReplacementAttemptRepository;
     @Autowired
     private TransportExecutionSegmentRepository transportExecutionSegmentRepository;
+    @Autowired(required = false)
+    private org.example.roadsimulation.service.ManualReplacementStore manualReplacementStore;
 
     @Autowired
     private VehicleRepository vehicleRepository;
@@ -206,6 +208,7 @@ public class SimulationDataCleanupService {
 
             // assignment_leg -> assignment_nodes -> shipment_item -> assignment -> shipment -> enrollment
             // transport_random_event -> assignment_leg -> assignment_nodes -> shipment_item -> assignment -> shipment -> enrollment
+            if (manualReplacementStore != null) manualReplacementStore.clearOrdinaryRun();
             long replacementAttemptCount=vehicleReplacementAttemptRepository.count();
             transportExecutionSegmentRepository.deleteAllInBatch();transportExecutionSegmentRepository.flush();
             vehicleReplacementAttemptRepository.deleteAllInBatch();vehicleReplacementAttemptRepository.flush();

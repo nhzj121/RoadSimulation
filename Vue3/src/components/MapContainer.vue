@@ -165,10 +165,10 @@
             </div>
             <div class="panel-section">
               <RandomEventPanel
-                  :vehicles="eventEligibleVehicles"
                   :active-events="monitorActiveEvents"
-                  :disabled="!isSimulationRunning || isExperimentRunActive"
-                  @triggered="handleRandomEventTriggered"
+                  :display-events="[...manualDisplayEvents.values()]"
+                  :display-history="manualDisplayHistory"
+                  read-only
               />
             </div>
           </div>
@@ -231,6 +231,13 @@
               </div>
             </div>
             <button
+                v-if="canOpenVehicleEvent"
+                class="vehicle-floating-event"
+                type="button"
+                @pointerdown.stop
+                @click.stop="openVehicleEvent"
+            >触发事件</button>
+            <button
                 class="vehicle-floating-info-close"
                 type="button"
                 title="Close"
@@ -256,8 +263,8 @@
                   { label: 'Quantity', value: floatingVehicleDisplayAssignment.quantity || floatingVehicleDisplayInfo.quantity || 0 }
                 ]"
                 :load="[
-                  { current: formatNumber(floatingVehicleDisplayInfo.currentLoad), limit: formatNumber(floatingVehicleDisplayInfo.maxLoadCapacity), unit: 't', percent: floatingVehicleLoadPercent },
-                  { current: formatNumber(floatingVehicleDisplayInfo.currentVolume), limit: formatNumber(floatingVehicleDisplayInfo.maxVolumeCapacity), unit: 'm³', percent: floatingVehicleVolumePercent }
+                  { current: formatFloatingVehicleMeasurement(floatingVehicleDisplayInfo.currentLoad), limit: formatFloatingVehicleMeasurement(floatingVehicleDisplayInfo.maxLoadCapacity), unit: 't', percent: floatingVehicleLoadPercent },
+                  { current: formatFloatingVehicleMeasurement(floatingVehicleDisplayInfo.currentVolume), limit: formatFloatingVehicleMeasurement(floatingVehicleDisplayInfo.maxVolumeCapacity), unit: 'm³', percent: floatingVehicleVolumePercent }
                 ]"
             >
             <div
@@ -296,12 +303,36 @@
                 <strong>{{ floatingVehicleInfo.vehicleDetail.vehicleType || '-' }}</strong>
                 <span>Capacity</span>
                 <strong>{{ floatingVehicleInfo.vehicleDetail.maxLoadCapacity || 0 }} t</strong>
-                <span v-if="floatingVehicleInfo.vehicleDetail.driverName">Driver</span>
-                <strong v-if="floatingVehicleInfo.vehicleDetail.driverName">{{ floatingVehicleInfo.vehicleDetail.driverName }}</strong>
+                <template v-if="floatingVehicleInfo.replacementEventId === null && floatingVehicleInfo.vehicleDetail.driverName">
+                  <span>Driver</span>
+                  <strong>{{ floatingVehicleInfo.vehicleDetail.driverName }}</strong>
+                </template>
               </div>
             </div>
           </div>
         </div>
+        <ElDialog v-model="vehicleEventDialog" title="触发车辆事件" width="min(390px, 94vw)" append-to-body>
+          <div v-if="vehicleEventTarget" class="vehicle-event-dialog">
+            <strong>{{ vehicleEventTarget.plate }}</strong>
+            <label for="vehicle-event-type">事件类型</label>
+            <select id="vehicle-event-type" v-model="vehicleEventType" :disabled="vehicleEventSubmitting">
+              <option value="congestion">拥堵</option>
+              <option value="repair">原地修理</option>
+              <option value="replacement" :disabled="!manualReplacement.available.value">需要换车</option>
+            </select>
+            <small v-if="!manualReplacement.available.value">手动换车需启用运输事件并完成普通库迁移。</small>
+            <template v-if="vehicleEventType !== 'replacement'">
+              <label>持续时长（播放分钟）</label>
+              <ElInputNumber v-model="vehicleEventMinutes" :min="30" :max="vehicleEventType === 'repair' ? 180 : 240"
+                :step="30" :precision="0" :disabled="vehicleEventSubmitting" aria-label="持续时长（播放分钟）" />
+            </template>
+            <p v-else>原车停在当前画面位置，接替车到场后接续。原车恢复前暂停接单。</p>
+          </div>
+          <template #footer>
+            <ElButton :disabled="vehicleEventSubmitting" @click="vehicleEventDialog = false">关闭</ElButton>
+            <ElButton type="danger" :loading="vehicleEventSubmitting" @click="submitVehicleEvent">确认触发</ElButton>
+          </template>
+        </ElDialog>
         </div>
         <SimulationDataBottomPanel
             v-if="activeMainView === 'map' && isDataWorkspace"
@@ -334,6 +365,22 @@
           </div>
           <ElTabs v-model="activeMonitorTab" class="monitor-tabs">
             <ElTabPane label="车辆监控" name="vehicles">
+              <section v-if="faultedVehicles.length" class="faulted-vehicle-list" aria-label="故障车辆">
+                <h3>故障车辆</h3>
+                <div v-for="fault in faultedVehicles" :key="fault.eventId" class="faulted-vehicle-row">
+                  <strong>{{ fault.originalPlate || `车辆 ${fault.originalVehicleId}` }}</strong>
+                  <span>{{ faultStatus(fault) }}</span>
+                  <small v-if="manualReplacement.errors.value[fault.eventId]">{{ manualReplacement.errors.value[fault.eventId] }}</small>
+                  <div class="faulted-vehicle-actions">
+                    <ElButton v-if="manualReplacement.errors.value[fault.eventId] && manualReplacement.canRetry(fault)"
+                      size="small" @click="manualReplacement.retry(fault)">重试</ElButton>
+                    <ElButton v-if="['WAITING', 'EN_ROUTE', 'VISUAL_ONLY', 'HANDED_OFF'].includes(fault.phase)"
+                      size="small" :disabled="faultActionBusy" @click="operateFault(fault, 'cancel')">结束接替</ElButton>
+                    <ElButton v-if="['HANDED_OFF', 'FINISHED', 'TERMINATED'].includes(fault.phase)"
+                      size="small" type="primary" :disabled="faultActionBusy" @click="operateFault(fault, 'restore')">恢复原车</ElButton>
+                  </div>
+                </div>
+              </section>
               <div class="vehicle-monitor-list" ref="vehiclePanelScroll">
                 <div
                     v-for="v in vehicleMonitorDisplayVehicles"
@@ -341,7 +388,7 @@
                     :id="`vehicle-item-${v.id}`"
                     class="vehicle-monitor-item"
                     :class="{ 'vehicle-item-highlighted': highlightedVehicleId === v.id }"
-                    @click="openVehicleFloatingInfo(v, { source: 'panel' })"
+                    @click="v.displayOnly ? v.focus() : openVehicleFloatingInfo(v, { source: 'panel' })"
                 >
                   <span class="status-dot" :style="{ backgroundColor: statusMap[v.status]?.color || '#ccc' }"></span>
                   <div class="vehicle-monitor-main">
@@ -353,7 +400,7 @@
                       {{ v.actionDescription || v.currentAssignment || '暂无任务信息' }}
                       <span v-if="v.driverName"> · 司机 {{ v.driverName }}（{{ driverStatusMap[v.driverStatus]?.text || '未知' }}）</span>
                     </div>
-                    <div class="vehicle-mini-metrics">
+                    <div v-if="!v.displayOnly" class="vehicle-mini-metrics">
                       <span>载重 {{ v.currentLoad?.toFixed(1) || '0.0' }}/{{ v.maxLoadCapacity?.toFixed(1) || '0.0' }}t</span>
                       <div class="progress-bar mini-progress">
                         <div class="progress-fill load-progress" :style="{ width: `${v.loadPercentage || 0}%` }"></div>
@@ -1104,7 +1151,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, watch, onMounted, onUnmounted, markRaw , nextTick} from "vue";
+import { ref, shallowRef, reactive, computed, watch, onMounted, onUnmounted, markRaw , nextTick} from "vue";
 import ModeNavigationButton from './ModeNavigationButton.vue';
 import { beginNavigationOperation, navigationState, setLocalOrdinaryNavigation, clearLocalOrdinaryNavigation } from '../navigation/modeNavigation';
 import VehicleImpactDetails from './VehicleImpactDetails.vue';
@@ -1114,6 +1161,9 @@ import { useVehicleArrivalMonitor } from '@/composables/useVehicleArrivalMonitor
 import { poiManagerApi } from "../api/poiManagerApi";
 import { simulationController} from "@/api/simulationController";
 import RandomEventPanel from './RandomEventPanel.vue';
+import { useManualReplacement } from '../composables/useManualReplacement';
+import { captureRemainingRoute } from '../utils/manualReplacementPlayback';
+import { advanceDisplayEvent, createDisplayEvent, displayEventDuration } from '../utils/manualVehicleDisplayEvent';
 import WeatherPanel from './WeatherPanel.vue';
 import request from "../utils/request";
 // Phase 6C：新增独立评价视图，不向地图动画管理器注入任何评价状态。
@@ -1321,6 +1371,7 @@ const floatingVehicleInfo = reactive({
   visible: false,
   loading: false,
   vehicleId: null,
+  replacementEventId: null,
   assignment: null,
   vehicleInfo: null,
   vehicleDetail: null,
@@ -1330,6 +1381,7 @@ const floatingVehicleInfo = reactive({
   position: { ...FLOATING_VEHICLE_INFO_DEFAULT_POSITION }
 });
 let floatingVehicleDragState = null;
+let floatingVehicleRequestId = 0;
 
 const handleVehicleClick = (vehicle) => {
   openVehicleFloatingInfo(vehicle, { source: 'panel' });
@@ -3587,7 +3639,7 @@ function unmarkDrawnVehicleIcon(vehicleId) {
     nextIds.delete(iconId);
     drawnVehicleIconIds.value = nextIds;
     syncRegisteredVehicleStats();
-    if (String(floatingVehicleInfo.vehicleId) === iconId) {
+    if (floatingVehicleInfo.replacementEventId === null && String(floatingVehicleInfo.vehicleId) === iconId) {
       floatingVehicleInfo.visible = false;
       floatingVehicleInfo.loading = false;
     }
@@ -4155,6 +4207,7 @@ class VehicleAnimation {
 
   _getEffectiveVehicleStatus(fallback) {
     if (this._isBackendReplacementStopped()) return this.backendVehicleStatus;
+    if (this.displayEvent?.eventType === 'VEHICLE_BREAKDOWN') return 'BREAKDOWN';
     if (this.activeRandomEvent?.eventType === 'VEHICLE_BREAKDOWN'
         && this.activeRandomEvent.breakdownLevel !== 'REPLACEMENT_REQUIRED') {
       return 'BREAKDOWN';
@@ -4312,6 +4365,7 @@ class VehicleAnimation {
 
     this.isCompleted = true;
     this.isStopped = true;
+    this.finishDisplayEvent?.('TASK_ENDED');
     this.isPaused = false;
     if (this.arrivalRetryTimer) {
       clearTimeout(this.arrivalRetryTimer);
@@ -4327,13 +4381,44 @@ class VehicleAnimation {
 
     if (this.lastUpdateTime && !this.isPaused && !this.isCompleted) {
       const delta = (now - this.lastUpdateTime) / 1000;
-      this.animationTime += delta * this.speedFactor * this.environmentSpeedFactor * this.eventSpeedFactor;
+      this.advanceAnimationTime(delta);
     }
 
     this.speedFactor = speedFactor;
     this.lastUpdateTime = now;
 
     console.log(`[VehicleAnimation] 更新车辆速度因子: ${this.licensePlate} -> ${speedFactor.toFixed(1)}x`);
+  }
+
+  startDisplayEvent(event, notify) {
+    this.displayEvent = event;
+    this.notifyDisplayEvent = notify;
+    this.lastUpdateTime = performance.now();
+    notify({ ...event });
+    this._updateMarkerPosition();
+  }
+
+  finishDisplayEvent(reason = 'ELAPSED') {
+    if (!this.displayEvent) return;
+    const event = this.displayEvent;
+    this.displayEvent = null;
+    this.notifyDisplayEvent?.({ ...event, status: 'RESOLVED', reason });
+    this.notifyDisplayEvent = null;
+  }
+
+  advanceAnimationTime(realSeconds) {
+    if (this.replacementDisplayFrozen) return;
+    const playbackSeconds = Math.max(0, realSeconds * this.speedFactor);
+    let drivingSeconds = playbackSeconds;
+    if (this.displayEvent) {
+      const before = this.displayEvent.remainingSeconds;
+      drivingSeconds = advanceDisplayEvent(this.displayEvent, playbackSeconds);
+      if (this.displayEvent.remainingSeconds === 0) this.finishDisplayEvent();
+      else if (before !== this.displayEvent.remainingSeconds) this.notifyDisplayEvent?.({ ...this.displayEvent });
+    }
+    if (!this._isBackendReplacementStopped()) {
+      this.animationTime += drivingSeconds * this.environmentSpeedFactor * this.eventSpeedFactor;
+    }
   }
 
   updateEnvironmentImpact(weather) {
@@ -4474,13 +4559,12 @@ class VehicleAnimation {
     }
 
     const deltaTime = (now - this.lastUpdateTime) / 1000;
-    if (this._isBackendReplacementStopped()) {
-      this.lastUpdateTime = now;
+    this.advanceAnimationTime(deltaTime);
+    this.lastUpdateTime = now;
+    if (this.replacementDisplayFrozen || this._isBackendReplacementStopped()) {
       this.animationFrameId = requestAnimationFrame(() => this._animate());
       return;
     }
-    this.animationTime += deltaTime * this.speedFactor * this.environmentSpeedFactor * this.eventSpeedFactor;
-    this.lastUpdateTime = now;
 
     const currentSegments = this._getCurrentSegments();
     const currentPath = this._getCurrentPath();
@@ -4593,6 +4677,7 @@ class VehicleAnimation {
 
       // 标记为完成
       this.isCompleted = true;
+      this.finishDisplayEvent?.('TASK_ENDED');
 
       // 调用车辆到达处理函数
       void this._acknowledgeArrivalWithRetry(this.routeData.assignment.endPOIId, () => {
@@ -4841,6 +4926,7 @@ class VrpVehicleAnimation extends VehicleAnimation {
       }
 
       this.isCompleted = true;
+      this.finishDisplayEvent?.('TASK_ENDED');
 
       // 通知后端到达！
       void this._acknowledgeArrivalWithRetry(nodeInfo.poiId, () => {
@@ -5371,6 +5457,10 @@ const resetSimulation = async () => {
         throw new Error(resetResult?.message || '后端清理失败，请重试 reset');
       }
 
+      manualReplacement.clear({ forget: true });
+      manualDisplayEvents.clear();
+      manualDisplayHistory.value = [];
+      vehicleEventDialog.value = false;
       ElMessage.success('仿真已重置');
       await weatherPanel.value?.refresh();
     }
@@ -5414,16 +5504,17 @@ const startSimulationTimer = () => {
       // Other modes retain the lower-cost new-assignment endpoint.
       if (isActiveTransportGeneration(runGeneration)) {
         const weatherRecovery = assignmentPollingMode(monitorWeather.value) === 'active';
-        const ownerChanged = monitorAssignments.some(assignment => {
+        const drawableAssignments = monitorAssignments.filter(assignment => !ownsReplacementRoute(assignment.assignmentId));
+        const ownerChanged = drawableAssignments.some(assignment => {
           const rendered = animationManager?.animations?.get(assignment.assignmentId)?.routeData?.assignment;
           const renderedIdentity = assignmentRenderIdentity(rendered);
           const changed = renderedIdentity && renderedIdentity !== assignmentRenderIdentity(assignment);
           if (changed) assignmentRecoveryTracker.mark(assignment);
           return changed;
         });
-        assignmentRecoveryTracker.retainActive(monitorAssignments);
+        assignmentRecoveryTracker.retainActive(drawableAssignments);
         const pendingOwnerRecovery = assignmentRecoveryTracker.hasPending();
-        const durableReplacementRecovery = monitorAssignments.some(assignment => assignment?.replacementRecovery === true);
+        const durableReplacementRecovery = drawableAssignments.some(assignment => assignment?.replacementRecovery === true);
         const activeAssignmentRecovery = weatherRecovery || ownerChanged || pendingOwnerRecovery || durableReplacementRecovery;
         scheduleAssignmentDrawing(
             activeAssignmentRecovery ? fetchCurrentAssignments : fetchAndDrawNewAssignments,
@@ -5689,6 +5780,8 @@ const monitorAssignments = reactive([]);
 const monitorVehicles = reactive([]);
 const monitorLinks = reactive([]);
 const monitorActiveEvents = reactive([]);
+const manualDisplayEvents = reactive(new Map());
+const manualDisplayHistory = ref([]);
 const monitorWeather = ref(null);
 const weatherPanel = ref(null);
 const monitorSummary = reactive({
@@ -5697,13 +5790,244 @@ const monitorSummary = reactive({
   activeVehicleCount: 0,
   activeEventCount: 0
 });
-const eventEligibleVehicles = computed(() => monitorVehicles.filter(vehicle =>
-    ['ORDER_DRIVING', 'TRANSPORT_DRIVING'].includes(vehicle.status) && !vehicle.activeEvent
-));
-const handleRandomEventTriggered = async () => {
-  await fetchTransportMonitor();
-  await updateVehicleInfo();
-};
+let activeReplacementAssignments = new Set();
+let finishedReplacementAssignments = new Set();
+const replacementDisplay = reactive(new Map());
+
+function ownsReplacementRoute(assignmentId) {
+  const id = String(assignmentId);
+  return activeReplacementAssignments.has(id) || finishedReplacementAssignments.has(id);
+}
+
+function syncReplacementRouteOwnership(active, finished) {
+  activeReplacementAssignments = active;
+  finishedReplacementAssignments = new Set(finished);
+  for (const [id, route] of activeRoutes.value) {
+    if (finished.has(String(id))) {
+      clearRouteByAssignmentId(id);
+      continue;
+    }
+    const animation = getFloatingAnimation(route);
+    const frozen = active.has(String(id));
+    if (animation && Boolean(animation.replacementDisplayFrozen) !== frozen) {
+      animation.replacementDisplayFrozen = frozen;
+      animation.lastUpdateTime = performance.now();
+    }
+    route.manualReplacementOwned = frozen;
+  }
+}
+
+function transportRouteStyle(kind) {
+  const empty = kind === 'empty';
+  return {
+    strokeColor: empty ? '#95a5a6' : kind === 'vrp' ? '#9b59b6' : '#3388ff',
+    strokeOpacity: empty ? 0.6 : 0.8, strokeWeight: empty ? 3 : 4,
+    strokeDasharray: empty ? [5, 5] : [], lineJoin: 'round'
+  };
+}
+
+function createReplacementOverlay(event, snapshot) {
+  if (!map || !AMapLib) return null;
+  const liveRoute = lookupMapByLooseId(activeRoutes.value, event.assignmentId);
+  const originalRoute = liveRoute?.movingMarker && !liveRoute.drawing && !liveRoute.cleaned ? liveRoute : null;
+  const original = originalRoute?.movingMarker || new AMapLib.Marker({
+    map, position: snapshot.position, title: `${event.originalPlate} · 故障`,
+    offset: new AMapLib.Pixel(-16, -16)
+  });
+  // Restoration after a page reload has no live route overlays to retain.
+  const restoredLines = originalRoute ? [] : snapshot.remaining.flatMap((leg, index) => leg.path.length < 2 ? [] : [
+    new AMapLib.Polyline({
+      map, path: leg.path,
+      ...transportRouteStyle(snapshot.nextStopIndex + index === 0 ? 'empty' : snapshot.vrp ? 'vrp' : 'loaded')
+    })
+  ]);
+  original.setPosition(snapshot.position);
+  original.setContent(createVehicleIcon(32, 'BREAKDOWN', null, { vehicleId: event.originalVehicleId }));
+  let approach = null;
+  let spare = null;
+  const spareIconSize = 32;
+  const spareContent = document.createElement('div');
+  spareContent.style.cssText = `display:grid;place-items:center;width:${spareIconSize}px;height:${spareIconSize}px`;
+  let appearance = null;
+  let leftFault = false;
+  const task = snapshot.task || originalRoute?.assignment || {};
+  const showSpare = (position, row, status, legIndex = null, loaded = false) => {
+    if (spare) spare.setPosition(position);
+    if (appearance !== status) {
+      let icon;
+      if (status === 'RESERVED_REPLACEMENT') {
+        icon = document.createElement('span');
+        icon.textContent = '+';
+        icon.style.cssText = 'display:grid;place-items:center;width:100%;height:100%;border:2px solid #b91c1c;border-radius:50%;background:#fff;color:#b91c1c;font:700 28px/1 sans-serif';
+      } else {
+        icon = createVehicleIcon(spareIconSize, status, null, { vehicleId: row.spareVehicleId });
+      }
+      icon.style.boxSizing = 'border-box';
+      spareContent.replaceChildren(icon);
+      appearance = status;
+    }
+    if (!spare) {
+      spare = new AMapLib.Marker({
+        position, title: row.sparePlate, content: spareContent,
+        anchor: 'center', offset: new AMapLib.Pixel(0, 0)
+      });
+      spare.setMap(map);
+      spare.on('click', () => {
+        const replacement = replacementDisplay.get(event.eventId);
+        if (replacement) void openVehicleFloatingInfo(replacement, { replacementEventId: event.eventId });
+      });
+    }
+    const previous = replacementDisplay.get(row.eventId);
+    if (previous?.status === status && previous.phase === row.phase
+        && previous.legIndex === legIndex && previous.loaded === loaded) return;
+    const actionDescription = row.phase === 'EN_ROUTE' ? '赶赴故障点'
+        : legIndex === null ? (loaded ? '接替装货' : '到场交接')
+        : status === 'LOADING' ? '装货中' : status === 'UNLOADING' ? '卸货中' : '接替续运';
+    replacementDisplay.set(row.eventId, {
+      id: row.spareVehicleId, licensePlate: row.sparePlate, assignmentId: row.assignmentId, status,
+      phase: row.phase, task, snapshot, legIndex, loaded, actionDescription,
+      currentAssignment: `运输任务 ${row.assignmentId}`,
+      focus: () => map?.setCenter(spare.getPosition())
+    });
+  };
+  return {
+    drawApproach(path, position, row) {
+      if (path.length > 1) approach = new AMapLib.Polyline({
+        map, path, ...transportRouteStyle('loaded'), strokeColor: '#dc2626'
+      });
+      showSpare(position, row, 'RESERVED_REPLACEMENT');
+    },
+    move: position => spare?.setPosition(position),
+    transfer(position, row, loaded) {
+      showSpare(position, row, loaded ? 'LOADING' : 'RESERVED_REPLACEMENT', null, loaded);
+    },
+    continueTrip(position, row, status, legIndex, loaded) {
+      if (!leftFault) {
+        leftFault = true;
+        original.hide();
+        approach?.setMap(null);
+      }
+      showSpare(position, row, status, legIndex, loaded);
+    },
+    clear() {
+      if (!originalRoute) original.setMap(null);
+      else if (!originalRoute.cleaned) {
+        original.show();
+        const animation = getFloatingAnimation(originalRoute);
+        if (animation) {
+          original.setContent(createVehicleIcon(32, animation._getEffectiveVehicleStatus(
+              animation._getTravelStatus?.() || (animation.currentStage === 1 ? 'ORDER_DRIVING' : 'TRANSPORT_DRIVING')
+          ), null, { vehicleId: event.originalVehicleId }));
+          animation._updateMarkerPosition();
+        }
+      }
+      approach?.setMap(null);
+      spare?.setMap(null);
+      restoredLines.forEach(line => line.setMap(null));
+      replacementDisplay.delete(event.eventId);
+      if (floatingVehicleInfo.replacementEventId === event.eventId) closeFloatingVehicleInfo();
+    }
+  };
+}
+
+const ordinaryManualEvents = () => !mapViewDisposed && !resetInProgress.value && !isExperimentRunActive.value && !sandboxRunBusy.value;
+const manualReplacement = useManualReplacement({
+  http: request, enabled: ordinaryManualEvents, running: () => ordinaryManualEvents() && isSimulationRunning.value,
+  speed: () => speedFactor.value, render: createReplacementOverlay, ownRoutes: syncReplacementRouteOwnership
+});
+const faultedVehicles = computed(() => manualReplacement.rows.value.filter(row => !row.restored));
+const faultActionBusy = ref(false);
+const vehicleEventDialog = ref(false);
+// 确认时会与动画管理器比较同一实例，弹窗只监听目标整体替换。
+const vehicleEventTarget = shallowRef(null);
+const vehicleEventType = ref('congestion');
+const vehicleEventMinutes = ref(60);
+const vehicleEventSubmitting = ref(false);
+const canOpenVehicleEvent = computed(() => ordinaryManualEvents() && isSimulationRunning.value
+  && floatingVehicleInfo.replacementEventId === null
+  && ['ORDER_DRIVING', 'TRANSPORT_DRIVING'].includes(floatingVehicleLiveDisplay.value.currentStatus)
+  && !floatingVehicleImpactDisplay.value?.activeEvent
+  && !faultedVehicles.value.some(row => String(row.originalVehicleId) === String(floatingVehicleInfo.vehicleId)));
+
+function openVehicleEvent() {
+  const assignment = floatingVehicleDisplayAssignment.value;
+  const animation = getFloatingAnimation(findVisibleVehicleRouteData(floatingVehicleInfo.vehicleId));
+  vehicleEventTarget.value = {
+    vehicleId: Number(floatingVehicleInfo.vehicleId), assignmentId: Number(assignment.assignmentId),
+    plate: floatingVehicleTitle.value, animation
+  };
+  vehicleEventType.value = 'congestion';
+  vehicleEventMinutes.value = 60;
+  vehicleEventDialog.value = true;
+}
+
+async function submitVehicleEvent() {
+  const target = vehicleEventTarget.value;
+  if (!target || vehicleEventSubmitting.value || !ordinaryManualEvents() || !isSimulationRunning.value) return;
+  vehicleEventSubmitting.value = true;
+  try {
+    const route = findVisibleVehicleRouteData(target.vehicleId);
+    const animation = getFloatingAnimation(route);
+    if (!animation || animation !== target.animation || animation.isStopped || animation.isCompleted) {
+      throw new Error('当前运输动画已结束或已切换，请重新选择车辆');
+    }
+    if (ownsReplacementRoute(target.assignmentId) || animation.displayEvent) {
+      throw new Error('当前任务已有手动事件或正在接替，请等待处理完成');
+    }
+    const status = projectVisibleVehicleForSidebar(target.vehicleId)?.status;
+    if (!['ORDER_DRIVING', 'TRANSPORT_DRIVING'].includes(status)) {
+      const statusText = vehicleStatusPresentation(status).text;
+      throw new Error(`当前车辆状态为「${statusText}」，请在行驶时触发事件`);
+    }
+    if (vehicleEventType.value === 'replacement') {
+      const snapshot = captureRemainingRoute(animation);
+      if (!snapshot || !target.assignmentId) throw new Error('车辆没有可接续的路线');
+      await manualReplacement.start(target.vehicleId, target.assignmentId, snapshot);
+    } else {
+      const event = createDisplayEvent({ ...target, licensePlate: target.plate,
+        repair: vehicleEventType.value === 'repair', minutes: vehicleEventMinutes.value });
+      animation.startDisplayEvent(event, updateManualDisplayEvent);
+    }
+    vehicleEventDialog.value = false;
+    ElMessage.success('车辆事件已触发');
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.message || error.message || '车辆事件触发失败');
+    if (vehicleEventType.value === 'replacement') void manualReplacement.refresh();
+  } finally {
+    vehicleEventSubmitting.value = false;
+  }
+}
+
+function updateManualDisplayEvent(event) {
+  const key = String(event.assignmentId);
+  if (event.status === 'ACTIVE') manualDisplayEvents.set(key, event);
+  else {
+    manualDisplayEvents.delete(key);
+    manualDisplayHistory.value = [event, ...manualDisplayHistory.value].slice(0, 50);
+  }
+}
+
+const faultStatus = row => ({
+  WAITING: '等待合格备用车',
+  EN_ROUTE: `${row.sparePlate || '接替车'}赶赴中`,
+  HANDED_OFF: `已交接 · ${row.sparePlate || '接替车'}续运中`,
+  VISUAL_ONLY: `原任务已完成 · ${row.sparePlate || '接替车'}续播中`,
+  FINISHED: '接替结束 · 待恢复',
+  TERMINATED: '接替已终止 · 待恢复'
+})[row.phase] || row.phase;
+
+async function operateFault(row, operation) {
+  if (faultActionBusy.value || !ordinaryManualEvents()) return;
+  faultActionBusy.value = true;
+  try {
+    await manualReplacement.operate(row, operation);
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.message || error.message || '车辆接替操作失败');
+    void manualReplacement.refresh();
+  } finally {
+    faultActionBusy.value = false;
+  }
+}
 
 function pickFloatingText(...values) {
   return values.find(value => typeof value === 'string' && value.trim().length > 0);
@@ -5763,7 +6087,52 @@ function findFloatingAssignmentSupplement(routeAssignment, vehicleId) {
   ) || null;
 }
 
+function projectReplacementVehicleDetails(replacement) {
+  const { id, assignmentId, licensePlate, status, phase, task, snapshot, legIndex, loaded } = replacement;
+  const isApproaching = phase === 'EN_ROUTE';
+  const monitorTask = monitorAssignments.find(item => String(item.assignmentId) === String(assignmentId));
+  const assigned = phase === 'HANDED_OFF' ? findFloatingAssignmentSupplement(replacement, id) : null;
+  const vehicle = monitorVehicles.find(item => String(item.vehicleId) === String(id));
+  const detail = floatingVehicleInfo.vehicleDetail;
+  const stageIndex = snapshot.nextStopIndex + (legIndex ?? 0);
+  const leg = snapshot.remaining[legIndex ?? 0];
+  const nodes = task.nodes;
+  const quantity = pickFloatingQuantity(task.quantity, monitorTask?.quantity);
+  const cargoAmount = (unitAmount) => !loaded ? 0 : unitAmount == null || quantity == null ? null : Number(unitAmount) * Number(quantity);
+  const startPOI = pickFloatingText(task.startPOIName, monitorTask?.startPOIName);
+  const endPOI = pickFloatingText(task.endPOIName, monitorTask?.endPOIName);
+  const from = isApproaching ? '接替车辆当前位置'
+      : !legIndex ? '故障接替点' : snapshot.vrp ? nodes?.[stageIndex - 1]?.poiName : startPOI;
+  const to = legIndex === null ? '故障接替点'
+      : snapshot.vrp ? nodes?.[stageIndex]?.poiName : stageIndex === 0 ? startPOI : endPOI;
+  const actionDescription = phase === 'VISUAL_ONLY'
+      ? `${replacement.actionDescription}（前端续播）` : replacement.actionDescription;
+  return {
+    currentStatus: status,
+    assignment: {
+      vehicleId: id, assignmentId, licensePlate,
+      routeName: pickFloatingText(task.routeName, monitorTask?.routeName),
+      goodsName: pickFloatingText(task.goodsName, monitorTask?.goodsName), quantity,
+      startPOIName: from, endPOIName: to,
+      driverName: assigned?.driverName, driverStatus: assigned?.driverStatus,
+      vrp: snapshot.vrp, nodes
+    },
+    vehicleInfo: {
+      vehicleId: id, licensePlate, actionDescription, currentAssignment: replacement.currentAssignment,
+      currentLoad: isApproaching ? 0 : snapshot.vrp ? leg?.loadBefore : cargoAmount(task.goodsWeightPerUnit),
+      currentVolume: isApproaching ? 0 : snapshot.vrp ? leg?.volumeBefore : cargoAmount(task.goodsVolumePerUnit),
+      maxLoadCapacity: firstDefined(detail?.maxLoadCapacity, vehicle?.maxLoadCapacity, assigned?.maxLoadCapacity),
+      maxVolumeCapacity: firstDefined(detail?.cargoVolume, vehicle?.maxVolumeCapacity, assigned?.maxVolumeCapacity),
+      vrpProgress: snapshot.vrp ? { currentStageIndex: stageIndex, carriedCount: isApproaching ? 0 : leg?.carriedBefore } : null
+    }
+  };
+}
+
 const floatingVehicleLiveDisplay = computed(() => {
+  if (floatingVehicleInfo.replacementEventId !== null) {
+    const replacement = replacementDisplay.get(floatingVehicleInfo.replacementEventId);
+    return replacement ? projectReplacementVehicleDetails(replacement) : {};
+  }
   const cachedAssignment = floatingVehicleInfo.assignment || {};
   const cachedInfo = floatingVehicleInfo.vehicleInfo || {};
   const projectedVehicle = projectVisibleVehicleForSidebar(floatingVehicleInfo.vehicleId);
@@ -5819,13 +6188,16 @@ const floatingVehicleLiveDisplay = computed(() => {
 const floatingVehicleDisplayAssignment = computed(() => floatingVehicleLiveDisplay.value.assignment || {});
 const floatingVehicleDisplayInfo = computed(() => floatingVehicleLiveDisplay.value.vehicleInfo || {});
 const floatingVehicleImpactDisplay = computed(() => {
+  if (floatingVehicleInfo.replacementEventId !== null) return null;
   const vehicle = floatingVehicleDisplayInfo.value;
   const status = floatingVehicleLiveDisplay.value.currentStatus;
   if (!vehicle?.vehicleId || !status) return null;
 
   const routeData = findVisibleVehicleRouteData(vehicle.vehicleId);
   const animation = getFloatingAnimation(routeData);
-  const activeEvent = animation ? animation.activeRandomEvent : (vehicle.activeEvent || null);
+  const displayEvent = manualDisplayEvents.get(String(routeData?.assignment?.assignmentId));
+  const backendEvent = animation ? animation.activeRandomEvent : (vehicle.activeEvent?.displayOnly ? null : vehicle.activeEvent);
+  const activeEvent = displayEvent || backendEvent;
   const driving = ['ORDER_DRIVING', 'TRANSPORT_DRIVING'].includes(status);
   const stopped = vehicleStatusPresentation(status).stopped;
   const normalizeFactor = (value, fallback = 1) => {
@@ -5838,10 +6210,10 @@ const floatingVehicleImpactDisplay = computed(() => {
   );
   const eventFactor = normalizeFactor(
       animation?.eventSpeedFactor,
-      activeEvent ? normalizeFactor(activeEvent.speedFactor) : 1
+      backendEvent ? normalizeFactor(backendEvent.speedFactor) : 1
   );
   const effectiveSpeedFactor = driving
-      ? weatherFactor * eventFactor
+      ? weatherFactor * eventFactor * (displayEvent?.speedFactor ?? 1)
       : stopped ? 0 : null;
 
   return {
@@ -5854,16 +6226,15 @@ const floatingVehicleImpactDisplay = computed(() => {
 });
 const floatingVehicleDriverText = computed(() => {
   const assignment = floatingVehicleDisplayAssignment.value || {};
-  const vehicleInfo = floatingVehicleInfo.vehicleInfo || {};
-  const vehicleSnapshot = findVehicleSnapshot(floatingVehicleInfo.vehicleId) || {};
-  const vehicleDetail = floatingVehicleInfo.vehicleDetail || {};
-  const driverName = assignment.driverName || vehicleInfo.driverName ||
-      vehicleSnapshot.driverName || vehicleDetail.driverName;
-  if (!driverName) {
-    return '-';
+  let { driverName, driverStatus } = assignment;
+  if (floatingVehicleInfo.replacementEventId === null) {
+    const vehicleInfo = floatingVehicleInfo.vehicleInfo || {};
+    const vehicleSnapshot = findVehicleSnapshot(floatingVehicleInfo.vehicleId) || {};
+    const vehicleDetail = floatingVehicleInfo.vehicleDetail || {};
+    driverName ||= vehicleInfo.driverName || vehicleSnapshot.driverName || vehicleDetail.driverName;
+    driverStatus ||= vehicleInfo.driverStatus || vehicleSnapshot.driverStatus || vehicleDetail.driverStatus;
   }
-  const driverStatus = assignment.driverStatus || vehicleInfo.driverStatus ||
-      vehicleSnapshot.driverStatus || vehicleDetail.driverStatus;
+  if (!driverName) return '-';
   const statusText = driverStatusMap[driverStatus]?.text || '未知';
   return `司机 ${driverName}（${statusText}）`;
 });
@@ -5923,6 +6294,10 @@ const toFiniteNumber = (value, fallback = 0) => {
 };
 
 const formatNumber = (value, digits = 1) => toFiniteNumber(value, 0).toFixed(digits);
+
+const formatFloatingVehicleMeasurement = value =>
+    floatingVehicleInfo.replacementEventId !== null && (value == null || !Number.isFinite(Number(value)))
+        ? '-' : formatNumber(value);
 
 const calculateUsagePercent = (current, max) => {
   const maxValue = toFiniteNumber(max, 0);
@@ -6261,6 +6636,8 @@ const clearFrontendSimulationVisuals = () => {
 
 // 清除特定Assignment的路线
 const clearRouteByAssignmentId = (assignmentId, vehicleId = null) => {
+  if (activeReplacementAssignments.has(String(assignmentId))
+      && !finishedReplacementAssignments.has(String(assignmentId))) return;
   const routeData = activeRoutes.value.get(assignmentId);
   const targetVehicleId = vehicleId || routeData?.assignment?.vehicleId || null;
   const unregisterVehicle = () => removeVehicleRenderRegistration(
@@ -6318,6 +6695,7 @@ const fetchCurrentAssignments = async (runGeneration = simulationGeneration.valu
       // 为每个Assignment绘制两段路线
       for (const assignment of assignments) {
         if (assignment && assignment.assignmentId) {
+          if (ownsReplacementRoute(assignment.assignmentId)) continue;
           const vehicleConflict = animationManager.findVehicleAnimationConflict(
               assignment.vehicleId,
               assignment.assignmentId
@@ -6390,6 +6768,7 @@ const fetchAndDrawNewAssignments = async (runGeneration = simulationGeneration.v
     for (const assignment of newAssignments) {
       if (!isActiveTransportGeneration(runGeneration)) return;
       if (assignment && assignment.assignmentId) {
+        if (ownsReplacementRoute(assignment.assignmentId)) continue;
         if (!drawnAssignmentIds.value.has(assignment.assignmentId)) {
           const vehicleConflict = animationManager.findVehicleAnimationConflict(
               assignment.vehicleId,
@@ -6438,7 +6817,7 @@ const fetchAndDrawNewAssignments = async (runGeneration = simulationGeneration.v
 // 为Assignment绘制两段路线（修复版）
 const drawTwoStageRouteForAssignment = async (assignment, runGeneration = simulationGeneration.value, options = {}) => {
   if (!AMapLib || !map) return null;
-  if (!isActiveTransportGeneration(runGeneration)) return null;
+  if (!isActiveTransportGeneration(runGeneration) || ownsReplacementRoute(assignment.assignmentId)) return null;
 
   let routeData = null;
   try {
@@ -6522,7 +6901,7 @@ const drawTwoStageRouteForAssignment = async (assignment, runGeneration = simula
         runGeneration
     );
 
-    if (!isActiveTransportGeneration(runGeneration)) {
+    if (!isActiveTransportGeneration(runGeneration) || ownsReplacementRoute(assignment.assignmentId)) {
       discardRouteData(assignment.assignmentId, routeData);
       return null;
     }
@@ -6545,11 +6924,7 @@ const drawTwoStageRouteForAssignment = async (assignment, runGeneration = simula
     // 绘制第一段路线（空驶阶段）
     const stage1Poly = new AMapLib.Polyline({
       path: stage1Route.path,
-      strokeColor: '#95a5a6', // 灰色表示空驶
-      strokeOpacity: 0.6,
-      strokeWeight: 3,
-      strokeDasharray: [5, 5], // 虚线
-      lineJoin: 'round',
+      ...transportRouteStyle('empty'),
     });
     elements.push(stage1Poly);
     stage1Poly.setMap(map);
@@ -6557,10 +6932,7 @@ const drawTwoStageRouteForAssignment = async (assignment, runGeneration = simula
     // 绘制第二段路线（运输阶段）
     const stage2Poly = new AMapLib.Polyline({
       path: stage2Route.path,
-      strokeColor: '#3388ff', // 蓝色表示运输
-      strokeOpacity: 0.8,
-      strokeWeight: 4,
-      lineJoin: 'round',
+      ...transportRouteStyle('loaded'),
     });
     elements.push(stage2Poly);
     stage2Poly.setMap(map);
@@ -6677,7 +7049,7 @@ const drawTwoStageRouteForAssignment = async (assignment, runGeneration = simula
 // ==================== VRP 专线：绘制多节点复杂路线 ====================
 const drawMultiStageRouteForVrpAssignment = async (assignment, runGeneration = simulationGeneration.value, options = {}) => {
   if (!AMapLib || !map) return null;
-  if (!isActiveTransportGeneration(runGeneration)) return null;
+  if (!isActiveTransportGeneration(runGeneration) || ownsReplacementRoute(assignment.assignmentId)) return null;
 
   let routeData = null;
   try {
@@ -6777,7 +7149,7 @@ const drawMultiStageRouteForVrpAssignment = async (assignment, runGeneration = s
         return null;
       }
 
-      if (path.length === 0) {
+      if (path.length === 0 || ownsReplacementRoute(assignment.assignmentId)) {
         discardRouteData(assignment.assignmentId, routeData);
         return null;
       }
@@ -6793,11 +7165,8 @@ const drawMultiStageRouteForVrpAssignment = async (assignment, runGeneration = s
       const isFirstStage = i === 0;
       const polyline = new AMapLib.Polyline({
         path: path,
-        strokeColor: isFirstStage ? '#95a5a6' : '#9b59b6',
+        ...transportRouteStyle(isFirstStage ? 'empty' : 'vrp'),
         strokeOpacity: 0.8,
-        strokeWeight: isFirstStage ? 3 : 4,
-        strokeDasharray: isFirstStage ? [5, 5] : [],
-        lineJoin: 'round',
       });
       elements.push(polyline);
       polyline.setMap(map);
@@ -6975,7 +7344,7 @@ function projectVisibleVehicleForSidebar(vehicleId, backendVehicle = null) {
       || { id: vehicleId };
   const managerInfo = vehicleStatusManager.value?.getVehicleInfo?.(vehicleId) || {};
   const monitorVehicle = monitorVehicles.find(vehicle => String(vehicle.vehicleId) === String(vehicleId)) || null;
-  const activeEvent = monitorVehicle?.activeEvent
+  const activeEvent = manualDisplayEvents.get(String(assignment.assignmentId)) || monitorVehicle?.activeEvent
       || monitorActiveEvents.find(event => String(event.vehicleId) === String(vehicleId))
       || null;
   const backendStatus = monitorVehicle?.status || sourceVehicle.status;
@@ -7011,7 +7380,9 @@ function projectVisibleVehicleForSidebar(vehicleId, backendVehicle = null) {
   const markerPosition = normalizeMapPosition(
       lookupMapByLooseId(vehicleStatusManager.value?.vehicleMarkers, vehicleId)?.getPosition?.()
   );
-  const actionDescription = forcedBackendStatus || activeBreakdown
+  const actionDescription = activeEvent?.displayOnly
+      ? `${activeEvent.eventTypeText} · 剩余 ${displayEventDuration(activeEvent.remainingSeconds)}`
+      : forcedBackendStatus || activeBreakdown
       ? displayStatusTextForVehicleStatus(status)
       : assignment.frontendActionDescription
           || managerInfo.actionDescription
@@ -7047,10 +7418,17 @@ function projectVisibleVehicleForSidebar(vehicleId, backendVehicle = null) {
 const vehicleMonitorDisplayVehicles = computed(() => {
   const displayedVehicleIds = new Set();
   const projectedVehicles = [];
+  const faultedIds = new Set(faultedVehicles.value.map(vehicle => String(vehicle.originalVehicleId)));
+  for (const vehicle of replacementDisplay.values()) {
+    const id = String(vehicle.id);
+    if (faultedIds.has(id) || displayedVehicleIds.has(id)) continue;
+    projectedVehicles.push({ ...vehicle, displayOnly: true });
+    displayedVehicleIds.add(id);
+  }
   activeRoutes.value.forEach(routeData => {
     const vehicleId = routeData?.assignment?.vehicleId;
     const iconId = getVehicleIconId(vehicleId);
-    if (!iconId || displayedVehicleIds.has(iconId)) return;
+    if (!iconId || displayedVehicleIds.has(iconId) || faultedIds.has(iconId) || routeData.manualReplacementOwned) return;
     const backendVehicle = vehicles.find(vehicle => String(vehicle.id) === iconId) || null;
     const projectedVehicle = projectVisibleVehicleForSidebar(vehicleId, backendVehicle);
     if (projectedVehicle) {
@@ -7376,17 +7754,18 @@ const buildFloatingVehicleInfo = (vehicleId, assignment, vehicleDetail = null) =
   };
 };
 
-const applyFloatingVehicleInfoPayload = (vehicleId, assignment, vehicleDetail, loading) => {
-  const payload = buildFloatingVehicleInfo(vehicleId, assignment, vehicleDetail);
+const applyFloatingVehicleInfoPayload = (vehicleId, assignment, vehicleDetail, loading, replacementEventId) => {
+  const payload = replacementEventId === null ? buildFloatingVehicleInfo(vehicleId, assignment, vehicleDetail) : {};
   floatingVehicleInfo.visible = true;
   floatingVehicleInfo.loading = loading;
   floatingVehicleInfo.vehicleId = vehicleId;
+  floatingVehicleInfo.replacementEventId = replacementEventId;
   floatingVehicleInfo.assignment = assignment || {};
-  floatingVehicleInfo.vehicleInfo = payload.vehicleInfo;
-  floatingVehicleInfo.vehicleDetail = payload.vehicleDetail;
-  floatingVehicleInfo.currentStatus = payload.currentStatus;
-  floatingVehicleInfo.statusText = payload.statusText;
-  floatingVehicleInfo.statusColor = payload.statusColor;
+  floatingVehicleInfo.vehicleInfo = payload.vehicleInfo ?? null;
+  floatingVehicleInfo.vehicleDetail = vehicleDetail;
+  floatingVehicleInfo.currentStatus = payload.currentStatus ?? null;
+  floatingVehicleInfo.statusText = payload.statusText ?? '';
+  floatingVehicleInfo.statusColor = payload.statusColor ?? '#ccc';
 };
 
 const setFloatingVehicleHighlight = (vehicleId) => {
@@ -7429,9 +7808,11 @@ const resetFloatingVehicleInfoPosition = () => {
 };
 
 const closeFloatingVehicleInfo = () => {
+  floatingVehicleRequestId++;
   stopFloatingVehicleInfoDrag();
   floatingVehicleInfo.visible = false;
   floatingVehicleInfo.loading = false;
+  floatingVehicleInfo.replacementEventId = null;
 };
 
 const startFloatingVehicleInfoDrag = (event) => {
@@ -7477,15 +7858,22 @@ const openVehicleFloatingInfo = async (source, options = {}) => {
     return;
   }
 
-  await openVehicleMonitorPanelWithoutMapResize();
-  const assignment = resolveFloatingVehicleAssignment(source, vehicleId, options);
+  const replacementEventId = options.replacementEventId ?? null;
+  const requestId = ++floatingVehicleRequestId;
+  const isCurrentRequest = () => requestId === floatingVehicleRequestId
+      && (replacementEventId === null || replacementDisplay.has(replacementEventId));
+  const monitorReady = openVehicleMonitorPanelWithoutMapResize();
+  if (replacementEventId === null) await monitorReady;
+  if (!isCurrentRequest()) return;
+  const assignment = replacementEventId === null ? resolveFloatingVehicleAssignment(source, vehicleId, options) : null;
   let displayAssignment = assignment;
   const assignmentId = assignment?.assignmentId ?? source?.assignmentId ?? options.assignment?.assignmentId;
   const experimentDisplayInfoPromise = fetchExperimentVehicleDisplayInfo(vehicleId, assignmentId);
   setFloatingVehicleHighlight(vehicleId);
   resetFloatingVehicleInfoPosition();
-  applyFloatingVehicleInfoPayload(vehicleId, assignment, null, true);
+  applyFloatingVehicleInfoPayload(vehicleId, assignment, null, true, replacementEventId);
   await nextTick();
+  if (!isCurrentRequest()) return;
   resetFloatingVehicleInfoPosition();
 
   let vehicleDetail = null;
@@ -7495,10 +7883,11 @@ const openVehicleFloatingInfo = async (source, options = {}) => {
     console.error('获取车辆详情失败:', error);
   }
   const experimentDisplayInfo = await experimentDisplayInfoPromise;
+  if (!isCurrentRequest()) return;
   displayAssignment = mergeExperimentVehicleDisplayAssignment(displayAssignment, experimentDisplayInfo);
-  applyFloatingVehicleInfoPayload(vehicleId, displayAssignment, vehicleDetail, false);
+  applyFloatingVehicleInfoPayload(vehicleId, displayAssignment, vehicleDetail, false, replacementEventId);
   await nextTick();
-  setFloatingVehicleInfoPosition(floatingVehicleInfo.position.left, floatingVehicleInfo.position.top);
+  if (isCurrentRequest()) setFloatingVehicleInfoPosition(floatingVehicleInfo.position.left, floatingVehicleInfo.position.top);
 };
 
 const centerMapOnVehicle = (position) => {
@@ -7806,6 +8195,7 @@ const checkAndCleanupCompletedAssignments = async () => {
       let skippedRunningAssignments = 0;
       let compensatedVisualAcks = 0;
       for (const assignmentId of assignmentIdsToCleanup) {
+        if (ownsReplacementRoute(assignmentId)) continue;
         const animation = animationManager?.animations?.get(assignmentId);
         if (animation && animation.isCompleted !== true) {
           skippedRunningAssignments += 1;
@@ -8095,6 +8485,8 @@ onMounted(() => {
 
         // 初始加载POI数据
         updatePOIData();
+        await manualReplacement.refresh();
+        manualReplacement.startMonitoring();
         await restoreWeatherRunView();
       })
       .catch((e) => {
@@ -8107,6 +8499,7 @@ onUnmounted(() => {
   window.removeEventListener('resize', updateDataViewport);
   dataDrawerReturnFocus = null;
   mapViewDisposed = true;
+  manualReplacement.clear({ unmount: true });
   stopMapContainerResizeObserver();
   clearLocalOrdinaryNavigation();
   stopFloatingVehicleInfoDrag();
@@ -8758,6 +9151,67 @@ onUnmounted(() => {
   line-height: 16px;
   color: #909399;
 }
+
+.vehicle-floating-event {
+  margin-left: auto;
+  padding: 4px 8px;
+  border: 1px solid #e4a5a5;
+  border-radius: 4px;
+  background: #fff;
+  color: #9f2525;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.vehicle-floating-event:hover,
+.vehicle-floating-event:focus-visible {
+  background: #fff1f1;
+  border-color: #a92828;
+}
+
+.vehicle-event-dialog {
+  display: grid;
+  gap: 10px;
+  color: #303133;
+}
+
+.vehicle-event-dialog select {
+  padding: 7px 10px;
+  border: 1px solid #dcdfe6;
+  border-radius: 4px;
+  background: #fff;
+  color: #303133;
+}
+
+.vehicle-event-dialog p {
+  margin: 0;
+  color: #525b69;
+}
+
+.faulted-vehicle-list {
+  padding: 12px;
+  color: #303133;
+}
+
+.faulted-vehicle-list h3 {
+  margin: 0 0 8px;
+  color: #8b2424;
+  font-size: 14px;
+}
+
+.faulted-vehicle-row {
+  display: grid;
+  gap: 5px;
+  padding: 8px;
+  border: 1px solid #f0d4d4;
+  border-radius: 6px;
+  background: #fff7f7;
+  margin-bottom: 6px;
+}
+
+.faulted-vehicle-row small { color: #9f2525; }
+.faulted-vehicle-actions { display: flex; flex-wrap: wrap; }
 
 .vehicle-floating-info-close {
   width: 28px;

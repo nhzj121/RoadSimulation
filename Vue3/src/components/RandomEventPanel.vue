@@ -3,13 +3,13 @@
     <template #header>
       <div class="event-card-header">
         <span>随机运输事件</span>
-        <ElTag v-if="activeEvents.length" type="danger" size="small">
-          活跃 {{ activeEvents.length }}
+        <ElTag v-if="activeEvents.length || displayEvents.length" type="danger" size="small">
+          活跃 {{ activeEvents.length + displayEvents.length }}
         </ElTag>
       </div>
     </template>
 
-    <div class="event-form">
+    <div v-if="!readOnly" class="event-form">
       <label for="random-event-vehicle">运输车辆</label>
       <ElSelect id="random-event-vehicle" v-model="vehicleId" placeholder="选择运输车辆" size="small" :disabled="disabled" aria-label="运输车辆">
         <ElOption
@@ -66,13 +66,27 @@
         <small>已持续 {{ formatDelay(event.delaySeconds) }} · 结束 {{ formatTime(event.plannedEndTime) }}</small>
       </div>
     </div>
-    <div v-else class="event-empty">当前无活跃事件</div>
+    <div v-if="displayEvents.length" class="active-event-list">
+      <div v-for="event in displayEvents" :key="event.eventId" class="active-event-item">
+        <strong>手动{{ event.eventTypeText }}</strong>
+        <span>{{ event.licensePlate || `车辆${event.vehicleId}` }}</span>
+        <small>剩余 {{ displayEventDuration(event.remainingSeconds) }}（播放时间）</small>
+      </div>
+    </div>
+    <div v-if="!activeEvents.length && !displayEvents.length" class="event-empty">当前无活跃事件</div>
     <div v-if="recentEvents.length" class="recent-event-list" aria-label="最近故障结果">
       <strong>最近故障结果</strong>
       <div v-for="event in recentEvents" :key="event.eventId" class="recent-event-item">
         <span>{{ event.licensePlate || `车辆${event.vehicleId}` }}</span>
         <small>{{ event.description }}</small>
         <small>{{ formatTime(event.resolvedTime || event.plannedEndTime) }}</small>
+      </div>
+    </div>
+    <div v-if="displayHistory.length" class="recent-event-list" aria-label="本次会话手动事件">
+      <strong>本次会话手动事件</strong>
+      <div v-for="event in displayHistory" :key="event.eventId" class="recent-event-item">
+        <span>{{ event.licensePlate || `车辆${event.vehicleId}` }}</span>
+        <small>{{ event.eventTypeText }} · {{ event.reason === 'ELAPSED' ? '已结束' : '随任务结束' }}</small>
       </div>
     </div>
   </ElCard>
@@ -84,11 +98,15 @@ import { ElButton, ElCard, ElInputNumber, ElMessage, ElOption, ElSelect, ElTag }
 import { randomEventApi } from '../api/randomEventApi'
 import { activeEventSignature, createEventHistoryTransitionHandler, describeBreakdown, recentBreakdownRows, validateRandomEventInput } from '../utils/breakdownPresentation'
 import { vehicleStatusPresentation } from '../utils/vehicleStatusPresentation'
+import { displayEventDuration } from '../utils/manualVehicleDisplayEvent'
 
 const props = defineProps({
   vehicles: { type: Array, default: () => [] },
   activeEvents: { type: Array, default: () => [] },
-  disabled: { type: Boolean, default: false }
+  displayEvents: { type: Array, default: () => [] },
+  displayHistory: { type: Array, default: () => [] },
+  disabled: { type: Boolean, default: false },
+  readOnly: { type: Boolean, default: false }
 })
 const emit = defineEmits(['triggered'])
 

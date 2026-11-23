@@ -12,9 +12,15 @@ import org.example.roadsimulation.repository.ProductionPlanRepository;
 import org.example.roadsimulation.sandbox.random.SandboxRandomDomain;
 import org.example.roadsimulation.sandbox.random.SplitMix64V1;
 import org.example.roadsimulation.sandbox.run.SandboxRunRuntimeContext;
+import org.example.roadsimulation.sandbox.run.SandboxRunSpecificationRevisionV2;
+import org.example.roadsimulation.sandbox.run.SandboxRunSpecificationV1.ChainDemandOverride;
+import org.example.roadsimulation.sandbox.run.SandboxRunSpecificationV1.Demand;
+import org.example.roadsimulation.sandbox.run.SandboxRunSpecificationV2;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.dao.DataIntegrityViolationException;
 
+import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -22,9 +28,11 @@ import java.util.Optional;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -103,6 +111,49 @@ class ProductionDemandGeneratorTest {
     }
 
     @Test
+    void aFailedPublicationLeavesOnlyThatBatchToRetry() {
+        Fixture fixture = batchFixture(3);
+        when(fixture.planRepository.findBySimulationRunIdAndGenerationRoundAndChainId("run", 6, 1L))
+                .thenReturn(Optional.of(plan(100L, ProductionPlan.PlanStatus.RELEASED)));
+        when(fixture.planRepository.findBySimulationRunIdAndGenerationRoundAndChainIdAndGenerationBatchIndex("run", 6, 1L, 1))
+                .thenReturn(Optional.of(plan(101L, ProductionPlan.PlanStatus.CALCULATED)));
+        when(fixture.planRepository.findBySimulationRunIdAndGenerationRoundAndChainIdAndGenerationBatchIndex("run", 6, 1L, 2))
+                .thenReturn(Optional.empty(), Optional.of(plan(102L, ProductionPlan.PlanStatus.RELEASED)));
+        var response = mock(ProductionPlanResponse.class);
+        when(response.id()).thenReturn(102L);
+        when(fixture.planningService.createAutomaticPlan(any(), eq("run"), eq(6), eq(2))).thenReturn(response);
+        when(fixture.planningService.releasePlan(101L, "production-demand-generator"))
+                .thenThrow(new IllegalStateException("simulated release failure")).thenReturn(null);
+
+        assertThatThrownBy(() -> fixture.generator.generate("run", tick(6))).hasMessageContaining("batch 1");
+        fixture.generator.generate("run", tick(6));
+
+        verify(fixture.planningService, times(2)).releasePlan(101L, "production-demand-generator");
+        verify(fixture.planningService).releasePlan(102L, "production-demand-generator");
+        verify(fixture.planningService).createAutomaticPlan(any(), eq("run"), eq(6), eq(2));
+        verify(fixture.planningService, never()).createAutomaticPlan(any(), any(), any(Integer.class));
+    }
+
+    @Test
+    void concurrentCreationAndPublicationResolveTheSameBatch() {
+        Fixture fixture = batchFixture(2);
+        when(fixture.planRepository.findBySimulationRunIdAndGenerationRoundAndChainId("run", 6, 1L))
+                .thenReturn(Optional.of(plan(100L, ProductionPlan.PlanStatus.RELEASED)));
+        when(fixture.planRepository.findBySimulationRunIdAndGenerationRoundAndChainIdAndGenerationBatchIndex("run", 6, 1L, 1))
+                .thenReturn(Optional.empty(), Optional.of(plan(101L, ProductionPlan.PlanStatus.CALCULATED)));
+        when(fixture.planningService.createAutomaticPlan(any(), eq("run"), eq(6), eq(1)))
+                .thenThrow(new DataIntegrityViolationException("duplicate batch"));
+        doThrow(new IllegalStateException("another transaction released the plan"))
+                .when(fixture.planningService).releasePlan(101L, "production-demand-generator");
+        when(fixture.planRepository.findById(101L)).thenReturn(Optional.of(plan(101L, ProductionPlan.PlanStatus.RELEASED)));
+
+        fixture.generator.generate("run", tick(6));
+
+        verify(fixture.planningService).releasePlan(101L, "production-demand-generator");
+        verify(fixture.planningService, never()).releasePlan(eq(100L), any());
+    }
+
+    @Test
     void sandboxQuantityUsesFinalQuantityDomainAndStableChainKey() {
         Fixture fixture = fixture();
         ProcessingChain chain = chain(7L, "CHAIN-7");
@@ -144,6 +195,30 @@ class ProductionDemandGeneratorTest {
                 chainRepository, planRepository, planningService, catalogService, runtimeConfig);
         return new Fixture(
                 generator, chainRepository, planRepository, planningService, catalogService);
+    }
+
+    private Fixture batchFixture(int batchCount) {
+        Fixture fixture = fixture();
+        var runtime = mock(SandboxRunRuntimeContext.class);
+        var revision = mock(SandboxRunSpecificationRevisionV2.class);
+        var specification = mock(SandboxRunSpecificationV2.class);
+        when(runtime.isV2()).thenReturn(true);
+        when(runtime.revisionV2()).thenReturn(revision);
+        when(revision.specification()).thenReturn(specification);
+        when(specification.demand()).thenReturn(new Demand("PRODUCTION", 6, false,
+                List.of(new ChainDemandOverride(1L, BigDecimal.ONE, BigDecimal.valueOf(batchCount)))));
+        when(runtime.random(eq(SandboxRandomDomain.PRODUCTION_FINAL_QUANTITY), any())).thenAnswer(i -> new SplitMix64V1(12345L));
+        fixture.generator.setSandboxRunRuntimeContext(runtime);
+        when(fixture.chainRepository.findByStatus(ProcessingChain.ChainStatus.ACTIVE)).thenReturn(List.of(chain(1L, "FIRST")));
+        when(fixture.catalogService.resolveFinalTransportedGoods(1L)).thenReturn(goods("FINAL", 1));
+        return fixture;
+    }
+
+    private ProductionPlan plan(long id, ProductionPlan.PlanStatus status) {
+        var plan = new ProductionPlan();
+        plan.setId(id);
+        plan.setStatus(status);
+        return plan;
     }
 
     private void assertUnitQuantity(CreateProductionPlanRequest request, double unitWeight) {

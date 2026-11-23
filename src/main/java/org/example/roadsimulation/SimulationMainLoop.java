@@ -89,6 +89,8 @@ public class SimulationMainLoop {
 
     @Autowired
     private TransportRandomEventService transportRandomEventService;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private org.example.roadsimulation.service.ManualReplacementService manualReplacementService;
 
     @Autowired private org.example.roadsimulation.service.DrivingProgressService drivingProgressService;
     @Autowired private org.example.roadsimulation.service.WeatherEnvironmentService weatherEnvironmentService;
@@ -224,6 +226,7 @@ public class SimulationMainLoop {
             // Phase 4：先结算到期的装卸动作，再让新激活的行驶路段消费本轮秒预算。
             if(transportRandomEventService!=null) transportRandomEventService.settleDueEvents(currentTick.tickEnd());
             EvaluationLoopExecutionReport executionReport = advanceTransportProgressSafely(currentTick);
+            if (manualReplacementService != null && !isControlledTick()) manualReplacementService.retryWaiting();
             if (isControlledTick() && (executionReport.candidateQueryFailed()
                     || executionReport.failedAssignmentCount() > 0)) {
                 throw new IllegalStateException("Sandbox authoritative transport progress failed: "
