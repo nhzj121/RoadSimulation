@@ -146,6 +146,7 @@ test('new assignment polling defers task B without marking it drawn, then retrie
     Set,
     simulationGeneration: { value: 7 },
     isActiveTransportGeneration: () => true,
+    ownsReplacementRoute: () => false,
     request: {
       async get(url) {
         assert.equal(url, '/api/assignments/new')
@@ -184,6 +185,11 @@ this.fetchNew = fetchAndDrawNewAssignments;`, context)
   assert.equal(context.drawnAssignmentIds.value.has(89), false)
 
   animations.delete(88)
+  context.ownsReplacementRoute = id => id === assignmentB.assignmentId
+  await context.fetchNew(7)
+  assert.deepEqual(drawCalls, [])
+  assert.deepEqual(postCalls, [])
+  context.ownsReplacementRoute = () => false
   await context.fetchNew(7)
   assert.deepEqual(drawCalls, [89])
   assert.deepEqual(postCalls, ['/api/assignments/mark-drawn/89'])
@@ -299,6 +305,7 @@ test('failed owner redraw remains on active polling until matching animation reg
     simulationGeneration: { value: 7 },
     isTransportAnimationActive: () => true,
     isActiveTransportGeneration: () => true,
+    ownsReplacementRoute: () => false,
     fetchSimulationCosts: async () => {},
     updateVehicleInfo: async () => {},
     checkAndCleanupCompletedAssignments: async () => {},
@@ -382,7 +389,7 @@ test('refresh without an owner tracker reconstructs static recovery from durable
     assignmentRenderIdentity, reconcileAssignmentRenderOwner, createAssignmentRecoveryTracker,
     ref: value => ({ value }), simulationTimer: { value: null }, simulationInterval: { value: 4000 },
     simulationGeneration: { value: 7 }, isTransportAnimationActive: () => true,
-    isActiveTransportGeneration: () => true, fetchSimulationCosts: async () => {}, updateVehicleInfo: async () => {},
+    isActiveTransportGeneration: () => true, ownsReplacementRoute: () => false, fetchSimulationCosts: async () => {}, updateVehicleInfo: async () => {},
     checkAndCleanupCompletedAssignments: async () => {}, isExperimentRunActive: { value: false },
     syncExperimentRunAfterStatusRefresh: async () => {}, monitorAssignments: [assignment], monitorWeather: { value: null },
     assignmentPollingMode: () => 'new', animationManager: { animations, findVehicleAnimationConflict() { return null } },

@@ -28,6 +28,8 @@ import java.util.Map;
 
 @Service
 public class HeuristicSimulationDispatchService implements SimulationDispatchService {
+    @Autowired(required = false)
+    private org.example.roadsimulation.service.ManualReplacementStore manualReplacementStore;
 
     private static final Logger log = LoggerFactory.getLogger(HeuristicSimulationDispatchService.class);
 
@@ -90,6 +92,7 @@ public class HeuristicSimulationDispatchService implements SimulationDispatchSer
                 ShipmentItem.ShipmentItemStatus.NOT_ASSIGNED
         ));
         List<Vehicle> queriedIdleVehicles = vehicleRepository.findByCurrentStatus(Vehicle.VehicleStatus.IDLE);
+        if (manualReplacementStore != null) queriedIdleVehicles = manualReplacementStore.filterDispatchable(queriedIdleVehicles);
         List<Vehicle> idleVehicles = new java.util.ArrayList<>(driverBehaviorService == null
                 ? queriedIdleVehicles
                 : driverBehaviorService.filterVehiclesWithIdleDriver(queriedIdleVehicles));

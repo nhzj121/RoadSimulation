@@ -80,6 +80,12 @@ public class DataInitializer implements CommandLineRunner {
     private final SimulationDataCleanupService cleanupService;
     private final ShipmentItemService shipmentItemService;
     private final VehicleRepository vehicleRepository;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private org.example.roadsimulation.service.ManualReplacementStore manualReplacementStore;
+
+    private List<Vehicle> dispatchable(List<Vehicle> vehicles) {
+        return manualReplacementStore == null ? vehicles : manualReplacementStore.filterDispatchable(vehicles);
+    }
     private final RoutePlanningService routePlanningService;
     private final GetCostService getCostService;
     private final CargoChunkService cargoChunkService;
@@ -626,7 +632,7 @@ public class DataInitializer implements CommandLineRunner {
         // 4. 批量获取空闲车辆（适配动态随机出来的货物）
         String targetGoodsSku = dynamicGoods.getSku();
         String targetVehicleType = dynamicGoods.getVehicleFit() != null ? dynamicGoods.getVehicleFit() : "载货车";
-        List<Vehicle> allIdleVehicles = vehicleRepository.findByCurrentStatus(Vehicle.VehicleStatus.IDLE); // ToDo 只考虑车辆状态，暂时不考虑适配性
+        List<Vehicle> allIdleVehicles = dispatchable(vehicleRepository.findByCurrentStatus(Vehicle.VehicleStatus.IDLE));
         // 剔除保养中司机绑定的车辆（司机带车保养期间不可派单）
         allIdleVehicles = filterVehiclesWithIdleDriver(allIdleVehicles);
 
@@ -930,7 +936,7 @@ public class DataInitializer implements CommandLineRunner {
                     continue;
                 }
 
-                List<Vehicle> idleVehicles = vehicleRepository.findByCurrentStatus(Vehicle.VehicleStatus.IDLE);
+                List<Vehicle> idleVehicles = dispatchable(vehicleRepository.findByCurrentStatus(Vehicle.VehicleStatus.IDLE));
                 idleVehicles = filterVehiclesWithIdleDriver(idleVehicles);
                 ShipmentItem item = creation.getItems().get(0);
                 Optional<Vehicle> vehicle = selectOriginalDispatchVehicleForItem(item, idleVehicles);
@@ -1406,8 +1412,7 @@ public class DataInitializer implements CommandLineRunner {
         double itemVolume = safeDouble(item.getVolume());
         POI origin = item.getShipment().getOriginPOI();
 
-        return candidateVehicles.stream()
-                .filter(Objects::nonNull)
+        return dispatchable(candidateVehicles.stream().filter(Objects::nonNull).toList()).stream()
                 .filter(vehicle -> Vehicle.VehicleStatus.IDLE.equals(vehicle.getCurrentStatus()))
                 .filter(vehicle -> safeDouble(vehicle.getMaxLoadCapacity()) >= itemWeight)
                 .filter(vehicle -> safeDouble(vehicle.getCargoVolume()) >= itemVolume)
@@ -2180,7 +2185,7 @@ public class DataInitializer implements CommandLineRunner {
             return 0;
         }
 
-        List<Vehicle> idleVehicles = vehicleRepository.findByCurrentStatus(Vehicle.VehicleStatus.IDLE);
+        List<Vehicle> idleVehicles = dispatchable(vehicleRepository.findByCurrentStatus(Vehicle.VehicleStatus.IDLE));
         idleVehicles = filterVehiclesWithIdleDriver(idleVehicles);
         if (idleVehicles == null || idleVehicles.isEmpty()) {
             logger.info("[TailFallback] No idle vehicles. overdue={}, loop={}, source={}",
@@ -2557,7 +2562,7 @@ public class DataInitializer implements CommandLineRunner {
 
         // 2. 获取专属的 VRP 测试车队 (空闲状态)，剔除保养中司机绑定的车辆
         List<Vehicle> vrpVehicles = new ArrayList<>(filterVehiclesWithIdleDriver(
-                vehicleRepository.findByCurrentStatus(Vehicle.VehicleStatus.IDLE)));
+                dispatchable(vehicleRepository.findByCurrentStatus(Vehicle.VehicleStatus.IDLE))));
         vrpVehicles.sort(Comparator.comparing(Vehicle::getId, Comparator.nullsLast(Long::compareTo)));
         if (vrpVehicles.isEmpty()) {
             System.out.println("[VRP 大脑] 没有空闲的车辆。");

@@ -11,6 +11,8 @@ import java.util.*;
 @Service
 @Transactional
 public class DriverResourceService {
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private ManualReplacementStore manualReplacementStore;
     @jakarta.persistence.PersistenceContext
     private jakarta.persistence.EntityManager entityManager;
     private final DriverRepository drivers;
@@ -29,6 +31,7 @@ public class DriverResourceService {
     public Driver claimForAssignment(Assignment assignment, Vehicle vehicle, LocalDateTime at, String actor) {
         if (assignment==null || vehicle==null || vehicle.getId()==null)
             throw new IllegalStateException("Assignment requires a vehicle and a driver");
+        if (manualReplacementStore != null) manualReplacementStore.requireDispatchClaim(vehicle.getId(), assignment.getId());
         Driver preset=assignment.getAssignedDriver();
         List<Driver> ordered=preset==null?ranked(vehicle,assignment):List.of(preset);
         for (Driver listed:ordered) {

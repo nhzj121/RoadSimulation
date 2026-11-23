@@ -44,6 +44,8 @@ public class TransportRandomEventService {
     private BreakdownDecisionPolicy breakdownDecisionPolicy;
     @org.springframework.beans.factory.annotation.Autowired
     private VehicleReplacementAttemptRepository replacementAttemptRepository;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private ManualReplacementStore manualReplacementStore;
     private static final int MIN_MANUAL_DURATION_MINUTES = 30;
     private static final int MAX_MANUAL_DURATION_MINUTES = 240;
 
@@ -174,6 +176,7 @@ public class TransportRandomEventService {
         Optional<TransportRandomEvent> active=direct.isPresent()?direct:eventRepository.findByStatus(TransportRandomEvent.EventStatus.ACTIVE).stream()
                 .filter(e->Objects.equals(e.getReplacementVehicleId(),vehicleId)).findFirst();
         return active
+                .filter(event -> !manualMapHandoff(event))
                 .filter(event -> !authoritativeMode() && (drivingProgressService == null || !drivingProgressService.enabled())
                         || event.getEventType() == TransportRandomEvent.EventType.VEHICLE_BREAKDOWN)
                 .filter(event -> event.getEventType() == TransportRandomEvent.EventType.VEHICLE_BREAKDOWN
@@ -183,7 +186,8 @@ public class TransportRandomEventService {
 
     @Transactional(readOnly = true)
     public List<TransportRandomEvent> getActiveEvents() {
-        return eventRepository.findByStatus(TransportRandomEvent.EventStatus.ACTIVE);
+        return eventRepository.findByStatus(TransportRandomEvent.EventStatus.ACTIVE).stream()
+                .filter(event -> !manualMapHandoff(event)).toList();
     }
 
     @Transactional(readOnly = true)
@@ -201,7 +205,7 @@ public class TransportRandomEventService {
         Set<Long> resolvedVehicleIds = new HashSet<>();
         for (TransportRandomEvent event : eventRepository.findByStatus(TransportRandomEvent.EventStatus.ACTIVE).stream()
                 .sorted(Comparator.comparing(TransportRandomEvent::getId,Comparator.nullsLast(Long::compareTo))).toList()) {
-            if (event.getStatus() != TransportRandomEvent.EventStatus.ACTIVE) {
+            if (event.getStatus() != TransportRandomEvent.EventStatus.ACTIVE || manualMapHandoff(event)) {
                 continue;
             }
             if(event.getBreakdownLevel()==TransportRandomEvent.BreakdownLevel.REPLACEMENT_REQUIRED){
@@ -222,6 +226,10 @@ public class TransportRandomEventService {
             resolvedVehicleIds.add(event.getVehicleId());
         }
         return resolvedVehicleIds;
+    }
+
+    private boolean manualMapHandoff(TransportRandomEvent event) {
+        return ManualReplacementService.RULE.equals(event.getBreakdownRuleVersion());
     }
 
     private void resolveEvent(TransportRandomEvent event, LocalDateTime simNow) {
@@ -572,8 +580,9 @@ public class TransportRandomEventService {
                 .comparingDouble((Vehicle v)->v.getMaxLoadCapacity()-event.getRequiredLoad())
                 .thenComparingDouble(v->v.getCargoVolume()-event.getRequiredVolume())
                 .thenComparing(Vehicle::getId);
+        var held = manualReplacementStore == null ? Set.<Long>of() : manualReplacementStore.heldVehicleIds();
         for(Vehicle listed:vehicleRepository.findByCurrentStatus(Vehicle.VehicleStatus.IDLE).stream()
-                .filter(v->eligibleCandidate(v,event)).sorted(order).toList()){
+                .filter(v->!held.contains(v.getId()) && eligibleCandidate(v,event)).sorted(order).toList()){
             if(vehicleRepository.reserveReplacementIfIdle(listed.getId(),event.getId(),simNow)!=1)continue;
             Vehicle candidate=vehicleRepository.findByIdForUpdate(listed.getId()).orElse(null);
             if(candidate!=null)entityManager.refresh(candidate,LockModeType.PESSIMISTIC_WRITE);

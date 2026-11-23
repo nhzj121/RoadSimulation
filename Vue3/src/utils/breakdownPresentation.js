@@ -57,6 +57,7 @@ const replacementVehicleText = event => {
 }
 
 export function describeBreakdown(event) {
+  if (event?.replacementOutcome === 'VISUAL_ONLY') return '原任务已完成 · 播放换车接续'
   if (event?.breakdownLevel === 'REPLACEMENT_REQUIRED') {
     if (event.replacementOutcome && event.replacementOutcome !== 'REPLACED') {
       return `换车未完成 · ${replacementOutcomes[event.replacementOutcome] || event.replacementOutcome}`
