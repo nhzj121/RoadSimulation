@@ -263,8 +263,8 @@
                   { label: 'Quantity', value: floatingVehicleDisplayAssignment.quantity || floatingVehicleDisplayInfo.quantity || 0 }
                 ]"
                 :load="[
-                  { current: formatNumber(floatingVehicleDisplayInfo.currentLoad), limit: formatNumber(floatingVehicleDisplayInfo.maxLoadCapacity), unit: 't', percent: floatingVehicleLoadPercent },
-                  { current: formatNumber(floatingVehicleDisplayInfo.currentVolume), limit: formatNumber(floatingVehicleDisplayInfo.maxVolumeCapacity), unit: 'm³', percent: floatingVehicleVolumePercent }
+                  { current: formatFloatingVehicleMeasurement(floatingVehicleDisplayInfo.currentLoad), limit: formatFloatingVehicleMeasurement(floatingVehicleDisplayInfo.maxLoadCapacity), unit: 't', percent: floatingVehicleLoadPercent },
+                  { current: formatFloatingVehicleMeasurement(floatingVehicleDisplayInfo.currentVolume), limit: formatFloatingVehicleMeasurement(floatingVehicleDisplayInfo.maxVolumeCapacity), unit: 'm³', percent: floatingVehicleVolumePercent }
                 ]"
             >
             <div
@@ -303,8 +303,10 @@
                 <strong>{{ floatingVehicleInfo.vehicleDetail.vehicleType || '-' }}</strong>
                 <span>Capacity</span>
                 <strong>{{ floatingVehicleInfo.vehicleDetail.maxLoadCapacity || 0 }} t</strong>
-                <span v-if="floatingVehicleInfo.vehicleDetail.driverName">Driver</span>
-                <strong v-if="floatingVehicleInfo.vehicleDetail.driverName">{{ floatingVehicleInfo.vehicleDetail.driverName }}</strong>
+                <template v-if="floatingVehicleInfo.replacementEventId === null && floatingVehicleInfo.vehicleDetail.driverName">
+                  <span>Driver</span>
+                  <strong>{{ floatingVehicleInfo.vehicleDetail.driverName }}</strong>
+                </template>
               </div>
             </div>
           </div>
@@ -1369,6 +1371,7 @@ const floatingVehicleInfo = reactive({
   visible: false,
   loading: false,
   vehicleId: null,
+  replacementEventId: null,
   assignment: null,
   vehicleInfo: null,
   vehicleDetail: null,
@@ -1378,6 +1381,7 @@ const floatingVehicleInfo = reactive({
   position: { ...FLOATING_VEHICLE_INFO_DEFAULT_POSITION }
 });
 let floatingVehicleDragState = null;
+let floatingVehicleRequestId = 0;
 
 const handleVehicleClick = (vehicle) => {
   openVehicleFloatingInfo(vehicle, { source: 'panel' });
@@ -3635,7 +3639,7 @@ function unmarkDrawnVehicleIcon(vehicleId) {
     nextIds.delete(iconId);
     drawnVehicleIconIds.value = nextIds;
     syncRegisteredVehicleStats();
-    if (String(floatingVehicleInfo.vehicleId) === iconId) {
+    if (floatingVehicleInfo.replacementEventId === null && String(floatingVehicleInfo.vehicleId) === iconId) {
       floatingVehicleInfo.visible = false;
       floatingVehicleInfo.loading = false;
     }
@@ -5841,27 +5845,47 @@ function createReplacementOverlay(event, snapshot) {
   original.setContent(createVehicleIcon(32, 'BREAKDOWN', null, { vehicleId: event.originalVehicleId }));
   let approach = null;
   let spare = null;
+  const spareIconSize = 32;
+  const spareContent = document.createElement('div');
+  spareContent.style.cssText = `display:grid;place-items:center;width:${spareIconSize}px;height:${spareIconSize}px`;
   let appearance = null;
   let leftFault = false;
-  const showSpare = (position, row, status) => {
+  const task = snapshot.task || originalRoute?.assignment || {};
+  const showSpare = (position, row, status, legIndex = null, loaded = false) => {
+    if (spare) spare.setPosition(position);
+    if (appearance !== status) {
+      let icon;
+      if (status === 'RESERVED_REPLACEMENT') {
+        icon = document.createElement('span');
+        icon.textContent = '+';
+        icon.style.cssText = 'display:grid;place-items:center;width:100%;height:100%;border:2px solid #b91c1c;border-radius:50%;background:#fff;color:#b91c1c;font:700 28px/1 sans-serif';
+      } else {
+        icon = createVehicleIcon(spareIconSize, status, null, { vehicleId: row.spareVehicleId });
+      }
+      icon.style.boxSizing = 'border-box';
+      spareContent.replaceChildren(icon);
+      appearance = status;
+    }
     if (!spare) {
-      spare = new AMapLib.Marker({ map, position, title: row.sparePlate, offset: new AMapLib.Pixel(-16, -16) });
+      spare = new AMapLib.Marker({
+        position, title: row.sparePlate, content: spareContent,
+        anchor: 'center', offset: new AMapLib.Pixel(0, 0)
+      });
+      spare.setMap(map);
+      spare.on('click', () => {
+        const replacement = replacementDisplay.get(event.eventId);
+        if (replacement) void openVehicleFloatingInfo(replacement, { replacementEventId: event.eventId });
+      });
     }
-    spare.setPosition(position);
-    if (appearance === status) return;
-    appearance = status;
-    if (status === 'RESERVED_REPLACEMENT') {
-      const cross = document.createElement('span');
-      cross.textContent = '+';
-      cross.style.cssText = 'display:grid;place-items:center;width:32px;height:32px;border:2px solid #b91c1c;border-radius:50%;background:#fff;color:#b91c1c;font:700 28px/1 sans-serif';
-      spare.setContent(cross);
-    } else {
-      spare.setContent(createVehicleIcon(32, status, null, { vehicleId: row.spareVehicleId }));
-    }
+    const previous = replacementDisplay.get(row.eventId);
+    if (previous?.status === status && previous.phase === row.phase
+        && previous.legIndex === legIndex && previous.loaded === loaded) return;
+    const actionDescription = row.phase === 'EN_ROUTE' ? '赶赴故障点'
+        : legIndex === null ? (loaded ? '接替装货' : '到场交接')
+        : status === 'LOADING' ? '装货中' : status === 'UNLOADING' ? '卸货中' : '接替续运';
     replacementDisplay.set(row.eventId, {
-      id: row.spareVehicleId, licensePlate: row.sparePlate, status,
-      actionDescription: status === 'RESERVED_REPLACEMENT' ? '赶赴故障点'
-        : status === 'LOADING' ? '接替装货' : '接替续运',
+      id: row.spareVehicleId, licensePlate: row.sparePlate, assignmentId: row.assignmentId, status,
+      phase: row.phase, task, snapshot, legIndex, loaded, actionDescription,
       currentAssignment: `运输任务 ${row.assignmentId}`,
       focus: () => map?.setCenter(spare.getPosition())
     });
@@ -5875,15 +5899,15 @@ function createReplacementOverlay(event, snapshot) {
     },
     move: position => spare?.setPosition(position),
     transfer(position, row, loaded) {
-      showSpare(position, row, loaded ? 'LOADING' : 'RESERVED_REPLACEMENT');
+      showSpare(position, row, loaded ? 'LOADING' : 'RESERVED_REPLACEMENT', null, loaded);
     },
-    continueTrip(position, row, status) {
+    continueTrip(position, row, status, legIndex, loaded) {
       if (!leftFault) {
         leftFault = true;
         original.hide();
         approach?.setMap(null);
       }
-      showSpare(position, row, status);
+      showSpare(position, row, status, legIndex, loaded);
     },
     clear() {
       if (!originalRoute) original.setMap(null);
@@ -5901,6 +5925,7 @@ function createReplacementOverlay(event, snapshot) {
       spare?.setMap(null);
       restoredLines.forEach(line => line.setMap(null));
       replacementDisplay.delete(event.eventId);
+      if (floatingVehicleInfo.replacementEventId === event.eventId) closeFloatingVehicleInfo();
     }
   };
 }
@@ -5919,6 +5944,7 @@ const vehicleEventType = ref('congestion');
 const vehicleEventMinutes = ref(60);
 const vehicleEventSubmitting = ref(false);
 const canOpenVehicleEvent = computed(() => ordinaryManualEvents() && isSimulationRunning.value
+  && floatingVehicleInfo.replacementEventId === null
   && ['ORDER_DRIVING', 'TRANSPORT_DRIVING'].includes(floatingVehicleLiveDisplay.value.currentStatus)
   && !floatingVehicleImpactDisplay.value?.activeEvent
   && !faultedVehicles.value.some(row => String(row.originalVehicleId) === String(floatingVehicleInfo.vehicleId)));
@@ -6061,7 +6087,52 @@ function findFloatingAssignmentSupplement(routeAssignment, vehicleId) {
   ) || null;
 }
 
+function projectReplacementVehicleDetails(replacement) {
+  const { id, assignmentId, licensePlate, status, phase, task, snapshot, legIndex, loaded } = replacement;
+  const isApproaching = phase === 'EN_ROUTE';
+  const monitorTask = monitorAssignments.find(item => String(item.assignmentId) === String(assignmentId));
+  const assigned = phase === 'HANDED_OFF' ? findFloatingAssignmentSupplement(replacement, id) : null;
+  const vehicle = monitorVehicles.find(item => String(item.vehicleId) === String(id));
+  const detail = floatingVehicleInfo.vehicleDetail;
+  const stageIndex = snapshot.nextStopIndex + (legIndex ?? 0);
+  const leg = snapshot.remaining[legIndex ?? 0];
+  const nodes = task.nodes;
+  const quantity = pickFloatingQuantity(task.quantity, monitorTask?.quantity);
+  const cargoAmount = (unitAmount) => !loaded ? 0 : unitAmount == null || quantity == null ? null : Number(unitAmount) * Number(quantity);
+  const startPOI = pickFloatingText(task.startPOIName, monitorTask?.startPOIName);
+  const endPOI = pickFloatingText(task.endPOIName, monitorTask?.endPOIName);
+  const from = isApproaching ? '接替车辆当前位置'
+      : !legIndex ? '故障接替点' : snapshot.vrp ? nodes?.[stageIndex - 1]?.poiName : startPOI;
+  const to = legIndex === null ? '故障接替点'
+      : snapshot.vrp ? nodes?.[stageIndex]?.poiName : stageIndex === 0 ? startPOI : endPOI;
+  const actionDescription = phase === 'VISUAL_ONLY'
+      ? `${replacement.actionDescription}（前端续播）` : replacement.actionDescription;
+  return {
+    currentStatus: status,
+    assignment: {
+      vehicleId: id, assignmentId, licensePlate,
+      routeName: pickFloatingText(task.routeName, monitorTask?.routeName),
+      goodsName: pickFloatingText(task.goodsName, monitorTask?.goodsName), quantity,
+      startPOIName: from, endPOIName: to,
+      driverName: assigned?.driverName, driverStatus: assigned?.driverStatus,
+      vrp: snapshot.vrp, nodes
+    },
+    vehicleInfo: {
+      vehicleId: id, licensePlate, actionDescription, currentAssignment: replacement.currentAssignment,
+      currentLoad: isApproaching ? 0 : snapshot.vrp ? leg?.loadBefore : cargoAmount(task.goodsWeightPerUnit),
+      currentVolume: isApproaching ? 0 : snapshot.vrp ? leg?.volumeBefore : cargoAmount(task.goodsVolumePerUnit),
+      maxLoadCapacity: firstDefined(detail?.maxLoadCapacity, vehicle?.maxLoadCapacity, assigned?.maxLoadCapacity),
+      maxVolumeCapacity: firstDefined(detail?.cargoVolume, vehicle?.maxVolumeCapacity, assigned?.maxVolumeCapacity),
+      vrpProgress: snapshot.vrp ? { currentStageIndex: stageIndex, carriedCount: isApproaching ? 0 : leg?.carriedBefore } : null
+    }
+  };
+}
+
 const floatingVehicleLiveDisplay = computed(() => {
+  if (floatingVehicleInfo.replacementEventId !== null) {
+    const replacement = replacementDisplay.get(floatingVehicleInfo.replacementEventId);
+    return replacement ? projectReplacementVehicleDetails(replacement) : {};
+  }
   const cachedAssignment = floatingVehicleInfo.assignment || {};
   const cachedInfo = floatingVehicleInfo.vehicleInfo || {};
   const projectedVehicle = projectVisibleVehicleForSidebar(floatingVehicleInfo.vehicleId);
@@ -6117,6 +6188,7 @@ const floatingVehicleLiveDisplay = computed(() => {
 const floatingVehicleDisplayAssignment = computed(() => floatingVehicleLiveDisplay.value.assignment || {});
 const floatingVehicleDisplayInfo = computed(() => floatingVehicleLiveDisplay.value.vehicleInfo || {});
 const floatingVehicleImpactDisplay = computed(() => {
+  if (floatingVehicleInfo.replacementEventId !== null) return null;
   const vehicle = floatingVehicleDisplayInfo.value;
   const status = floatingVehicleLiveDisplay.value.currentStatus;
   if (!vehicle?.vehicleId || !status) return null;
@@ -6154,16 +6226,15 @@ const floatingVehicleImpactDisplay = computed(() => {
 });
 const floatingVehicleDriverText = computed(() => {
   const assignment = floatingVehicleDisplayAssignment.value || {};
-  const vehicleInfo = floatingVehicleInfo.vehicleInfo || {};
-  const vehicleSnapshot = findVehicleSnapshot(floatingVehicleInfo.vehicleId) || {};
-  const vehicleDetail = floatingVehicleInfo.vehicleDetail || {};
-  const driverName = assignment.driverName || vehicleInfo.driverName ||
-      vehicleSnapshot.driverName || vehicleDetail.driverName;
-  if (!driverName) {
-    return '-';
+  let { driverName, driverStatus } = assignment;
+  if (floatingVehicleInfo.replacementEventId === null) {
+    const vehicleInfo = floatingVehicleInfo.vehicleInfo || {};
+    const vehicleSnapshot = findVehicleSnapshot(floatingVehicleInfo.vehicleId) || {};
+    const vehicleDetail = floatingVehicleInfo.vehicleDetail || {};
+    driverName ||= vehicleInfo.driverName || vehicleSnapshot.driverName || vehicleDetail.driverName;
+    driverStatus ||= vehicleInfo.driverStatus || vehicleSnapshot.driverStatus || vehicleDetail.driverStatus;
   }
-  const driverStatus = assignment.driverStatus || vehicleInfo.driverStatus ||
-      vehicleSnapshot.driverStatus || vehicleDetail.driverStatus;
+  if (!driverName) return '-';
   const statusText = driverStatusMap[driverStatus]?.text || '未知';
   return `司机 ${driverName}（${statusText}）`;
 });
@@ -6223,6 +6294,10 @@ const toFiniteNumber = (value, fallback = 0) => {
 };
 
 const formatNumber = (value, digits = 1) => toFiniteNumber(value, 0).toFixed(digits);
+
+const formatFloatingVehicleMeasurement = value =>
+    floatingVehicleInfo.replacementEventId !== null && (value == null || !Number.isFinite(Number(value)))
+        ? '-' : formatNumber(value);
 
 const calculateUsagePercent = (current, max) => {
   const maxValue = toFiniteNumber(max, 0);
@@ -7679,17 +7754,18 @@ const buildFloatingVehicleInfo = (vehicleId, assignment, vehicleDetail = null) =
   };
 };
 
-const applyFloatingVehicleInfoPayload = (vehicleId, assignment, vehicleDetail, loading) => {
-  const payload = buildFloatingVehicleInfo(vehicleId, assignment, vehicleDetail);
+const applyFloatingVehicleInfoPayload = (vehicleId, assignment, vehicleDetail, loading, replacementEventId) => {
+  const payload = replacementEventId === null ? buildFloatingVehicleInfo(vehicleId, assignment, vehicleDetail) : {};
   floatingVehicleInfo.visible = true;
   floatingVehicleInfo.loading = loading;
   floatingVehicleInfo.vehicleId = vehicleId;
+  floatingVehicleInfo.replacementEventId = replacementEventId;
   floatingVehicleInfo.assignment = assignment || {};
-  floatingVehicleInfo.vehicleInfo = payload.vehicleInfo;
-  floatingVehicleInfo.vehicleDetail = payload.vehicleDetail;
-  floatingVehicleInfo.currentStatus = payload.currentStatus;
-  floatingVehicleInfo.statusText = payload.statusText;
-  floatingVehicleInfo.statusColor = payload.statusColor;
+  floatingVehicleInfo.vehicleInfo = payload.vehicleInfo ?? null;
+  floatingVehicleInfo.vehicleDetail = vehicleDetail;
+  floatingVehicleInfo.currentStatus = payload.currentStatus ?? null;
+  floatingVehicleInfo.statusText = payload.statusText ?? '';
+  floatingVehicleInfo.statusColor = payload.statusColor ?? '#ccc';
 };
 
 const setFloatingVehicleHighlight = (vehicleId) => {
@@ -7732,9 +7808,11 @@ const resetFloatingVehicleInfoPosition = () => {
 };
 
 const closeFloatingVehicleInfo = () => {
+  floatingVehicleRequestId++;
   stopFloatingVehicleInfoDrag();
   floatingVehicleInfo.visible = false;
   floatingVehicleInfo.loading = false;
+  floatingVehicleInfo.replacementEventId = null;
 };
 
 const startFloatingVehicleInfoDrag = (event) => {
@@ -7780,15 +7858,22 @@ const openVehicleFloatingInfo = async (source, options = {}) => {
     return;
   }
 
-  await openVehicleMonitorPanelWithoutMapResize();
-  const assignment = resolveFloatingVehicleAssignment(source, vehicleId, options);
+  const replacementEventId = options.replacementEventId ?? null;
+  const requestId = ++floatingVehicleRequestId;
+  const isCurrentRequest = () => requestId === floatingVehicleRequestId
+      && (replacementEventId === null || replacementDisplay.has(replacementEventId));
+  const monitorReady = openVehicleMonitorPanelWithoutMapResize();
+  if (replacementEventId === null) await monitorReady;
+  if (!isCurrentRequest()) return;
+  const assignment = replacementEventId === null ? resolveFloatingVehicleAssignment(source, vehicleId, options) : null;
   let displayAssignment = assignment;
   const assignmentId = assignment?.assignmentId ?? source?.assignmentId ?? options.assignment?.assignmentId;
   const experimentDisplayInfoPromise = fetchExperimentVehicleDisplayInfo(vehicleId, assignmentId);
   setFloatingVehicleHighlight(vehicleId);
   resetFloatingVehicleInfoPosition();
-  applyFloatingVehicleInfoPayload(vehicleId, assignment, null, true);
+  applyFloatingVehicleInfoPayload(vehicleId, assignment, null, true, replacementEventId);
   await nextTick();
+  if (!isCurrentRequest()) return;
   resetFloatingVehicleInfoPosition();
 
   let vehicleDetail = null;
@@ -7798,10 +7883,11 @@ const openVehicleFloatingInfo = async (source, options = {}) => {
     console.error('获取车辆详情失败:', error);
   }
   const experimentDisplayInfo = await experimentDisplayInfoPromise;
+  if (!isCurrentRequest()) return;
   displayAssignment = mergeExperimentVehicleDisplayAssignment(displayAssignment, experimentDisplayInfo);
-  applyFloatingVehicleInfoPayload(vehicleId, displayAssignment, vehicleDetail, false);
+  applyFloatingVehicleInfoPayload(vehicleId, displayAssignment, vehicleDetail, false, replacementEventId);
   await nextTick();
-  setFloatingVehicleInfoPosition(floatingVehicleInfo.position.left, floatingVehicleInfo.position.top);
+  if (isCurrentRequest()) setFloatingVehicleInfoPosition(floatingVehicleInfo.position.left, floatingVehicleInfo.position.top);
 };
 
 const centerMapOnVehicle = (position) => {

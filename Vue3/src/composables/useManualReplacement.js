@@ -244,7 +244,7 @@ export function useManualReplacement({ http, enabled, running, speed, render, ow
           playback.meters = Math.min(route.length, playback.meters + meters)
           overlay.continueTrip(pointOnPath(route, playback.meters), row,
             playback.meters < route.length ? (playback.loaded ? 'TRANSPORT_DRIVING' : 'ORDER_DRIVING')
-              : (action === 'LOAD' ? 'LOADING' : 'UNLOADING'))
+              : (action === 'LOAD' ? 'LOADING' : 'UNLOADING'), playback.leg, playback.loaded)
           if (playback.meters === route.length) {
             playback.service += seconds * speed()
             if (playback.service >= 2) {

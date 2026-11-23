@@ -39,11 +39,21 @@ export function captureRemainingRoute(animation) {
   remaining[0].path = tail
   if (vrp) {
     let load = animation.runtimeLoad
+    let volume = animation.runtimeVolume
+    let carriedCount = animation.carriedCount
     remaining.forEach((leg, i) => {
+      const node = animation.stages[nextStopIndex + i].nodeInfo
       leg.loadBefore = load
-      load = Math.max(0, load + (animation.stages[nextStopIndex + i].nodeInfo.weightDelta || 0))
+      leg.volumeBefore = volume
+      leg.carriedBefore = carriedCount
+      load = Math.max(0, load + (node.weightDelta || 0))
+      if (Number.isFinite(volume)) volume = Math.max(0, volume + (node.volumeDelta || 0))
+      if (Number.isFinite(carriedCount)) carriedCount = Math.max(0, carriedCount + (leg.action === 'LOAD' ? 1 : -1))
     })
   }
+  const { routeName, startPOIName, endPOIName, goodsName, quantity, goodsWeightPerUnit, goodsVolumePerUnit, nodes } =
+    animation.routeData?.assignment || {}
+  const task = { routeName, startPOIName, endPOIName, goodsName, quantity, goodsWeightPerUnit, goodsVolumePerUnit, nodes }
   const loaded = vrp ? animation.runtimeLoad > 0 : nextStopIndex > 0
-  return { position, nextStopIndex, loaded, vrp, remaining }
+  return { position, nextStopIndex, loaded, vrp, remaining, task }
 }
